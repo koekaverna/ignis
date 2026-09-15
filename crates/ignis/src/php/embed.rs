@@ -53,24 +53,7 @@ impl Engine {
     /// Runs a script file as the primary script of the current request.
     /// Returns PHP's exit status (0 unless `exit(n)` was called).
     pub fn run_file(&mut self, path: &Path) -> Result<i32> {
-        let cpath = CString::new(path.to_str().context("non-utf8 path")?)?;
-        // SAFETY: file handle is stack-owned and destroyed after execution;
-        // `php_execute_script` may longjmp on fatal error (zend_bailout) — it
-        // catches that internally via zend_try when called outside a
-        // zend_first_try block? No: php_execute_script uses zend_try itself
-        // and returns false on bailout, so no longjmp crosses our frame.
-        let status = unsafe {
-            let mut fh: sys::zend_file_handle = std::mem::zeroed();
-            sys::zend_stream_init_filename(&mut fh, cpath.as_ptr());
-            fh.primary_script = true;
-            let ok = sys::php_execute_script(&mut fh);
-            sys::zend_destroy_file_handle(&mut fh);
-            if !ok {
-                tracing::warn!(?path, "php_execute_script returned false (fatal error or exit)");
-            }
-            exit_status()
-        };
-        Ok(status)
+        run_file_on_current_thread(path)
     }
 }
 
@@ -86,6 +69,71 @@ unsafe fn exit_status() -> i32 {
         let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
         (*eg).exit_status as i32
     }
+}
+
+/// A non-main PHP thread (ADR-0004). Created on the thread it will run on.
+///
+/// FFI contract: `ts_resource(0)` allocates this thread's Zend globals (TSRM
+/// runs every registered ctor); `php_request_startup` activates a request on
+/// them. `Drop` runs `php_request_shutdown` + `ts_free_thread`. `!Send` pins
+/// it to its thread; the main-thread `Engine` must outlive every `WorkerThread`.
+pub struct WorkerThread {
+    _not_send: PhantomData<*mut ()>,
+}
+
+impl WorkerThread {
+    pub fn attach() -> Result<WorkerThread> {
+        // SAFETY: called on a fresh OS thread after php_embed_init completed on
+        // the main thread (the caller guarantees ordering via thread spawn order).
+        unsafe {
+            if sys::ts_resource_ex(0, std::ptr::null_mut()).is_null() {
+                bail!("ts_resource(0) returned NULL");
+            }
+            // Mirror php_embed_init: never chdir() to the script directory.
+            // chdir is process-wide, so a worker doing it would break every
+            // other thread's relative paths.
+            let sg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::sapi_globals_offset) as *mut sys::sapi_globals_struct;
+            (*sg).options |= 1; // SAPI_OPTION_NO_CHDIR (main/SAPI.h: #define SAPI_OPTION_NO_CHDIR 1)
+            if sys::php_request_startup() != sys::SUCCESS {
+                bail!("php_request_startup failed on worker thread");
+            }
+        }
+        Ok(WorkerThread { _not_send: PhantomData })
+    }
+
+    /// Same as [`Engine::run_file`] but on this worker thread.
+    pub fn run_file(&mut self, path: &Path) -> Result<i32> {
+        run_file_on_current_thread(path)
+    }
+}
+
+impl Drop for WorkerThread {
+    fn drop(&mut self) {
+        // SAFETY: mirrors attach(); on the owning thread.
+        unsafe {
+            sys::php_request_shutdown(std::ptr::null_mut());
+            sys::ts_free_thread();
+        }
+    }
+}
+
+fn run_file_on_current_thread(path: &Path) -> Result<i32> {
+    let cpath = CString::new(path.to_str().context("non-utf8 path")?)?;
+    // SAFETY: file handle is stack-owned and destroyed after execution;
+    // php_execute_script wraps execution in zend_try and returns false on
+    // bailout, so no longjmp crosses our frame.
+    let status = unsafe {
+        let mut fh: sys::zend_file_handle = std::mem::zeroed();
+        sys::zend_stream_init_filename(&mut fh, cpath.as_ptr());
+        fh.primary_script = true;
+        let ok = sys::php_execute_script(&mut fh);
+        sys::zend_destroy_file_handle(&mut fh);
+        if !ok {
+            tracing::warn!(?path, "php_execute_script returned false (fatal error or exit)");
+        }
+        exit_status()
+    };
+    Ok(status)
 }
 
 impl Drop for Engine {

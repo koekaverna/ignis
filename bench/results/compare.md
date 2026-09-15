@@ -16,3 +16,10 @@
 |---|---|---|---|---|
 | frankenphp worker (num=1, num_threads=2) | 27627.43 | 2.12ms | 6.42ms | |
 | frankenphp worker (num=4, num_threads=5) | 16582.78 | 3.77ms | 10.35ms | |
+
+### 2026-09-15T23:14:13Z wrk -t1 -c64 -d10s, 4 vCPU, Intel(R) Xeon(R) Processor @ 2.80GHz
+path: /cpu
+
+| server | req/s | p50 | p99 | errors |
+|---|---|---|---|---|
+| frankenphp worker (num=1, num_threads=2) /cpu | 2517.63 | 25.11ms | 28.62ms | |

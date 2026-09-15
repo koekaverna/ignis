@@ -21,17 +21,26 @@ use ignis_sys as sys;
 use super::zval;
 use crate::reactor::{Completion, HttpResponse, Op, Outcome, Reactor};
 
-/// Process-wide handles for the (single, in Cycle 1) PHP thread.
-static REACTOR: OnceLock<Arc<Reactor>> = OnceLock::new();
+/// One reactor per PHP OS thread (ADR-0004); set by the worker before it runs
+/// any PHP. The runtime handle is process-wide.
 static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+thread_local! {
+    static REACTOR: std::cell::OnceCell<Arc<Reactor>> = const { std::cell::OnceCell::new() };
+}
 
-pub fn install(r: Arc<Reactor>, rt: tokio::runtime::Handle) {
-    REACTOR.set(r).ok().expect("reactor installed twice");
+pub fn install_runtime(rt: tokio::runtime::Handle) {
     RUNTIME.set(rt).ok().expect("runtime installed twice");
 }
 
-pub fn reactor() -> &'static Arc<Reactor> {
-    REACTOR.get().expect("reactor not installed before PHP started")
+/// Binds `r` to the calling OS thread. Must precede any PHP execution on it.
+pub fn install_thread_reactor(r: Arc<Reactor>) {
+    REACTOR.with(|c| c.set(r).ok().expect("reactor installed twice on this thread"));
+}
+
+/// The calling PHP thread's reactor. Cloning the Arc is a refcount bump; the
+/// handle is cheap and the thread-local keeps it alive for the thread's life.
+pub fn reactor() -> Arc<Reactor> {
+    REACTOR.with(|c| c.get().expect("reactor not installed on this PHP thread").clone())
 }
 
 /// Wrapper so a struct holding raw pointers can be a `static`. The pointees
@@ -153,7 +162,7 @@ unsafe extern "C" fn zif_ignis_serve(ex: *mut sys::zend_execute_data, rv: *mut s
         }
         let addr = String::from_utf8_lossy(std::slice::from_raw_parts(s as *const u8, len)).into_owned();
         let rt = RUNTIME.get().expect("runtime not installed");
-        match crate::http::start(rt, reactor().clone(), &addr) {
+        match crate::http::start(rt, reactor(), &addr) {
             Ok(local) => {
                 tracing::info!(%local, "listening");
                 zval::set_bool(rv, true);

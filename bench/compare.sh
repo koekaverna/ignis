@@ -5,6 +5,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 T="${1:-2}"; C="${2:-64}"; D="${3:-10s}"
 ONLY="${ONLY:-ignis franken fpm}"   # space-separated subset to run
+URL_PATH="${URL_PATH:-/}"            # e.g. /cpu for the CPU-bound route
+IGNIS_THREADS_LIST="${IGNIS_THREADS_LIST:-1}"
 OUT=bench/results/compare.md
 SCRATCH="${SCRATCH:-/tmp}"
 FRANKEN="${FRANKEN:-/opt/frankenphp-bin}"
@@ -16,20 +18,20 @@ row()       { echo "| $1 | $2 |" | tee -a "$OUT"; }
 
 {
   echo; echo "### $(date -u +%Y-%m-%dT%H:%M:%SZ) wrk -t$T -c$C -d$D, $(nproc) vCPU, $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
-  echo "| server | req/s | p50 | p99 | errors |"; echo "|---|---|---|---|---|"
+  echo "path: $URL_PATH"; echo; echo "| server | req/s | p50 | p99 | errors |"; echo "|---|---|---|---|---|"
 } >> "$OUT"
 
 # --- Ignis, 1 PHP thread
-[[ " $ONLY " == *" ignis "* ]] && {
-./target/release/ignis examples/hello_server.php >"$SCRATCH/ignis-bench.log" 2>&1 & PID=$!
-wait_port http://127.0.0.1:8080/ && row "ignis (1 PHP thread + 2 tokio)" "$(run_wrk http://127.0.0.1:8080/)"
+[[ " $ONLY " == *" ignis "* ]] && for IT in $IGNIS_THREADS_LIST; do
+./target/release/ignis --threads "$IT" examples/hello_server.php >"$SCRATCH/ignis-bench.log" 2>&1 & PID=$!
+wait_port http://127.0.0.1:8080/ && row "ignis ($IT PHP thread(s) + 2 tokio) $URL_PATH" "$(run_wrk http://127.0.0.1:8080$URL_PATH)"
 kill $PID; wait $PID 2>/dev/null
-}
+done
 
 # --- FrankenPHP worker mode, 1 and N worker threads
 [[ " $ONLY " == *" franken "* ]] && for W in 1 $(nproc); do
   NUM_THREADS=$((W + 1)) WORKER_NUM=$W "$FRANKEN" run --config bench/frankenphp/Caddyfile >"$SCRATCH/franken-bench.log" 2>&1 & PID=$!
-  wait_port http://127.0.0.1:8081/ && row "frankenphp worker (num=$W, num_threads=$((W + 1)))" "$(run_wrk http://127.0.0.1:8081/)"
+  wait_port http://127.0.0.1:8081/ && row "frankenphp worker (num=$W, num_threads=$((W + 1))) $URL_PATH" "$(run_wrk http://127.0.0.1:8081$URL_PATH)"
   kill $PID; wait $PID 2>/dev/null
 done
 
@@ -38,7 +40,7 @@ done
   sed "s/\${FPM_CHILDREN}/$CH/" bench/fpm/php-fpm.conf > "$SCRATCH/php-fpm.conf"
   "$FPM" -R -y "$SCRATCH/php-fpm.conf" -p "$SCRATCH" >"$SCRATCH/fpm-bench.log" 2>&1 & FPID=$!
   nginx -c "$PWD/bench/fpm/nginx.conf" >"$SCRATCH/nginx-bench.log" 2>&1 & NPID=$!
-  wait_port http://127.0.0.1:8082/ && row "php-fpm (pm.max_children=$CH) + nginx" "$(run_wrk http://127.0.0.1:8082/)"
+  wait_port http://127.0.0.1:8082/ && row "php-fpm (pm.max_children=$CH) + nginx $URL_PATH" "$(run_wrk http://127.0.0.1:8082$URL_PATH)"
   kill $NPID $FPID; wait $NPID $FPID 2>/dev/null
 done
 echo "results appended to $OUT"

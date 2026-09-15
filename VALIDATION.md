@@ -224,3 +224,38 @@ backend=b n=10000 sleep_ms=1000 wall_ms=1177.0 overhead_ms=177.0 last_timer_late
 | overhead | 165–177 ms | 160–178 ms | — |
 
 Reading: the engine ABI's idle point is exactly where a reactor plugs in (14-line hook); the cost is identical to mainline because the reference provider also mmaps one C stack per coroutine (`ts_context_create` → `zend_fiber_init_context`), so the V-2 finding (fiber lifecycle, not scheduling, is the cost) holds on (b) too. A first attempt that called `ZEND_ASYNC_SUSPEND()` directly from `ignis_await_op` without enqueuing `fiber->caller_coroutine` serialised everything (1013 ms for 10 × 100 ms): on this ABI a suspension must hand control back to the starter the way `zend_fiber_coroutine_yield` does. Numbers are tied to fork commit `14af3cb`.
+
+## V-9 — H10 (E5 in-process) and H11 (E5/E4' over HTTP): N PHP threads (CONFIRMED)
+
+Date: 2026-09-16T00:4xZ. Build: `cargo build --release -p ignis` (ADR-0004: `--threads N`, one reactor per PHP thread, round-robin dispatch).
+
+### In-process CPU scaling (no HTTP, no wrk)
+
+`IGNIS_THREADS=$t ./target/release/ignis --threads $t bench/php/e5_cpu.php` — every thread runs the same fixed workload (md5 + array + usort) and prints its own wall time.
+
+| threads | per-thread wall (ms), ITERS=300k, 3 runs | ITERS=3M, 1 run |
+|---|---|---|
+| 1 | 61.0 / 62.0 / 61.8 | 603.1 |
+| 2 | 60.5, 60.7 / 60.1, 61.8 / 61.0, 61.1 | — |
+| 4 | 59.9–61.1 / 60.0–62.3 / 60.0–66.2 | 603.1, 613.0, 622.3, 634.6 |
+
+4× the work in ≤ 1.07× (300k) / 1.05× (3M) the 1-thread time → **3.7–3.98× throughput** (target ≥ 3.25×) → H10 CONFIRMED. No ZTS contention visible in libphp for this workload.
+
+### Over HTTP, load generator on the same 4-vCPU box
+
+Server: `./target/release/ignis --threads T examples/hello_server.php`. FrankenPHP rows: `bench/frankenphp/index.php` with the same `/cpu` loop, `wrk -t1 -c64 -d10s`.
+
+| server | route | wrk | req/s | p99 |
+|---|---|---|---|---|
+| ignis 1 thread | `/` | -t2 -c64 | 125,907 | 1.34 ms |
+| ignis 4 threads | `/` | -t2 -c64 | 105,200 | 2.12 ms |
+| ignis 1 thread | `/cpu` (~0.37 ms PHP) | -t1 -c64 | 2,660 | 25.5 ms |
+| **ignis 4 threads** | `/cpu` | -t1 -c64 | **9,285** | 17.5 ms |
+| frankenphp worker num=1 | `/cpu` | -t1 -c64 | 2,558 | 30.6 ms |
+| frankenphp worker num=4 | `/cpu` | -t1 -c64 | 7,278 | 15.6 ms |
+| frankenphp worker num=4 (V-6) | `/` | -t2 -c64 | 16,583 | 10.35 ms |
+
+- `/cpu` 4 threads vs 1: **3.49×** (target ≥ 2.5×) → H11 part 1 CONFIRMED.
+- hello at 4 threads (105k) ≥ FrankenPHP at 4 workers (16.6k) → H11 part 2 CONFIRMED; hello is *slower* than at 1 thread (126k) because it is not CPU-bound in PHP and 4 PHP threads + 2 tokio + 2 wrk oversubscribe 4 vCPUs.
+- Honesty: on `/cpu` at 4 workers FrankenPHP's p99 (15.6 ms) beats Ignis's (17.5 ms) while Ignis has 28% more throughput. Round-robin dispatch sends 1/N of requests to a thread that is busy; least-inflight dispatch is the obvious fix (ADR-0004 lists it).
+- Per-request CPU is PHP's: at 1 thread Ignis and FrankenPHP are within 4% on `/cpu`.

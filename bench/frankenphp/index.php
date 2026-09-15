@@ -3,6 +3,15 @@
 ignore_user_abort(true);
 $handler = static function (): void {
     header('Content-Type: text/plain; charset=utf-8');
+    if (($_SERVER['REQUEST_URI'] ?? '/') === '/cpu') {
+        // Same ~0.3 ms CPU-bound work as examples/hello_server.php /cpu (E5 over HTTP).
+        $acc = 0;
+        for ($i = 0; $i < 2000; $i++) {
+            $acc += strlen(md5((string) $i));
+        }
+        echo "cpu $acc\n";
+        return;
+    }
     echo "Hello, World!\n";
 };
 while (frankenphp_handle_request($handler)) {

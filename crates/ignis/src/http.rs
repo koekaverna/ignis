@@ -1,7 +1,8 @@
 //! hyper 1.x front door. Runs entirely on tokio; hands each request to the
 //! reactor as plain data and awaits the PHP answer on a oneshot.
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -15,13 +16,42 @@ use tokio::net::TcpListener;
 
 use crate::reactor::{HttpRequest, Reactor};
 
-/// Binds `addr` and serves it forever on the runtime. Returns after the
-/// listener is bound so the caller knows the port is live.
+/// Reactors of every PHP thread that called `ignis_serve`; requests are
+/// dispatched round-robin (ADR-0004).
+struct Registry {
+    reactors: Mutex<Vec<Arc<Reactor>>>,
+    next: AtomicUsize,
+}
+
+static REGISTRY: OnceLock<Arc<Registry>> = OnceLock::new();
+static BOUND: OnceLock<SocketAddr> = OnceLock::new();
+
+impl Registry {
+    fn pick(&self) -> Option<Arc<Reactor>> {
+        let rs = self.reactors.lock().unwrap();
+        if rs.is_empty() {
+            return None;
+        }
+        let i = self.next.fetch_add(1, Ordering::Relaxed) % rs.len();
+        Some(rs[i].clone())
+    }
+}
+
+/// Registers the calling thread's reactor as a request target and, on the
+/// first call, binds `addr` and serves it forever on the runtime. Returns the
+/// bound address. Later calls (other PHP threads) only register.
 pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> Result<SocketAddr> {
+    let registry = REGISTRY.get_or_init(|| Arc::new(Registry { reactors: Mutex::new(Vec::new()), next: AtomicUsize::new(0) }));
+    reactor.server_started();
+    registry.reactors.lock().unwrap().push(reactor);
+    if let Some(bound) = BOUND.get() {
+        return Ok(*bound);
+    }
     let addr: SocketAddr = addr.parse().with_context(|| format!("bad listen address {addr:?}"))?;
     let listener = rt.block_on(TcpListener::bind(addr)).with_context(|| format!("bind {addr}"))?;
     let local = listener.local_addr()?;
-    reactor.server_started();
+    let _ = BOUND.set(local);
+    let registry = registry.clone();
     rt.spawn(async move {
         loop {
             let (stream, _peer) = match listener.accept().await {
@@ -32,9 +62,19 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
                 }
             };
             let _ = stream.set_nodelay(true);
-            let reactor = reactor.clone();
+            let registry = registry.clone();
             tokio::spawn(async move {
-                let svc = service_fn(move |req| handle(reactor.clone(), req));
+                // One target per request (not per connection) so keep-alive
+                // connections still spread across PHP threads.
+                let svc = service_fn(move |req| {
+                    let r = registry.pick();
+                    async move {
+                        match r {
+                            Some(r) => handle(r, req).await,
+                            None => Ok(simple(StatusCode::SERVICE_UNAVAILABLE, "no php thread registered\n")),
+                        }
+                    }
+                });
                 let builder = auto::Builder::new(TokioExecutor::new());
                 if let Err(e) = builder.serve_connection(TokioIo::new(stream), svc).await {
                     tracing::debug!(error = %e, "connection ended with error");

@@ -35,3 +35,6 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:08:54Z C2 REASSESS — E6 stays stream-hook work on both backends; full Rust provider deferred (needs C shim for zend_first_try); Cycle 3 = N PHP threads (E5) + E4' at 4 threads.
 - 2026-09-15T23:10:52Z C3 START — question: N PHP OS threads (ZTS) with one reactor each; does CPU-bound work scale (E5) and does E4' hold at 4 threads?
 - 2026-09-15T23:10:52Z C3 RESEARCH/DECIDE/HYPOTHESIZE — research 03 (TSRM per-thread ctors, php_request_startup has no main-thread assumption), ADR-0004, H10/H11.
+- 2026-09-15T23:11:50Z C3 IMPLEMENT — per-thread reactors, worker thread lifecycle (ts_resource + php_request_startup), round-robin dispatch, --threads.
+- 2026-09-15T23:20:53Z C3 VALIDATE — H10 CONFIRMED (V-9: 3.7-3.98x in-process at 4 threads), H11 CONFIRMED (3.49x /cpu over HTTP; hello@4 105k vs FrankenPHP@4 16.6k; /cpu p99 17.5 vs FrankenPHP 15.6 ms noted).
+- 2026-09-15T23:20:53Z C3 REASSESS — E5 confirmed (scaled to 4 vCPU), E5' = least-inflight dispatch; Cycle 4 question = E3 RSS flat over 1M requests.

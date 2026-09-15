@@ -24,7 +24,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 ### FrankenPHP
 1. Worker mode requires app adaptation and a leak-free app → same requirement, with tooling: leak detector, fiber-scoped services. — NOT STARTED (E13).
 2. Aborted connections stall the server without ignore_user_abort → disconnect is a cancellation event, not a Zend signal. — NOT STARTED (E11).
-3. Sizing formula num_threads × memory_limit + GOMEMLIMIT; workers vs threads confusion → one axis: threads = cores, fibers = concurrency, memory = fiber budget; no GC heap. — DESIGNED (ADR-0001/0002); the fiber budget (pool cap + queueing) is NOT STARTED, see V-5 memory note.
+3. Sizing formula num_threads × memory_limit + GOMEMLIMIT; workers vs threads confusion → one axis: threads = cores, fibers = concurrency, memory = fiber budget; no GC heap. — **ADDRESSED** for threads/fibers (ADR-0004, V-9: `--threads N`, 3.7–4× scaling); the fiber budget (pool cap + queueing) is NOT STARTED, see V-5 memory note.
 4. Thread contention on small CPU: PHP thread yields to hand output to Caddy → buffered response channel, no thread switch per write. — **ADDRESSED** (ADR-0002: one `ignis_respond` per request, oneshot to hyper).
 5. Hot reload drops custom extensions → modules registered once per process; thread restart never re-registers. — DESIGNED (ADR-0001: module registered in MINIT once).
 6. RestartWorkers must restart all threads because of opcache → single-thread restart without opcache reset; SHM is process-level, thread only recreates its TSRM context. — NOT STARTED (E12).
@@ -36,7 +36,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 3. Forgotten $response->end() holds the connection → response is the Fiber's return value; return or exception closes the connection. — **ADDRESSED** (ADR-0002, `Ignis\serve` handler returns `Response`; exception → 500).
 4. Deadlock when the only coroutine yields; CPU-heavy work starves others → per-thread watchdog logs long fibers with trace; work-stealing routes new requests to other threads. — NOT STARTED (E12).
 5. Incomplete hooks (curl_multi etc.) → native Rust drivers for HTTP, Postgres, MySQL, Redis; stream-layer hooks for the rest. — NOT STARTED (E6); V-7 shows the engine ABI does not cover I/O either, so this stays stream-layer work.
-6. One blocking call stalls the whole process → stalls one thread of N; supervisor sees it via watchdog. — NOT STARTED (E5/E12).
+6. One blocking call stalls the whole process → stalls one thread of N; supervisor sees it via watchdog. — DESIGNED (ADR-0004: N independent threads, V-9); watchdog NOT STARTED (E12).
 7. Fatal kills the worker with every coroutine in it → fatal kills one thread; pools and Table survive. — NOT STARTED (E12).
 8. Ecosystem fork (Hyperf, own clients, single listeners) → plain Symfony/Laravel via symfony/runtime, AMPHP via a Revolt driver. — DESIGNED (ADR-0001 (c): reactor shaped for a Revolt driver); NOT STARTED (E7/E8).
 

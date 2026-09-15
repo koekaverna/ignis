@@ -10,7 +10,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E2 | `Ignis\all()` of three 200 ms calls returns in < 230 ms; per-fiber overhead < 100 µs | **CONFIRMED** 202 ms, 22 µs (V-3). Raised: E2' = per-fiber overhead < 5 µs with a warm fiber pool (no mmap/munmap per request) |
 | E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | OPEN |
 | E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | **CONFIRMED** on 1 thread (V-6): 4.6× throughput, p99 5.8× lower. Raised: E4' = same with Ignis@4 threads vs FrankenPHP@4 workers, and with `$_SERVER` populated (E13) so the work is comparable |
-| E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | OPEN |
+| E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | **CONFIRMED** scaled (V-9): 3.7–3.98× in-process, 3.49× over HTTP. Raised: E5' = least-inflight dispatch so /cpu p99 at 4 threads ≤ FrankenPHP's |
 | E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | OPEN — **not provided by the async ABI** (V-7): needs stream transport hooks on both backends |
 | E7 | Revolt-compatible driver over the Ignis reactor runs AMPHP examples unchanged | OPEN |
 | E8 | symfony/runtime adapter boots symfony/skeleton in worker mode; RequestStack fiber-scoped | OPEN |
@@ -23,7 +23,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ## Ranking (after Cycle 2)
 
-Next question (Cycle 3): N PHP threads (E5) with per-thread reactors, then E4' at 4 threads. Then E13 (fiber-switch observer state swap) and E6 (stream hooks).
+~~Cycle 3: N PHP threads (E5)~~ DONE (V-9).
+
+Next question (Cycle 4): E3 — is RSS flat over 1,000,000 requests in worker mode? Cheap to test now (hello at 100k+ req/s) and every later feature inherits the answer. Then E13 (fiber-switch observer state swap), E6 (stream hooks), E11 (cancellation via hyper drop).
 
 ## Ranking (after Cycle 0, kept for history)
 

@@ -16,6 +16,14 @@ Ignis\serve(static function (Request $req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
         })(),
+        '/cpu'   => (static function (): Response {
+            // ~0.3 ms of CPU-bound work per request (E5 over HTTP).
+            $acc = 0;
+            for ($i = 0; $i < 2000; $i++) {
+                $acc += strlen(md5((string) $i));
+            }
+            return Response::text("cpu $acc\n");
+        })(),
         '/stats' => Response::json(['resumes' => Ignis\Loop::$resumes, 'fibers' => Ignis\Loop::$fibersCreated, 'idle' => Ignis\Loop::idleFibers()]),
         default  => Response::text("not found\n", 404),
     };
