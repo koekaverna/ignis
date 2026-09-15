@@ -1,0 +1,38 @@
+Ignis: let an embedder plug a reactor into the reference scheduler's idle point.
+
+Where ext/test_scheduler raises DeadlockError ("this scheduler has no reactor
+to deliver it"), call a process-wide hook first; if the hook enqueued
+something, continue the loop. Applied on top of true-async/php-src async-core
+commit 14af3cb by scripts/build-php-async.sh. ~15 lines, no behaviour change
+when no hook is set.
+--- a/ext/test_scheduler/test_scheduler.c
++++ b/ext/test_scheduler/test_scheduler.c
+@@ -178,6 +178,16 @@
+ static zend_class_entry *ts_ce_deadlock_error;
+ static zend_object_handlers ts_coroutine_handlers;
+ 
++/* Ignis idle hook: called when the run queue is empty but coroutines are
++ * still parked. Returns true if it enqueued at least one coroutine. */
++typedef bool (*ts_idle_hook_t)(void);
++static ts_idle_hook_t ts_idle_hook = NULL;
++ZEND_API void test_scheduler_set_idle_hook(ts_idle_hook_t hook);
++ZEND_API void test_scheduler_set_idle_hook(ts_idle_hook_t hook)
++{
++	ts_idle_hook = hook;
++}
++
+ /* The bottom frame of every coroutine's VM stack. Nameless on purpose: a
+  * frame with no function name is a dummy frame, and backtraces skip it — the
+  * engine's own fiber root frame is built exactly this way. */
+@@ -1143,6 +1153,11 @@
+ 				if (zend_hash_num_elements(&TSG(coroutines)) == 0) {
+ 					break;
+ 				}
++				/* Ignis: a real reactor may deliver a wakeup here. */
++				if (ts_idle_hook != NULL && ts_idle_hook()) {
++					continue;
++				}
++
+ 				/* Nothing runnable, yet coroutines are still alive: they
+ 				 * wait for something that will never happen, because this
+ 				 * scheduler has no reactor to deliver it. */

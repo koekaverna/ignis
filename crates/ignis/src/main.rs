@@ -2,6 +2,7 @@
 //!
 //! Cycle 0 binary: `ignis <script.php>` runs one script on the main thread
 //! with a tokio runtime on the side owning all timers/I/O.
+mod backend;
 mod http;
 mod php;
 mod reactor;

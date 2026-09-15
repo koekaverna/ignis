@@ -27,6 +27,13 @@ fn main() {
 
     let includes = php_config("--includes"); // "-I/opt/php85-zts/include/php -I.../main ..."
     let prefix = php_config("--prefix");
+    // Backend (b) detection: the async scheduler ABI header of the true-async fork.
+    println!("cargo:rustc-check-cfg=cfg(php_async_abi)");
+    let has_async = std::path::Path::new(&format!("{prefix}/include/php/Zend/zend_async_API.h")).exists();
+    if has_async {
+        println!("cargo:rustc-cfg=php_async_abi");
+    }
+    println!("cargo:has_async_abi={}", if has_async { "1" } else { "0" });
     let libdir = format!("{prefix}/lib");
     let version = php_config("--version");
     println!("cargo:rustc-link-search=native={libdir}");
@@ -39,9 +46,9 @@ fn main() {
         .header("wrapper.h")
         .clang_args(includes.split_whitespace())
         .clang_arg("-DZTS=1")
-        .allowlist_function("(php|zend|sapi|ts|tsrm|_zend|_emalloc|_efree|_safe_emalloc|_estrndup|_ecalloc|_erealloc|add_|array_|object_|zval_|_zval|_call_user|convert_to).*")
+        .allowlist_function("(test_scheduler_set_idle_hook|php|zend|sapi|ts|tsrm|_zend|_emalloc|_efree|_safe_emalloc|_estrndup|_ecalloc|_erealloc|add_|array_|object_|zval_|_zval|_call_user|convert_to).*")
         .allowlist_type("(_?zend|_?zval|_?php|sapi|_?ts|_?zif|_?HashTable|_?Bucket).*")
-        .allowlist_var("(executor_globals_offset|executor_globals_id|compiler_globals_offset|core_globals_offset|sapi_globals_offset|php_embed_module|zend_ce_.*|IS_.*|ZEND_.*|E_.*|PHP_.*|MODULE_.*|IGNIS_.*|GC_.*|Z_.*|USING_ZTS|TSRM.*|_ZEND.*|_ZSTR.*)")
+        .allowlist_var("(zend_async_globals_offset|zend_async_[a-z_]*_fn|executor_globals_offset|executor_globals_id|compiler_globals_offset|core_globals_offset|sapi_globals_offset|php_embed_module|zend_ce_.*|IS_.*|ZEND_.*|E_.*|PHP_.*|MODULE_.*|IGNIS_.*|GC_.*|Z_.*|USING_ZTS|TSRM.*|_ZEND.*|_ZSTR.*)")
         .allowlist_type("max_align_t")
         .derive_default(true)
         .derive_debug(false)

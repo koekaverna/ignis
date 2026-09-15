@@ -31,13 +31,22 @@ impl Engine {
         // runs; we replace one function pointer with a compatible extern "C"
         // fn. php_embed_init then uses it exactly once. argv outlives the call
         // (kept in the struct) because SG(request_info).argv keeps the pointer.
+        // Optional php.ini (PHP_INI_SYSTEM entries such as test_scheduler.enable
+        // cannot be set at runtime). Kept alive for the process in INI_PATH.
+        let ini = std::env::var("IGNIS_PHP_INI").ok().and_then(|p| CString::new(p).ok());
         let rc = unsafe {
             sys::php_embed_module.startup = Some(module::ignis_sapi_startup);
+            if let Some(ini) = ini {
+                let leaked: &'static CString = Box::leak(Box::new(ini));
+                sys::php_embed_module.php_ini_path_override = leaked.as_ptr() as *mut c_char;
+            }
             sys::php_embed_init(1, argv_ptrs.as_mut_ptr())
         };
         if rc != sys::SUCCESS as i32 {
             bail!("php_embed_init failed ({rc})");
         }
+        #[cfg(php_async_abi)]
+        crate::backend::async_core::install();
         Ok(Engine { _not_send: PhantomData, argv })
     }
 

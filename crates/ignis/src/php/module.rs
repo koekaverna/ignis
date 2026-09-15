@@ -30,7 +30,7 @@ pub fn install(r: Arc<Reactor>, rt: tokio::runtime::Handle) {
     RUNTIME.set(rt).ok().expect("runtime installed twice");
 }
 
-fn reactor() -> &'static Arc<Reactor> {
+pub fn reactor() -> &'static Arc<Reactor> {
     REACTOR.get().expect("reactor not installed before PHP started")
 }
 
@@ -235,12 +235,24 @@ const fn fe_end() -> sys::zend_function_entry {
     }
 }
 
+#[cfg(not(php_async_abi))]
 static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 6]> = SyncStatic([
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe_end(),
+]);
+/// Backend (b) adds `ignis_await_op` (see backend/async_core.rs).
+#[cfg(php_async_abi)]
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 7]> = SyncStatic([
+    fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe(c"ignis_await_op", crate::backend::async_core::zif_ignis_await_op, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),
 ]);
 

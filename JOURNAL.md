@@ -30,3 +30,4 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:00:30Z C2 RESEARCH done — docs/research/02: PR #22561 == fork async-core head 14af3cb (8.6.0-dev); ABI = provider slot table used only by Zend core; NO stream/sleep integration → E6 does not fall out of (b). Mainline master already has main/poll. RFC page blocked (logged).
 - 2026-09-15T23:00:30Z C2 DECIDE — ADR-0003: two backends (mainline85 production, async-core provider prototype), shared reactor; E6 via stream hooks on (a).
 - 2026-09-15T23:00:30Z C2 HYPOTHESIZE — H8 (fork builds + test_scheduler passes), H9a (E6 on (b): expected REFUTED by inspection), H9b (Rust provider runs E1 on engine coroutines).
+- 2026-09-15T23:04:22Z C2 IMPLEMENT — backend (b) prototype: idle-hook patch for ext/test_scheduler, ignis_await_op (Rust) parks the engine coroutine on a reactor op, cfg(php_async_abi) wiring; mainline build unaffected.
