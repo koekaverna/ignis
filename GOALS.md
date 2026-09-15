@@ -9,7 +9,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E1 | 10,000 concurrent requests each doing `Ignis\sleep(1000)` on ONE thread finish in < 1.2 s wall | **CONFIRMED** in-process at 1.17 s (V-2), marginal. Raised: E1' = same over real HTTP (10k connections) in < 1.1 s with a warm fiber pool; overhead < 50 ms |
 | E2 | `Ignis\all()` of three 200 ms calls returns in < 230 ms; per-fiber overhead < 100 µs | **CONFIRMED** 202 ms, 22 µs (V-3). Raised: E2' = per-fiber overhead < 5 µs with a warm fiber pool (no mmap/munmap per request) |
 | E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | OPEN |
-| E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | OPEN |
+| E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | **CONFIRMED** on 1 thread (V-6): 4.6× throughput, p99 5.8× lower. Raised: E4' = same with Ignis@4 threads vs FrankenPHP@4 workers, and with `$_SERVER` populated (E13) so the work is comparable |
 | E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | OPEN |
 | E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | OPEN |
 | E7 | Revolt-compatible driver over the Ignis reactor runs AMPHP examples unchanged | OPEN |
@@ -29,8 +29,9 @@ CPU in kernel stack lifecycle). That reorders the plan: a fiber pool is now
 the first engineering item because every later expectation (E3 RSS flatness,
 E4 throughput) inherits its cost.
 
-1. E1'/E2' — fiber pool: keep fibers alive across work items, measure overhead per item.
-2. E4 — hello-world over hyper (worker mode); needed as the transport for everything else. php-fpm and FrankenPHP baselines being built now.
+1. ~~E1'/E2' — fiber pool~~ DONE (V-4).
+2. ~~E4 — hello-world over hyper~~ DONE on 1 thread (V-6).
+2b. **Owner direction (23:15Z):** research the async scheduler ABI RFC (wiki.php.net/rfc/async_scheduler_abi), php-src PR #22561 and the true-async/php-src `async-core` branch; ADR: reactor/scheduler behind a trait with two backends — (a) mainline 8.5 via zend_observer fiber-switch + stream hooks, (b) async-core fork via the engine ABI. Prototype E6 on (b) first if it builds; (a) stays the production path until the ABI ships. This is Cycle 2's question; E5 (threads) moves to Cycle 3.
 3. E5 — multi-thread ZTS workers.
 4. E3 — worker mode leak test.
 5. E6 — stream hooks (Swoole route).

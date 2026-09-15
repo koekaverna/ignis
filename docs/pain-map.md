@@ -40,5 +40,8 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 7. Fatal kills the worker with every coroutine in it → fatal kills one thread; pools and Table survive. — NOT STARTED (E12).
 8. Ecosystem fork (Hyperf, own clients, single listeners) → plain Symfony/Laravel via symfony/runtime, AMPHP via a Revolt driver. — DESIGNED (ADR-0001 (c): reactor shaped for a Revolt driver); NOT STARTED (E7/E8).
 
+### Engine-level (added by the owner, 2026-09-15)
+1. GC-triggered destructors may switch context: a `__destruct` running inside `gc_collect_cycles()` could call `Fiber::suspend()` → the scheduler must forbid or safely handle suspension during GC (Zend already calls `zend_fiber_switch_block()` around GC and destructors of dead fibers, zend_fibers.c/zend_gc.c; Ignis must never resume a fiber from inside a destructor and must treat `FiberError` from a blocked switch as a scheduler bug, not a user error). — NOT STARTED; to be covered by the ADR-0003 kill criteria.
+
 ### Remains true for Ignis too
 Leaks inside C extensions, global statics in third-party libraries (namespace-level constants leak in every worker runtime), thread-unsafe extensions under ZTS. Architecture gives detection, not immunity.
