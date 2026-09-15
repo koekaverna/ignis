@@ -14,5 +14,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc = "0.2"
 anyhow = "1"
+hyper = { version = "1", features = ["http1", "http2", "server"] }
+http-body-util = "0.1"
+http = "1"
+bytes = "1"
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "http1", "http2"] }
 
 [dev-dependencies]
