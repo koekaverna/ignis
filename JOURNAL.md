@@ -14,3 +14,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T22:26:50Z C0 IMPLEMENT/VALIDATE — H0 CONFIRMED (V-0), H1 CONFIRMED (V-1): ignis binary embeds libphp ZTS, internal module registered, hello runs in 16ms; nextest 7/7 green.
 - 2026-09-15T22:31:12Z C0 VALIDATE — H2/E1 CONFIRMED marginal: 1168-1178ms for 10k fibers (V-2). H4 CONFIRMED: resume phase 87-90ms. perf: ~50% of PHP-thread CPU is kernel mmap/munmap/page-fault of fiber stacks; scheduler code is noise.
 - 2026-09-15T22:31:12Z C0 VALIDATE — H3/E2 CONFIRMED: all() 201-202ms, 21.6-24.2us per fiber (V-3).
+- 2026-09-15T22:33:43Z C0 REASSESS — E1/E2 confirmed; raising E1; next cycle question chosen (HTTP worker transport + fiber pool). miri (nightly) green on zval/module helpers after fixing a test-only provenance bug it found.
+- 2026-09-15T22:35:07Z C0 VALIDATE addendum — smoke.sh E1 = 1302ms with background builds running (REFUTED under load). Margin too thin; fiber pool moves to top of Cycle 1.

@@ -6,8 +6,8 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 
 | id | target | status |
 |---|---|---|
-| E1 | 10,000 concurrent requests each doing `Ignis\sleep(1000)` on ONE thread finish in < 1.2 s wall | OPEN (H2) |
-| E2 | `Ignis\all()` of three 200 ms calls returns in < 230 ms; per-fiber overhead < 100 µs | OPEN (H3) |
+| E1 | 10,000 concurrent requests each doing `Ignis\sleep(1000)` on ONE thread finish in < 1.2 s wall | **CONFIRMED** in-process at 1.17 s (V-2), marginal. Raised: E1' = same over real HTTP (10k connections) in < 1.1 s with a warm fiber pool; overhead < 50 ms |
+| E2 | `Ignis\all()` of three 200 ms calls returns in < 230 ms; per-fiber overhead < 100 µs | **CONFIRMED** 202 ms, 22 µs (V-3). Raised: E2' = per-fiber overhead < 5 µs with a warm fiber pool (no mmap/munmap per request) |
 | E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | OPEN |
 | E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | OPEN |
 | E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | OPEN |
@@ -21,10 +21,16 @@ Note on E5: the machine has 4 vCPUs (`nproc`), so "8 threads ≥ 6.5×" cannot
 be measured as written. The proportional target (≥ 81% scaling efficiency)
 is used: 4 threads ≥ 3.25× single-thread.
 
-## Ranking (Cycle 0)
+## Ranking (after Cycle 0)
 
-1. E1, E2 — the thesis. Nothing else matters until these are CONFIRMED or REFUTED.
-2. E4 — hello-world over hyper; needed anyway as the transport for everything else.
+Cycle 0 result: the thesis holds in-process. The measured bottleneck is not
+the scheduler but Zend's per-fiber mmap/munmap (V-2 profile: ~50% of PHP-thread
+CPU in kernel stack lifecycle). That reorders the plan: a fiber pool is now
+the first engineering item because every later expectation (E3 RSS flatness,
+E4 throughput) inherits its cost.
+
+1. E1'/E2' — fiber pool: keep fibers alive across work items, measure overhead per item.
+2. E4 — hello-world over hyper (worker mode); needed as the transport for everything else. php-fpm and FrankenPHP baselines being built now.
 3. E5 — multi-thread ZTS workers.
 4. E3 — worker mode leak test.
 5. E6 — stream hooks (Swoole route).

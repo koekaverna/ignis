@@ -8,10 +8,11 @@ mod reactor;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use mimalloc::MiMalloc;
-
+// mimalloc is the production allocator; miri cannot execute its C code, so
+// tests under miri fall back to the system allocator.
+#[cfg(not(miri))]
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()

@@ -141,7 +141,11 @@ mod tests {
             set_long(&mut f.args[0], 7);
             set_long(&mut f.args[1], 9);
             f.ex.This.u2.num_args = 2;
-            let ex = &mut f.ex as *mut sys::zend_execute_data;
+            // Derive the frame pointer from the whole allocation, exactly as the
+            // VM does (execute_data and its args are one allocation). Deriving it
+            // from `&mut f.ex` would give provenance over the header only, which
+            // miri (Stacked Borrows) correctly rejects.
+            let ex = (&raw mut f) as *mut sys::zend_execute_data;
             assert_eq!(num_args(ex), 2);
             assert_eq!(arg_long(ex, 1), Some(7));
             assert_eq!(arg_long(ex, 2), Some(9));

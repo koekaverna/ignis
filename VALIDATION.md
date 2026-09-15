@@ -96,3 +96,16 @@ all3x200_ms=201.98 result=abc n=10000 per_fiber_us=21.62
 | per-fiber overhead (spawn + submit 0 ms sleep + poll + resume + teardown, amortised over 10k) | 21.6–24.2 µs | < 100 µs → **CONFIRMED** |
 
 The 1–2 ms above 200 ms is tokio's 1 ms timer-wheel granularity plus one poll round trip.
+
+### V-2 addendum — E1 under CPU contention (REFUTED under load)
+
+`scripts/smoke.sh` run while two background builds (php-fpm `make -j2`, FrankenPHP `go build`) were using the other cores:
+
+```
+n=10000 sleep_ms=1000 completed=10000 wall_ms=1301.6 spawn_ms=57.1 run_ms=1244.5 overhead_ms=301.6 resumes=20000 peak_rss_kb=184320
+```
+
+Same binary, same script, 1302 ms: the 2–3% margin of V-2 does not survive a
+loaded machine. E1 is therefore CONFIRMED only on an idle box; the raised
+target E1' (fiber pool, overhead < 50 ms) is what makes it robust. Recorded
+rather than re-run quietly.
