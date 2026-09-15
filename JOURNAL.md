@@ -33,3 +33,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:04:22Z C2 IMPLEMENT — backend (b) prototype: idle-hook patch for ext/test_scheduler, ignis_await_op (Rust) parks the engine coroutine on a reactor op, cfg(php_async_abi) wiring; mainline build unaffected.
 - 2026-09-15T23:08:54Z C2 VALIDATE — H8 CONFIRMED (V-7: fork builds, 61/61 tests), H9a REFUTED by inspection (no I/O path consults the ABI), H9b CONFIRMED (V-8: E1 on engine coroutines 1165-1177ms via idle hook).
 - 2026-09-15T23:08:54Z C2 REASSESS — E6 stays stream-hook work on both backends; full Rust provider deferred (needs C shim for zend_first_try); Cycle 3 = N PHP threads (E5) + E4' at 4 threads.
+- 2026-09-15T23:10:52Z C3 START — question: N PHP OS threads (ZTS) with one reactor each; does CPU-bound work scale (E5) and does E4' hold at 4 threads?
+- 2026-09-15T23:10:52Z C3 RESEARCH/DECIDE/HYPOTHESIZE — research 03 (TSRM per-thread ctors, php_request_startup has no main-thread assumption), ADR-0004, H10/H11.
