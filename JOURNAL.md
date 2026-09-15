@@ -47,3 +47,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:27:23Z C5 IMPLEMENT — superglobals.rs (fiber-switch/destroy observers, ignis_set_superglobals), loop populates $_SERVER/$_GET/$_POST/$_COOKIE at dispatch, Ignis\Scope WeakMap, E13 tests.
 - 2026-09-15T23:41:57Z C5 VALIDATE — H13/E13 CONFIRMED (V-11): 0 mismatches in-process and over 200 concurrent HTTP requests; +100 ns per switch (reserved-slot storage; HashMap version was 2x worse and replaced).
 - 2026-09-15T23:41:57Z C5 REASSESS — E13' = lazy swap + PG(http_globals); Cycle 6 = E6 stream hooks (tcp:// factory), sqlite part not hookable.
+- 2026-09-15T23:42:28Z C6 START — question: can a replacement tcp:// transport factory make unmodified file_get_contents('http://…') suspend the fiber (E6)?
+- 2026-09-15T23:44:56Z C6 RESEARCH/DECIDE/HYPOTHESIZE — research 06 (transport factory swap, http wrapper needs no fd, suspend from C via zend_fiber_suspend), ADR-0007, H14/H14b.
