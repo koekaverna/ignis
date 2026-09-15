@@ -1,0 +1,12 @@
+[package]
+name = "ignis-sys"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+description = "Raw bindgen bindings to the PHP embed SAPI (ZTS build)."
+links = "php"
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.73"

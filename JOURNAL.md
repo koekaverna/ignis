@@ -10,3 +10,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T22:19:36Z C0 DECIDE done — ADR-0001 accepted.
 - 2026-09-15T22:19:36Z C0 HYPOTHESIZE — writing HYPOTHESES.md H1..H4 for E1/E2 and the embed FFI.
 - 2026-09-15T22:19:36Z C0 HYPOTHESIZE done — H0..H4 recorded.
+- 2026-09-15T22:21:37Z C0 IMPLEMENT — scaffolding cargo workspace: crates/ignis-sys (bindgen over php_embed.h, ZTS) + crates/ignis (bin, tokio reactor, internal module).
+- 2026-09-15T22:26:50Z C0 IMPLEMENT/VALIDATE — H0 CONFIRMED (V-0), H1 CONFIRMED (V-1): ignis binary embeds libphp ZTS, internal module registered, hello runs in 16ms; nextest 7/7 green.
