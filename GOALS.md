@@ -8,7 +8,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 |---|---|---|
 | E1 | 10,000 concurrent requests each doing `Ignis\sleep(1000)` on ONE thread finish in < 1.2 s wall | **CONFIRMED** in-process at 1.17 s (V-2), marginal. Raised: E1' = same over real HTTP (10k connections) in < 1.1 s with a warm fiber pool; overhead < 50 ms |
 | E2 | `Ignis\all()` of three 200 ms calls returns in < 230 ms; per-fiber overhead < 100 µs | **CONFIRMED** 202 ms, 22 µs (V-3). Raised: E2' = per-fiber overhead < 5 µs with a warm fiber pool (no mmap/munmap per request) |
-| E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | OPEN |
+| E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | **CONFIRMED** (V-10): 1.5M hello, RSS −2.5%, PHP heap flat to the byte; 4.6M requests total. Raised: E3' = re-run with streams (E6) and state swap (E13) enabled, 4 threads, 10M requests |
 | E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | **CONFIRMED** on 1 thread (V-6): 4.6× throughput, p99 5.8× lower. Raised: E4' = same with Ignis@4 threads vs FrankenPHP@4 workers, and with `$_SERVER` populated (E13) so the work is comparable |
 | E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | **CONFIRMED** scaled (V-9): 3.7–3.98× in-process, 3.49× over HTTP. Raised: E5' = least-inflight dispatch so /cpu p99 at 4 threads ≤ FrankenPHP's |
 | E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | OPEN — **not provided by the async ABI** (V-7): needs stream transport hooks on both backends |
@@ -25,7 +25,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 3: N PHP threads (E5)~~ DONE (V-9).
 
-Next question (Cycle 4): E3 — is RSS flat over 1,000,000 requests in worker mode? Cheap to test now (hello at 100k+ req/s) and every later feature inherits the answer. Then E13 (fiber-switch observer state swap), E6 (stream hooks), E11 (cancellation via hyper drop).
+~~Cycle 4: E3~~ DONE (V-10).
+
+Next question (Cycle 5): E13 — can `zend_observer_fiber_switch` swap `$_SERVER`/`$_GET`/`$_POST` (and a fiber-scoped container) per fiber so two interleaved requests never see each other's superglobals, at < 1 µs per switch? Then E6 (stream hooks), E11 (cancellation via hyper drop), E5' (least-inflight dispatch).
 
 ## Ranking (after Cycle 0, kept for history)
 

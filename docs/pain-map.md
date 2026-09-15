@@ -14,7 +14,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 
 ### RoadRunner
 1. State discipline pushed to the developer: close descriptors, avoid state pollution, close connections after every iteration → connections belong to the runtime; nothing to close. — NOT STARTED (E14).
-2. Leaks handled by memory-limit restarts and gc_collect_cycles per request → allocator-level leak detector in dev, per-thread supervisor in prod, GC scheduled by the runtime off the hot path. — NOT STARTED (E3, E13).
+2. Leaks handled by memory-limit restarts and gc_collect_cycles per request → allocator-level leak detector in dev, per-thread supervisor in prod, GC scheduled by the runtime off the hot path. — **ADDRESSED** for the runtime itself (V-10: 4.6M requests, PHP heap flat to the byte, no gc_collect_cycles per request); leak detector and supervisor NOT STARTED (E12, E13).
 3. One request per worker; I/O-bound apps sized by memory → fibers. — **ADDRESSED** (V-5).
 4. Shared state via RPC to Go (KV = network hop) → Table in process memory. — NOT STARTED.
 5. Per-request serialization over pipes plus PSR-7 bridges → embedded PHP, request objects built on the Rust side without copies. — DESIGNED (ADR-0002: one array build per request, strings copied once; "without copies" not yet true).

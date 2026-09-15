@@ -38,3 +38,7 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:11:50Z C3 IMPLEMENT — per-thread reactors, worker thread lifecycle (ts_resource + php_request_startup), round-robin dispatch, --threads.
 - 2026-09-15T23:20:53Z C3 VALIDATE — H10 CONFIRMED (V-9: 3.7-3.98x in-process at 4 threads), H11 CONFIRMED (3.49x /cpu over HTTP; hello@4 105k vs FrankenPHP@4 16.6k; /cpu p99 17.5 vs FrankenPHP 15.6 ms noted).
 - 2026-09-15T23:20:53Z C3 REASSESS — E5 confirmed (scaled to 4 vCPU), E5' = least-inflight dispatch; Cycle 4 question = E3 RSS flat over 1M requests.
+- 2026-09-15T23:22:37Z C4 START — question: is RSS flat (±2%) over 1,000,000 requests in worker mode (E3), and does PHP heap usage stay flat too?
+- 2026-09-15T23:22:37Z C4 RESEARCH/DECIDE/HYPOTHESIZE — research 04 (leak candidates), ADR-0005 (RSS via /stats), H12; bench/rss-1m.sh.
+- 2026-09-15T23:24:13Z C4 VALIDATE — H12/E3 CONFIRMED (V-10): RSS 26.9→26.2 MB over 1.5M hello requests, PHP heap flat to the byte; 4.6M requests total; /sleep?ms=1 at 500 conns sustained 131k rps.
+- 2026-09-15T23:24:13Z C4 REASSESS — E3 raised to E3' (with E6/E13, 4 threads, 10M). Cycle 5 = E13 fiber-switch state swap.

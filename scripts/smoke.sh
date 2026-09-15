@@ -15,4 +15,5 @@ echo "== E1 (10k fibers x 1000 ms < 1200 ms)"
 out=$(N=10000 MS=1000 ./target/release/ignis bench/php/e1_sleep_10k.php | tail -1); echo "$out"
 wall=$(sed -E 's/.*wall_ms=([0-9.]+).*/\1/' <<<"$out")
 awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || { echo "E1 FAILED: wall_ms=$wall"; exit 1; }
+echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
 echo "smoke: GREEN"

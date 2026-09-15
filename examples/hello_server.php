@@ -24,7 +24,14 @@ Ignis\serve(static function (Request $req): Response {
             }
             return Response::text("cpu $acc\n");
         })(),
-        '/stats' => Response::json(['resumes' => Ignis\Loop::$resumes, 'fibers' => Ignis\Loop::$fibersCreated, 'idle' => Ignis\Loop::idleFibers()]),
+        '/stats' => Response::json([
+            'resumes'  => Ignis\Loop::$resumes,
+            'fibers'   => Ignis\Loop::$fibersCreated,
+            'idle'     => Ignis\Loop::idleFibers(),
+            'mem'      => memory_get_usage(),
+            'mem_real' => memory_get_usage(true),
+            'rss_kb'   => (int) (preg_match('/^VmRSS:\s+(\d+)/m', (string) file_get_contents('/proc/self/status'), $m) ? $m[1] : -1),
+        ]),
         default  => Response::text("not found\n", 404),
     };
 }, getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080');

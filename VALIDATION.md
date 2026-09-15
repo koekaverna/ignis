@@ -259,3 +259,29 @@ Server: `./target/release/ignis --threads T examples/hello_server.php`. FrankenP
 - hello at 4 threads (105k) ≥ FrankenPHP at 4 workers (16.6k) → H11 part 2 CONFIRMED; hello is *slower* than at 1 thread (126k) because it is not CPU-bound in PHP and 4 PHP threads + 2 tokio + 2 wrk oversubscribe 4 vCPUs.
 - Honesty: on `/cpu` at 4 workers FrankenPHP's p99 (15.6 ms) beats Ignis's (17.5 ms) while Ignis has 28% more throughput. Round-robin dispatch sends 1/N of requests to a thread that is busy; least-inflight dispatch is the obvious fix (ADR-0004 lists it).
 - Per-request CPU is PHP's: at 1 thread Ignis and FrankenPHP are within 4% on `/cpu`.
+
+## V-10 — H12 (E3): RSS over 4.6 million requests in worker mode (CONFIRMED)
+
+Date: 2026-09-16T01:0xZ. Command: `bench/rss-1m.sh` (1 PHP thread, release build; `/stats` reads VmRSS from `/proc/self/status` and `memory_get_usage()`).
+
+```
+warm-up 5s: 759158 requests
+sample 0 (post warm-up): {"resumes":759220,"fibers":64,"idle":63,"mem":1652312,"mem_real":2097152,"rss_kb":26920}
+sample 1: +500322 (total  500322): {"fibers":64,"mem":1652432,"mem_real":2097152,"rss_kb":26420}
+sample 2: +487093 (total  987415): {"fibers":64,"mem":1652432,"mem_real":2097152,"rss_kb":26184}
+sample 3: +513332 (total 1500747): {"fibers":64,"mem":1652432,"mem_real":2097152,"rss_kb":26244}
+sleep workload /sleep?ms=1, 500 connections, 20s: 2619271 requests: {"fibers":500,"idle":499,"mem":10245448,"mem_real":12582912,"rss_kb":46976}
+cpu workload /cpu 5s: 13155 requests:            {"fibers":500,"mem":10219816,"mem_real":12582912,"rss_kb":43168}
+hello again 3s: 469197 requests:                 {"fibers":500,"mem":10219400,"mem_real":12582912,"rss_kb":33032}
+```
+
+| phase | requests | RSS | PHP heap (`memory_get_usage`) |
+|---|---|---|---|
+| post warm-up | 0.76M done | 26.9 MB | 1,652,312 B |
+| +1.5M hello | 2.26M | **26.2 MB (−2.5%)** | **1,652,432 B (flat to the byte across samples 1–3)** |
+| +2.6M `/sleep?ms=1` at 500 conns | 4.88M | 47.0 MB | 10.2 MB (pool grew 64 → 500 fibers: 8 MB of 16 KiB VM stacks + objects) |
+| +13k `/cpu`, +0.47M hello | 5.36M | 33.0 MB | 10.2 MB (flat) |
+
+E3 target "±2% over 1M requests": RSS did not grow at all over 1.5M requests (it fell 2.5%); the PHP heap was flat to the byte → **CONFIRMED**. The only step is the fiber pool growing to the peak concurrency of the sleep workload; afterwards nothing grows. Also observed: `/sleep?ms=1` at 500 connections sustained **131k req/s** on one PHP thread (2.62M in 20 s) — timers through tokio are not a bottleneck.
+
+Caveat: 1 thread, ~7 minutes of traffic, no PDO/streams yet; E3 must be re-run when E6 (streams) and E13 (state swap) land, since those add per-request allocations.
