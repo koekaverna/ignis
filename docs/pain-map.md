@@ -17,7 +17,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 2. Leaks handled by memory-limit restarts and gc_collect_cycles per request → allocator-level leak detector in dev, per-thread supervisor in prod, GC scheduled by the runtime off the hot path. — **ADDRESSED** for the runtime itself (V-10: 4.6M requests, PHP heap flat to the byte, no gc_collect_cycles per request); leak detector and supervisor NOT STARTED (E12, E13).
 3. One request per worker; I/O-bound apps sized by memory → fibers. — **ADDRESSED** (V-5).
 4. Shared state via RPC to Go (KV = network hop) → Table in process memory. — NOT STARTED.
-5. Per-request serialization over pipes plus PSR-7 bridges → embedded PHP, request objects built on the Rust side without copies. — DESIGNED (ADR-0002: one array build per request, strings copied once; "without copies" not yet true).
+5. Per-request serialization over pipes plus PSR-7 bridges → embedded PHP, request objects built on the Rust side without copies. — DESIGNED (ADR-0002: one array build per request, strings copied once; "without copies" not yet true). `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` now exist per request (V-11), so `Request::createFromGlobals()` works unchanged.
 6. Bridge reset bugs (leaks on 404, reset broken on exception) → runtime performs reset at fiber end, including abnormal end. — DESIGNED (ADR-0002: handler exceptions become 500 and the pooled fiber survives; no state reset yet, E13).
 7. musl/Alpine instability → single official artifact: static glibc build. — NOT STARTED.
 
@@ -31,7 +31,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 7. cgo boundary cost and thread pinning → native FFI, no stack switch. — **ADDRESSED** (ADR-0001: bindgen; V-2 profile shows Rust at 0.3% of PHP-thread samples).
 
 ### Swoole
-1. Own coroutines: statics, class state and superglobals change on switch → native Fibers plus superglobal swap on the fiber-switch observer and a fiber-scoped container. — NOT STARTED (E13); research 01 §3 documents the per-thread globals problem.
+1. Own coroutines: statics, class state and superglobals change on switch → native Fibers plus superglobal swap on the fiber-switch observer and a fiber-scoped container. — **ADDRESSED** (ADR-0006, V-11: superglobals swapped per fiber at +100 ns/switch, `Ignis\Scope` WeakMap container); userland statics remain the app's (leak detector NOT STARTED).
 2. Xdebug/Xhprof incompatibility → Fibers are supported by Xdebug natively. — ADDRESSED by construction (native `Fiber`, no custom context switching).
 3. Forgotten $response->end() holds the connection → response is the Fiber's return value; return or exception closes the connection. — **ADDRESSED** (ADR-0002, `Ignis\serve` handler returns `Response`; exception → 500).
 4. Deadlock when the only coroutine yields; CPU-heavy work starves others → per-thread watchdog logs long fibers with trace; work-stealing routes new requests to other threads. — NOT STARTED (E12).

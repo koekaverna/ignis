@@ -10,6 +10,7 @@
 #include <Zend/zend_observer.h>
 #include <Zend/zend_interfaces.h>
 #include <Zend/zend_ini.h>
+#include <Zend/zend_extensions.h>
 #include <TSRM/TSRM.h>
 
 static const char *const IGNIS_ZEND_MODULE_BUILD_ID = ZEND_MODULE_BUILD_ID;

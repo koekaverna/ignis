@@ -16,6 +16,14 @@ Ignis\serve(static function (Request $req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
         })(),
+        '/echo'  => (static function (): Response {
+            // E13: after suspending, this fiber must still see its own superglobals.
+            $x = $_GET['x'] ?? '?';
+            Ignis\sleep((int) ($_GET['ms'] ?? 20));
+            Ignis\Scope::set('x', $x);
+            Ignis\sleep(1);
+            return Response::text(($_GET['x'] ?? '?') . ' ' . $_SERVER['REQUEST_URI'] . ' ' . Ignis\Scope::get('x') . "\n");
+        })(),
         '/cpu'   => (static function (): Response {
             // ~0.3 ms of CPU-bound work per request (E5 over HTTP).
             $acc = 0;

@@ -27,7 +27,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 4: E3~~ DONE (V-10).
 
-Next question (Cycle 5): E13 — can `zend_observer_fiber_switch` swap `$_SERVER`/`$_GET`/`$_POST` (and a fiber-scoped container) per fiber so two interleaved requests never see each other's superglobals, at < 1 µs per switch? Then E6 (stream hooks), E11 (cancellation via hyper drop), E5' (least-inflight dispatch).
+~~Cycle 5: E13~~ DONE (V-11).
+
+Next question (Cycle 6): E6 — can a replacement `tcp://` transport factory (Swoole route) make unmodified `file_get_contents('http://…')` suspend the fiber, with the stream ops suspending from C via `zend_fiber_suspend` and resumed by the reactor? PDO sqlite has no socket (in-process disk I/O): it cannot suspend by hooks — record, and plan a blocking-call offload instead. Then E11, E5'.
 
 ## Ranking (after Cycle 0, kept for history)
 

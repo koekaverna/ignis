@@ -233,6 +233,10 @@ final class Loop
         $handler = self::$requestHandler;
         $request = new Http\Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body']);
         self::spawn(static function () use ($handler, $request, $id): void {
+            // E13: this fiber gets its own $_SERVER/$_GET/$_POST/$_COOKIE (ADR-0006).
+            if (\function_exists('ignis_set_superglobals')) {
+                \ignis_set_superglobals(...$request->superglobals());
+            }
             try {
                 $response = $handler($request);
                 if (!$response instanceof Http\Response) {
@@ -243,6 +247,38 @@ final class Loop
             }
             \ignis_respond($id, $response->status, $response->headers, $response->body);
         });
+    }
+}
+
+/**
+ * Fiber-scoped storage (ADR-0006): values live exactly as long as the fiber that set them.
+ * In {main} (no fiber) a plain static array is used.
+ */
+final class Scope
+{
+    private static ?\WeakMap $map = null;
+    private static array $main = [];
+
+    public static function set(string $key, mixed $value): void
+    {
+        $fiber = \Fiber::getCurrent();
+        if ($fiber === null) {
+            self::$main[$key] = $value;
+            return;
+        }
+        self::$map ??= new \WeakMap();
+        $bag = self::$map[$fiber] ?? [];
+        $bag[$key] = $value;
+        self::$map[$fiber] = $bag;
+    }
+
+    public static function get(string $key, mixed $default = null): mixed
+    {
+        $fiber = \Fiber::getCurrent();
+        if ($fiber === null) {
+            return self::$main[$key] ?? $default;
+        }
+        return (self::$map?->offsetExists($fiber) ? self::$map[$fiber] : [])[$key] ?? $default;
     }
 }
 
@@ -319,6 +355,47 @@ final class Request
     public function header(string $name): ?string
     {
         return $this->headers[strtolower($name)] ?? null;
+    }
+
+    /**
+     * CGI-style superglobals for this request: [$_SERVER, $_GET, $_POST, $_COOKIE].
+     * @return array{0:array,1:array,2:array,3:array}
+     */
+    public function superglobals(): array
+    {
+        $q = strpos($this->uri, '?');
+        $query = $q === false ? '' : substr($this->uri, $q + 1);
+        $server = [
+            'REQUEST_METHOD'  => $this->method,
+            'REQUEST_URI'     => $this->uri,
+            'QUERY_STRING'    => $query,
+            'SCRIPT_NAME'     => '/index.php',
+            'SERVER_PROTOCOL' => 'HTTP/1.1',
+            'REQUEST_TIME'    => time(),
+            'REQUEST_TIME_FLOAT' => microtime(true),
+        ];
+        foreach ($this->headers as $name => $value) {
+            $server['HTTP_' . strtoupper(str_replace('-', '_', $name))] = $value;
+        }
+        if (isset($this->headers['content-type'])) {
+            $server['CONTENT_TYPE'] = $this->headers['content-type'];
+        }
+        if (isset($this->headers['content-length'])) {
+            $server['CONTENT_LENGTH'] = $this->headers['content-length'];
+        }
+        $get = [];
+        parse_str($query, $get);
+        $post = [];
+        if ($this->method === 'POST' && str_starts_with($this->headers['content-type'] ?? '', 'application/x-www-form-urlencoded')) {
+            parse_str($this->body, $post);
+        }
+        $cookie = [];
+        foreach (explode(';', $this->headers['cookie'] ?? '') as $pair) {
+            if (($eq = strpos($pair, '=')) !== false) {
+                $cookie[trim(substr($pair, 0, $eq))] = urldecode(trim(substr($pair, $eq + 1)));
+            }
+        }
+        return [$server, $get, $post, $cookie];
     }
 }
 

@@ -285,3 +285,30 @@ hello again 3s: 469197 requests:                 {"fibers":500,"mem":10219400,"m
 E3 target "±2% over 1M requests": RSS did not grow at all over 1.5M requests (it fell 2.5%); the PHP heap was flat to the byte → **CONFIRMED**. The only step is the fiber pool growing to the peak concurrency of the sleep workload; afterwards nothing grows. Also observed: `/sleep?ms=1` at 500 connections sustained **131k req/s** on one PHP thread (2.62M in 20 s) — timers through tokio are not a bottleneck.
 
 Caveat: 1 thread, ~7 minutes of traffic, no PDO/streams yet; E3 must be re-run when E6 (streams) and E13 (state swap) land, since those add per-request allocations.
+
+## V-11 — H13 (E13): fiber-scoped superglobals via the fiber-switch observer (CONFIRMED)
+
+Date: 2026-09-16T01:4xZ. Build: release, observer registered at MINIT (`IGNIS_NO_SUPERGLOBALS=1` disables it). Saved state lives in `zend_fiber_context.reserved[slot]` (slot from `zend_get_resource_handle`), a HashMap version was measured first and replaced.
+
+(b) in-process: `./target/release/ignis bench/php/e13_isolation.php`
+```
+e13_isolation fibers=3 checks=300 mismatches=0 main_leak=0
+```
+Three fibers interleaved 50 times each through `Ignis\sleep(1)`; each always saw its own `$_GET['x']`, `$_SERVER['REQUEST_URI']`, `$_COOKIE['sid']`, `Ignis\Scope` value; writes to `$_GET` did not leak; `{main}` never saw any of them.
+
+(a) over HTTP: `bench/e13-http.sh` (200 concurrent `curl "/echo?x=i&ms=20"`, handler sleeps twice and returns `$_GET['x']`, `$_SERVER['REQUEST_URI']`, `Ignis\Scope::get('x')`)
+```
+e13_http n=200 mismatches=0
+```
+
+(c) cost, `bench/php/e13_switch_cost.php` (1M `Fiber::suspend`/`resume` pairs, 2 runs each):
+
+| variant | ns per switch |
+|---|---|
+| observer off | 51–55 |
+| observer on, HashMap keyed by context (first version) | 183–193 |
+| **observer on, reserved-slot storage (final)** | **152–155** → +100 ns per switch |
+
+Amortised in the pooled 10k-fiber workload (E2 warm per job, 4 switches per job; 3 runs each): off 5.2–5.9 µs, on 7.2–7.6 µs → ≈ +0.5 µs per switch (cache effects on 10k live contexts). E1 warm round: 1046 → 1066 ms. Hello-world throughput unchanged (134k req/s with the observer, V-5/V-6 range).
+
+Target < 1 µs per switch → CONFIRMED (marginal in the pooled case). Follow-up E13': swap lazily (only when some fiber on the thread has ever set superglobals) so compute-only fibers pay nothing. Limitation (research 05): `PG(http_globals)` is not swapped; `filter_input()`/phar read thread state.

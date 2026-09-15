@@ -44,3 +44,6 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:24:13Z C4 REASSESS — E3 raised to E3' (with E6/E13, 4 threads, 10M). Cycle 5 = E13 fiber-switch state swap.
 - 2026-09-15T23:25:58Z C5 START — question: can zend_observer fiber-switch hooks give each fiber its own $_SERVER/$_GET/$_POST/$_COOKIE at < 1 us per switch (E13)?
 - 2026-09-15T23:25:58Z C5 RESEARCH/DECIDE/HYPOTHESIZE — research 05, ADR-0006, H13.
+- 2026-09-15T23:27:23Z C5 IMPLEMENT — superglobals.rs (fiber-switch/destroy observers, ignis_set_superglobals), loop populates $_SERVER/$_GET/$_POST/$_COOKIE at dispatch, Ignis\Scope WeakMap, E13 tests.
+- 2026-09-15T23:41:57Z C5 VALIDATE — H13/E13 CONFIRMED (V-11): 0 mismatches in-process and over 200 concurrent HTTP requests; +100 ns per switch (reserved-slot storage; HashMap version was 2x worse and replaced).
+- 2026-09-15T23:41:57Z C5 REASSESS — E13' = lazy swap + PG(http_globals); Cycle 6 = E6 stream hooks (tcp:// factory), sqlite part not hookable.

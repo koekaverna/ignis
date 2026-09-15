@@ -70,6 +70,13 @@ const fn arg_info_head(required: usize) -> sys::zend_internal_arg_info {
 
 static ARGINFO_ONE: SyncStatic<[sys::zend_internal_arg_info; 2]> = SyncStatic([arg_info_head(1), arg_info(c"value")]);
 static ARGINFO_NONE: SyncStatic<[sys::zend_internal_arg_info; 1]> = SyncStatic([arg_info_head(0)]);
+static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
+    arg_info_head(4),
+    arg_info(c"server"),
+    arg_info(c"get"),
+    arg_info(c"post"),
+    arg_info(c"cookie"),
+]);
 static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
     arg_info_head(4),
     arg_info(c"id"),
@@ -245,7 +252,8 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(not(php_async_abi))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 6]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 7]> = SyncStatic([
+    fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
@@ -255,7 +263,8 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 6]> = SyncStatic([
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 8]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 9]> = SyncStatic([
+    fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
@@ -277,7 +286,7 @@ pub static mut MODULE: sys::zend_module_entry = sys::zend_module_entry {
     deps: ptr::null(),
     name: c"ignis".as_ptr(),
     functions: FUNCTIONS.0.as_ptr(),
-    module_startup_func: None,
+    module_startup_func: Some(super::superglobals::minit),
     module_shutdown_func: None,
     request_startup_func: None,
     request_shutdown_func: None,
@@ -323,7 +332,8 @@ mod tests {
     fn function_table_is_terminated() {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_submit_sleep");
-        assert_eq!(FUNCTIONS.0[4].num_args, 4);
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_set_superglobals");
+        assert_eq!(FUNCTIONS.0[0].num_args, 4);
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[5].fname) }.to_str().unwrap(), "ignis_respond");
     }
 }
