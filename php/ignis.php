@@ -1,15 +1,16 @@
 <?php
 /**
- * Ignis userland scheduler (Cycle 0).
+ * Ignis userland scheduler (Cycle 1: fiber pool + HTTP).
  *
- * The Rust side exposes three primitives: ignis_submit_sleep(int $ms): int,
- * ignis_poll(int $timeout_ms): array<int,int>, ignis_inflight(): int.
- * Everything else — fibers, futures, all() — lives here, shaped so that it
- * can become a Revolt driver (activate/dispatch/deactivate/now) later.
+ * Rust primitives: ignis_submit_sleep(int $ms): int, ignis_poll(int $timeout_ms): array,
+ * ignis_inflight(): int, ignis_serve(string $addr): bool,
+ * ignis_respond(int $id, int $status, array $headers, string $body): bool.
+ * Everything else — fibers, futures, all(), the pool, serve() — lives here,
+ * shaped so it can become a Revolt driver (activate/dispatch/deactivate/now).
  */
 declare(strict_types=1);
 
-namespace Ignis;
+namespace Ignis {
 
 final class Future
 {
@@ -43,7 +44,7 @@ final class Future
         $this->value = $value;
         $this->error = $e;
         foreach ($this->waiters as $fiber) {
-            Loop::markReady($fiber, $this);
+            Loop::markReady($fiber, null);
         }
         $this->waiters = [];
     }
@@ -71,12 +72,17 @@ final class Loop
 {
     /** @var array<int,\Fiber> op id => fiber waiting for it */
     private static array $waiting = [];
-    /** @var list<array{0:\Fiber,1:mixed}> fibers to (re)start with a value */
+    /** @var list<array{0:\Fiber,1:mixed}> fibers to resume with a value */
     private static array $ready = [];
-    /** @var list<\Fiber> fibers created but not yet started */
+    /** @var list<array{0:\Fiber,1:array}> new pool fibers to start with a job */
     private static array $pending = [];
+    /** @var list<\Fiber> parked pool fibers */
+    private static array $idle = [];
     private static bool $running = false;
+    /** @var null|callable(Http\Request):Http\Response */
+    private static $requestHandler = null;
     public static int $resumes = 0;
+    public static int $fibersCreated = 0;
     /** Nanoseconds spent in each phase (for VALIDATION.md; cheap: one hrtime per batch). */
     public static array $phaseNs = ['start' => 0, 'ready' => 0, 'poll' => 0, 'resume' => 0];
 
@@ -85,14 +91,15 @@ final class Loop
     {
         $fiber = \Fiber::getCurrent();
         if ($fiber === null) {
-            // Called from {main}: drive the loop until this op is done.
+            // Called from {main}: park a throwaway fiber on the op and drive the loop.
             $result = null;
             $done = false;
-            self::$waiting[$id] = new \Fiber(function () use (&$result, &$done) {
+            $f = new \Fiber(function () use (&$result, &$done) {
                 $result = \Fiber::suspend();
                 $done = true;
             });
-            self::$waiting[$id]->start();
+            $f->start();
+            self::$waiting[$id] = $f;
             self::runUntil(fn () => $done);
             return $result;
         }
@@ -106,21 +113,43 @@ final class Loop
         self::$ready[] = [$fiber, $value];
     }
 
-    /** Start $fn in a new fiber on the next loop turn. */
-    public static function spawn(callable $fn, mixed ...$args): Future
+    /** Body of a pooled fiber: runs jobs forever, parking between them. */
+    private static function poolBody(array $job): void
     {
-        $future = new Future();
-        self::$pending[] = new \Fiber(static function () use ($fn, $args, $future): void {
+        $self = \Fiber::getCurrent();
+        while (true) {
+            [$fn, $args, $future] = $job;
             try {
                 $future->resolve($fn(...$args));
             } catch (\Throwable $e) {
                 $future->reject($e);
             }
-        });
+            self::$idle[] = $self;
+            $job = \Fiber::suspend();
+        }
+    }
+
+    /** Run $fn concurrently; a parked pool fiber is reused when available. */
+    public static function spawn(callable $fn, mixed ...$args): Future
+    {
+        $future = new Future();
+        $job = [$fn, $args, $future];
+        $fiber = array_pop(self::$idle);
+        if ($fiber !== null) {
+            self::$ready[] = [$fiber, $job];
+        } else {
+            ++self::$fibersCreated;
+            self::$pending[] = [new \Fiber(self::poolBody(...)), $job];
+        }
         return $future;
     }
 
-    /** Run until no fiber is waiting on anything. */
+    public static function idleFibers(): int
+    {
+        return \count(self::$idle);
+    }
+
+    /** Run until no fiber is waiting on anything (and no server is listening). */
     public static function run(): void
     {
         self::runUntil(static fn () => false);
@@ -135,18 +164,18 @@ final class Loop
         self::$running = true;
         try {
             while (!$stop()) {
-                // 1. start new fibers
+                // 1. start new pool fibers
                 while (self::$pending !== []) {
                     $batch = self::$pending;
                     self::$pending = [];
                     $t = hrtime(true);
-                    foreach ($batch as $fiber) {
+                    foreach ($batch as [$fiber, $job]) {
                         ++self::$resumes;
-                        $fiber->start();
+                        $fiber->start($job);
                     }
                     self::$phaseNs['start'] += hrtime(true) - $t;
                 }
-                // 2. resume fibers whose future settled
+                // 2. resume fibers that became runnable (settled future or new job)
                 while (self::$ready !== []) {
                     $batch = self::$ready;
                     self::$ready = [];
@@ -161,17 +190,21 @@ final class Loop
                     continue;
                 }
                 // 3. nothing runnable: block on the reactor
-                if (self::$waiting === []) {
-                    if (self::$ready === [] && self::$pending === []) {
-                        break;
-                    }
-                    continue;
+                if (self::$waiting === [] && self::$requestHandler === null) {
+                    break;
                 }
                 $t = hrtime(true);
                 $events = \ignis_poll(-1);
                 $t2 = hrtime(true);
                 self::$phaseNs['poll'] += $t2 - $t;
+                if ($events === [] && self::$waiting === [] && self::$requestHandler === null) {
+                    break;
+                }
                 foreach ($events as $id => $payload) {
+                    if (\is_array($payload)) {
+                        self::dispatchRequest($id, $payload);
+                        continue;
+                    }
                     $fiber = self::$waiting[$id] ?? null;
                     if ($fiber === null) {
                         continue; // cancelled
@@ -186,6 +219,31 @@ final class Loop
             self::$running = false;
         }
     }
+
+    /** @param callable(Http\Request):Http\Response $handler */
+    public static function serve(callable $handler, string $addr): void
+    {
+        \ignis_serve($addr);
+        self::$requestHandler = $handler;
+        self::run();
+    }
+
+    private static function dispatchRequest(int $id, array $raw): void
+    {
+        $handler = self::$requestHandler;
+        $request = new Http\Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body']);
+        self::spawn(static function () use ($handler, $request, $id): void {
+            try {
+                $response = $handler($request);
+                if (!$response instanceof Http\Response) {
+                    $response = Http\Response::text("handler must return Ignis\\Http\\Response\n", 500);
+                }
+            } catch (\Throwable $e) {
+                $response = Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
+            }
+            \ignis_respond($id, $response->status, $response->headers, $response->body);
+        });
+    }
 }
 
 /** Non-blocking sleep: the fiber suspends, tokio owns the timer. */
@@ -194,7 +252,7 @@ function sleep(int $ms): void
     Loop::awaitOp(\ignis_submit_sleep($ms));
 }
 
-/** Run $fn concurrently in a fiber. */
+/** Run $fn concurrently in a (pooled) fiber. */
 function async(callable $fn, mixed ...$args): Future
 {
     return Loop::spawn($fn, ...$args);
@@ -212,3 +270,77 @@ function all(iterable $futures): array
     }
     return $out;
 }
+
+/**
+ * Worker mode: serve HTTP forever, one pooled fiber per request.
+ * @param callable(Http\Request):Http\Response $handler
+ */
+function serve(callable $handler, string $addr = '127.0.0.1:8080'): void
+{
+    Loop::serve($handler, $addr);
+}
+
+} // namespace Ignis
+
+namespace Ignis\Http {
+
+final class Request
+{
+    private ?array $query = null;
+
+    /** @param array<string,string> $headers lower-cased names */
+    public function __construct(
+        public readonly string $method,
+        public readonly string $uri,
+        public readonly array $headers,
+        public readonly string $body,
+    ) {
+    }
+
+    public function path(): string
+    {
+        $q = strpos($this->uri, '?');
+        return $q === false ? $this->uri : substr($this->uri, 0, $q);
+    }
+
+    public function query(string $name): ?string
+    {
+        if ($this->query === null) {
+            $q = strpos($this->uri, '?');
+            $this->query = [];
+            if ($q !== false) {
+                parse_str(substr($this->uri, $q + 1), $this->query);
+            }
+        }
+        $v = $this->query[$name] ?? null;
+        return $v === null ? null : (string) $v;
+    }
+
+    public function header(string $name): ?string
+    {
+        return $this->headers[strtolower($name)] ?? null;
+    }
+}
+
+final class Response
+{
+    /** @param array<string,string> $headers */
+    public function __construct(
+        public readonly string $body = '',
+        public readonly int $status = 200,
+        public readonly array $headers = [],
+    ) {
+    }
+
+    public static function text(string $body, int $status = 200): self
+    {
+        return new self($body, $status, ['content-type' => 'text/plain; charset=utf-8']);
+    }
+
+    public static function json(mixed $data, int $status = 200): self
+    {
+        return new self(json_encode($data, JSON_THROW_ON_ERROR), $status, ['content-type' => 'application/json']);
+    }
+}
+
+} // namespace Ignis\Http

@@ -13,22 +13,28 @@ if (($fs = getenv('FIBER_STACK')) !== false) {
     ini_set('fiber.stack_size', $fs);
 }
 
-$t0 = hrtime(true);
-$futures = [];
-for ($i = 0; $i < $n; $i++) {
-    $futures[] = Ignis\async(static function () use ($ms): int {
-        Ignis\sleep($ms);
-        return 1;
-    });
-}
-$tSpawned = hrtime(true);
-Ignis\Loop::run();
-$tDone = hrtime(true);
+$rounds = (int) (getenv('ROUNDS') ?: 1); // round 2+ runs on a warm fiber pool (H5)
+$ok = true;
+for ($round = 1; $round <= $rounds; $round++) {
+    Ignis\Loop::$phaseNs = ['start' => 0, 'ready' => 0, 'poll' => 0, 'resume' => 0];
+    $t0 = hrtime(true);
+    $futures = [];
+    for ($i = 0; $i < $n; $i++) {
+        $futures[] = Ignis\async(static function () use ($ms): int {
+            Ignis\sleep($ms);
+            return 1;
+        });
+    }
+    $tSpawned = hrtime(true);
+    Ignis\Loop::run();
+    $tDone = hrtime(true);
 
-$sum = array_sum(array_map(static fn (Ignis\Future $f) => $f->await(), $futures));
-$wall = ($tDone - $t0) / 1e6;
-$ph = array_map(static fn (int $ns) => round($ns / 1e6, 1), Ignis\Loop::$phaseNs);
-printf("phases_ms start=%.1f ready=%.1f poll=%.1f resume=%.1f\n", $ph['start'], $ph['ready'], $ph['poll'], $ph['resume']);
-printf("n=%d sleep_ms=%d completed=%d wall_ms=%.1f spawn_ms=%.1f run_ms=%.1f overhead_ms=%.1f resumes=%d peak_rss_kb=%d\n",
-    $n, $ms, $sum, $wall, ($tSpawned - $t0) / 1e6, ($tDone - $tSpawned) / 1e6, $wall - $ms, Ignis\Loop::$resumes, memory_get_peak_usage(true) >> 10);
-exit($sum === $n ? 0 : 1);
+    $sum = array_sum(array_map(static fn (Ignis\Future $f) => $f->await(), $futures));
+    $ok = $ok && $sum === $n;
+    $wall = ($tDone - $t0) / 1e6;
+    $ph = array_map(static fn (int $ns) => round($ns / 1e6, 1), Ignis\Loop::$phaseNs);
+    printf("round=%d phases_ms start=%.1f ready=%.1f poll=%.1f resume=%.1f\n", $round, $ph['start'], $ph['ready'], $ph['poll'], $ph['resume']);
+    printf("round=%d n=%d sleep_ms=%d completed=%d wall_ms=%.1f spawn_ms=%.1f run_ms=%.1f overhead_ms=%.1f resumes=%d fibers_created=%d peak_rss_kb=%d\n",
+        $round, $n, $ms, $sum, $wall, ($tSpawned - $t0) / 1e6, ($tDone - $tSpawned) / 1e6, $wall - $ms, Ignis\Loop::$resumes, Ignis\Loop::$fibersCreated, memory_get_peak_usage(true) >> 10);
+}
+exit($ok ? 0 : 1);

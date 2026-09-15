@@ -12,16 +12,21 @@ $r = Ignis\all([
 $allMs = (hrtime(true) - $t0) / 1e6;
 
 // Per-fiber overhead: N fibers doing a 0 ms sleep (still round-trips through tokio).
+// Round 1 creates the pool (cold), round 2 reuses it (warm, H5/E2').
 $n = (int) (getenv('N') ?: 10000);
 ini_set('memory_limit', '1G');
-$t1 = hrtime(true);
-$fs = [];
-for ($i = 0; $i < $n; $i++) {
-    $fs[] = Ignis\async(static function () { Ignis\sleep(0); return 1; });
+$us = [];
+$sum = 0;
+foreach (['cold', 'warm'] as $label) {
+    $t1 = hrtime(true);
+    $fs = [];
+    for ($i = 0; $i < $n; $i++) {
+        $fs[] = Ignis\async(static function () { Ignis\sleep(0); return 1; });
+    }
+    Ignis\Loop::run();
+    $sum = array_sum(array_map(static fn ($f) => $f->await(), $fs));
+    $us[$label] = (hrtime(true) - $t1) / 1e3 / $n;
 }
-Ignis\Loop::run();
-$sum = array_sum(array_map(static fn ($f) => $f->await(), $fs));
-$perFiberUs = (hrtime(true) - $t1) / 1e3 / $n;
 
-printf("all3x200_ms=%.2f result=%s n=%d per_fiber_us=%.2f\n", $allMs, implode('', $r), $sum, $perFiberUs);
-exit(($allMs < 230 && $perFiberUs < 100 && $sum === $n) ? 0 : 1);
+printf("all3x200_ms=%.2f result=%s n=%d per_fiber_us_cold=%.2f per_fiber_us_warm=%.2f fibers_created=%d\n", $allMs, implode('', $r), $sum, $us['cold'], $us['warm'], Ignis\Loop::$fibersCreated);
+exit(($allMs < 230 && $us['cold'] < 100 && $sum === $n) ? 0 : 1);

@@ -20,3 +20,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T22:37:11Z C1 RESEARCH — hyper 1.11.1 / hyper-util 0.1.20 auto server API read from registry sources; FrankenPHP frankenphp_handle_request + threadworker.go read; writing docs/research/01-http-transport-and-fiber-pool.md.
 - 2026-09-15T22:37:11Z C1 DECIDE — ADR-0002 (value-based request boundary, hyper auto builder, userland fiber pool).
 - 2026-09-15T22:37:11Z C1 HYPOTHESIZE — H5 (pool), H6 (HTTP hello via hyper), H7 (E4 vs baselines).
+- 2026-09-15T22:38:44Z C1 IMPLEMENT — reactor: HTTP requests as poll events (hyper auto, oneshot responders); module: ignis_serve/ignis_respond; loop: fiber pool + Ignis\serve.
+- 2026-09-15T22:44:50Z C1 VALIDATE — H5 CONFIRMED (V-4): warm pool 37-41ms overhead for 10k fibers, 4.4-4.6us per job. H6 CONFIRMED (V-5): 122-130k rps hello on 1 PHP thread, p99 1.01s for 1000 concurrent sleeps; 10k-connection p99 1.21s INCONCLUSIVE (load generator shares the box).

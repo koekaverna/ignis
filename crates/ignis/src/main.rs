@@ -2,6 +2,7 @@
 //!
 //! Cycle 0 binary: `ignis <script.php>` runs one script on the main thread
 //! with a tokio runtime on the side owning all timers/I/O.
+mod http;
 mod php;
 mod reactor;
 
@@ -35,7 +36,7 @@ fn main() -> ExitCode {
         .build()
         .expect("tokio runtime");
     let reactor = reactor::Reactor::new(rt.handle());
-    php::module::install_reactor(reactor);
+    php::module::install(reactor, rt.handle().clone());
 
     let mut engine = match php::embed::Engine::init("ignis") {
         Ok(e) => e,

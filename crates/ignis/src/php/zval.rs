@@ -29,7 +29,6 @@ pub unsafe fn set_null(zv: *mut sys::zval) {
     unsafe { (*zv).u1.type_info = sys::IS_NULL }
 }
 
-#[allow(dead_code)]
 /// `ZVAL_BOOL(zv, b)`.
 ///
 /// # Safety
@@ -150,5 +149,17 @@ mod tests {
             assert_eq!(arg_long(ex, 1), Some(7));
             assert_eq!(arg_long(ex, 2), Some(9));
         }
+    }
+}
+
+/// Copies a `zend_string` into an owned Rust `String` (lossy on invalid UTF-8).
+///
+/// # Safety
+/// `zs` must point to a live `zend_string`.
+pub unsafe fn zstr_to_string(zs: *const sys::zend_string) -> String {
+    unsafe {
+        let len = (*zs).len;
+        let ptr = (*zs).val.as_ptr() as *const u8;
+        String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).into_owned()
     }
 }
