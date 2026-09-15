@@ -1,0 +1,19 @@
+{
+    "name": "ignis/amphp-examples",
+    "description": "AMPHP examples run unchanged on the Ignis Revolt driver (E7).",
+    "require": {
+        "php": ">=8.1",
+        "revolt/event-loop": "^1.0",
+        "amphp/amp": "^3.0",
+        "amphp/socket": "^2.0"
+    },
+    "config": {
+        "preferred-install": "source",
+        "allow-plugins": false
+    },
+    "autoload": {
+        "psr-4": {
+            "Ignis\\Revolt\\": "src/"
+        }
+    }
+}

@@ -26,6 +26,9 @@ pub enum Op {
     Write { conn: u64, data: Bytes },
     /// Close `conn`. Completes with `Closed`.
     Close { conn: u64 },
+    /// Wait until a raw fd (dup'd by the reactor) is readable (`write=false`) or
+    /// writable. One-shot. Completes with `Ready` (ADR-0008).
+    Watch { fd: i32, write: bool },
 }
 
 /// Command to a connection actor (tokio side only).
@@ -65,6 +68,8 @@ pub enum Outcome {
     Data(Bytes),
     Written(usize),
     Closed,
+    /// The watched fd is ready.
+    Ready,
     Error(String),
 }
 
@@ -121,6 +126,33 @@ async fn conn_actor(mut stream: tokio::net::TcpStream, mut rx: mpsc::UnboundedRe
     }
 }
 
+/// Waits for readiness on a duplicate of `fd`. The dup keeps the descriptor
+/// alive even if PHP closes its stream meanwhile (the watch then fires or is
+/// dropped with the runtime).
+async fn watch_fd(fd: i32, write: bool) -> Outcome {
+    use std::os::fd::FromRawFd;
+    use tokio::io::Interest;
+    // SAFETY: dup() returns a fresh descriptor we own; OwnedFd closes it.
+    let dup = unsafe { libc::dup(fd) };
+    if dup < 0 {
+        return Outcome::Error(format!("dup({fd}) failed: {}", std::io::Error::last_os_error()));
+    }
+    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup) };
+    let interest = if write { Interest::WRITABLE } else { Interest::READABLE };
+    let afd = match tokio::io::unix::AsyncFd::with_interest(owned, interest) {
+        Ok(a) => a,
+        // epoll refuses regular files (EPERM): they are always ready, which is
+        // exactly what select() reports for them.
+        Err(e) if e.raw_os_error() == Some(libc::EPERM) => return Outcome::Ready,
+        Err(e) => return Outcome::Error(format!("AsyncFd({fd}): {e}")),
+    };
+    let r = if write { afd.writable().await.map(|mut g| g.retain_ready()) } else { afd.readable().await.map(|mut g| g.retain_ready()) };
+    match r {
+        Ok(()) => Outcome::Ready,
+        Err(e) => Outcome::Error(format!("watch({fd}): {e}")),
+    }
+}
+
 fn forward(conns: &ConnMap, conn: u64, cmd: ConnCmd, id: u64, done: &Sender<Completion>) {
     let tx = conns.lock().unwrap().get(&conn).cloned();
     match tx {
@@ -167,6 +199,12 @@ impl Reactor {
                                 }
                                 Err(e) => Outcome::Error(format!("connect {host}:{port}: {e}")),
                             };
+                            let _ = done_tx.send(Completion { id, outcome });
+                        });
+                    }
+                    Op::Watch { fd, write } => {
+                        tokio::spawn(async move {
+                            let outcome = watch_fd(fd, write).await;
                             let _ = done_tx.send(Completion { id, outcome });
                         });
                     }

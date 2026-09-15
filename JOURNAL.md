@@ -52,3 +52,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:47:15Z C6 IMPLEMENT — reactor connection ops (tokio actor per TcpStream), stream.rs tcp:// factory + ops suspending via zend_fiber_suspend, ignis_poll resumes C-parked fibers, /fetch route.
 - 2026-09-15T23:49:31Z C6 VALIDATE — H14/E6 tcp CONFIRMED (V-12): 3x200ms unmodified file_get_contents in 203ms on one thread, 100/100 concurrent, fallback ok, hook-disabled control stalls. H14b sqlite REFUTED for hooks (no stream layer).
 - 2026-09-15T23:49:31Z C6 REASSESS — E6' = ssl + native pgsql; Cycle 7 = E7 Revolt driver.
+- 2026-09-15T23:52:55Z C7 START — question: can a Revolt Driver on ignis_poll run Revolt/AMPHP examples unchanged (E7)?
+- 2026-09-15T23:57:49Z C7 IMPLEMENT — IgnisDriver (Revolt AbstractDriver: activate/dispatch/deactivate/now), ignis_watch + Op::Watch (tokio AsyncFd, regular files always ready), amphp installed from source via composer --prefer-source; 6/7 examples identical, fiber-local-manual is a timing race, amp-socket needs ext-filter (rebuilding libphp with filter/ctype/tokenizer).

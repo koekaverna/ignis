@@ -77,6 +77,7 @@ static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> = Sync
     arg_info(c"post"),
     arg_info(c"cookie"),
 ]);
+static ARGINFO_WATCH: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"stream"), arg_info(c"mode")]);
 static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
     arg_info_head(4),
     arg_info(c"id"),
@@ -142,6 +143,7 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
             // consumed here: the fiber is resumed and runs until its next
             // suspension before we continue. Everything else goes to userland.
             match c.outcome {
+                Outcome::Ready => sys::add_index_long(rv, c.id, 1),
                 Outcome::Connected { .. } | Outcome::Data(_) | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
                     if !super::stream::resume_parked(c.id, c.outcome) {
                         tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
@@ -152,6 +154,7 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
             }
             match c.outcome {
                 Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
+                Outcome::Ready => {}
                 Outcome::Request(req) => {
                     let mut item: sys::zval = std::mem::zeroed();
                     request_to_zval(&mut item, &req);
@@ -163,6 +166,36 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                 _ => unreachable!("stream outcomes are consumed above"),
             }
         }
+    }
+}
+
+/// `ignis_watch(resource $stream, int $mode): int` — one-shot readiness watch
+/// on the stream's fd (mode 1 = readable, 2 = writable). Returns the op id;
+/// `ignis_poll` reports it with payload 1 when ready (ADR-0008).
+unsafe extern "C" fn zif_ignis_watch(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: zend_parse_parameters validates the args; the stream resource is
+    // VM-owned and only used to extract an fd number during this call.
+    unsafe {
+        let mut zres: *mut sys::zval = ptr::null_mut();
+        let mut mode: sys::zend_long = 1;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"rl".as_ptr(), &mut zres, &mut mode) != sys::SUCCESS {
+            return;
+        }
+        let stream = sys::zend_fetch_resource2_ex(zres, c"stream".as_ptr(), sys::php_file_le_stream(), sys::php_file_le_pstream())
+            as *mut sys::php_stream;
+        if stream.is_null() {
+            return; // zend_fetch_resource2_ex threw
+        }
+        let mut fd: c_int = -1;
+        if sys::_php_stream_cast(stream, sys::PHP_STREAM_AS_FD_FOR_SELECT as c_int, &mut fd as *mut c_int as *mut *mut std::ffi::c_void, 0)
+            != sys::SUCCESS
+            || fd < 0
+        {
+            sys::zend_throw_exception(ptr::null_mut(), c"ignis_watch(): stream has no selectable file descriptor".as_ptr(), 0);
+            return;
+        }
+        let id = reactor().submit(Op::Watch { fd, write: mode == 2 });
+        zval::set_long(rv, id as i64);
     }
 }
 
@@ -265,7 +298,8 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(not(php_async_abi))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 7]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 8]> = SyncStatic([
+    fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
@@ -276,7 +310,8 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 7]> = SyncStatic([
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 9]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 10]> = SyncStatic([
+    fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
@@ -345,8 +380,9 @@ mod tests {
     fn function_table_is_terminated() {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_set_superglobals");
-        assert_eq!(FUNCTIONS.0[0].num_args, 4);
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[5].fname) }.to_str().unwrap(), "ignis_respond");
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_watch");
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[1].fname) }.to_str().unwrap(), "ignis_set_superglobals");
+        assert_eq!(FUNCTIONS.0[1].num_args, 4);
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[6].fname) }.to_str().unwrap(), "ignis_respond");
     }
 }
