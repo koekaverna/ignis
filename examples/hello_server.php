@@ -16,6 +16,18 @@ Ignis\serve(static function (Request $req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
         })(),
+        '/fetch' => (static function (): Response {
+            // E6: unmodified file_get_contents() over http:// suspends this fiber; the server serves
+            // its own /sleep endpoints meanwhile — on ONE thread this can only work if it suspends.
+            $t0 = hrtime(true);
+            $ms = (int) ($_GET['ms'] ?? 200);
+            $bodies = Ignis\all([
+                Ignis\async(static fn () => file_get_contents("http://127.0.0.1:8080/sleep?ms=$ms")),
+                Ignis\async(static fn () => file_get_contents("http://127.0.0.1:8080/sleep?ms=$ms")),
+                Ignis\async(static fn () => file_get_contents("http://127.0.0.1:8080/sleep?ms=$ms")),
+            ]);
+            return Response::json(['bodies' => $bodies, 'ms' => round((hrtime(true) - $t0) / 1e6, 1)]);
+        })(),
         '/echo'  => (static function (): Response {
             // E13: after suspending, this fiber must still see its own superglobals.
             $x = $_GET['x'] ?? '?';

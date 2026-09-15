@@ -16,4 +16,7 @@ out=$(N=10000 MS=1000 ./target/release/ignis bench/php/e1_sleep_10k.php | tail -
 wall=$(sed -E 's/.*wall_ms=([0-9.]+).*/\1/' <<<"$out")
 awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || { echo "E1 FAILED: wall_ms=$wall"; exit 1; }
 echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
+echo "== E13 (isolation)"; ./target/release/ignis bench/php/e13_isolation.php
+echo "== E13 (200 concurrent HTTP)"; bench/e13-http.sh | tail -1
+echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 bench/e6-fetch.sh | tail -2
 echo "smoke: GREEN"

@@ -38,9 +38,10 @@ function fetchDashboard(int $userId): array
 }
 
 // ---------------------------------------------------------------------------
-// 2. Unmodified synchronous I/O becomes non-blocking: → E6 (php_stream hooks)
-//    No Ignis\* call in sight: plain PDO and file_get_contents() suspend the
-//    fiber because the tcp:// transport factory is replaced by Ignis.
+// 2. Unmodified synchronous I/O becomes non-blocking: ✓ for tcp streams (E6, V-12):
+//    file_get_contents('http://…') suspends the fiber because the tcp:// transport
+//    factory is replaced by Ignis (ADR-0007). PDO sqlite does its own file I/O in-process
+//    and still blocks the thread (V-12) — use it for short queries only for now.
 // ---------------------------------------------------------------------------
 function usersFromDb(\PDO $pdo): array
 {
@@ -54,7 +55,8 @@ function upstreamJson(string $url): array
 
 // ---------------------------------------------------------------------------
 // 3. Worker mode: the script stays resident; each request runs in its own
-//    fiber; RequestStack-style state is fiber-scoped: → E4, E8
+//    fiber (✓ E4, V-5/V-6); $_SERVER/$_GET/$_POST/$_COOKIE and Ignis\Scope are
+//    fiber-scoped (✓ E13, V-11); Symfony RequestStack adapter → E8
 // ---------------------------------------------------------------------------
 if (function_exists('Ignis\serve')) {
     $pdo = new \PDO('sqlite::memory:');
@@ -66,6 +68,8 @@ if (function_exists('Ignis\serve')) {
             '/'          => Response::text("hello from fiber\n"),
             '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
             '/users'     => Response::json(usersFromDb($pdo)),
+            '/upstream'  => Response::json(upstreamJson('http://127.0.0.1:8080/dashboard')), // self-call, suspends (E6)
+            '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
             '/sleep'     => (static function () use ($req): Response {
                 Ignis\sleep((int) ($req->query('ms') ?? 1000));
                 return Response::text("slept\n");

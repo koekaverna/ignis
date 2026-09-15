@@ -18,6 +18,21 @@ use tokio::sync::{mpsc, oneshot};
 pub enum Op {
     /// Complete after `ms` milliseconds (tokio timer wheel).
     Sleep { ms: u64 },
+    /// Open a TCP connection (ADR-0007). Completes with `Connected { conn }`.
+    Connect { host: String, port: u16 },
+    /// Read up to `max` bytes from `conn`. Completes with `Data` (empty = EOF).
+    Read { conn: u64, max: usize },
+    /// Write all of `data` to `conn`. Completes with `Written`.
+    Write { conn: u64, data: Bytes },
+    /// Close `conn`. Completes with `Closed`.
+    Close { conn: u64 },
+}
+
+/// Command to a connection actor (tokio side only).
+enum ConnCmd {
+    Read { id: u64, max: usize },
+    Write { id: u64, data: Bytes },
+    Close { id: u64 },
 }
 
 /// An HTTP request handed to PHP. Plain data only.
@@ -45,6 +60,12 @@ pub enum Outcome {
     Slept { late_us: u64 },
     /// A new HTTP request; PHP must eventually call `respond(id, ..)`.
     Request(HttpRequest),
+    Connected { conn: u64 },
+    /// Bytes read; empty means EOF.
+    Data(Bytes),
+    Written(usize),
+    Closed,
+    Error(String),
 }
 
 #[derive(Debug)]
@@ -66,6 +87,50 @@ pub struct Reactor {
     responders: Mutex<HashMap<u64, oneshot::Sender<HttpResponse>>>,
 }
 
+type ConnMap = Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<ConnCmd>>>>;
+
+/// One actor per TCP connection: owns the socket, serves commands in order.
+async fn conn_actor(mut stream: tokio::net::TcpStream, mut rx: mpsc::UnboundedReceiver<ConnCmd>, done: Sender<Completion>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    while let Some(cmd) = rx.recv().await {
+        match cmd {
+            ConnCmd::Read { id, max } => {
+                let mut buf = vec![0u8; max.clamp(1, 1 << 20)];
+                let outcome = match stream.read(&mut buf).await {
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Outcome::Data(Bytes::from(buf))
+                    }
+                    Err(e) => Outcome::Error(e.to_string()),
+                };
+                let _ = done.send(Completion { id, outcome });
+            }
+            ConnCmd::Write { id, data } => {
+                let outcome = match stream.write_all(&data).await {
+                    Ok(()) => Outcome::Written(data.len()),
+                    Err(e) => Outcome::Error(e.to_string()),
+                };
+                let _ = done.send(Completion { id, outcome });
+            }
+            ConnCmd::Close { id } => {
+                let _ = stream.shutdown().await;
+                let _ = done.send(Completion { id, outcome: Outcome::Closed });
+                break;
+            }
+        }
+    }
+}
+
+fn forward(conns: &ConnMap, conn: u64, cmd: ConnCmd, id: u64, done: &Sender<Completion>) {
+    let tx = conns.lock().unwrap().get(&conn).cloned();
+    match tx {
+        Some(tx) if tx.send(cmd).is_ok() => {}
+        _ => {
+            let _ = done.send(Completion { id, outcome: Outcome::Error(format!("connection {conn} is closed")) });
+        }
+    }
+}
+
 impl Reactor {
     /// Spawns the dispatcher task on `rt` and returns the PHP-side handle.
     pub fn new(rt: &tokio::runtime::Handle) -> Arc<Reactor> {
@@ -73,6 +138,8 @@ impl Reactor {
         let (done_tx, from_tokio) = crossbeam_channel::unbounded::<Completion>();
         let done_for_task = done_tx.clone();
         rt.spawn(async move {
+            let conns: ConnMap = Arc::new(Mutex::new(HashMap::new()));
+            let next_conn = Arc::new(AtomicU64::new(1));
             while let Some((id, op)) = rx.recv().await {
                 let done_tx: Sender<Completion> = done_for_task.clone();
                 match op {
@@ -84,6 +151,37 @@ impl Reactor {
                             // Receiver dropped => PHP thread is gone; nothing to do.
                             let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us } });
                         });
+                    }
+                    Op::Connect { host, port } => {
+                        let conns = conns.clone();
+                        let next_conn = next_conn.clone();
+                        tokio::spawn(async move {
+                            let outcome = match tokio::net::TcpStream::connect((host.as_str(), port)).await {
+                                Ok(stream) => {
+                                    let _ = stream.set_nodelay(true);
+                                    let conn = next_conn.fetch_add(1, Ordering::Relaxed);
+                                    let (ctx, crx) = mpsc::unbounded_channel();
+                                    conns.lock().unwrap().insert(conn, ctx);
+                                    tokio::spawn(conn_actor(stream, crx, done_tx.clone()));
+                                    Outcome::Connected { conn }
+                                }
+                                Err(e) => Outcome::Error(format!("connect {host}:{port}: {e}")),
+                            };
+                            let _ = done_tx.send(Completion { id, outcome });
+                        });
+                    }
+                    Op::Read { conn, max } => forward(&conns, conn, ConnCmd::Read { id, max }, id, &done_tx),
+                    Op::Write { conn, data } => forward(&conns, conn, ConnCmd::Write { id, data }, id, &done_tx),
+                    Op::Close { conn } => {
+                        let tx = conns.lock().unwrap().remove(&conn);
+                        match tx {
+                            Some(tx) => {
+                                let _ = tx.send(ConnCmd::Close { id });
+                            }
+                            None => {
+                                let _ = done_tx.send(Completion { id, outcome: Outcome::Closed });
+                            }
+                        }
                     }
                 }
             }
@@ -201,6 +299,39 @@ mod tests {
         let t0 = std::time::Instant::now();
         assert!(r.poll(None).is_empty());
         assert!(t0.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn tcp_connect_write_read_close() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        // Echo server on tokio.
+        let listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        rt.spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut b = [0u8; 16];
+            let n = tokio::io::AsyncReadExt::read(&mut s, &mut b).await.unwrap();
+            tokio::io::AsyncWriteExt::write_all(&mut s, &b[..n]).await.unwrap();
+        });
+        let wait = |r: &Reactor, id: u64| -> Outcome {
+            loop {
+                for c in r.poll(Some(Duration::from_secs(2))) {
+                    if c.id == id {
+                        return c.outcome;
+                    }
+                }
+            }
+        };
+        let id = r.submit(Op::Connect { host: "127.0.0.1".into(), port });
+        let Outcome::Connected { conn } = wait(&r, id) else { panic!("connect failed") };
+        let id = r.submit(Op::Write { conn, data: Bytes::from_static(b"ping") });
+        assert!(matches!(wait(&r, id), Outcome::Written(4)));
+        let id = r.submit(Op::Read { conn, max: 64 });
+        let Outcome::Data(d) = wait(&r, id) else { panic!("read failed") };
+        assert_eq!(&d[..], b"ping");
+        let id = r.submit(Op::Close { conn });
+        assert!(matches!(wait(&r, id), Outcome::Closed));
     }
 
     #[test]

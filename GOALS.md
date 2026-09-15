@@ -11,7 +11,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | **CONFIRMED** (V-10): 1.5M hello, RSS −2.5%, PHP heap flat to the byte; 4.6M requests total. Raised: E3' = re-run with streams (E6) and state swap (E13) enabled, 4 threads, 10M requests |
 | E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | **CONFIRMED** on 1 thread (V-6): 4.6× throughput, p99 5.8× lower. Raised: E4' = same with Ignis@4 threads vs FrankenPHP@4 workers, and with `$_SERVER` populated (E13) so the work is comparable |
 | E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | **CONFIRMED** scaled (V-9): 3.7–3.98× in-process, 3.49× over HTTP. Raised: E5' = least-inflight dispatch so /cpu p99 at 4 threads ≤ FrankenPHP's |
-| E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | OPEN — **not provided by the async ABI** (V-7): needs stream transport hooks on both backends |
+| E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | **CONFIRMED for tcp streams** (V-12: 3 × 200 ms fetches in 203 ms on one thread, hook-disabled control stalls). **REFUTED for PDO sqlite via hooks** (no stream layer). Raised: E6' = `ssl://` (TLS on tokio) + PDO pgsql over the hooked tcp transport (pgsql's libpq uses its own sockets, so that needs the native driver, E14) |
 | E7 | Revolt-compatible driver over the Ignis reactor runs AMPHP examples unchanged | OPEN |
 | E8 | symfony/runtime adapter boots symfony/skeleton in worker mode; RequestStack fiber-scoped | OPEN |
 | E9 | Temporal: link temporal sdk-core (Rust) in-process; workflow on Fibers with deterministic replay; one workflow with two activities and a timer passes a replay test. Research first: how the Python SDK bridges core ↔ asyncio | OPEN |
@@ -27,9 +27,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 4: E3~~ DONE (V-10).
 
-~~Cycle 5: E13~~ DONE (V-11).
+~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks.
 
-Next question (Cycle 6): E6 — can a replacement `tcp://` transport factory (Swoole route) make unmodified `file_get_contents('http://…')` suspend the fiber, with the stream ops suspending from C via `zend_fiber_suspend` and resumed by the reactor? PDO sqlite has no socket (in-process disk I/O): it cannot suspend by hooks — record, and plan a blocking-call offload instead. Then E11, E5'.
+Next question (Cycle 7): E7 — can a Revolt `Driver` (extending `AbstractDriver`, four methods) sit on `ignis_poll` so AMPHP examples run unchanged? Then E11 (cancellation via hyper drop → fiber exception), E5' (least-inflight dispatch), E6' (ssl).
 
 ## Ranking (after Cycle 0, kept for history)
 

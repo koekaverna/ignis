@@ -49,3 +49,6 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:41:57Z C5 REASSESS — E13' = lazy swap + PG(http_globals); Cycle 6 = E6 stream hooks (tcp:// factory), sqlite part not hookable.
 - 2026-09-15T23:42:28Z C6 START — question: can a replacement tcp:// transport factory make unmodified file_get_contents('http://…') suspend the fiber (E6)?
 - 2026-09-15T23:44:56Z C6 RESEARCH/DECIDE/HYPOTHESIZE — research 06 (transport factory swap, http wrapper needs no fd, suspend from C via zend_fiber_suspend), ADR-0007, H14/H14b.
+- 2026-09-15T23:47:15Z C6 IMPLEMENT — reactor connection ops (tokio actor per TcpStream), stream.rs tcp:// factory + ops suspending via zend_fiber_suspend, ignis_poll resumes C-parked fibers, /fetch route.
+- 2026-09-15T23:49:31Z C6 VALIDATE — H14/E6 tcp CONFIRMED (V-12): 3x200ms unmodified file_get_contents in 203ms on one thread, 100/100 concurrent, fallback ok, hook-disabled control stalls. H14b sqlite REFUTED for hooks (no stream layer).
+- 2026-09-15T23:49:31Z C6 REASSESS — E6' = ssl + native pgsql; Cycle 7 = E7 Revolt driver.

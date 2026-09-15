@@ -138,6 +138,18 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
         let done: Vec<Completion> = reactor().poll(timeout);
         zval::set_new_array(rv);
         for c in done {
+            // Completions for fibers parked inside a stream op (ADR-0007) are
+            // consumed here: the fiber is resumed and runs until its next
+            // suspension before we continue. Everything else goes to userland.
+            match c.outcome {
+                Outcome::Connected { .. } | Outcome::Data(_) | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
+                    if !super::stream::resume_parked(c.id, c.outcome) {
+                        tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             match c.outcome {
                 Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
                 Outcome::Request(req) => {
@@ -148,6 +160,7 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                     // copies the zval bits and takes ownership of `item`.
                     sys::zend_hash_index_update((*rv).value.arr, c.id, &mut item);
                 }
+                _ => unreachable!("stream outcomes are consumed above"),
             }
         }
     }

@@ -312,3 +312,28 @@ e13_http n=200 mismatches=0
 Amortised in the pooled 10k-fiber workload (E2 warm per job, 4 switches per job; 3 runs each): off 5.2–5.9 µs, on 7.2–7.6 µs → ≈ +0.5 µs per switch (cache effects on 10k live contexts). E1 warm round: 1046 → 1066 ms. Hello-world throughput unchanged (134k req/s with the observer, V-5/V-6 range).
 
 Target < 1 µs per switch → CONFIRMED (marginal in the pooled case). Follow-up E13': swap lazily (only when some fiber on the thread has ever set superglobals) so compute-only fibers pay nothing. Limitation (research 05): `PG(http_globals)` is not swapped; `filter_input()`/phar read thread state.
+
+## V-12 — H14 (E6, tcp) and H14b (E6, sqlite): unmodified stream I/O suspends the fiber (H14 CONFIRMED, H14b REFUTED for hooks)
+
+Date: 2026-09-16T02:2xZ. Build: release; `tcp://` factory replaced at MINIT (ADR-0007), `IGNIS_NO_STREAM_HOOK=1` restores the stock transport.
+Test: `bench/e6-fetch.sh` — `/fetch?ms=200` runs three **unmodified** `file_get_contents("http://127.0.0.1:8080/sleep?ms=200")` via `Ignis\all()`; the server serves its own `/sleep` on the **same single PHP thread**, so this can only complete if the calls suspend.
+
+```
+single:
+{"bodies":["slept\n","slept\n","slept\n"],"ms":202.9}
+{"bodies":["slept\n","slept\n","slept\n"],"ms":202.6}
+{"bodies":["slept\n","slept\n","slept\n"],"ms":202.5}
+concurrent: n=100 ok=100 wall_ms=361      per-request ms: min 207, max 235.8
+```
+
+| check | result | target |
+|---|---|---|
+| 3 × 200 ms fetches in one handler, 1 thread | **202.5–202.9 ms**, bodies correct | < 260 ms → CONFIRMED |
+| 100 concurrent `/fetch` (300 self-requests + 300 sleeps in flight on 1 thread) | 100/100 ok, 207–236 ms each, 361 ms wall | 0 failures → CONFIRMED |
+| blocking fallback: `file_get_contents` from `{main}` (no fiber), hook installed | body ok, 102.8 ms for a 100 ms sleep, `in_fiber=0` | works → CONFIRMED |
+| negative control: `IGNIS_NO_STREAM_HOOK=1`, 1 thread, `/fetch?ms=200` | `curl -m 5` exit 28 (timeout): the thread blocks in `connect()`/`read()` and can never serve its own request | must stall → CONFIRMED (proves the hook is what makes it work) |
+| throughput `wrk -t1 -c32 -d5s /fetch?ms=1` | 1,657 req/s (≈ 5k hooked HTTP fetches/s + 5k timers/s on one thread), p99 11.4 ms | — |
+
+Unit tests: 9/9 (new `tcp_connect_write_read_close` reactor test against a tokio echo server).
+
+**H14b (PDO sqlite) REFUTED for the hook approach**: `ext/pdo_sqlite` and `ext/sqlite3` contain no `php_stream` usage; libsqlite3 (system, dynamically linked) does its own `read`/`pread`/`fsync` on the database file inside the calling thread. There is no transport or wrapper layer to intercept; a blocking sqlite query stalls the PHP thread (and every fiber on it). The honest options are a blocking-call offload pool (run the PDO call on a helper thread, suspend the fiber, resume with the result — only sound for operations that do not touch Zend state, which PDO does, so it needs a per-connection worker thread model) or the native pgsql driver path (E14 via tokio-postgres). Recorded; not attempted tonight.

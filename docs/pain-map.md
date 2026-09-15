@@ -3,7 +3,7 @@
 Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DESIGNED / NOT STARTED, with a link to the hypothesis or ADR.
 
 ### PHP-FPM
-1. Pool exhaustion at low CPU: workers block on I/O, listen queue grows, 502/504 → concurrency decoupled from process count; an I/O wait costs a Fiber, not a worker. — **ADDRESSED** for `Ignis\sleep` (H2/H6, V-2/V-5: 10k concurrent waits on one thread); DESIGNED for unmodified I/O (E6).
+1. Pool exhaustion at low CPU: workers block on I/O, listen queue grows, 502/504 → concurrency decoupled from process count; an I/O wait costs a Fiber, not a worker. — **ADDRESSED** for `Ignis\sleep` (V-2/V-5) and for **unmodified tcp stream I/O** (V-12: `file_get_contents('http://…')` suspends the fiber); NOT for sqlite/libpq-style in-process I/O (V-12).
 2. Slow-dependency cascade drains the whole pool → per-endpoint fiber budget and circuit breaker on the connection pool. — NOT STARTED.
 3. Phantom workers: nginx times out, PHP keeps building a response nobody reads → client disconnect cancels the Fiber and its pending futures. — NOT STARTED (E11).
 4. Three unaligned timeouts; max_execution_time counts CPU time, not wall-clock → one wall-clock deadline per request, inherited by child fibers and futures. — NOT STARTED (E11).
@@ -35,7 +35,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 2. Xdebug/Xhprof incompatibility → Fibers are supported by Xdebug natively. — ADDRESSED by construction (native `Fiber`, no custom context switching).
 3. Forgotten $response->end() holds the connection → response is the Fiber's return value; return or exception closes the connection. — **ADDRESSED** (ADR-0002, `Ignis\serve` handler returns `Response`; exception → 500).
 4. Deadlock when the only coroutine yields; CPU-heavy work starves others → per-thread watchdog logs long fibers with trace; work-stealing routes new requests to other threads. — NOT STARTED (E12).
-5. Incomplete hooks (curl_multi etc.) → native Rust drivers for HTTP, Postgres, MySQL, Redis; stream-layer hooks for the rest. — NOT STARTED (E6); V-7 shows the engine ABI does not cover I/O either, so this stays stream-layer work.
+5. Incomplete hooks (curl_multi etc.) → native Rust drivers for HTTP, Postgres, MySQL, Redis; stream-layer hooks for the rest. — **ADDRESSED for `tcp://` streams** (ADR-0007, V-12); `ssl://`, curl, sqlite, libpq NOT STARTED; V-7 shows the engine ABI does not cover I/O either.
 6. One blocking call stalls the whole process → stalls one thread of N; supervisor sees it via watchdog. — DESIGNED (ADR-0004: N independent threads, V-9); watchdog NOT STARTED (E12).
 7. Fatal kills the worker with every coroutine in it → fatal kills one thread; pools and Table survive. — NOT STARTED (E12).
 8. Ecosystem fork (Hyperf, own clients, single listeners) → plain Symfony/Laravel via symfony/runtime, AMPHP via a Revolt driver. — DESIGNED (ADR-0001 (c): reactor shaped for a Revolt driver); NOT STARTED (E7/E8).
