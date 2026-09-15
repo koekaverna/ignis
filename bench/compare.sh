@@ -33,7 +33,7 @@ done
 # --- php-fpm (NTS) + nginx, 1 and N children
 for CH in 1 $(nproc); do
   sed "s/\${FPM_CHILDREN}/$CH/" bench/fpm/php-fpm.conf > "$SCRATCH/php-fpm.conf"
-  "$FPM" -y "$SCRATCH/php-fpm.conf" -p "$SCRATCH" >"$SCRATCH/fpm-bench.log" 2>&1 & FPID=$!
+  "$FPM" -R -y "$SCRATCH/php-fpm.conf" -p "$SCRATCH" >"$SCRATCH/fpm-bench.log" 2>&1 & FPID=$!
   nginx -c "$PWD/bench/fpm/nginx.conf" >"$SCRATCH/nginx-bench.log" 2>&1 & NPID=$!
   wait_port http://127.0.0.1:8082/ && row "php-fpm (pm.max_children=$CH) + nginx" "$(run_wrk http://127.0.0.1:8082/)"
   kill $NPID $FPID; wait $NPID $FPID 2>/dev/null

@@ -22,3 +22,4 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T22:37:11Z C1 HYPOTHESIZE — H5 (pool), H6 (HTTP hello via hyper), H7 (E4 vs baselines).
 - 2026-09-15T22:38:44Z C1 IMPLEMENT — reactor: HTTP requests as poll events (hyper auto, oneshot responders); module: ignis_serve/ignis_respond; loop: fiber pool + Ignis\serve.
 - 2026-09-15T22:44:50Z C1 VALIDATE — H5 CONFIRMED (V-4): warm pool 37-41ms overhead for 10k fibers, 4.4-4.6us per job. H6 CONFIRMED (V-5): 122-130k rps hello on 1 PHP thread, p99 1.01s for 1000 concurrent sleeps; 10k-connection p99 1.21s INCONCLUSIVE (load generator shares the box).
+- 2026-09-15T22:49:35Z C1 IMPLEMENT — owner addendum applied (pain map, E9-E14, CLAUDE.md, push-after-commit, night-1). Name check: ignis taken on crates.io (v0.1.0 unrelated), free on Packagist, unrelated GitHub repos. FrankenPHP needs --disable-zend-signals: rebuilding libphp ZTS with it (both servers will use the same build). nextest 8/8.
