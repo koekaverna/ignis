@@ -11,7 +11,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | OPEN |
 | E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | **CONFIRMED** on 1 thread (V-6): 4.6× throughput, p99 5.8× lower. Raised: E4' = same with Ignis@4 threads vs FrankenPHP@4 workers, and with `$_SERVER` populated (E13) so the work is comparable |
 | E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | OPEN |
-| E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | OPEN |
+| E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | OPEN — **not provided by the async ABI** (V-7): needs stream transport hooks on both backends |
 | E7 | Revolt-compatible driver over the Ignis reactor runs AMPHP examples unchanged | OPEN |
 | E8 | symfony/runtime adapter boots symfony/skeleton in worker mode; RequestStack fiber-scoped | OPEN |
 | E9 | Temporal: link temporal sdk-core (Rust) in-process; workflow on Fibers with deterministic replay; one workflow with two activities and a timer passes a replay test. Research first: how the Python SDK bridges core ↔ asyncio | OPEN |
@@ -21,7 +21,11 @@ Note on E5: the machine has 4 vCPUs (`nproc`), so "8 threads ≥ 6.5×" cannot
 be measured as written. The proportional target (≥ 81% scaling efficiency)
 is used: 4 threads ≥ 3.25× single-thread.
 
-## Ranking (after Cycle 0)
+## Ranking (after Cycle 2)
+
+Next question (Cycle 3): N PHP threads (E5) with per-thread reactors, then E4' at 4 threads. Then E13 (fiber-switch observer state swap) and E6 (stream hooks).
+
+## Ranking (after Cycle 0, kept for history)
 
 Cycle 0 result: the thesis holds in-process. The measured bottleneck is not
 the scheduler but Zend's per-fiber mmap/munmap (V-2 profile: ~50% of PHP-thread
@@ -31,7 +35,7 @@ E4 throughput) inherits its cost.
 
 1. ~~E1'/E2' — fiber pool~~ DONE (V-4).
 2. ~~E4 — hello-world over hyper~~ DONE on 1 thread (V-6).
-2b. **Owner direction (23:15Z):** research the async scheduler ABI RFC (wiki.php.net/rfc/async_scheduler_abi), php-src PR #22561 and the true-async/php-src `async-core` branch; ADR: reactor/scheduler behind a trait with two backends — (a) mainline 8.5 via zend_observer fiber-switch + stream hooks, (b) async-core fork via the engine ABI. Prototype E6 on (b) first if it builds; (a) stays the production path until the ABI ships. This is Cycle 2's question; E5 (threads) moves to Cycle 3.
+2b. DONE (V-7, V-8): fork builds, provider idle-hook prototype runs E1 on engine coroutines; E6 not in the ABI. Owner direction (23:15Z) was: research the async scheduler ABI RFC (wiki.php.net/rfc/async_scheduler_abi), php-src PR #22561 and the true-async/php-src `async-core` branch; ADR: reactor/scheduler behind a trait with two backends — (a) mainline 8.5 via zend_observer fiber-switch + stream hooks, (b) async-core fork via the engine ABI. Prototype E6 on (b) first if it builds; (a) stays the production path until the ABI ships. This is Cycle 2's question; E5 (threads) moves to Cycle 3.
 3. E5 — multi-thread ZTS workers.
 4. E3 — worker mode leak test.
 5. E6 — stream hooks (Swoole route).
@@ -42,4 +46,5 @@ E4 throughput) inherits its cost.
 
 ## Retired / cut
 
-(nothing yet)
+- "Prototype E6 on backend (b) first": retired after V-7 — the ABI PR has no I/O integration; E6 is stream-hook work on both backends.
+- A full Rust re-implementation of the scheduler provider (2k lines of setjmp-heavy C): deferred; `zend_first_try` in the coroutine entry needs a C shim, so a Rust provider is a C-shim + Rust design, not pure Rust.

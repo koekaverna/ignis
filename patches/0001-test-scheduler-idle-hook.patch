@@ -1,13 +1,8 @@
-Ignis: let an embedder plug a reactor into the reference scheduler's idle point.
-
-Where ext/test_scheduler raises DeadlockError ("this scheduler has no reactor
-to deliver it"), call a process-wide hook first; if the hook enqueued
-something, continue the loop. Applied on top of true-async/php-src async-core
-commit 14af3cb by scripts/build-php-async.sh. ~15 lines, no behaviour change
-when no hook is set.
+diff --git a/ext/test_scheduler/test_scheduler.c b/ext/test_scheduler/test_scheduler.c
+index 1147ed60..a4cfd810 100644
 --- a/ext/test_scheduler/test_scheduler.c
 +++ b/ext/test_scheduler/test_scheduler.c
-@@ -178,6 +178,16 @@
+@@ -173,6 +173,16 @@ static zend_class_entry *ts_ce_cancellation_error;
  static zend_class_entry *ts_ce_deadlock_error;
  static zend_object_handlers ts_coroutine_handlers;
  
@@ -24,7 +19,7 @@ when no hook is set.
  /* The bottom frame of every coroutine's VM stack. Nameless on purpose: a
   * frame with no function name is a dummy frame, and backtraces skip it — the
   * engine's own fiber root frame is built exactly this way. */
-@@ -1143,6 +1153,11 @@
+@@ -1144,6 +1154,10 @@ static ZEND_STACK_ALIGNED void ts_scheduler_entry(zend_fiber_transfer *transfer)
  				if (zend_hash_num_elements(&TSG(coroutines)) == 0) {
  					break;
  				}
@@ -32,7 +27,6 @@ when no hook is set.
 +				if (ts_idle_hook != NULL && ts_idle_hook()) {
 +					continue;
 +				}
-+
+ 
  				/* Nothing runnable, yet coroutines are still alive: they
  				 * wait for something that will never happen, because this
- 				 * scheduler has no reactor to deliver it. */

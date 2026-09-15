@@ -31,3 +31,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:00:30Z C2 DECIDE — ADR-0003: two backends (mainline85 production, async-core provider prototype), shared reactor; E6 via stream hooks on (a).
 - 2026-09-15T23:00:30Z C2 HYPOTHESIZE — H8 (fork builds + test_scheduler passes), H9a (E6 on (b): expected REFUTED by inspection), H9b (Rust provider runs E1 on engine coroutines).
 - 2026-09-15T23:04:22Z C2 IMPLEMENT — backend (b) prototype: idle-hook patch for ext/test_scheduler, ignis_await_op (Rust) parks the engine coroutine on a reactor op, cfg(php_async_abi) wiring; mainline build unaffected.
+- 2026-09-15T23:08:54Z C2 VALIDATE — H8 CONFIRMED (V-7: fork builds, 61/61 tests), H9a REFUTED by inspection (no I/O path consults the ABI), H9b CONFIRMED (V-8: E1 on engine coroutines 1165-1177ms via idle hook).
+- 2026-09-15T23:08:54Z C2 REASSESS — E6 stays stream-hook work on both backends; full Rust provider deferred (needs C shim for zend_first_try); Cycle 3 = N PHP threads (E5) + E4' at 4 threads.

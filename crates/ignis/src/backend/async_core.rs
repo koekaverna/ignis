@@ -3,8 +3,8 @@
 //! Prototype scope (H9b): the *reference* scheduler `ext/test_scheduler`
 //! stays the provider; Ignis plugs the tokio reactor into its idle point via
 //! the `patches/0001-test-scheduler-idle-hook.patch` hook and exposes
-//! `ignis_await_op(int $id): int` that parks the *current engine coroutine*
-//! until the reactor completes op `$id`.
+//! `ignis_park_on(int $id)` + `Fiber::suspend()` to park the *current engine
+//! coroutine* until the reactor completes op `$id`.
 //!
 //! FFI contract:
 //! - `zend_async_suspend_fn` / `zend_async_enqueue_coroutine_fn` are the ABI's
@@ -45,39 +45,43 @@ unsafe fn current_coroutine() -> *mut sys::zend_coroutine_t {
     }
 }
 
-/// `ignis_await_op(int $id): int` — parks the current coroutine until op `$id`
-/// completes; returns the op payload (timer lateness in µs).
-pub unsafe extern "C" fn zif_ignis_await_op(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+/// `ignis_park_on(int $id): void` — records that the *current engine coroutine*
+/// waits for reactor op `$id`. The caller then does `Fiber::suspend()`, which
+/// hands control back to whoever started/resumed it and parks the coroutine
+/// (`zend_fiber_coroutine_yield`). The idle hook later enqueues the coroutine
+/// exactly as `Fiber::resume()` does (`ZEND_ASYNC_ENQUEUE_COROUTINE`), so the
+/// `Fiber::suspend()` call returns null and the fiber continues.
+pub unsafe extern "C" fn zif_ignis_park_on(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: VM frame on the PHP thread; see module contract.
     unsafe {
         let Some(id) = zval::arg_long(ex, 1) else {
-            sys::zend_type_error(c"ignis_await_op(): argument #1 ($id) must be of type int".as_ptr());
+            sys::zend_type_error(c"ignis_park_on(): argument #1 ($id) must be of type int".as_ptr());
             return;
         };
-        let id = id as u64;
         if !sys::zend_async_is_enabled() {
-            sys::zend_throw_exception(std::ptr::null_mut(), c"ignis_await_op(): no async scheduler registered".as_ptr(), 0);
-            return;
-        }
-        // Already delivered (completion raced ahead of the await)? Return now.
-        if let Some(v) = RESULTS.with(|r| r.borrow_mut().remove(&id)) {
-            zval::set_long(rv, v);
+            sys::zend_throw_exception(std::ptr::null_mut(), c"ignis_park_on(): no async scheduler registered".as_ptr(), 0);
             return;
         }
         let co = current_coroutine();
         if co.is_null() {
-            sys::zend_throw_exception(std::ptr::null_mut(), c"ignis_await_op(): not inside a coroutine".as_ptr(), 0);
+            sys::zend_throw_exception(std::ptr::null_mut(), c"ignis_park_on(): not inside a coroutine".as_ptr(), 0);
             return;
         }
-        WAITING.with(|w| w.borrow_mut().insert(id, co));
-        // ZEND_ASYNC_SUSPEND(): switches to the scheduler; returns when we are
-        // enqueued again by the idle hook. `false` = an exception is pending.
-        let ok = (sys::zend_async_suspend_fn.expect("suspend slot"))(false, false);
-        if !ok {
-            WAITING.with(|w| w.borrow_mut().remove(&id));
+        WAITING.with(|w| w.borrow_mut().insert(id as u64, co));
+        zval::set_null(rv);
+    }
+}
+
+/// `ignis_op_result(int $id): int` — payload of a completed op (timer lateness
+/// in µs), or -1 if unknown. Removes it.
+pub unsafe extern "C" fn zif_ignis_op_result(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above.
+    unsafe {
+        let Some(id) = zval::arg_long(ex, 1) else {
+            sys::zend_type_error(c"ignis_op_result(): argument #1 ($id) must be of type int".as_ptr());
             return;
-        }
-        let v = RESULTS.with(|r| r.borrow_mut().remove(&id)).unwrap_or(-1);
+        };
+        let v = RESULTS.with(|r| r.borrow_mut().remove(&(id as u64))).unwrap_or(-1);
         zval::set_long(rv, v);
     }
 }
