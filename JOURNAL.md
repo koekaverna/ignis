@@ -42,3 +42,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:22:37Z C4 RESEARCH/DECIDE/HYPOTHESIZE — research 04 (leak candidates), ADR-0005 (RSS via /stats), H12; bench/rss-1m.sh.
 - 2026-09-15T23:24:13Z C4 VALIDATE — H12/E3 CONFIRMED (V-10): RSS 26.9→26.2 MB over 1.5M hello requests, PHP heap flat to the byte; 4.6M requests total; /sleep?ms=1 at 500 conns sustained 131k rps.
 - 2026-09-15T23:24:13Z C4 REASSESS — E3 raised to E3' (with E6/E13, 4 threads, 10M). Cycle 5 = E13 fiber-switch state swap.
+- 2026-09-15T23:25:58Z C5 START — question: can zend_observer fiber-switch hooks give each fiber its own $_SERVER/$_GET/$_POST/$_COOKIE at < 1 us per switch (E13)?
+- 2026-09-15T23:25:58Z C5 RESEARCH/DECIDE/HYPOTHESIZE — research 05, ADR-0006, H13.
