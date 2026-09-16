@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../site/reference/cli/">
+        <link rel="prev" href="../reference/cli/">
       
       
-        <link rel="next" href="../site/compatibility/">
+        <link rel="next" href="../compatibility/">
       
       
         
@@ -223,7 +223,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../site/" class="md-tabs__link">
+      <a href=".." class="md-tabs__link">
         
   
   
@@ -244,7 +244,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../site/concept/why/" class="md-tabs__link">
+        <a href="../concept/why/" class="md-tabs__link">
           
   
   
@@ -264,7 +264,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../site/getting-started/install/" class="md-tabs__link">
+        <a href="../getting-started/install/" class="md-tabs__link">
           
   
   
@@ -284,7 +284,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../site/reference/configuration/" class="md-tabs__link">
+        <a href="../reference/configuration/" class="md-tabs__link">
           
   
   
@@ -323,7 +323,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../site/compatibility/" class="md-tabs__link">
+      <a href="../compatibility/" class="md-tabs__link">
         
   
   
@@ -342,7 +342,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../site/comparison/" class="md-tabs__link">
+      <a href="../comparison/" class="md-tabs__link">
         
   
   
@@ -426,7 +426,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/" class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -503,7 +503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/why/" class="md-nav__link">
+      <a href="../concept/why/" class="md-nav__link">
         
   
   
@@ -531,7 +531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/architecture/" class="md-nav__link">
+      <a href="../concept/architecture/" class="md-nav__link">
         
   
   
@@ -559,7 +559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/mechanisms/" class="md-nav__link">
+      <a href="../concept/mechanisms/" class="md-nav__link">
         
   
   
@@ -587,7 +587,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/non-goals/" class="md-nav__link">
+      <a href="../concept/non-goals/" class="md-nav__link">
         
   
   
@@ -672,7 +672,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/install/" class="md-nav__link">
+      <a href="../getting-started/install/" class="md-nav__link">
         
   
   
@@ -700,7 +700,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/quickstart/" class="md-nav__link">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
         
   
   
@@ -728,7 +728,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/symfony/" class="md-nav__link">
+      <a href="../getting-started/symfony/" class="md-nav__link">
         
   
   
@@ -756,7 +756,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/legacy/" class="md-nav__link">
+      <a href="../getting-started/legacy/" class="md-nav__link">
         
   
   
@@ -841,7 +841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/reference/configuration/" class="md-nav__link">
+      <a href="../reference/configuration/" class="md-nav__link">
         
   
   
@@ -869,7 +869,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/reference/php-api/" class="md-nav__link">
+      <a href="../reference/php-api/" class="md-nav__link">
         
   
   
@@ -897,7 +897,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -1061,7 +1061,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/compatibility/" class="md-nav__link">
+      <a href="../compatibility/" class="md-nav__link">
         
   
   
@@ -1088,7 +1088,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/comparison/" class="md-nav__link">
+      <a href="../comparison/" class="md-nav__link">
         
   
   
@@ -1410,10 +1410,12 @@ fix would cost the worker model's own bootstrap saving.</p>
 <li><strong>Linux-only, by construction.</strong> Universal park depends on <code>epoll</code>, raw <code>syscall</code> numbers and
   <code>dladdr</code> semantics that are Linux-specific (ADR-0037's build/distribution table); there is no
   other-OS target.</li>
-<li><strong>Graceful reload is not built.</strong> <code>SIGHUP</code> drain-and-respawn and <code>SIGTERM</code> drain-then-exit are
-  designed (they would reuse ADR-0012's existing per-thread respawn mechanism) but not implemented
-  — a config change needs a process restart today, which drops in-flight connections (BACKLOG
-  M4-5).</li>
+<li><strong><code>SIGTERM</code> and <code>SIGINT</code> drain; <code>SIGHUP</code> reload is not built.</strong> On either signal the runtime
+  reports <code>503 {"status":"draining"}</code> from <code>/_ignis/health</code> for <code>IGNIS_DRAIN_DELAY_MS</code> (default 0)
+  while still accepting, then closes the listener and gives in-flight requests
+  <code>IGNIS_DRAIN_TIMEOUT_MS</code> (default 10 s) to finish before exiting 0 — measured in V-56. What is
+  still missing is reload <em>without</em> a restart: a config change needs a new process, so a rolling
+  deploy behind a balancer is the way to change configuration without a gap (BACKLOG M4-5).</li>
 </ul>
 <h2 id="configuration-reference">Configuration reference<a class="headerlink" href="#configuration-reference" title="Permanent link">&para;</a></h2>
 <p>Every key in <code>ignis.toml</code> and every <code>IGNIS_*</code> / <code>RUST_LOG</code> environment variable

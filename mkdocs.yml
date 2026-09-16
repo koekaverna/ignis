@@ -45,22 +45,22 @@ markdown_extensions:
   - pymdownx.inlinehilite
 
 nav:
-  - Home: site/index.md
+  - Home: index.md
   - Concept:
-      - Why Ignis: site/concept/why.md
-      - Architecture: site/concept/architecture.md
-      - The three mechanisms: site/concept/mechanisms.md
-      - What it is not: site/concept/non-goals.md
+      - Why Ignis: concept/why.md
+      - Architecture: concept/architecture.md
+      - The three mechanisms: concept/mechanisms.md
+      - What it is not: concept/non-goals.md
   - Getting started:
-      - Install: site/getting-started/install.md
-      - Quickstart: site/getting-started/quickstart.md
-      - Symfony: site/getting-started/symfony.md
-      - Legacy apps: site/getting-started/legacy.md
+      - Install: getting-started/install.md
+      - Quickstart: getting-started/quickstart.md
+      - Symfony: getting-started/symfony.md
+      - Legacy apps: getting-started/legacy.md
   - Reference:
-      - Configuration: site/reference/configuration.md
-      - PHP API: site/reference/php-api.md
-      - CLI: site/reference/cli.md
+      - Configuration: reference/configuration.md
+      - PHP API: reference/php-api.md
+      - CLI: reference/cli.md
   - Operations: operate.md
-  - Compatibility: site/compatibility.md
-  - Comparison: site/comparison.md
+  - Compatibility: compatibility.md
+  - Comparison: comparison.md
   - ADRs: adr/README.md

@@ -219,7 +219,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../site/" class="md-tabs__link">
+      <a href=".." class="md-tabs__link">
         
   
   
@@ -240,7 +240,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../site/concept/why/" class="md-tabs__link">
+        <a href="../concept/why/" class="md-tabs__link">
           
   
   
@@ -260,7 +260,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../site/getting-started/install/" class="md-tabs__link">
+        <a href="../getting-started/install/" class="md-tabs__link">
           
   
   
@@ -280,7 +280,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../site/reference/configuration/" class="md-tabs__link">
+        <a href="../reference/configuration/" class="md-tabs__link">
           
   
   
@@ -317,7 +317,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../site/compatibility/" class="md-tabs__link">
+      <a href="../compatibility/" class="md-tabs__link">
         
   
   
@@ -336,7 +336,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../site/comparison/" class="md-tabs__link">
+      <a href="../comparison/" class="md-tabs__link">
         
   
   
@@ -420,7 +420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/" class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -497,7 +497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/why/" class="md-nav__link">
+      <a href="../concept/why/" class="md-nav__link">
         
   
   
@@ -525,7 +525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/architecture/" class="md-nav__link">
+      <a href="../concept/architecture/" class="md-nav__link">
         
   
   
@@ -553,7 +553,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/mechanisms/" class="md-nav__link">
+      <a href="../concept/mechanisms/" class="md-nav__link">
         
   
   
@@ -581,7 +581,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/concept/non-goals/" class="md-nav__link">
+      <a href="../concept/non-goals/" class="md-nav__link">
         
   
   
@@ -666,7 +666,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/install/" class="md-nav__link">
+      <a href="../getting-started/install/" class="md-nav__link">
         
   
   
@@ -694,7 +694,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/quickstart/" class="md-nav__link">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
         
   
   
@@ -722,7 +722,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/symfony/" class="md-nav__link">
+      <a href="../getting-started/symfony/" class="md-nav__link">
         
   
   
@@ -750,7 +750,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/getting-started/legacy/" class="md-nav__link">
+      <a href="../getting-started/legacy/" class="md-nav__link">
         
   
   
@@ -835,7 +835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/reference/configuration/" class="md-nav__link">
+      <a href="../reference/configuration/" class="md-nav__link">
         
   
   
@@ -863,7 +863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/reference/php-api/" class="md-nav__link">
+      <a href="../reference/php-api/" class="md-nav__link">
         
   
   
@@ -891,7 +891,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -953,7 +953,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/compatibility/" class="md-nav__link">
+      <a href="../compatibility/" class="md-nav__link">
         
   
   
@@ -980,7 +980,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../site/comparison/" class="md-nav__link">
+      <a href="../comparison/" class="md-nav__link">
         
   
   
@@ -1289,17 +1289,27 @@ budget by construction, so it stays reachable even under a saturated server.</p>
 <div class="highlight"><pre><span></span><code>docker compose -f docker/compose.prod.yaml pull
 docker compose -f docker/compose.prod.yaml up -d
 </code></pre></div>
-<p><strong>There is no graceful reload yet</strong> (<code>operate.md</code>: "Not yet — BACKLOG M4-5"): this recreates the
-container, so in-flight requests on the old one are cut, not drained. If that matters for your
-traffic, run two instances behind a load balancer and roll them one at a time, or accept the brief
-gap — there is no third option today.</p>
+<p><strong><code>SIGTERM</code> drains</strong> (V-56), which is what <code>docker compose up -d</code> sends to the old container, so
+in-flight requests are finished rather than cut. Two knobs:</p>
+<ul>
+<li><code>IGNIS_DRAIN_DELAY_MS</code> (default <code>0</code>) — how long <code>/_ignis/health</code> answers <code>503 {"status":"draining"}</code>
+  <strong>while the listener is still accepting</strong>. Set it a little above your load balancer's health-check
+  interval and a rolling deploy loses nothing: the balancer takes the instance out of rotation,
+  requests it already sent are still served, and only then does the socket close.</li>
+<li><code>IGNIS_DRAIN_TIMEOUT_MS</code> (default <code>10000</code>) — how long in-flight requests get to finish after the
+  listener closes. Past it the process exits anyway and logs how many were still pending.</li>
+</ul>
+<p>Measured (V-56): five 1.5 s requests in flight when <code>SIGTERM</code> arrived all returned 200; a new
+request during the grace window returned 200; after it, connections were refused; the process
+exited by itself. With a single instance there is still a gap between the socket closing and the
+new container binding — run two behind a balancer if that matters.</p>
 <h2 id="9-roll-back">9. Roll back<a class="headerlink" href="#9-roll-back" title="Permanent link">&para;</a></h2>
 <p>Before deploying, note what is currently running:</p>
 <div class="highlight"><pre><span></span><code>docker inspect --format &#39;{{.Config.Image}}&#39; app
 </code></pre></div>
 <p>That gives you the exact <code>ghcr.io/koekaverna/ignis:&lt;sha&gt;</code> to go back to. To roll back, set that sha
-as the <code>image:</code> in <code>docker/compose.prod.yaml</code> (or pass it to <code>docker run</code>) and repeat step 6 — same
-"no graceful reload" caveat as step 8.</p>
+as the <code>image:</code> in <code>docker/compose.prod.yaml</code> (or pass it to <code>docker run</code>) and repeat step 6; the
+old container drains on <code>SIGTERM</code> as in step 8.</p>
 <h2 id="what-to-do-when-it-does-not-start">What to do when it does not start<a class="headerlink" href="#what-to-do-when-it-does-not-start" title="Permanent link">&para;</a></h2>
 <p>Three failure modes exist today; nothing else is a documented mechanism.</p>
 <p><strong>The boot self-check refuses to start (exit code 2).</strong> Before any worker thread exists, the binary
