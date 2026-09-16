@@ -22,7 +22,7 @@ Status: `open` / `in progress (agent name)` / `validating` / `done (V-n)` / `dro
 
 ## M3 — Real apps unchanged
 
-### M3-1 Symfony recipe in README `agent` `in progress (batch 1)`
+### M3-1 Symfony recipe in README `agent` `done (README, validated by main)`
 **What.** A "Symfony" section in README.md that a Symfony developer follows end to end: the five
 composer commands from V-40, the `ignis.toml`, the docker invocation, and the two traps (`APP_RUNTIME`
 in `.env` does nothing; `var/` must be writable by the image's `ignis` user).
@@ -254,7 +254,7 @@ The API spec should show a handler reading `Ignis\Loop::budgetStats()` and the d
 say the runtime answers `/_ignis/health` itself. **Constraints.** "Change it only with intent"
 (CLAUDE.md): add, do not restructure; keep every existing route.
 
-### H-4 CI concurrency: a push every few minutes cancels every run `agent` `in progress (batch 1)`
+### H-4 CI concurrency: a push every few minutes cancels every run `agent` `done (main: YAML ok, comment trimmed; behavioural check on the next two pushes)`
 Observed 2026-09-16: three CI runs in a row ended `cancelled` because the next push superseded
 them; the gate never completed. Decide in `ci.yml`: keep cancel-in-progress but add a
 `workflow_dispatch` "full gate" that is never cancelled, **or** drop cancel-in-progress for `main`.
@@ -267,7 +267,7 @@ A `--image ghcr.io/koekaverna/ignis:TAG` mode that runs the same route checks ov
 binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.php route table and
 `smoke: GREEN`.
 
-### H-6 Delete `bench/php/pg_async_probe.php`'s hardcoded DSN default `agent` `in progress (batch 1)`
+### H-6 Delete `bench/php/pg_async_probe.php`'s hardcoded DSN default `agent` `done (validated by main: rc=2 on both probes)`
 It defaults to `127.0.0.1` with user/password baked in. Make `PG_DSN` required with a one-line
 message. **Acceptance.** Running without `PG_DSN` exits 2 with the message.
 

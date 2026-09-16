@@ -57,7 +57,7 @@ needs an FFI change or when two agent runs disagree.
 
 ## Commit and CI cadence
 
-CI's concurrency group cancels the previous run on every push; three pushes in ten minutes on
-2026-09-16 meant no run of the full gate completed. Until BACKLOG H-4 lands: push a batch, wait for
-green, then push the next. Never leave more than 30 minutes of work uncommitted (CLAUDE.md) — commit
-locally as you go; the *push* is what waits.
+CI used to cancel the in-flight run on every push; three pushes in ten minutes on 2026-09-16 meant
+no run of the full gate completed. Since H-4, runs on `main` are never cancelled — they queue. So:
+push per batch, not per item, or the queue grows by one full run per push. Never leave more than
+30 minutes of work uncommitted (CLAUDE.md) — commit locally as you go; the *push* is what batches.

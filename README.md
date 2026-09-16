@@ -69,6 +69,47 @@ next to your app) and `listen = "0.0.0.0:8080"` in that file. The userland lives
 `/opt/ignis/php` inside the image. A static binary is not shipped yet — `libphp` pulls in ~35
 shared libraries through libcurl — so the image is the artifact for now.
 
+## Symfony
+
+An untouched `symfony/skeleton` app served through `symfony/runtime`'s `extra.runtime.class`
+hook — no wrapper script, no change to the skeleton (V-40). `ignis/runtime` is installed as a
+path repository today; Packagist publication is tracked separately (BACKLOG M3-6).
+
+Inside your app (composer needs PHP ≥ 8.4; use the builder image,
+`ghcr.io/koekaverna/ignis-php:8.5.10-zts`, with this repo bind-mounted at `/opt/ignis`, if the
+app's own PHP is older):
+
+```
+composer config platform.php 8.5.10
+composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php","options":{"symlink":false}}'
+composer require ignis/runtime:@dev
+composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
+composer dump-autoload
+```
+
+`ignis.toml`:
+
+```
+entry = "/app/public/index.php"
+listen = "0.0.0.0:8080"
+```
+
+Run it the same way as [Install](#install):
+
+```
+docker run -p 8080:8080 \
+  -v ./ignis.toml:/etc/ignis/ignis.toml \
+  -v ./app:/app \
+  ghcr.io/koekaverna/ignis
+```
+
+Two traps (V-40):
+- `APP_RUNTIME=…` in `.env` does **nothing**: `symfony/runtime` reads it from `$_SERVER` before
+  `.env` is loaded, so `public/index.php` runs as a single CGI request, prints the page and exits
+  0 — the runtime class belongs in `composer.json`'s `extra.runtime.class`, set above.
+- `var/` must be writable by the image's `ignis` user: `chmod -R a+rwX var` after running
+  `composer` as root.
+
 ## Build from source
 
 Ignis needs PHP 8.5.10 ZTS with the embed SAPI at `/opt/php85-zts`; distribution packages are

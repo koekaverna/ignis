@@ -7,7 +7,11 @@ require __DIR__ . '/../../php/pg/ignis-pg.php';
 use Ignis\Pg\LeaseError;
 use Ignis\Pg\Pool;
 
-$dsn = getenv('PG_DSN') ?: 'host=127.0.0.1 user=ignis password=ignis dbname=ignis';
+$dsn = getenv('PG_DSN');
+if ($dsn === false || $dsn === '') {
+    fwrite(STDERR, 'PG_DSN is required, e.g. PG_DSN="host=/tmp/ignis-pgsock user=ignis password=ignis dbname=ignis"' . "\n");
+    exit(2);
+}
 $poolSize = (int) (getenv('POOL') ?: 20);
 $fibers = (int) (getenv('FIBERS') ?: 200);
 $n = (int) (getenv('N') ?: 2000);

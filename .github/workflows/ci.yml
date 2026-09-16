@@ -5,10 +5,21 @@ on:
     branches: [main, "night-*"]
   pull_request:
   workflow_dispatch:
-# A new push cancels the previous run of the same branch.
+# H-4 (2026-09-16): with cancel-in-progress unconditional, the orchestrator's push-every-few-minutes
+# cadence on main meant three runs in a row were cancelled and the full gate never completed
+# (run 35115588266 and its successors were all on main; `gh run list` at the time showed only
+# cancelled/superseded runs there). PRs and night-* branches still get superseded on every push
+# (cheap, no gate to protect); main never does, so every push to main gets one completed run of
+# the full gate — later pushes queue behind the one in flight instead of killing it. Chose this
+# over a workflow_dispatch "full_gate" opt-out because that still lets an ordinary push to main
+# get silently cancelled; this makes the safe behavior the default instead of something you must
+# remember to ask for. Cost: pushes to main faster than a full run (about 10 minutes on
+# 2026-09-16) queue behind each other instead of collapsing, so a burst leaves several gates
+# queued — acceptable because the alternative (silent cancellation) is exactly the bug, and
+# docs/orchestration.md's "push per batch" cadence keeps bursts rare.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 env:
   CARGO_TERM_COLOR: always
   PHP_CONFIG: /opt/php85-zts/bin/php-config

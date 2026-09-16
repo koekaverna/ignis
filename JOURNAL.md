@@ -292,3 +292,11 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   budget — exactly the failure the raised log floor made visible), and the builder image's 8.3 CLI
   needs `platform.php` pinned. Bare skeleton from the runtime image: welcome page, 20/20 concurrent,
   health ok, 0 restarts. Laravel open.
+- 2026-09-16T19:50Z — **Batch 1 of the harness, first three items validated.** M3-1 (README Symfony
+  section, scribe/sonnet): the five V-40 commands verbatim, both traps, path-repo caveat; agent
+  correctly refused to cite V-16's throughput because it was measured through `worker.php`, not the
+  package route — that number waits for M3-3. H-6 (sonnet): `PG_DSN` required in both PG probes;
+  my re-run: message + `rc=2` on each. H-4 (sonnet): `cancel-in-progress` is now
+  `github.ref != 'refs/heads/main'` — pushes to main queue instead of killing the run; I trimmed the
+  agent's "e15 ~45–60 min" to the ~10 min actually observed. Five agents still running; push held
+  until CI on `fb8d4d2` completes.

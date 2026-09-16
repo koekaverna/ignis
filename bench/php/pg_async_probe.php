@@ -9,7 +9,11 @@ use Ignis\Loop;
 use function Ignis\all;
 use function Ignis\async;
 
-$dsn    = getenv('PG_DSN') ?: 'host=127.0.0.1 user=ignis password=ignis dbname=ignis';
+$dsn = getenv('PG_DSN');
+if ($dsn === false || $dsn === '') {
+    fwrite(STDERR, 'PG_DSN is required, e.g. PG_DSN="host=/tmp/ignis-pgsock user=ignis password=ignis dbname=ignis"' . "\n");
+    exit(2);
+}
 $fibers = (int) (getenv('FIBERS') ?: 20);
 $sleep  = (float) (getenv('SLEEP') ?: 0.2);
 $n      = (int) (getenv('N') ?: 2000);
