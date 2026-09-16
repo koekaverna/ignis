@@ -1494,3 +1494,44 @@ welcome page — `404 Not Found`, 39 KB, profiler on (wrk counts all of them as 
 different quantity from V-16's prod-mode 200 on a real route (7.2k / 25.2k), so no comparison is
 drawn here. BACKLOG M3-8 adds the prod-mode leg; until then this is the floor for "the Symfony
 kernel handling a request and rendering its error page" on this box.
+
+## V-42 — a PHP thread that dies holding a pg lease leaks the permit for the life of the process (CONFIRMED defect; M4-8)
+
+Date: 2026-09-16T23:0xZ. Found by the M4-8 bencher agent, **re-run by main** (numbers below are
+main's; the agent's three runs were identical). `bench/m4-pool-survives.sh` /
+`bench/php/m4_pool_survives.php`: `--threads 2 --supervise`, one pool of max 2 (elected through
+`flock` because of V-43), two concurrent `/lease-hold?ms=3000`, then `/fatal`.
+
+| moment | created | available | restarts |
+|---|---|---|---|
+| boot | 0 | 2 | 0 |
+| both holds live | 2 | 0 | 0 |
+| after `/fatal` and the respawn | 2 | **1** | 1 |
+
+`hold1` got `500 no response from php` (its thread died), `hold2` returned `held 3000 ms`. The
+recycled connection was reset correctly — `SHOW search_path` → `"$user", public`, the temp table
+is gone — but the dead thread's lease is orphaned inside `LEASES` with its semaphore permit:
+`available` never returns to 2. Under load, every worker crash costs the pool one connection until
+it is empty. ADR-0015's "pools survive a thread restart" holds for the *connections* and not for
+the *permits*. Fix: BACKLOG M4-11.
+
+A dispatcher fact the agent had to work around, worth recording: with one thread busy and one
+idle, `Registry::pick()` always chooses the idle one, so a single held lease can never be hit by
+`/fatal`; two concurrent holds make the tie-break land on a holder deterministically.
+
+## V-43 — every worker thread opens its own pool; "process-wide" is not what runs (CONFIRMED defect; M4-8)
+
+Same date. `ignis_pg_open($dsn, 2)` at the top of a script served with `--threads 3 --supervise`,
+12 requests returning the thread's pool id:
+
+```
+      4 pool_id=1
+      4 pool_id=2
+      4 pool_id=3
+```
+
+Three pools, because every thread runs the script and `pg::open` mints a new id per call with no
+DSN dedup. ADR-0015 §1 says a pool "is process-wide (shared by all PHP threads)" — true of the
+Rust object's ownership, false of what an application gets: `threads × max` connections. At this
+box's default of 24 threads and the README's example `max = 20` that is 480 connections against
+PostgreSQL's default `max_connections = 100`. Fix: BACKLOG M4-12.

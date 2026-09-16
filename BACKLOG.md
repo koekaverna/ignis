@@ -156,7 +156,7 @@ locks across `Curl_poll`; does libpq's `pg_g_threadlock` wrap anything that bloc
 deliberate mutex-holding test library is specified here (a 20-line C shim that locks a pthread
 mutex, calls `read`, unlocks — under `park` two fibers on one thread must deadlock).
 
-### E18-R3 Interposition from the executable binds inside a shared library `main` `open` — my experiment
+### E18-R3 Interposition from the executable binds inside a shared library `main` `done (research 28: poll from inside libcurl hit 8×, gate ≈ 8.3 ns, this libcurl never calls getaddrinfo)`
 A scratch crate defining `#[no_mangle] extern "C" fn getaddrinfo` (forwarding via
 `dlsym(RTLD_NEXT)`), linked with `-Wl,--export-dynamic-symbol=getaddrinfo`, dlopening libcurl and
 running `curl_easy_perform` on a local URL: the interposer must be hit from inside libcurl. Also:
@@ -248,7 +248,7 @@ a per-thread atomic the watchdog reads.
 **Acceptance.** `/spin?s=5` in `examples/hello_server.php` produces one `warn!` with `uri=/spin?s=5`
 and `age_ms` ≥ 1000 within 1.5 s of the stall.
 
-### M4-8 Pool survival across a thread respawn `agent` `in progress (batch 4)`
+### M4-8 Pool survival across a thread respawn `agent` `done (V-42/V-43: re-run by main — TWO defects found, fixes are M4-11 and M4-12)`
 **What.** Pain map FrankenPHP 7 / Swoole 7: "pools survive" is claimed (ADR-0015: the pool is
 runtime-owned) but **not measured**. Bench: hold a PG lease on thread A, kill A with `/fatal`,
 verify the pool's connection count is unchanged and the lease was reset (`DISCARD ALL` ran).
@@ -256,6 +256,23 @@ verify the pool's connection count is unchanged and the lease was reset (`DISCAR
 and a query on the recycled connection sees no state from before (`SHOW search_path` default).
 Needs PostgreSQL: the builder image has `postgresql-client`; run `postgres:17-alpine` over a
 bind-mounted unix socket as research 24 did (TCP publishing is broken on the dev box).
+
+### M4-11 A PHP thread dying with a lease leaks the pool permit for ever `main` `open` — next, with M4-1
+**What.** V-42: `--threads 2 --supervise`, pool max 2, both threads holding a lease, `/fatal` on
+one → after the respawn `available` is 1 of 2 and stays there; `created` unchanged, so the
+connection object is orphaned inside `LEASES` with its permit. Nothing associates a lease with the
+thread that took it and `http::unregister` only fails HTTP responders. Fix: record the owning
+reactor in `Lease`; on unregister, reset-and-return every lease it owns (the reset runs on the
+tokio side, so a dying thread cannot block it). **Acceptance.** `bench/m4-pool-survives.sh`'s
+"available back to max" line flips to PASS, 3 of 3 runs.
+
+### M4-12 Every thread opens its own pool — ADR-0015's "process-wide" is false as deployed `main` `open` — next, with M4-1
+**What.** V-43: `ignis_pg_open(dsn, max)` mints a new pool per call and every worker thread runs the
+script, so `--threads 3` gives `pool_id` 1, 2, 3 — three pools of `max` each. At `threads = cores`
+(24 here) with `max = 20` that is 480 connections against PostgreSQL's default `max_connections =
+100`. Fix: dedupe by DSN — a second `ignis_pg_open` with an identical DSN returns the existing id
+(first opener's `max` wins; a differing `max` is logged at warn). **Acceptance.** The V-43 probe
+prints one `pool_id` for every thread; `bench/php/e14_pg.php` unchanged.
 
 ### M4-9 Cancellation of offload jobs and PG queries on disconnect (E11') `main` `open`
 **What.** ROADMAP E11': today a client disconnect cancels the fiber (V-14) but a query already sent
@@ -382,12 +399,21 @@ distinguish `EG(exit_status)` from a real fatal (the `Engine::eval` sentinel alr
 `-r`): warn only on a fatal, `debug` on exit. **Acceptance.** Running `e1_sleep_10k.php` prints no
 WARN; a script with `trigger_error(..., E_USER_ERROR)` still prints one. `main` (guarded path).
 
-### H-11 `examples/grpc_server.php` fails static analysis `agent` `in progress (batch 4)`
-**What.** phpantom flags lines 24–25: an `int` parameter receives `int|float` (the request's number
-fields are decoded from JSON). Pre-existing, not from today's edits. Cast or validate at the
+### H-11 `examples/grpc_server.php` fails static analysis `agent` `done (validated by main: phpstan L6 0 errors on the example + grpc lib)`
+**What.** phpantom flags lines 24–25: `intdiv(hrtime(true), …)` — `hrtime(true)` is typed `int|float`.
+(The first version of this entry blamed JSON-decoded fields; the agent read the line, I had not.)
+Fixed with a cast. Note for any phpstan run: `php/stubs/ignis.php` covers only the `ignis_*` C
+functions — pass `php/ignis.php` (and pg/offload files) too, or every `Ignis\*` symbol is "not found". Cast or validate at the
 boundary so the example passes PHPStan level 6 with `php/stubs/ignis.php` loaded (H-7).
 **Acceptance.** `phpstan analyse -l 6 examples/grpc_server.php --autoload-file php/stubs/ignis.php`
 reports 0 errors (phpstan via the builder image's composer, `composer global require phpstan/phpstan`).
+
+### H-12 `php/ignis.php` at phpstan level 6 `agent` `open`
+**What.** The H-11 agent's run reported ~30 level-6 findings in `php/ignis.php` (generics on
+`Fiber`/`WeakMap`, untyped iterables, always-true conditions); main's raw-format count read 0, so
+the number is not established. Establish it, then fix the ones that are real without changing
+behaviour. **Acceptance.** phpstan L6 on `php/ignis.php php/pg/*.php php/offload/*.php` with the
+stub loaded: 0 errors, and `scripts/smoke.sh` still GREEN.
 
 ### H-8 Retire the `IGNIS_ADDR` name `agent` `done (validated by main: no code hits, classic_server answers on IGNIS_LISTEN)`
 **What.** `bench/e15-frankenphp.sh` sets `IGNIS_ADDR`; `examples/classic_server.php` and

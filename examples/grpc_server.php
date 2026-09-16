@@ -21,7 +21,7 @@ $methods = [
     '/ignis.Greeter/Countdown' => static function (Call $call): null {
         $n = (int) (Proto::decode($call->message())[1] ?? 3);
         for ($i = $n; $i >= 1; $i--) {
-            $call->send(Proto::encode([1 => $i, 2 => date('H:i:s') . '.' . sprintf('%03d', intdiv(hrtime(true), 1000000) % 1000)]));
+            $call->send(Proto::encode([1 => $i, 2 => date('H:i:s') . '.' . sprintf('%03d', intdiv((int) hrtime(true), 1000000) % 1000)]));
             Ignis\sleep(10);
         }
         return null;

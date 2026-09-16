@@ -374,3 +374,15 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   the kill criterion are about), R3 (does interposition from the executable bind inside libcurl on
   this toolchain — my experiment, it decides feasibility), then ADR-0020, then implementation
   behind a feature flag with a hook-off control. R1 and R2 dispatched to sonnet agents; R3 is mine.
+- 2026-09-16T23:05Z — **Batch 4 validated; two pg defects found (V-42, V-43).** H-11 (sonnet): the
+  real cause was `intdiv(hrtime(true))`, not JSON fields as my BACKLOG text said — the agent read the
+  line; my phpstan run: 0 errors on the example and the grpc lib. M4-8 (bencher): the pool does
+  **not** survive a thread dying with a lease — `available` stuck at 1 of 2 after the respawn, my
+  re-run identical; and a probe of my own showed `--threads 3` opens three pools (`pool_id` 1, 2, 3):
+  ADR-0015's "process-wide" is the Rust object, not the application's experience — 24 threads × 20
+  would be 480 connections. Both are mine to fix (M4-11, M4-12) together with M4-1, all in `pg.rs`.
+  E18-R3 (mine, research 28): exporting `read`/`poll`/`getaddrinfo` from the executable binds inside
+  libcurl — `poll` hit 8× from inside `curl_easy_perform` — Rust std survives it, the gate costs
+  ~8.3 ns per syscall on the non-fiber path (budget 20), and this libcurl never calls `getaddrinfo`
+  (0 hits on a hostname): acceptance (3) must be restated per library once R1 says which resolver
+  each uses. scribe reconciled STATUS/ROADMAP/pain-map to the product state (47 V-n references).
