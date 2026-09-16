@@ -130,6 +130,22 @@ pub unsafe fn adopt_fd(fd: c_int) -> *mut sys::php_stream {
     }
 }
 
+/// True if `zv` is a hooked stream holding bytes the kernel fd no longer shows (our read-ahead):
+/// `stream_select()` must report it readable without parking.
+pub unsafe fn has_buffered(zv: *mut sys::zval) -> bool {
+    unsafe {
+        if super::zval::type_of(zv) != sys::IS_RESOURCE {
+            return false;
+        }
+        let stream = sys::zend_fetch_resource2_ex(zv, ptr::null(), sys::php_file_le_stream(), sys::php_file_le_pstream()) as *mut sys::php_stream;
+        if stream.is_null() || (*stream).ops != &OPS.0 as *const sys::php_stream_ops {
+            return false;
+        }
+        let s = sock_of(stream);
+        !s.is_null() && ((*s).pending.len() > (*s).pos || (*s).eof)
+    }
+}
+
 /// Park the running fiber until ANY of `ids` completes; returns the id that did. The other ids'
 /// completions are dropped later (no fiber waits on them any more). `None` = could not park.
 ///

@@ -100,18 +100,20 @@ unsafe extern "C" fn hooked_accept(ex: *mut sys::zend_execute_data, rv: *mut sys
     }
 }
 
-/// Streams of a by-reference array argument (`$read`/`$write` of stream_select) → selectable fds.
-unsafe fn fds_of(arg: *mut sys::zval) -> Vec<i32> {
+/// Streams of a by-reference array argument (`$read`/`$write` of stream_select) → selectable fds,
+/// and whether any hooked stream in it already holds read-ahead bytes (ready without parking).
+unsafe fn fds_of(arg: *mut sys::zval) -> (Vec<i32>, bool) {
     unsafe {
         let mut zv = arg;
         if zval::type_of(zv) == sys::IS_REFERENCE {
             zv = &raw mut (*(*zv).value.ref_).val;
         }
         if zval::type_of(zv) != sys::IS_ARRAY {
-            return Vec::new();
+            return (Vec::new(), false);
         }
         let ht = (*zv).value.arr;
         let mut out = Vec::new();
+        let mut buffered = false;
         let mut pos: sys::HashPosition = 0;
         sys::zend_hash_internal_pointer_reset_ex(ht, &mut pos);
         loop {
@@ -119,12 +121,32 @@ unsafe fn fds_of(arg: *mut sys::zval) -> Vec<i32> {
             if v.is_null() {
                 break;
             }
+            buffered |= super::stream::has_buffered(v);
             if let Some(fd) = stream_fd(v, sys::PHP_STREAM_AS_FD_FOR_SELECT) {
                 out.push(fd);
             }
             sys::zend_hash_move_forward_ex(ht, &mut pos);
         }
-        out
+        (out, buffered)
+    }
+}
+
+/// Run the original stream_select with a zero timeout (a non-blocking probe); restores the timeout args.
+unsafe fn probe(orig: Handler, ex: *mut sys::zend_execute_data, rv: *mut sys::zval, n: usize) {
+    unsafe {
+        let slot = std::mem::size_of::<sys::zend_execute_data>() / std::mem::size_of::<sys::zval>();
+        let arg = |i: usize| (ex as *mut sys::zval).add(slot + i);
+        let saved3: sys::zval = *arg(3);
+        let saved4: Option<sys::zval> = if n >= 5 { Some(*arg(4)) } else { None };
+        zval::set_long(arg(3), 0);
+        if n >= 5 {
+            zval::set_long(arg(4), 0);
+        }
+        orig(ex, rv);
+        *arg(3) = saved3;
+        if let Some(v) = saved4 {
+            *arg(4) = v;
+        }
     }
 }
 
@@ -142,8 +164,8 @@ unsafe extern "C" fn hooked_select(ex: *mut sys::zend_execute_data, rv: *mut sys
         }
         let slot = std::mem::size_of::<sys::zend_execute_data>() / std::mem::size_of::<sys::zval>();
         let arg = |i: usize| (ex as *mut sys::zval).add(slot + i);
-        let reads = fds_of(arg(0));
-        let writes = fds_of(arg(1));
+        let (reads, read_buffered) = fds_of(arg(0));
+        let (writes, _) = fds_of(arg(1));
         // seconds (null = forever), microseconds
         let secs_zv = arg(3);
         let timeout_us: Option<u64> = if zval::type_of(secs_zv) == sys::IS_NULL {
@@ -156,6 +178,43 @@ unsafe extern "C" fn hooked_select(ex: *mut sys::zend_execute_data, rv: *mut sys
         if reads.is_empty() && writes.is_empty() {
             orig(ex, rv);
             return;
+        }
+        // 1. Non-blocking probe first: PHP's own buffered-data check and anything already ready
+        //    answer at once (the original select with tv = 0 modifies the arrays in place).
+        //    Read-ahead held by our hooked streams counts as ready too.
+        if read_buffered || timeout_us == Some(0) {
+            probe(orig, ex, rv, n);
+            return;
+        }
+        // The probe consumes the arrays (it filters them); copy them first so the parked path can re-run.
+        let mut copies: Vec<(usize, sys::zval)> = Vec::new();
+        for i in 0..3usize.min(n) {
+            let mut zv = arg(i);
+            if zval::type_of(zv) == sys::IS_REFERENCE {
+                zv = &raw mut (*(*zv).value.ref_).val;
+            }
+            if zval::type_of(zv) == sys::IS_ARRAY {
+                let mut copy: sys::zval = *zv;
+                sys::zval_add_ref(&mut copy);
+                copies.push((i, copy));
+            }
+        }
+        probe(orig, ex, rv, n);
+        let ready = if zval::type_of(rv) == sys::IS_LONG { (*rv).value.lval } else { -1 };
+        if ready != 0 {
+            for (_, mut c) in copies {
+                sys::zval_ptr_dtor(&mut c);
+            }
+            return; // something was ready (or the probe failed): that is the answer
+        }
+        // Nothing ready: restore the arrays and park on readiness + timeout.
+        for (i, copy) in copies {
+            let mut zv = arg(i);
+            if zval::type_of(zv) == sys::IS_REFERENCE {
+                zv = &raw mut (*(*zv).value.ref_).val;
+            }
+            sys::zval_ptr_dtor(zv);
+            *zv = copy;
         }
         let reactor = super::module::reactor();
         let mut ids: Vec<u64> = Vec::new();
@@ -179,17 +238,7 @@ unsafe extern "C" fn hooked_select(ex: *mut sys::zend_execute_data, rv: *mut sys
         if woke.is_none() {
             return; // unwound while parked
         }
-        // Compute the ready sets now, without blocking: original select with tv_sec = 0, tv_usec = 0.
-        let saved3: sys::zval = *arg(3);
-        let saved4: Option<sys::zval> = if n >= 5 { Some(*arg(4)) } else { None };
-        zval::set_long(arg(3), 0);
-        if n >= 5 {
-            zval::set_long(arg(4), 0);
-        }
-        orig(ex, rv);
-        *arg(3) = saved3;
-        if let Some(v) = saved4 {
-            *arg(4) = v;
-        }
+        // Compute the ready sets now, without blocking.
+        probe(orig, ex, rv, n);
     }
 }
