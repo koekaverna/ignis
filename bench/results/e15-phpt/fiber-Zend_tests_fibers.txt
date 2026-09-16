@@ -17,7 +17,6 @@
 /home/user/php-src/Zend/tests/fibers/get-return-after-throwing.phpt
 /home/user/php-src/Zend/tests/fibers/get-return-from-unstarted-fiber.phpt
 /home/user/php-src/Zend/tests/fibers/get-return-in-unfinished-fiber.phpt
-/home/user/php-src/Zend/tests/fibers/gh10496-001.phpt
 /home/user/php-src/Zend/tests/fibers/gh20483.phpt
 /home/user/php-src/Zend/tests/fibers/multiple-calls-to-ctor.phpt
 /home/user/php-src/Zend/tests/fibers/resume-non-running-fiber.phpt

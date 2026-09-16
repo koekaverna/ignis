@@ -9,14 +9,10 @@
 /home/user/php-src/ext/standard/tests/streams/gh10031.phpt
 /home/user/php-src/ext/standard/tests/streams/gh11418.phpt
 /home/user/php-src/ext/standard/tests/streams/gh14506.phpt
-/home/user/php-src/ext/standard/tests/streams/gh16889.phpt
 /home/user/php-src/ext/standard/tests/streams/gh8409.phpt
 /home/user/php-src/ext/standard/tests/streams/ghsa-3cr5-j632-f35r.phpt
 /home/user/php-src/ext/standard/tests/streams/glob-wrapper.phpt
 /home/user/php-src/ext/standard/tests/streams/stream_context_tcp_nodelay_server.phpt
-/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation1.phpt
 /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.phpt
-/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.phpt
-/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation4.phpt
 /home/user/php-src/ext/standard/tests/streams/stream_select_null_usec.phpt
 /home/user/php-src/ext/standard/tests/streams/user_streams_context_001.phpt

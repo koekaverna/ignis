@@ -3,9 +3,9 @@ Stack trace:
 #0 /home/user/php-src/Zend/tests/fibers/ticks.php(7): Fiber::suspend()
 #1 /home/user/php-src/Zend/tests/fibers/ticks.php(9): {closure:/home/user/php-src/Zend/tests/fibers/ticks.php:5}()
 #2 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
-#3 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+#3 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 #4 [internal function]: Ignis\Loop::poolBody(Array)
-#5 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+#5 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
 #6 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 #7 {main}
   thrown in /home/user/php-src/Zend/tests/fibers/ticks.php on line 7

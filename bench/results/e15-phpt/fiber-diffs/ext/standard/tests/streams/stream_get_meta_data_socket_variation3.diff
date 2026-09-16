@@ -1,13 +1,4 @@
 --
-       ["eof"]=>
-       bool(false)
-       ["stream_type"]=>
-009-   string(%d) "tcp_socke%s"
-009+   string(9) "ignis_tcp"
-       ["mode"]=>
-       string(2) "r+"
-       ["unread_bytes"]=>
---
        ["timed_out"]=>
        bool(false)
        ["blocked"]=>
@@ -16,18 +7,4 @@
        ["eof"]=>
        bool(false)
        ["stream_type"]=>
-031-   string(%d) "tcp_socke%s"
-031+   string(9) "ignis_tcp"
-       ["mode"]=>
-       string(2) "r+"
-       ["unread_bytes"]=>
---
-       ["eof"]=>
-       bool(false)
-       ["stream_type"]=>
-053-   string(%d) "tcp_socke%s"
-053+   string(9) "ignis_tcp"
-       ["mode"]=>
-       string(2) "r+"
-       ["unread_bytes"]=>
 --

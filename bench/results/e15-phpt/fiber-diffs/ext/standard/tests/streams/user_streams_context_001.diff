@@ -3,9 +3,9 @@
      #0 %suser_streams_context_001.php(5): dir('foo://')
 004- #1 {main}
 004+ #1 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
-005+ #2 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+005+ #2 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 006+ #3 [internal function]: Ignis\Loop::poolBody(Array)
-007+ #4 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+007+ #4 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
 008+ #5 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 009+ #6 {main}
        thrown in %suser_streams_context_001.php on line 5

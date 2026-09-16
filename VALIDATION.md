@@ -774,3 +774,48 @@ wall: 823 ms
 `http::unregister()` now drains the dying reactor's responders and gRPC streams (`Reactor::fail_pending`), so hyper answers 500 at once and the supervisor's respawn serves the next request.
 
 **E13' regression caught by CI** (`scripts/ci-gate.sh`, FrankenPHP baseline 29 → 27 on the first lazy-swap commit): a user `Fiber` started inside a request saw the base world's empty `$_GET` (`fiber-basic.php`, `fiber-no-cgo.php`: "Fiber " instead of "Fiber 1"), because the lazy swap restored the base world on every switch to a fiber without a slot. Fix: the observer tracks the *owner* of the installed view; a switch to a slot-less fiber leaves the view alone (children inherit their parent's request view, pool fibers inherit the base world), only a switch to `{main}` restores the base world, and a dying owner releases the view. After the fix: FrankenPHP 29 / 4 / 33 (the four known runtime gaps), `e13_isolation` 0 mismatches / no main leak, 200 concurrent HTTP 0 mismatches — with and without `IGNIS_CHAOS=1`. The quiet-box E2' figure after E13' is still owed.
+
+### V-26 addendum (2026-09-16T05:01:43Z) — phpt fiber-mode streams: 111 → 120 on the accept/select build
+
+The CI gate (`scripts/ci-gate.sh phpt`, run #23/#25) flagged fiber-mode `ext/standard/tests/streams` at **111 < 116** after the accept/select hooks landed. Bisection with `IGNIS_NO_ACCEPT_HOOK=1` pinned it on the hooks; the eight regressed tests exposed four distinct gaps, each fixed in `crates/ignis/src/php/{accept,stream}.rs` / `reactor.rs` and re-run one by one with `run-tests.php -p scripts/ignis-php` (`IGNIS_PHPT_MODE=fiber`, binary `target-c20/release/ignis`):
+
+| gap | tests it broke | fix |
+|---|---|---|
+| `stream_select` parked before PHP's own buffered-data check, and cast the fds without `PHP_STREAM_CAST_INTERNAL` ("bytes of buffered data lost" warning) | bug46024, stream_select_preserve_keys, bug60602, bug64770, proc_open_bug60120 | non-blocking probe first (original with tv = 0, arrays copied and restored when nothing is ready); internal cast |
+| a losing `stream_select` timeout stayed in flight until it lapsed, so `Loop::runUntil` could not stop | proc_open_bug64438 (60 s select, process timed out after its output was complete) | `Op::Sleep` is cancellable like a watch; select/accept cancel the loser |
+| `stream_socket_accept` ignored its timeout and the non-finite check, parking forever | non_finite_values (hung, listener held port 14781 for the next run) | timeout computed like PHP (null → `FG(default_socket_timeout)` via the TSRM id storage vector, < 0 → forever, non-finite → the original throws); on expiry the original runs with a zero timeout → stock `false` + "Accept failed: Connection timed out" (measured: 200 ms / 1001 ms for 0.2 s / 1.0 s, thread free) |
+| adopted sockets ignored `stream_set_blocking(false)`; `stream_get_meta_data()` had no blocked/timed_out/eof | gh8472 (second `fread` parked forever), gh16889, stream_get_meta_data_socket_variation1/3/4 | `Sock.blocking`, `Op::TryRead` (one poll with a no-op waker → `Data` or `WouldBlock`, returns 0 bytes without EOF), `PHP_STREAM_OPTION_META_DATA_API` |
+
+Full matrix (`IGNIS_BIN=target-c20/release/ignis bench/e15-phpt.sh`, 2026-09-16T05:01:43Z, load ~1.5):
+
+```
+stock  Zend/tests/fibers            110  108 pass   0 fail  2 skip
+main   Zend/tests/fibers            110  108        0       2
+fiber  Zend/tests/fibers            110   78       30       2      (baseline 77)
+stock  ext/standard/tests/streams   160  138        0      22
+main   ext/standard/tests/streams   160  132        6      22      (baseline 131)
+fiber  ext/standard/tests/streams   160  120       18      22      (baseline 116; 111 before this fix)
+stock  ext/sockets/tests            118   80        0      38
+main   ext/sockets/tests            118   80        0      38
+fiber  ext/sockets/tests            118   75        5      38      (baseline 75)
+gate: all six >= baseline  (rc=0)
+```
+
+`bench/results/e15-baseline.txt` raised to the new counts (fiber fibers 78, main streams 132, fiber streams 120). The 12 fiber-only stream failures that remain, classified: harness (stack traces include `phpt-harness.php`/`ignis.php` frames: bug77664, gh8409, user_streams_context_001; `open_basedir=.` rejects the harness path: bug70362) — *not applicable*; ours — bug60106-001/002 (unix-socket `stream_socket_get_name` on a hooked server socket), bug69521 and ghsa-3cr5-j632-f35r (error text for an invalid port / NUL host differs from stock), bug70198 (timeout, unexplored), stream_get_meta_data_socket_variation2 (`timed_out` after a read timeout is never set), stream_select_null_usec (the hook does not raise the "microseconds must be null" ValueError), gh14506 (`fclose` on STDIN/STDOUT should warn). The "not covered" line of V-26 no longer applies to the accept timeout.
+
+## V-27 — H22e (E15e): Symfony and Doctrine suites under chaos scheduling (CONFIRMED)
+
+Date: 2026-09-16T05:01:43Z. Port and first full pass by the porter (research 20, `bench/e15-chaos.sh`, 04:18–04:41Z, 10 849 tests per mode, 5 suites × 4 modes: stock CLI, plain `ignis`, chaos seed 1, chaos seed 20260916, `IGNIS_NOISE=4` background fibers). Main re-ran the two suites that carry the claim once (2026-09-16T05:01:43Z, `SUITES="symfony-http-foundation dbal"`), numbers identical to the porter's:
+
+```
+suite=symfony-http-foundation  stock                 tests=1815 failures=0 errors=62 skipped=126
+suite=symfony-http-foundation  ignis                 tests=1815 failures=0 errors=62 skipped=126  chaosYields=0
+suite=symfony-http-foundation  chaos-seed-1          tests=1815 failures=0 errors=62 skipped=126  chaosYields=10756 noiseTicks=21624
+suite=symfony-http-foundation  chaos-seed-20260916   tests=1815 failures=0 errors=62 skipped=126
+suite=dbal                     stock/ignis/chaos×2   tests=3901 failures=1 errors=0 skipped=633   (same test in every mode)
+```
+
+Porter's full pass (same binary): http-kernel 1389 tests, 2 failures stock vs **3** under ignis/chaos; httpcache 103/103 in every mode with **222 539** forced yields and **445 363** noise interleavings under chaos (5 min of real `sleep()` parked on reactor timers); orm 3641 tests, 16 failures / 62 errors identical in every mode.
+
+**Claim: zero new failures from chaos** — every chaos count equals the plain-ignis count, both seeds agree. **One** test fails under ignis at all and not under stock: `CacheWarmerAggregateTest::testWarmupRecoversFromCorruptedDeprecationLog` runs `PHP_BINARY -- <script on stdin>`, a php-cli feature the embed binary lacks → *not applicable* (fails with chaos off too). Honest limits: dbal, orm and http-kernel never enter the Ignis loop (CPU + pdo_sqlite + files: 1–4 yields in total), so for them the result says only that the embed environment behaves; the scheduling claim rests on httpcache and http-foundation (sleep + ~30 hooked `tcp://` requests; the attribution probe with the hooks off drops the yields from 10 844 to 4). The 21 `PHP_BINARY -S` failures are worked around symmetrically (the two fixture servers are started on the stock CLI for every mode). 58/19 "separate process" errors come from the custom entry point (no `PHPUNIT_COMPOSER_INSTALL`) and are identical in all modes. Baseline failures (dbal 1, orm 16+62, http-kernel 2+26) are classified in research 20.
+

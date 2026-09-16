@@ -83,7 +83,7 @@ PASSED	/home/user/php-src/ext/standard/tests/streams/gh14930.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh15155.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh15908.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh15980.phpt
-FAILED	/home/user/php-src/ext/standard/tests/streams/gh16889.phpt
+PASSED	/home/user/php-src/ext/standard/tests/streams/gh16889.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh17067.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh17650.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh19570.phpt
@@ -136,10 +136,10 @@ PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_file_v
 PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_file_variation5.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_process_basic.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_basic.phpt
-FAILED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation1.phpt
+PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation1.phpt
 FAILED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.phpt
-FAILED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.phpt
-FAILED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation4.phpt
+PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.phpt
+PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation4.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_transports.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/stream_get_wrappers.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/stream_is_local.phpt

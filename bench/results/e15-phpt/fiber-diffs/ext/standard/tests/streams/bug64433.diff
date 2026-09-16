@@ -35,12 +35,9 @@
 035- 307: REDIRECTED
 036- 404: REDIRECTED
 037- 500: REDIRECTED
-001+ Warning: Undefined array key "PHP_SELF" in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
-002+ 
-003+ Deprecated: basename(): Passing null to parameter #1 ($path) of type string is deprecated in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
-004+ Server failed to start
-005+ Server output:
-006+ 
-007+ Warning: include(/home/user/php-src/sapi/cli/tests): Failed to open stream: Invalid argument in /home/user/ignis/scripts/phpt-harness.php on line 40
-008+ 
-009+ Warning: include(): Failed opening '/home/user/php-src/sapi/cli/tests/' for inclusion (include_path='.:') in /home/user/ignis/scripts/phpt-harness.php on line 40
+001+ Server failed to start
+002+ Server output:
+003+ 
+004+ Warning: include(/home/user/php-src/sapi/cli/tests/phpt-harness): Failed to open stream: Invalid argument in /home/user/ignis/scripts/phpt-harness.php on line 40
+005+ 
+006+ Warning: include(): Failed opening '/home/user/php-src/sapi/cli/tests/phpt-harness' for inclusion (include_path='.:') in /home/user/ignis/scripts/phpt-harness.php on line 40

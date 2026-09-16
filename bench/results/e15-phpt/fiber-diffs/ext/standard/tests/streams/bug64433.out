@@ -1,9 +1,6 @@
-Warning: Undefined array key "PHP_SELF" in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
-
-Deprecated: basename(): Passing null to parameter #1 ($path) of type string is deprecated in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
 Server failed to start
 Server output:
 
-Warning: include(/home/user/php-src/sapi/cli/tests): Failed to open stream: Invalid argument in /home/user/ignis/scripts/phpt-harness.php on line 40
+Warning: include(/home/user/php-src/sapi/cli/tests/phpt-harness): Failed to open stream: Invalid argument in /home/user/ignis/scripts/phpt-harness.php on line 40
 
-Warning: include(): Failed opening '/home/user/php-src/sapi/cli/tests/' for inclusion (include_path='.:') in /home/user/ignis/scripts/phpt-harness.php on line 40
+Warning: include(): Failed opening '/home/user/php-src/sapi/cli/tests/phpt-harness' for inclusion (include_path='.:') in /home/user/ignis/scripts/phpt-harness.php on line 40

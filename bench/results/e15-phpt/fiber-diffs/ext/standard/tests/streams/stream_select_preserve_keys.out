@@ -1,0 +1,22 @@
+array(2) {
+  [1]=>
+  resource(8) of type (stream)
+  ["myindex"]=>
+  resource(8) of type (stream)
+}
+array(2) {
+  [1]=>
+  resource(8) of type (stream)
+  ["myindex"]=>
+  resource(8) of type (stream)
+}
+
+Warning: stream_select(): 284 bytes of buffered data lost during stream conversion! in /home/user/php-src/ext/standard/tests/streams/stream_select_preserve_keys.php on line 11
+
+Warning: stream_select(): 284 bytes of buffered data lost during stream conversion! in /home/user/php-src/ext/standard/tests/streams/stream_select_preserve_keys.php on line 11
+array(2) {
+  [1]=>
+  resource(8) of type (stream)
+  ["myindex"]=>
+  resource(8) of type (stream)
+}

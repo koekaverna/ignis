@@ -6,15 +6,15 @@
 006- stream_socket_client(): Argument #4 ($timeout) must be a finite value
 007- stream_socket_client(): Argument #4 ($timeout) must be a finite value
 008- stream_socket_client(): Argument #4 ($timeout) must be a finite value
-001+ Warning: stream_socket_server(): Unable to connect to tcp://0.0.0.0:14781 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/non_finite_values.php on line 2
+001+ Warning: stream_socket_server(): Unable to connect to tcp://0.0.0.0:14781 (Address already in use) in /home/user/php-src/ext/standard/tests/streams/non_finite_values.php on line 2
 002+ 
 003+ Fatal error: Uncaught TypeError: stream_socket_accept(): Argument #1 ($socket) must be of type resource, false given in /home/user/php-src/ext/standard/tests/streams/non_finite_values.php:5
 004+ Stack trace:
 005+ #0 /home/user/php-src/ext/standard/tests/streams/non_finite_values.php(5): stream_socket_accept(false, NAN)
-006+ #1 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include('/home/user/php-...')
-007+ #2 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+006+ #1 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+007+ #2 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 008+ #3 [internal function]: Ignis\Loop::poolBody(Array)
-009+ #4 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
-010+ #5 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+009+ #4 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
+010+ #5 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 011+ #6 {main}
 012+   thrown in /home/user/php-src/ext/standard/tests/streams/non_finite_values.php on line 5

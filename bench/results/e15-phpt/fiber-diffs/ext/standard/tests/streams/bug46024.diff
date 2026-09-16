@@ -1,0 +1,5 @@
+     resource(%d) of type (process)
+     bool(true)
+003+ 
+004+ Warning: stream_select(): 731 bytes of buffered data lost during stream conversion! in /home/user/php-src/ext/standard/tests/streams/bug46024.php on line 22
+     bool(true)

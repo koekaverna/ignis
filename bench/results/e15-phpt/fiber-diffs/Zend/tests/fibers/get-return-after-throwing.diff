@@ -4,9 +4,9 @@
      #0 %sget-return-after-throwing.php(%d): Fiber->getReturn()
 006- #1 {main}
 006+ #1 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
-007+ #2 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+007+ #2 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 008+ #3 [internal function]: Ignis\Loop::poolBody(Array)
-009+ #4 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+009+ #4 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
 010+ #5 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 011+ #6 {main}
        thrown in %sget-return-after-throwing.php on line %d

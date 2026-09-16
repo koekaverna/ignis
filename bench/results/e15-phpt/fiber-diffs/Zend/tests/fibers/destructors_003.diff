@@ -9,9 +9,9 @@
 007+ #1 [internal function]: gc_destructor_fiber()
 008+ #2 /home/user/php-src/Zend/tests/fibers/destructors_003.php(31): gc_collect_cycles()
 009+ #3 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
-010+ #4 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+010+ #4 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 011+ #5 [internal function]: Ignis\Loop::poolBody(Array)
-012+ #6 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+012+ #6 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
 013+ #7 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 014+ #8 {main}
 015+ 
@@ -21,9 +21,9 @@
 019+ #1 [internal function]: gc_destructor_fiber()
 020+ #2 /home/user/php-src/Zend/tests/fibers/destructors_003.php(31): gc_collect_cycles()
 021+ #3 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
-022+ #4 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+022+ #4 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 023+ #5 [internal function]: Ignis\Loop::poolBody(Array)
-024+ #6 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+024+ #6 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
 025+ #7 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 026+ #8 {main}
 027+   thrown in /home/user/php-src/Zend/tests/fibers/destructors_003.php on line 17

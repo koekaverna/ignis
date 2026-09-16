@@ -41,7 +41,7 @@ PASSED	/home/user/php-src/Zend/tests/fibers/gh10340-001.phpt
 PASSED	/home/user/php-src/Zend/tests/fibers/gh10340-002.phpt
 PASSED	/home/user/php-src/Zend/tests/fibers/gh10340-003.phpt
 PASSED	/home/user/php-src/Zend/tests/fibers/gh10437.phpt
-FAILED	/home/user/php-src/Zend/tests/fibers/gh10496-001.phpt
+PASSED	/home/user/php-src/Zend/tests/fibers/gh10496-001.phpt
 PASSED	/home/user/php-src/Zend/tests/fibers/gh10496-002.phpt
 PASSED	/home/user/php-src/Zend/tests/fibers/gh15108-001.phpt
 PASSED	/home/user/php-src/Zend/tests/fibers/gh15108-002.phpt

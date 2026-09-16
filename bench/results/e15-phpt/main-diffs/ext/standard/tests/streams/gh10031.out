@@ -1,11 +1,8 @@
-Warning: Undefined array key "PHP_SELF" in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
-
-Deprecated: basename(): Passing null to parameter #1 ($path) of type string is deprecated in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
 Server failed to start
 Server output:
 
 Warning: Unknown: Failed to open stream: Cannot allocate memory in Unknown on line 0
 
-Fatal error: Failed opening required '/home/user/php-src/sapi/cli/tests' (include_path='.:') in Unknown on line 0
+Fatal error: Failed opening required '/home/user/php-src/sapi/cli/tests/gh10031' (include_path='.:') in Unknown on line 0
 Stack trace:
 #0 {main}

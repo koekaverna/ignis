@@ -1,15 +1,15 @@
 001- string(4) "0000"
 002- string(1) "0"
-001+ Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:9100 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/gh8472.php on line 10
+001+ Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:9100 (Address already in use) in /home/user/php-src/ext/standard/tests/streams/gh8472.php on line 10
 002+ 
 003+ Fatal error: Uncaught TypeError: stream_get_meta_data(): Argument #1 ($stream) must be of type resource, false given in /home/user/php-src/ext/standard/tests/streams/gh8472.php:4
 004+ Stack trace:
 005+ #0 /home/user/php-src/ext/standard/tests/streams/gh8472.php(4): stream_get_meta_data(false)
 006+ #1 /home/user/php-src/ext/standard/tests/streams/gh8472.php(11): setNonBlocking(false)
-007+ #2 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include('/home/user/php-...')
-008+ #3 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+007+ #2 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+008+ #3 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 009+ #4 [internal function]: Ignis\Loop::poolBody(Array)
-010+ #5 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
-011+ #6 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+010+ #5 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
+011+ #6 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 012+ #7 {main}
 013+   thrown in /home/user/php-src/ext/standard/tests/streams/gh8472.php on line 4

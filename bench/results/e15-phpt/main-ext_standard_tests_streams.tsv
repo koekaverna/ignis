@@ -83,7 +83,7 @@ PASSED	/home/user/php-src/ext/standard/tests/streams/gh14930.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh15155.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh15908.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh15980.phpt
-FAILED	/home/user/php-src/ext/standard/tests/streams/gh16889.phpt
+PASSED	/home/user/php-src/ext/standard/tests/streams/gh16889.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh17067.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh17650.phpt
 PASSED	/home/user/php-src/ext/standard/tests/streams/gh19570.phpt

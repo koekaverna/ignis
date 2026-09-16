@@ -1,0 +1,87 @@
+001- array(8) {
+002-   ["timed_out"]=>
+003-   bool(false)
+004-   ["blocked"]=>
+005-   bool(true)
+006-   ["eof"]=>
+007-   bool(false)
+008-   ["stream_type"]=>
+009-   string(%d) "tcp_socke%s"
+010-   ["mode"]=>
+011-   string(2) "r+"
+012-   ["unread_bytes"]=>
+013-   int(0)
+014-   ["seekable"]=>
+015-   bool(false)
+016-   ["uri"]=>
+017-   string(21) "tcp://127.0.0.1:31332"
+018- }
+001+ Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:31332 (Address already in use) in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.php on line 4
+     
+020- 
+021- Set a timeout on the client and attempt a read:
+022- array(8) {
+023-   ["timed_out"]=>
+024-   bool(true)
+025-   ["blocked"]=>
+026-   bool(true)
+027-   ["eof"]=>
+028-   bool(false)
+029-   ["stream_type"]=>
+030-   string(%d) "tcp_socke%s"
+031-   ["mode"]=>
+032-   string(2) "r+"
+033-   ["unread_bytes"]=>
+034-   int(0)
+035-   ["seekable"]=>
+036-   bool(false)
+037-   ["uri"]=>
+038-   string(21) "tcp://127.0.0.1:31332"
+039- }
+040- 
+041- 
+042- Write some data from the server:
+043- array(8) {
+044-   ["timed_out"]=>
+045-   bool(true)
+046-   ["blocked"]=>
+047-   bool(true)
+048-   ["eof"]=>
+049-   bool(false)
+050-   ["stream_type"]=>
+051-   string(%d) "tcp_socke%s"
+052-   ["mode"]=>
+053-   string(2) "r+"
+054-   ["unread_bytes"]=>
+055-   int(0)
+056-   ["seekable"]=>
+057-   bool(false)
+058-   ["uri"]=>
+059-   string(21) "tcp://127.0.0.1:31332"
+060- }
+061- 
+062- 
+063- Read some data from the client:
+064- array(8) {
+065-   ["timed_out"]=>
+066-   bool(false)
+067-   ["blocked"]=>
+068-   bool(true)
+069-   ["eof"]=>
+070-   bool(false)
+071-   ["stream_type"]=>
+072-   string(%d) "tcp_socke%s"
+073-   ["mode"]=>
+074-   string(2) "r+"
+075-   ["unread_bytes"]=>
+076-   int(0)
+077-   ["seekable"]=>
+078-   bool(false)
+079-   ["uri"]=>
+080-   string(21) "tcp://127.0.0.1:31332"
+081- }
+003+ Fatal error: Uncaught TypeError: stream_socket_accept(): Argument #1 ($socket) must be of type resource, false given in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.php:13
+004+ Stack trace:
+005+ #0 /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.php(13): stream_socket_accept(false)
+006+ #1 {main}
+007+   thrown in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.php on line 13

@@ -1,0 +1,18 @@
+array(2) {
+  [8]=>
+  array(2) {
+    [0]=>
+    string(15) "Read 4097 bytes"
+    [1]=>
+    string(12) "Closing pipe"
+  }
+  [9]=>
+  array(2) {
+    [0]=>
+    string(15) "Read 4097 bytes"
+    [1]=>
+    string(12) "Closing pipe"
+  }
+}
+
+ ** ERROR: process timed out **

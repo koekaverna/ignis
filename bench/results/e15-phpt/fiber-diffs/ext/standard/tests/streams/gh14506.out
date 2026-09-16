@@ -4,9 +4,9 @@ Stack trace:
 #1 [internal function]: Bomb->stream_read(8192)
 #2 /home/user/php-src/ext/standard/tests/streams/gh14506.php(57): fread(Resource id #9, 1)
 #3 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
-#4 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+#4 /home/user/ignis/php/ignis.php(184): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 #5 [internal function]: Ignis\Loop::poolBody(Array)
-#6 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+#6 /home/user/ignis/php/ignis.php(252): Fiber->start(Array)
 #7 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 #8 {main}
   thrown in /home/user/php-src/ext/standard/tests/streams/gh14506.php on line 22
