@@ -553,7 +553,28 @@ unsafe extern "C" fn zif_ignis_offload_stats(_ex: *mut sys::zend_execute_data, r
         sys::add_assoc_long_ex(rv, c"busy".as_ptr(), 4, busy as i64);
         sys::add_assoc_long_ex(rv, c"done".as_ptr(), 4, done as i64);
         sys::add_assoc_long_ex(rv, c"queued".as_ptr(), 6, queued as i64);
+        // Index of this thread if it is an offload worker, else -1 (the worker loop needs it for handle refs).
+        sys::add_assoc_long_ex(rv, c"this".as_ptr(), 4, OFFLOAD_WORKER.with(|c| c.get()).map(|w| w as i64).unwrap_or(-1));
     }
+}
+
+/// `ignis_route_enable(bool $on): void` — the PHP Router is loaded (E16 auto-routing).
+unsafe extern "C" fn zif_ignis_route_enable(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: bool argument.
+    unsafe {
+        let mut on: bool = true;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"b".as_ptr(), &mut on) != sys::SUCCESS {
+            return;
+        }
+        super::route::set_enabled(on);
+        zval::set_null(rv);
+    }
+}
+
+/// `ignis_route_pass(): void` — the Router declines the current call; the original handler runs (E16).
+unsafe extern "C" fn zif_ignis_route_pass(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    super::route::pass();
+    unsafe { zval::set_null(rv) }
 }
 
 /// `ignis_pg_open(string $dsn, int $max): int` — pool id, no I/O (E14).
@@ -666,7 +687,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 26]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -692,12 +713,14 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 26]> = SyncStatic([
     fe(c"ignis_offload_callback", zif_ignis_offload_callback, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_cb_result", zif_ignis_offload_cb_result, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_stats", zif_ignis_offload_stats, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_route_enable", zif_ignis_route_enable, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
     fe_end(),
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 33]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -730,10 +753,12 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 33]> = SyncStatic([
     fe(c"ignis_offload_callback", zif_ignis_offload_callback, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_cb_result", zif_ignis_offload_cb_result, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_stats", zif_ignis_offload_stats, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_route_enable", zif_ignis_route_enable, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 30]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -759,6 +784,8 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
     fe(c"ignis_offload_callback", zif_ignis_offload_callback, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_cb_result", zif_ignis_offload_cb_result, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_stats", zif_ignis_offload_stats, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_route_enable", zif_ignis_route_enable, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_park_on", crate::backend::async_core::zif_ignis_park_on, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_op_result", crate::backend::async_core::zif_ignis_op_result, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),

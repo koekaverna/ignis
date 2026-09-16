@@ -1,5 +1,6 @@
 pub mod embed;
 pub mod module;
+pub mod route;
 pub mod sleep;
 pub mod stream;
 pub mod superglobals;

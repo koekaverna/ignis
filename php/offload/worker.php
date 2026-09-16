@@ -34,7 +34,8 @@ final class WorkerRuntime
         if ($v instanceof CallbackRef) {
             $id = $v->id;
             return static function (mixed ...$args) use ($id): mixed {
-                $r = \ignis_offload_callback(self::$job, $id, serialize($args));
+                // Handles among the callback arguments (curl gives the CurlHandle) travel as refs.
+                $r = \ignis_offload_callback(self::$job, $id, serialize(self::registerObjects($args)));
                 if ($r === false) {
                     throw new \RuntimeException('offload callback failed (caller gone)');
                 }
@@ -53,12 +54,83 @@ final class WorkerRuntime
         return $v;
     }
 
+    /** @var array<int, object> remote objects held for proxies on the fiber threads */
+    private static array $handles = [];
+    private static int $nextHandle = 1;
+    private const ROUTABLE = ['CurlHandle', 'CurlMultiHandle', 'CurlShareHandle', 'PDO', 'PDOStatement', 'SQLite3', 'SQLite3Stmt', 'SQLite3Result'];
+
+    /** Auto-routed call from a fiber thread: "fn:name" / "new:Class" / "method:name" / "free". */
+    public static function routed(string $what, array $args): mixed
+    {
+        if ($what === 'free') {
+            unset(self::$handles[(int) ($args[0]['__ref'][1] ?? 0)]);
+            return null;
+        }
+        $args = self::resolveRefs($args);
+        [$kind, $name] = explode(':', $what, 2);
+        $result = match ($kind) {
+            'fn' => $name(...$args),
+            'new' => new $name(...$args),
+            'method' => self::callMethod(array_shift($args), $name, $args),
+            default => throw new \InvalidArgumentException("bad routed call $what"),
+        };
+        return self::registerObjects($result);
+    }
+
+    private static function callMethod(mixed $obj, string $method, array $args): mixed
+    {
+        if (!\is_object($obj)) {
+            throw new \RuntimeException("routed method $method on a non-object");
+        }
+        return $obj->$method(...$args);
+    }
+
+    /** ['__ref' => [worker, id, class]] → the real object held here; unknown ids are an error. */
+    private static function resolveRefs(mixed $v): mixed
+    {
+        if (\is_array($v)) {
+            if (isset($v['__ref']) && \count($v) === 1) {
+                $id = (int) $v['__ref'][1];
+                if (!isset(self::$handles[$id])) {
+                    throw new \RuntimeException("offload: unknown handle $id on this worker");
+                }
+                return self::$handles[$id];
+            }
+            foreach ($v as $k => $x) {
+                $v[$k] = self::resolveRefs($x);
+            }
+        }
+        return $v;
+    }
+
+    /** Objects of routable classes stay here; the caller gets a reference. */
+    private static function registerObjects(mixed $v): mixed
+    {
+        if (\is_object($v)) {
+            $class = $v::class;
+            if (\in_array($class, self::ROUTABLE, true) || $v instanceof \PDO || $v instanceof \PDOStatement) {
+                $id = self::$nextHandle++;
+                self::$handles[$id] = $v;
+                return ['__ref' => [self::$worker, $id, $v instanceof \PDOStatement ? 'PDOStatement' : ($v instanceof \PDO ? 'PDO' : $class)]];
+            }
+        }
+        if (\is_array($v)) {
+            foreach ($v as $k => $x) {
+                $v[$k] = self::registerObjects($x);
+            }
+        }
+        return $v;
+    }
+
+    public static int $worker = 0;
+
     public static function run(): void
     {
         $prelude = getenv('IGNIS_OFFLOAD_PRELUDE');
         if ($prelude !== false && $prelude !== '') {
             require_once $prelude;
         }
+        self::$worker = (int) (\ignis_offload_stats()['this'] ?? 0);
         while (($job = \ignis_offload_next()) !== null) {
             [$id, $fn, $argsSer] = $job;
             self::$job = $id;
