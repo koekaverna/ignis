@@ -14,6 +14,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc = "0.2"
 anyhow = "1"
+# E9 (ADR-0013): Temporal sdk-core behind a feature; git-only crates (the crates.io alpha is unrelated).
+temporalio-sdk-core = { git = "https://github.com/temporalio/sdk-core", optional = true }
+temporalio-client = { git = "https://github.com/temporalio/sdk-core", optional = true }
+temporalio-protos = { git = "https://github.com/temporalio/sdk-core", optional = true, features = ["serde_serialize"] }
+temporalio-common = { git = "https://github.com/temporalio/sdk-core", optional = true }
+url = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
+futures = { version = "0.3", optional = true }
+
 hyper = { version = "1", features = ["http1", "http2", "server"] }
 http-body-util = "0.1"
 http = "1"
@@ -21,3 +30,6 @@ bytes = "1"
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "http1", "http2"] }
 
 [dev-dependencies]
+
+[features]
+temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:serde_json", "dep:futures"]
