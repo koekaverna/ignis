@@ -1006,6 +1006,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "cc",
  "crossbeam-channel",
  "futures",
  "futures-core",
