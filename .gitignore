@@ -12,3 +12,4 @@ php-src*/
 **/vendor/
 *.so
 *.a
+bench/.*.sh
