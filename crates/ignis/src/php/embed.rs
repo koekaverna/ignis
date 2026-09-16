@@ -134,6 +134,18 @@ impl WorkerThread {
     pub fn run_file(&mut self, path: &Path) -> Result<i32> {
         run_file_on_current_thread(path)
     }
+
+    /// Evaluate PHP source on this thread (E16 offload worker loop embedded in the binary).
+    pub fn eval(&mut self, code: &str, name: &str) -> Result<()> {
+        let code = CString::new(code.trim_start_matches("<?php"))?;
+        let name = CString::new(name)?;
+        // SAFETY: request is started on this thread; zend_eval_stringl compiles and runs the code.
+        let rc = unsafe { sys::zend_eval_stringl(code.as_ptr(), code.as_bytes().len(), std::ptr::null_mut(), name.as_ptr()) };
+        if rc != sys::SUCCESS {
+            bail!("eval failed");
+        }
+        Ok(())
+    }
 }
 
 impl Drop for WorkerThread {

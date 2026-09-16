@@ -5,6 +5,7 @@
 mod backend;
 mod grpc;
 mod http;
+mod offload;
 mod pg;
 mod php;
 mod reactor;
@@ -31,9 +32,13 @@ fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut threads: usize = std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut supervise = false;
+    let mut offload: usize = std::env::var("IGNIS_OFFLOAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     loop {
         if args.len() >= 2 && args[0] == "--threads" {
             threads = args[1].parse().unwrap_or(1);
+            args.drain(0..2);
+        } else if args.len() >= 2 && args[0] == "--offload" {
+            offload = args[1].parse().unwrap_or(0);
             args.drain(0..2);
         } else if !args.is_empty() && args[0] == "--supervise" {
             // Thread 0 stays idle (it owns the SAPI and cannot be respawned); workers 1..=N run the
@@ -45,7 +50,7 @@ fn main() -> ExitCode {
         }
     }
     let Some(script) = args.first().map(PathBuf::from) else {
-        eprintln!("usage: ignis [--threads N] [--supervise] <script.php> [args...]");
+        eprintln!("usage: ignis [--threads N] [--offload N] [--supervise] <script.php> [args...]");
         return ExitCode::from(2);
     };
     let threads = threads.max(1);
@@ -70,6 +75,31 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // E16: offload workers — synchronous PHP threads (own TSRM context, no reactor) running the
+    // embedded worker loop; jobs arrive over channels, answers go back to the caller's reactor.
+    let mut offload_handles = Vec::new();
+    if offload > 0 {
+        offload::init(offload);
+        for i in 0..offload {
+            offload_handles.push(std::thread::Builder::new()
+                .name(format!("ignis-offload-{i}"))
+                .spawn(move || {
+                    php::module::OFFLOAD_WORKER.with(|c| c.set(Some(i)));
+                    let mut w = match php::embed::WorkerThread::attach() {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("offload thread {i}: {e:#}");
+                            return;
+                        }
+                    };
+                    if let Err(e) = w.eval(include_str!("../../../php/offload/worker.php"), "ignis-offload-worker") {
+                        eprintln!("offload thread {i}: {e:#}");
+                    }
+                })
+                .expect("spawn offload thread"));
+        }
+    }
 
     // Worker threads: each attaches to TSRM, gets its own reactor, runs the same script.
     let spawn_worker = |i: usize| {
@@ -155,6 +185,11 @@ fn main() -> ExitCode {
             w = w.max(h.join().unwrap_or(1));
         }
         worst = w;
+    }
+    // E16: offload workers leave their PHP requests before the engine shuts down.
+    offload::shutdown();
+    for h in offload_handles {
+        let _ = h.join();
     }
     drop(engine);
     rt.shutdown_background();

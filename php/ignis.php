@@ -259,6 +259,8 @@ final class Loop
                     if (\is_array($payload) && !isset(self::$waiting[$id])) {
                         if (($payload['kind'] ?? null) === 'cancel') {
                             self::cancelRequest($id, new CancelledException('client disconnected'), (int) $payload['age_us']);
+                        } elseif (($payload['kind'] ?? null) === 'offload_cb') {
+                            (self::$offloadCallbackHandler ?? static fn () => null)($payload); // E16
                         } elseif (isset($payload['method'])) {
                             self::dispatchRequest($id, $payload);
                         }
@@ -293,6 +295,8 @@ final class Loop
 
     /** @var list<\Throwable> rejected futures nobody has awaited (reported when the loop stops) */
     public static array $unobserved = [];
+    /** @var null|callable(array):void set by Ignis\Offload\Client (E16) */
+    public static $offloadCallbackHandler = null;
 
     /** @param callable(Http\Request):Http\Response $handler */
     public static function serve(callable $handler, string $addr): void

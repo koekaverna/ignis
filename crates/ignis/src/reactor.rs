@@ -96,6 +96,8 @@ pub enum Outcome {
     Failed(String),
     /// PHP-facing binary result of a `Custom` op (E10 gRPC): a string, or null for end-of-stream.
     Blob(Option<Bytes>),
+    /// E16: an offload worker asks this thread to run callback `cb` of job `job` with serialized `args`.
+    OffloadCallback { job: u64, seq: u64, cb: u64, args: Bytes },
     Error(String),
 }
 
@@ -288,6 +290,25 @@ impl Reactor {
             tracing::error!(id, "reactor dispatcher is gone; op dropped");
             self.inflight.fetch_sub(1, Ordering::Relaxed);
         }
+        id
+    }
+
+    /// Reserve a completion id that another thread will complete later (`complete`); counts as in flight.
+    pub fn reserve_op(&self) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.inflight.fetch_add(1, Ordering::Relaxed);
+        id
+    }
+
+    /// Any thread: complete a reserved op.
+    pub fn complete(&self, id: u64, outcome: Outcome) {
+        let _ = self.done_tx.send(Completion { id, outcome });
+    }
+
+    /// Any thread: inject a completion with a fresh id (nobody waits on it by id; PHP routes it by kind).
+    pub fn inject(&self, outcome: Outcome) -> u64 {
+        let id = self.reserve_op();
+        self.complete(id, outcome);
         id
     }
 
