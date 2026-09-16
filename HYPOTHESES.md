@@ -94,3 +94,28 @@ and lowers CPU per op at every concurrency, with no penalty on a saturated box a
 idle. But it only pays when the completion lands inside the spin window: a serial local pg query
 improves 1.27–1.34×, while `GET /sleep?ms=1` gets *worse* (3.68→3.84 ms) because a millisecond-scale
 wait pays the spin and then sleeps anyway. Shipped off by default as a tuning knob, not a default.
+
+## H31 (a request is accepted but never answered, under inbound load) — OPEN
+
+**Statement.** Under concurrent inbound load the server occasionally accepts a connection and
+never produces a readable response, so a hooked `file_get_contents` against it returns `false`
+with "Failed to open stream: HTTP request failed!". Rate is roughly 1 in 400–1200.
+
+**How it surfaced.** Not as a new defect but as a newly *visible* one: E6 could not run on this
+box until the port collision was fixed today, and the first honest runs showed `ok=49/50` in about
+one run of three. `bench/e6-fetch.sh` asserts 50/50, so smoke stops there.
+
+**What is already excluded** (V-34): it is not the hooked client — 1500 fetches against an idle
+server are clean; it is not the self-call shape — it reproduces from a separate process with no
+self-call at all; it is not a startup race — batch 1 of 6 was clean and batch 2 failed. The
+captured body is `{"bodies":["slept\n",false,"slept\n"],"ms":203.9}`, and PHP's wording means the
+connection *was* opened and the status line could not be read. The server logs nothing, at
+`RUST_LOG=debug` too.
+
+**Next test.** Instrument the accept path and the hyper service to count connections that are
+accepted and produce no response, and separate "hyper never saw a request" from "PHP never got
+it" from "the response was dropped". `bench/php/e6_underload.php` is the reproducer.
+
+**Why it matters before Phase B.** B1's acceptance ("100k queued requests never exceed the
+configured RSS; p99 of admitted requests unchanged") is measured with exactly this storm shape, so
+a 0.1–0.3 % unanswered rate would sit inside those numbers and be read as queueing behaviour.

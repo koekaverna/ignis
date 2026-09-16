@@ -182,10 +182,25 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   3 × 200 ms, app.php answers its own routes.
 - 2026-09-16T13:05Z — newly visible once E6 actually ran: **one request in 50 fails in ~1 of 3 bench
   runs** (`ok=49`), and `bench/e6-fetch.sh` ends with `[ "$ok" = "$N" ]`, so smoke stops there. Not a
-  regression — the test was not executing on this box before today. Not reproducible under load:
-  150 concurrent `/fetch` after warm-up gave **150/150** with an empty server log, so the lead is a
-  startup race (the bench fires immediately after the readiness probe), not a concurrency defect.
-  Left as an assertion that fails rather than a tolerance that hides it.
+  regression — the test was not executing on this box before today. **Correction (13:40Z): the
+  startup-race reading was wrong.** Six consecutive batches against one server put the failure in
+  batch 2, not batch 1, and it reproduces with no self-call at all from a separate process — see
+  H31 / V-34. Left as an assertion that fails rather than a tolerance that hides it.
 - 2026-09-16T13:05Z — `wrk` was missing from this box (all of V-6/V-15/E4 were measured with it).
   Rebuilt 4.2.0 from source into `~/.cargo/bin`; the build tree under `/tmp/cmp` was deleted per the
   disk rule. B1 needs it.
+- 2026-09-16T13:40Z — **H31 / V-34: a request is accepted and never answered, ~1 in 400–1200 under
+  inbound load.** Chased the E6 flake to a characterised defect. It is not the hooked client (1500
+  fetches against an idle server are clean), not the self-call shape (reproduces from a separate
+  process), and not a startup race (batch 2 of 6 failed, batch 1 did not). PHP's
+  "Failed to open stream: HTTP request failed!" means the connection opened and no status line
+  could be read; the server logs nothing even at `RUST_LOG=debug` — which itself emitted only the
+  two startup lines, so hyper's logs are filtered out at our subscriber level and that wants fixing
+  before the next attempt. Reproducer committed as `bench/php/e6_underload.php`. Left OPEN: this is
+  accept-path/hyper territory and bigger than the harness work it came out of.
+- 2026-09-16T13:40Z — remaining `/home/user` hardcodes closed (owner item d): `e7-revolt.sh` had
+  `IGNIS_PHP_INI` pointing at another machine, so the ini silently did not apply anywhere else;
+  `e15-chaos.sh` generated a `run.php` requiring an absolute `php/ignis.php` from that box.
+  `e15-swoole.sh` and `e15-frankenphp.sh` now fall back to `$HOME`. `bench/frankenphp/Caddyfile`
+  and `bench/fpm/nginx.conf` left alone — neither comparison server is installed here, so a change
+  would be unverifiable; `bench/results/e10-build-complexity.md` is a recorded measurement.

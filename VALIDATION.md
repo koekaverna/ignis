@@ -1175,3 +1175,23 @@ A millisecond-scale wait pays the 100 µs and then sleeps anyway. Hence **off by
 `bench/e15-phpt.sh` locally — fibers main 108 / fiber 78, sockets main 91 / fiber 84, streams main
 133 / fiber 125, all at or above the baseline raised this morning. `scripts/smoke.sh` could not
 complete: an unrelated container holds `:8080`, which the app.php leg hardcodes.
+
+## V-34 — E6 under inbound load: ~0.1–0.3 % of requests accepted and never answered (H31)
+
+Machine: this box, quiet apart from the test. `./target/release/ignis --threads 1
+examples/hello_server.php` on `127.0.0.1:8099`, `IGNIS_POLL_SPIN_US` unset.
+
+| condition | result |
+|---|---|
+| hooked client, idle server (`bench/php/e6_underload.php`, N=150 × 10 rounds) | **1500 / 1500 ok** |
+| same client, server under 50 concurrent `curl /sleep?ms=200` | **1 failure in 1200**, then **2 in 750** on a second run |
+| `bench/e6-fetch.sh` (self-call shape, N=50) | `ok=50` / `ok=49` / `ok=50` / `ok=50` / `ok=50`, and `ok=50` in the green smoke run |
+| six consecutive batches of 50 against one server | batch 1 ok, **batch 2 `ok=49`**, batches 3–6 ok |
+
+Captured failing body: `{"bodies":["slept\n",false,"slept\n"],"ms":203.9}` with
+`Warning: file_get_contents(...): Failed to open stream: HTTP request failed!` — PHP's wording for
+"the connection opened but no status line could be read". Server log empty, including at
+`RUST_LOG=debug` (which emitted only the two startup lines, so hyper's own logs are filtered out at
+our subscriber level — worth fixing before the next attempt).
+
+Excluded by the table above: the hooked client on its own, the self-call shape, and a startup race.
