@@ -2,7 +2,14 @@
 name: ci
 on:
   push:
+    branches: [night-1]
+    branches-ignore: ['claude/**']
+  pull_request:
   workflow_dispatch:
+# A new push cancels the previous run of the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
   PHP_CONFIG: /opt/php85-zts/bin/php-config

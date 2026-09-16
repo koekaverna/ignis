@@ -140,6 +140,7 @@ pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi:
     unsafe {
         super::stream::install();
         super::sleep::install();
+        super::embed::fix_php_binary(_module_number);
     }
     if std::env::var_os("IGNIS_NO_SUPERGLOBALS").is_none() {
         // SAFETY: zend_observer_startup() ran in php_module_startup before MINIT;

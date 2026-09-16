@@ -165,6 +165,36 @@ fn run_file_on_current_thread(path: &Path) -> Result<i32> {
     Ok(status)
 }
 
+/// MINIT: `PHP_BINARY`. php_embed_init() overwrites `executable_location` with argv[0] (the
+/// script), so php_binary_init() finds no executable and registers "" before any MINIT runs.
+/// Re-register the persistent constant from `current_exe()` (E15a finding: suites that re-exec PHP).
+pub unsafe fn fix_php_binary(module_number: std::ffi::c_int) {
+    let Some(exe) = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()) else { return };
+    // SAFETY: MINIT on the main thread, before zend_post_startup copies the constants table for
+    // other threads; the strings are permanent interned strings and never freed.
+    unsafe {
+        let eg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
+        let Some(intern) = sys::zend_string_init_interned else { return };
+        sys::zend_hash_str_del((*eg).zend_constants, c"PHP_BINARY".as_ptr(), 10);
+        let mut c: sys::zend_constant = std::mem::zeroed();
+        c.value.value.str_ = intern(exe.as_ptr() as *const c_char, exe.len(), true);
+        c.value.u1.type_info = sys::IS_INTERNED_STRING_EX;
+        c.name = intern(c"PHP_BINARY".as_ptr(), 10, true);
+        // ZEND_CONSTANT_SET_FLAGS(&c, CONST_PERSISTENT, module_number)
+        c.value.u2.constant_flags = ((module_number as u32) << 16) | 1;
+        sys::zend_register_constant(&mut c);
+        let pg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::core_globals_offset) as *mut sys::_php_core_globals;
+        // PG(php_binary) is read by proc_open-of-PHP helpers; core_globals_dtor free()s it, so it
+        // must come from libc's allocator, not Rust's (mimalloc): strdup.
+        if let Ok(c) = CString::new(exe) {
+            if !(*pg).php_binary.is_null() {
+                libc::free((*pg).php_binary as *mut libc::c_void);
+            }
+            (*pg).php_binary = libc::strdup(c.as_ptr());
+        }
+    }
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         // SAFETY: mirrors php_embed_init; called once on the owning thread.
