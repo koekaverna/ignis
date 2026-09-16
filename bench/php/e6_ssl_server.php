@@ -1,7 +1,8 @@
 <?php
 // Stock-PHP TLS server for the E6' bench: accepts one connection at a time, reads the request,
 // sleeps DELAY_MS, answers a small HTTP response. Run with /opt/php85-zts/bin/php (blocking, in its own process).
-// Env: PORT, DELAY_MS, CERT (PEM with key+cert).
+// Env: PORT, DELAY_MS, CERT (PEM with key+cert), BODY_KB (default 0 = the original tiny body;
+// A6 uses a large one so a single TLS record leaves plaintext buffered inside rustls).
 declare(strict_types=1);
 $port = (int) (getenv('PORT') ?: 8441);
 $delay = (int) (getenv('DELAY_MS') ?: 200);
@@ -21,7 +22,8 @@ while (true) {
     $req = '';
     while (!str_contains($req, "\r\n\r\n") && ($line = fgets($c)) !== false) { $req .= $line; }
     usleep($delay * 1000);
-    $body = "hello over tls from $port\n";
+    $bodyKb = (int) (getenv('BODY_KB') ?: 0);
+    $body = $bodyKb > 0 ? str_repeat('x', $bodyKb * 1024) : "hello over tls from $port\n";
     fwrite($c, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " . strlen($body) . "\r\nConnection: close\r\n\r\n$body");
     fclose($c);
 }
