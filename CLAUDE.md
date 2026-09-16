@@ -57,6 +57,18 @@ One process, two worlds that only ever exchange plain data over channels:
 
 `examples/app.php` is the API spec — the file an application developer should be able to write. Unimplemented parts are feature-guarded and reported, never faked. Change it only with intent.
 
+### Mechanism budget (owner, 2026-09-17)
+
+Three mechanisms and one table, no more: **park** (syscall interposition with a per-symbol
+policy, ADR-0020), **offload** (synchronous worker threads with copy-in/copy-out and worker-pinned
+proxies, ADR-0016), **context** (fiber-switch observer slots, ADR-0006), and one policy table in
+`ignis.toml` — `symbol | PHP function | class → park | offload | block`. Adapters (Revolt,
+symfony/runtime, Laravel, gRPC, Temporal, `Ignis\Pg`) carry no mechanism of their own. The
+transition from today's seven wait mechanisms to this budget, with its measurements and gates, is
+ADR-0037; the inventory is research 29. A new blocking library, PHP function or vendor static is
+a table row, not a hook — anything that needs more is an "outside the three" entry in ADR-0037
+with its reason.
+
 ### Editing rules that come from the architecture
 
 - Every `unsafe` block states why it is sound; the FFI boundary documents ownership, lifetime and who frees. `.claude/hooks/guard-ffi.sh` blocks subagents from editing `crates/ignis/src/php/**`, `crates/ignis-sys/**`, `crates/ignis/src/backend/**` or any file containing `unsafe` — only the main agent touches those.
