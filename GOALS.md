@@ -19,7 +19,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E11 | Cancellation: client disconnect cancels the request fiber and its futures within 10 ms; one wall-clock deadline per request inherited by children | **CONFIRMED** (V-14): 0.78 ms worst case, 504 at 102 ms for a 100 ms deadline |
 | E12 | Isolation: fatal / 30 s CPU loop affects one thread; supervisor restarts it without an opcache reset; pools survive | **CONFIRMED** for threads (V-17); pools do not exist yet (E14) |
 | E13 | State: superglobals + fiber-scoped container swapped on every fiber switch via zend_observer; leak detector | **CONFIRMED** (V-11): 0 mismatches, +100 ns/switch; leak detector is the `Ignis\Scope` dev check |
-| E14 | Connections: runtime-owned pool, lease per fiber, transaction pins the lease, session reset on return | OPEN |
+| E14 | Connections: runtime-owned pool, lease per fiber, transaction pins the lease, session reset on return | **CONFIRMED** (V-21): 200 fibers over 20 connections in 1046 ms, transaction pins one backend, LeaseError without an op, reset verified; pdo_pgsql comparison pending |
 | E15 | Compat: php-src suites (Zend/tests/fibers, ext/standard/tests/streams, ext/sockets/tests) under ignis run-tests with every failure classified; Revolt DriverTest on IgnisDriver 100%; Swoole swoole_runtime hook tests through a shim (report missing hooks); FrankenPHP testdata as integration tests; Symfony + Doctrine suites in chaos mode with zero new failures vs stock PHP | OPEN (added by the owner 2026-09-16T01:48:11Z; split into E15a–e) |
 
 Note on E5: the machine has 4 vCPUs (`nproc`), so "8 threads ≥ 6.5×" cannot
@@ -34,7 +34,7 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15). ~~Cycle 10: E8~~ DONE (V-16).
 
-~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). ~~Cycle 14: E10~~ DONE (V-20). Remaining OPEN: E15 (compat), E14 (connection pool) — each a multi-hour build; see STATUS.md ranking.
+~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). ~~Cycle 14: E10~~ DONE (V-20). ~~Cycle 16: E14~~ DONE (V-21). Remaining OPEN: E15 (compat, in progress with porter) — each a multi-hour build; see STATUS.md ranking.
 
 ## Ranking (after Cycle 0, kept for history)
 

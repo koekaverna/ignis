@@ -366,6 +366,86 @@ unsafe extern "C" fn zif_ignis_grpc_recv(ex: *mut sys::zend_execute_data, rv: *m
     }
 }
 
+/// `ignis_pg_open(string $dsn, int $max): int` — pool id, no I/O (E14).
+unsafe extern "C" fn zif_ignis_pg_open(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: args are VM-owned for the call; the dsn is copied.
+    unsafe {
+        let mut d: *mut c_char = ptr::null_mut();
+        let mut dl: usize = 0;
+        let mut max: sys::zend_long = 10;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"sl".as_ptr(), &mut d, &mut dl, &mut max) != sys::SUCCESS {
+            return;
+        }
+        let dsn = String::from_utf8_lossy(std::slice::from_raw_parts(d as *const u8, dl)).into_owned();
+        zval::set_long(rv, crate::pg::open(dsn, max.max(1) as usize) as i64);
+    }
+}
+
+/// `ignis_pg_acquire(int $pool): int|array` — `['lease' => id]` at once when a connection is idle, else an op whose payload is `{"lease": id}` (E14).
+unsafe extern "C" fn zif_ignis_pg_acquire(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above.
+    unsafe {
+        let mut p: sys::zend_long = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut p) != sys::SUCCESS {
+            return;
+        }
+        if let Some(lease) = crate::pg::try_acquire(p as u64) {
+            zval::set_new_array(rv);
+            sys::add_assoc_long_ex(rv, c"lease".as_ptr(), 5, lease as i64);
+            return;
+        }
+        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::acquire(p as u64))) as i64);
+    }
+}
+
+/// `ignis_pg_query(int $lease, string $sql, string $paramsJson): int` — op; payload `{"rows": [...], "affected": n}` (E14).
+unsafe extern "C" fn zif_ignis_pg_query(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above.
+    unsafe {
+        let mut l: sys::zend_long = 0;
+        let (mut q, mut ql, mut j, mut jl): (*mut c_char, usize, *mut c_char, usize) = (ptr::null_mut(), 0, ptr::null_mut(), 0);
+        if sys::zend_parse_parameters(zval::num_args(ex), c"lss".as_ptr(), &mut l, &mut q, &mut ql, &mut j, &mut jl) != sys::SUCCESS {
+            return;
+        }
+        let sql = String::from_utf8_lossy(std::slice::from_raw_parts(q as *const u8, ql)).into_owned();
+        let params = String::from_utf8_lossy(std::slice::from_raw_parts(j as *const u8, jl)).into_owned();
+        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::query(l as u64, sql, params))) as i64);
+    }
+}
+
+/// `ignis_pg_release(int $lease, bool $reset): int` — op; payload 1 when the connection is idle again (E14).
+unsafe extern "C" fn zif_ignis_pg_release(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above.
+    unsafe {
+        let mut l: sys::zend_long = 0;
+        let mut reset: bool = true;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"lb".as_ptr(), &mut l, &mut reset) != sys::SUCCESS {
+            return;
+        }
+        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::release(l as u64, reset))) as i64);
+    }
+}
+
+/// `ignis_pg_stats(int $pool): ?array` — `[idle, created, available]` (E14).
+unsafe extern "C" fn zif_ignis_pg_stats(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above.
+    unsafe {
+        let mut p: sys::zend_long = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut p) != sys::SUCCESS {
+            return;
+        }
+        match crate::pg::stats(p as u64) {
+            Some((idle, created, available)) => {
+                zval::set_new_array(rv);
+                sys::add_assoc_long_ex(rv, c"idle".as_ptr(), 4, idle as i64);
+                sys::add_assoc_long_ex(rv, c"created".as_ptr(), 7, created as i64);
+                sys::add_assoc_long_ex(rv, c"available".as_ptr(), 9, available as i64);
+            }
+            None => zval::set_null(rv),
+        }
+    }
+}
+
 const fn fe(
     name: &'static CStr,
     handler: unsafe extern "C" fn(*mut sys::zend_execute_data, *mut sys::zval),
@@ -396,7 +476,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 14]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 19]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -410,12 +490,17 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 14]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_pg_open", zif_ignis_pg_open, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_pg_acquire", zif_ignis_pg_acquire, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_pg_query", zif_ignis_pg_query, ARGINFO_GRPC3.0.as_ptr(), 3),
+    fe(c"ignis_pg_release", zif_ignis_pg_release, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_pg_stats", zif_ignis_pg_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 21]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 26]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -436,10 +521,15 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 21]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_pg_open", zif_ignis_pg_open, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_pg_acquire", zif_ignis_pg_acquire, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_pg_query", zif_ignis_pg_query, ARGINFO_GRPC3.0.as_ptr(), 3),
+    fe(c"ignis_pg_release", zif_ignis_pg_release, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_pg_stats", zif_ignis_pg_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 16]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 21]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -453,6 +543,11 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 16]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_pg_open", zif_ignis_pg_open, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_pg_acquire", zif_ignis_pg_acquire, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_pg_query", zif_ignis_pg_query, ARGINFO_GRPC3.0.as_ptr(), 3),
+    fe(c"ignis_pg_release", zif_ignis_pg_release, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_pg_stats", zif_ignis_pg_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_park_on", crate::backend::async_core::zif_ignis_park_on, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_op_result", crate::backend::async_core::zif_ignis_op_result, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),
@@ -516,7 +611,7 @@ mod tests {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
         let names: Vec<String> = FUNCTIONS.0.iter().filter(|f| !f.fname.is_null()).map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string()).collect();
-        for n in ["ignis_stats", "ignis_set_superglobals", "ignis_respond", "ignis_poll", "ignis_grpc_send", "ignis_grpc_end", "ignis_grpc_call", "ignis_grpc_recv"] {
+        for n in ["ignis_stats", "ignis_set_superglobals", "ignis_respond", "ignis_poll", "ignis_grpc_send", "ignis_grpc_end", "ignis_grpc_call", "ignis_grpc_recv", "ignis_pg_open", "ignis_pg_query"] {
             assert!(names.contains(&n.to_string()), "{n} missing");
         }
         let sg = FUNCTIONS.0.iter().find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals").unwrap();

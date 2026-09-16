@@ -5,6 +5,7 @@
 mod backend;
 mod grpc;
 mod http;
+mod pg;
 mod php;
 mod reactor;
 

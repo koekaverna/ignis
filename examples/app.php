@@ -11,6 +11,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../php/ignis.php';
+require __DIR__ . '/../php/pg/ignis-pg.php'; // E14: runtime-owned PostgreSQL pool (route /db needs PG_DSN)
 
 use Ignis\Future;
 use Ignis\Http\Request;   // → E4 (hyper transport)
@@ -72,6 +73,7 @@ Ignis\serve(static function (Request $req) use ($pdo): Response {
         '/users'     => Response::json(usersFromDb($pdo)),
         '/upstream'  => Response::json(upstreamJson('http://127.0.0.1:8080/dashboard')), // self-call, suspends (E6)
         '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
+        '/db'        => Response::json(dbDemo()),                                             // pool lease per fiber, transaction pins it (E14)
         '/sleep'     => (static function () use ($req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
@@ -79,3 +81,20 @@ Ignis\serve(static function (Request $req) use ($pdo): Response {
         default      => Response::text("not found\n", 404),
     };
 });
+
+/** E14: one lease per fiber; a transaction keeps one backend; the query parks the fiber, not the thread. */
+function dbDemo(): array
+{
+    static $pool = null;
+    $dsn = getenv('PG_DSN');
+    if ($dsn === false) {
+        return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
+    }
+    $pool ??= new Ignis\Pg\Pool($dsn, 10);
+    return $pool->transaction(static fn (Ignis\Pg\Lease $l) => [
+        'backend' => $l->backendPid(),
+        'now' => $l->query('SELECT now()::text AS t')[0]['t'],
+        'sleep_ms' => (int) $l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0]['d'],
+        'pool' => $pool->stats(),
+    ]);
+}

@@ -10,10 +10,10 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 5. Reactive fork-based scaling lag → fibers spawn in microseconds; threads start once. — **ADDRESSED** (V-4: 4.5 µs per job on a warm pool).
 6. 30–80 MB per worker; pool sized by RAM → per-request memory is a fiber stack. — ADDRESSED with a caveat (V-5: ~34 KB RSS per parked fiber; 16 KiB of it is Zend's fixed VM stack page).
 7. Framework bootstrap per request → worker mode, kernel boots once. — **ADDRESSED** for the Ignis API (H6) and for Symfony (ADR-0011, V-16: kernel booted once, 7.8k req/s through it).
-8. No connection pool; pconnect leaks transactions → runtime-owned pool with lease and session reset on return. — NOT STARTED (E14).
+8. No connection pool; pconnect leaks transactions → runtime-owned pool with lease and session reset on return. — **ADDRESSED** (ADR-0015, V-21): runtime-owned tokio-postgres pool, lease per fiber, transaction pins the lease, one-round-trip session reset on return, second acquire in a fiber = LeaseError.
 
 ### RoadRunner
-1. State discipline pushed to the developer: close descriptors, avoid state pollution, close connections after every iteration → connections belong to the runtime; nothing to close. — NOT STARTED (E14).
+1. State discipline pushed to the developer: close descriptors, avoid state pollution, close connections after every iteration → connections belong to the runtime; nothing to close. — **ADDRESSED** for PostgreSQL (V-21: connections belong to the runtime; a lease released or destructed is reset before reuse); MySQL/Redis not started.
 2. Leaks handled by memory-limit restarts and gc_collect_cycles per request → allocator-level leak detector in dev, per-thread supervisor in prod, GC scheduled by the runtime off the hot path. — **ADDRESSED** for the runtime itself (V-10: 4.6M requests, PHP heap flat to the byte, no gc_collect_cycles per request); leak detector and supervisor NOT STARTED (E12, E13).
 3. One request per worker; I/O-bound apps sized by memory → fibers. — **ADDRESSED** (V-5). gRPC evidence in V-20: 100 concurrent 200 ms calls take 5.03 s on RoadRunner with 4 workers and 215 ms on one Ignis thread.
 4. Shared state via RPC to Go (KV = network hop) → Table in process memory. — NOT STARTED.
