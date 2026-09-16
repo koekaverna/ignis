@@ -1,14 +1,12 @@
-Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:74321 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/bug69521.php on line 3
-
 Warning: stream_socket_client(): Unable to connect to tcp://127.0.0.1:74321 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/bug69521.php on line 5
 
 Fatal error: Uncaught TypeError: fwrite(): Argument #1 ($stream) must be of type resource, false given in /home/user/php-src/ext/standard/tests/streams/bug69521.php:10
 Stack trace:
 #0 /home/user/php-src/ext/standard/tests/streams/bug69521.php(10): fwrite(false, 'test')
-#1 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include('/home/user/php-...')
-#2 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+#1 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+#2 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
 #3 [internal function]: Ignis\Loop::poolBody(Array)
-#4 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
-#5 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+#4 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+#5 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
 #6 {main}
   thrown in /home/user/php-src/ext/standard/tests/streams/bug69521.php on line 10

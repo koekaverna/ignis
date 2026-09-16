@@ -33,7 +33,7 @@ SKIPPED	/home/user/php-src/ext/sockets/tests/socket_clear_error-win32.phpt
 PASSED	/home/user/php-src/ext/sockets/tests/socket_clear_error.phpt
 PASSED	/home/user/php-src/ext/sockets/tests/socket_cmsg_credentials.phpt
 SKIPPED	/home/user/php-src/ext/sockets/tests/socket_cmsg_credentials_fbsd.phpt
-FAILED	/home/user/php-src/ext/sockets/tests/socket_cmsg_rights.phpt
+PASSED	/home/user/php-src/ext/sockets/tests/socket_cmsg_rights.phpt
 PASSED	/home/user/php-src/ext/sockets/tests/socket_cmsg_udp_segment.phpt
 PASSED	/home/user/php-src/ext/sockets/tests/socket_connect_params.phpt
 SKIPPED	/home/user/php-src/ext/sockets/tests/socket_create_listen-nobind.phpt

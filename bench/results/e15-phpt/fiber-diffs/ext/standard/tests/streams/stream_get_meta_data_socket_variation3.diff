@@ -1,65 +1,33 @@
-001- array(8) {
-002-   ["timed_out"]=>
-003-   bool(false)
-004-   ["blocked"]=>
-005-   bool(true)
-006-   ["eof"]=>
-007-   bool(false)
-008-   ["stream_type"]=>
+--
+       ["eof"]=>
+       bool(false)
+       ["stream_type"]=>
 009-   string(%d) "tcp_socke%s"
-010-   ["mode"]=>
-011-   string(2) "r+"
-012-   ["unread_bytes"]=>
-013-   int(0)
-014-   ["seekable"]=>
-015-   bool(false)
-016-   ["uri"]=>
-017-   string(21) "tcp://127.0.0.1:31333"
-018- }
-001+ Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:31333 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.php on line 4
-     
-020- 
-021- Set blocking to false:
-022- bool(true)
-023- array(8) {
-024-   ["timed_out"]=>
-025-   bool(false)
-026-   ["blocked"]=>
+009+   string(9) "ignis_tcp"
+       ["mode"]=>
+       string(2) "r+"
+       ["unread_bytes"]=>
+--
+       ["timed_out"]=>
+       bool(false)
+       ["blocked"]=>
 027-   bool(false)
-028-   ["eof"]=>
-029-   bool(false)
-030-   ["stream_type"]=>
+027+   bool(true)
+       ["eof"]=>
+       bool(false)
+       ["stream_type"]=>
 031-   string(%d) "tcp_socke%s"
-032-   ["mode"]=>
-033-   string(2) "r+"
-034-   ["unread_bytes"]=>
-035-   int(0)
-036-   ["seekable"]=>
-037-   bool(false)
-038-   ["uri"]=>
-039-   string(21) "tcp://127.0.0.1:31333"
-040- }
-041- 
-042- 
-043- Set blocking to true:
-044- bool(true)
-045- array(8) {
-046-   ["timed_out"]=>
-047-   bool(false)
-048-   ["blocked"]=>
-049-   bool(true)
-050-   ["eof"]=>
-051-   bool(false)
-052-   ["stream_type"]=>
+031+   string(9) "ignis_tcp"
+       ["mode"]=>
+       string(2) "r+"
+       ["unread_bytes"]=>
+--
+       ["eof"]=>
+       bool(false)
+       ["stream_type"]=>
 053-   string(%d) "tcp_socke%s"
-054-   ["mode"]=>
-055-   string(2) "r+"
-056-   ["unread_bytes"]=>
-057-   int(0)
-058-   ["seekable"]=>
-059-   bool(false)
-060-   ["uri"]=>
-061-   string(21) "tcp://127.0.0.1:31333"
-062- }
-003+ Warning: fsockopen(): Unable to connect to tcp://127.0.0.1:31333:-1 (connect 127.0.0.1:31333: Connection refused (os error 111)) in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.php on line 7
-004+ Unable to create socket
+053+   string(9) "ignis_tcp"
+       ["mode"]=>
+       string(2) "r+"
+       ["unread_bytes"]=>
+--

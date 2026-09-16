@@ -1,5 +1,1 @@
-Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:8964 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/bug70198_svr_81cf199cafbb7c888f61208d87db50e4.php on line 2
- (0)
-
-Warning: stream_socket_client(): Unable to connect to tcp://127.0.0.1:8964 (connect 127.0.0.1:8964: Connection refused (os error 111)) in /home/user/php-src/ext/standard/tests/streams/bug70198.php on line 35
-connect 127.0.0.1:8964: Connection refused (os error 111) (0)
+** ERROR: process timed out **

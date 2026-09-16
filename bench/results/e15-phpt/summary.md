@@ -2,12 +2,12 @@
 
 | suite | mode | total | passed | failed | skipped | warned | borked | wall s |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| Zend/tests/fibers | stock | 110 | 108 | 0 | 2 | 0 | 0 | 9 |
-| Zend/tests/fibers | main | 110 | 108 | 0 | 2 | 0 | 0 | 26 |
-| Zend/tests/fibers | fiber | 110 | 77 | 31 | 2 | 0 | 0 | 35 |
-| ext/sockets/tests | stock | 118 | 80 | 0 | 38 | 0 | 0 | 35 |
-| ext/sockets/tests | main | 118 | 79 | 1 | 38 | 0 | 0 | 121 |
-| ext/sockets/tests | fiber | 118 | 74 | 6 | 38 | 0 | 0 | 114 |
-| ext/standard/tests/streams | stock | 160 | 138 | 0 | 22 | 0 | 0 | 12 |
-| ext/standard/tests/streams | main | 160 | 124 | 14 | 22 | 0 | 0 | 70 |
-| ext/standard/tests/streams | fiber | 160 | 102 | 36 | 22 | 0 | 0 | 161 |
+| Zend/tests/fibers | stock | 110 | 108 | 0 | 2 | 0 | 0 | 1 |
+| Zend/tests/fibers | main | 110 | 108 | 0 | 2 | 0 | 0 | 2 |
+| Zend/tests/fibers | fiber | 110 | 77 | 31 | 2 | 0 | 0 | 2 |
+| ext/sockets/tests | stock | 118 | 80 | 0 | 38 | 0 | 0 | 3 |
+| ext/sockets/tests | main | 118 | 80 | 0 | 38 | 0 | 0 | 8 |
+| ext/sockets/tests | fiber | 118 | 75 | 5 | 38 | 0 | 0 | 8 |
+| ext/standard/tests/streams | stock | 160 | 138 | 0 | 22 | 0 | 0 | 5 |
+| ext/standard/tests/streams | main | 160 | 131 | 7 | 22 | 0 | 0 | 7 |
+| ext/standard/tests/streams | fiber | 160 | 116 | 22 | 22 | 0 | 0 | 52 |
