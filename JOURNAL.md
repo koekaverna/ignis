@@ -117,3 +117,4 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T05:26:16Z CI #30 green on 91f1afa: nextest+miri, smoke, E9, E15 phpt/revolt/swoole/frankenphp all success (all 7 jobs). model=main
 - 2026-09-16T05:31:27Z BRANCHES — owner: assemble `main` without the extras, keep history. Done as a fast-forward of `night-1` plus one commit that drops the php-src `.diff/.out` copies (gitignored), retargets the workflows (ci: main + night-*, php-image: main), updates CLAUDE.md; scratch-branch deletion and the `night-1-done` tag push were refused by the git proxy — left to the owner (commands in DECISIONS.md). model=main
 
+- 2026-09-16T05:44:05Z CI #35 green on main (8ffd758): all 7 jobs success. model=main
