@@ -339,3 +339,10 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   quantity from V-16's prod 200 — BACKLOG M3-8 adds the prod leg; my re-run waits for a quiet box.
   Batch 2 so far: H-2, H-3, H-7 validated and committed; M5-1's release workflow and
   `scripts/release.sh` dry-run by me in a worktree.
+- 2026-09-16T21:30Z — **M5-1 validated** (sonnet): `.github/workflows/release.yml` on a `v*` tag —
+  build + push `ghcr.io/koekaverna/ignis:<tag>`, image.yml's smoke, then the honesty check that
+  `ignis --version` inside the tagged image equals the tag, then binary + `libphp.so` tarball with
+  the six runtime libraries named, release notes from `git log <prev>..<tag>`. `scripts/release.sh`
+  bumps the version, refreshes Cargo.lock offline, commits, and prints the tag commands it must not
+  run (the session git proxy refuses tag pushes). My own worktree dry run: both files at 0.0.2-rc.1,
+  commands printed, worktree removed. The first real run is the owner's tag push.
