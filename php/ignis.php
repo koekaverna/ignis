@@ -447,6 +447,26 @@ final class Loop
         self::$cancelLatencyUsMax = max(self::$cancelLatencyUsMax, $ageUs + (int) ((hrtime(true) - $t0) / 1000));
     }
 
+    /**
+     * `Fiber::throw()` on a fiber that has no handler for `$e` re-throws it straight back out at
+     * the caller. Unguarded user code is the normal case, so without this the cancellation walked
+     * back up through cancelRequest() into the event loop and killed the whole worker thread's
+     * script — one disconnected client took out a quarter of the server's capacity. Found by the
+     * A3 soak: 6 dead threads in 10.1M requests, and without --supervise the process itself died.
+     * Anything OTHER than the exception we injected (a `finally` that throws while unwinding, say)
+     * is a genuine user error and is kept for the unobserved-error report rather than swallowed.
+     */
+    private static function throwAndAbsorb(\Fiber $fiber, \Throwable $e): void
+    {
+        try {
+            $fiber->throw($e);
+        } catch (\Throwable $t) {
+            if ($t !== $e) {
+                self::$unobserved[] = $t;
+            }
+        }
+    }
+
     private static function throwInto(\Fiber $fiber, \Throwable $e): void
     {
         if ($fiber->isTerminated() || !$fiber->isSuspended()) {
@@ -456,7 +476,7 @@ final class Loop
         if ($opId !== null) {
             unset(self::$waiting[$opId]); // parked in userland (Ignis\sleep / await)
             ++self::$resumes;
-            $fiber->throw($e);
+            self::throwAndAbsorb($fiber, $e);
             return;
         }
         // Parked in a C stream op? Let Rust resume it with the exception.
@@ -464,13 +484,23 @@ final class Loop
             if ($f === $fiber) {
                 unset(self::$waiting[$op]);
                 ++self::$resumes;
-                $fiber->throw($e);
+                self::throwAndAbsorb($fiber, $e);
                 return;
             }
         }
         if (\function_exists('ignis_cancel_parked_any')) {
             // We do not know the op id of a C park; the Rust side searches its table.
-            \ignis_cancel_parked_any($fiber, $e);
+            // Guarded for the same reason as throwAndAbsorb, and this is the path that actually
+            // killed worker threads: zend_fiber_resume_exception leaves the throwable pending in
+            // C when the fiber has no handler, so it surfaces on return here — with no throwInto
+            // frame in the trace, which is why guarding Fiber::throw() alone did not help.
+            try {
+                \ignis_cancel_parked_any($fiber, $e);
+            } catch (\Throwable $t) {
+                if ($t !== $e) {
+                    self::$unobserved[] = $t;
+                }
+            }
         }
     }
 

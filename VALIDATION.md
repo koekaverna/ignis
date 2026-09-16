@@ -947,3 +947,69 @@ socketpair whose peer never read, so the buffer filled and writes began to park 
 parking path, not the ready path); the second sent UDP to a *closed* port, and a few hundred thousand
 ICMP port-unreachable replies slowed the whole box by ~10x. The committed version sends to a bound
 socket in the same process.
+
+## V-30 — A3 fallout: a client disconnect could kill a whole worker thread (CONFIRMED defect, fixed and verified by main)
+
+Date: 2026-09-16T10:46:59Z. Box: 24-thread Ryzen AI 9 HX 370 / 30 GB, WSL2. Found by the bencher during A3 calibration;
+reproduced, root-caused, fixed and re-verified by the main agent — the numbers below are the main
+agent's own runs.
+
+### The defect
+
+A client disconnect while a request is awaiting child fibers throws `Ignis\CancelledException` into a
+child that has no handler for it. `Fiber::throw()` on an unguarded fiber re-throws straight back out
+at the caller, and — the part that actually bit — `ignis_cancel_parked_any()` (the Rust path for a
+fiber parked in a C stream op) leaves the throwable **pending in C** via
+`zend_fiber_resume_exception`, so it surfaces after the call returns, inside `Loop::runUntil()`, with
+no `throwInto` frame in the trace. Uncaught there, it ends the worker thread's whole script.
+
+Unguarded user code is the normal case, so one disconnected client took out a quarter of the
+server's capacity. Rate under sustained mixed load: **6 dead threads in 10,081,952 requests** and
+4 in 9,169,719 (bencher's two soak runs). Without `--supervise` the process itself dies.
+
+Reproduction (main agent, before the fix):
+
+```
+IGNIS_LISTEN=127.0.0.1:8099 ./target/release/ignis --threads 4 --offload 4 bench/php/a3-soak.php &
+for i in $(seq 1 8); do wrk -t4 -c200 -d5s -s mix.lua http://127.0.0.1:8099/; done
+→ Fatal error: Uncaught Ignis\CancelledException: client disconnected in php/ignis.php:303
+```
+
+Short chained bursts are what trigger it — each `wrk` run closes all its connections at once. A
+single long run essentially never hits it, which is why 10M requests found it only 6 times while a
+60-second burst sequence finds it every time.
+
+### The fix
+
+`Loop::throwAndAbsorb()` guards both `Fiber::throw()` sites, and the `ignis_cancel_parked_any()` call
+is guarded the same way. The exception we injected is absorbed — that is the whole point of
+cancelling unguarded code. Anything **else** (a `finally` that throws while unwinding) is kept in
+`Loop::$unobserved` rather than swallowed.
+
+Guarding only the two `Fiber::throw()` calls was NOT enough and the first verification run still died
+(4 fatals, server gone by burst 12). The stack trace said why — the exception surfaced directly in
+`runUntil` with no `throwInto` frame — which is what pointed at the C path.
+
+### After the fix (main agent)
+
+| check | result |
+|---|---|
+| 12 burst rounds × `wrk -t4 -c200 -d5s` | server **alive**, **0** fatals, **0** supervisor restarts |
+| 442,120 resumes, 224 fibers, 4 threads | `stalled: 0` |
+| 20 requests aborted at 200 ms | **20/20 cancelled** |
+| worst cancel latency | **279 µs** (E11 requires < 10 ms; V-14 recorded 0.78 ms) |
+| `finally` blocks run | **40** = 20 × (handler + child fiber) — cancellation still unwinds user code |
+| `Ignis\deadline(100)` around a 1000 ms sleep | **504 in 103.7 ms** |
+| unit tests | 10/10 |
+
+So the fix removes the thread kill without weakening cancellation: every `finally` still runs and the
+latency is 2.8× better than the recorded E11 worst case.
+
+### Note on the A3 soak numbers themselves
+
+The RSS curve from the two soak runs is the **bencher's** measurement and has NOT been re-run by the
+main agent, so by the C15 rule it stays out of this entry as a validated number. It is recorded in
+JOURNAL and summarised here only as context: RSS grew ~+50 % between the 1M and 10M checkpoints, but
+the growth is front-loaded and stops trending at roughly 5M, after which readings oscillate in an
+87–110 MB band. A duplicate re-run was deliberately not performed: RSS is not a noisy quantity across
+runs, so repeating an identical configuration would have re-measured what was never in doubt.
