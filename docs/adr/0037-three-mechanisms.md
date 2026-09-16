@@ -113,11 +113,11 @@ ADR's own §7 is the gate):
 3. The libphp audit exists with a verdict per symbol for every group whose rows entered the seed
    (research 30 groups (a), (b), (c); groups (d)/(e) cover what stays `block`).
 
-**Still unmeasured, and named as such:** acceptance 5 of the owner's E18 spec (H36 — a library
-holding a mutex across a blocking call must deadlock under `park` and pass under `block`). The
-shim and its harness are written (`bench/e18/locklib.c`, `bench/php/e18_deadlock.php`,
-`bench/e18-deadlock.sh`); the internal functions that let PHP call the shim are not, so no number
-exists. Until it does, every `park` row rests on the source audit (research 27, 30) alone.
+4. **The lock hazard is measured, not assumed** (V-51, H36): a shim holding a mutex across a
+   blocking `read` breaks under `park` (fiber 1 finds the mutex held by a parked fiber) and
+   serializes cleanly under `block`. This is what makes §5's risk table and research 30's
+   acceptance real rather than rhetorical: a `park` row added without a source audit fails exactly
+   this way, and in a real library nothing reports it — the thread simply stops.
 
 **Kill criterion.** Any E15 suite dropping below its baseline after a deletion that cannot be
 fixed inside park within one cycle → that hook returns, and this ADR records it in an **"outside
@@ -127,6 +127,10 @@ exceptions.
 | outside the three | reason | since |
 |---|---|---|
 | (none yet) | | |
+
+Note: the `park` policy itself is the containment for the lock hazard — a library that holds a
+lock across a blocking call stays `block` (research 27: libphp's opcache path; research 30 group
+(d): `fcntl(F_SETLKW)`), and V-51 shows what happens when one does not.
 
 ## Progress
 

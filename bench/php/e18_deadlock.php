@@ -25,10 +25,10 @@ foreach ([0, 1] as $i) {
         return ['fiber' => $i, 'result' => $n, 'ms' => intdiv(hrtime(true) - $s, 1_000_000)];
     });
 }
-$fs[] = Ignis\async(static function () use ($pipe): void {
-    Ignis\sleep(200);                   // let both fibers reach the call first
-    ignis_locklib_write($pipe[1], "x");
-});
+// The feeder is an OS thread, not a fiber: under `block` the PHP thread sits inside read(), so a
+// fiber writer would never run and the control arm would hang for the wrong reason. Two bytes, so
+// the `block` arm can serve both calls in turn (~400 ms) while `park` needs only the first.
+ignis_locklib_feed($pipe[1], 200, 2);
 foreach (Ignis\all($fs) as $res) {
     if (is_array($res)) {
         printf("  fiber %d: result=%d (%s) after %d ms\n", $res['fiber'], $res['result'],

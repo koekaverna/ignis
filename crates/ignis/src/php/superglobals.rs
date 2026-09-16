@@ -222,6 +222,7 @@ pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi:
         #[cfg(feature = "universal-park")]
         super::park::install(); // E18 (ADR-0020)
         super::route::install();
+        super::locklib::install(); // H36 harness, only when IGNIS_LOCKLIB is set
         super::embed::fix_php_binary(_module_number);
     }
     if std::env::var_os("IGNIS_NO_SUPERGLOBALS").is_none() {

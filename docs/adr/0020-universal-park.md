@@ -8,6 +8,11 @@ handles stay on the fiber's thread). Depends on ADR-0007 (the stream factory sta
 (cancellation of a parked fiber), ADR-0016 (offload stays as the fallback for what cannot park).
 Research: 26 (symbols), 27 (locks), 28 (interposition feasibility).
 
+
+**Acceptance 5 measured 2026-09-17 (V-51, H36):** the shim deadlocks under `park` and
+serializes under `block`, as this ADR's kill criterion assumed. The hazard model is confirmed; the
+source audits (research 27, 30) are what keep the seeded libraries out of it.
+
 ## Context
 
 Today a blocking call inside a C library — `curl_exec`, a `pdo_pgsql` query, `getaddrinfo` from

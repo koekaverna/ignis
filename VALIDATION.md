@@ -1935,3 +1935,47 @@ with the TSRM mutex held on every cache-miss compile, and parking there deadlock
 *regular file* is nobody's mechanism — epoll refuses regular files, so `ext/session`'s
 `flock(LOCK_EX)` on the session file stalls the whole OS thread, not one fiber (ADR-0024 non-goal,
 BACKLOG R-SESS).
+
+## V-51 — H36: the lock hazard is real and the policy contains it (CONFIRMED, the last of the owner's five E18 acceptances)
+
+Date: 2026-09-16T19:09:40Z. Found missing by the doc reconciliation earlier today: ADR-0020 acceptance 5,
+ADR-0037 §5's risk table and research 30's acceptance all cited "H36's shim", and the shim had
+never been written, let alone run — every `park` row rested on the source audit alone.
+
+**What was built.** `bench/e18/locklib.c` (research 27's sketch, now real): `locklib_call(fd, buf,
+len, trylock)` takes a non-recursive `pthread_mutex`, calls `read(fd)`, unlocks — the hazard shape
+exactly. `nm -D` confirms it imports `read@GLIBC_2.2.5`, so inside the process it binds to the
+interposer in the executable (research 28). This build has no `ext/ffi` and PHP hands out no raw
+fds, so `crates/ignis/src/php/locklib.rs` registers four internal functions **only when
+`IGNIS_LOCKLIB` names the .so** (`zend_register_functions` at MINIT, not the static table, so a
+normal build has no trace of them): `ignis_locklib_pipe`, `ignis_locklib_write`,
+`ignis_locklib_feed`, `ignis_locklib_call`.
+
+**The test** (`bench/php/e18_deadlock.php`, driven by `bench/e18-deadlock.sh`): one PHP thread, an
+empty pipe, two fibers calling `locklib_call`; fiber 1 passes `trylock`, so a mutex held by another
+fiber is *reported* (`-2`) instead of hanging the harness. A detached **OS thread** feeds the pipe
+one byte every 200 ms — the first version had a fiber do it, and the `block` arms timed out at 30 s
+because the PHP thread was inside `read` and the writer fiber could never run: the control was
+measuring the stall, not the lock. That version's numbers are discarded.
+
+| policy | fiber 0 | fiber 1 | total |
+|---|---|---|---|
+| `IGNIS_PARK=liblocklib` (**park**) | returned 1 after 200 ms — it **parked inside `read` holding the mutex** | **`-2` at 0 ms: the mutex is held by a parked fiber** | **200 ms** |
+| `IGNIS_PARK=libcurl` (liblocklib absent → **block**) | 1 after 200 ms | 1 after 200 ms | **400 ms**, serialized |
+| `IGNIS_NO_UNIVERSAL_PARK=1` | 1 after 200 ms | 1 after 200 ms | 400 ms |
+
+Two runs, identical. `cargo nextest` 9/9, build clean.
+
+**Reading.** H36's statement holds: a library that holds a lock across a blocking call **does**
+break under `park` — fiber 0 suspends inside the critical section and the mutex stays owned by a
+fiber that will not run until the loop resumes it, so any other fiber on that thread is stuck — and
+**does not** break under `block`, where the calls simply serialize. The hazard model behind ADR-0020's
+policy table is confirmed by measurement, not only by reading source. It also confirms the
+converse: the source audit is not optional decoration — research 27 and 30 are what keep
+libcurl/libpq/OpenSSL/libphp off this outcome, and a future row added without an audit gets exactly
+this failure, silently (in a real library there is no `trylock` to report it — the thread just
+stops).
+
+With this, all five owner acceptances of E18 have a number: (1) (2) V-45, (3) V-45 + research 28
+(curl's threaded resolver is caught by `poll`, not by a resolver op — recorded as "not as written"),
+(4) research 28's 8.3 ns, (5) here.

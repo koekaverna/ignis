@@ -1,5 +1,6 @@
 pub mod park;
 pub mod embed;
+pub mod locklib;
 pub mod module;
 pub mod route;
 pub mod wait;

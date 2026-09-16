@@ -148,7 +148,12 @@ resolver that answers after 200 ms ≈ 200 ms; control ≈ 10 s.
 — two builds (feature `universal-park` on/off), 10 M zero-length `read` on a non-PHP thread, 3 reps
 each, delta reported. Research 28 measured ≈ 8.3 ns in a scratch binary.
 
-**H36 (acceptance 5).** The lock hazard is real and the policy contains it: a library that takes a
+**H36 (acceptance 5) — CONFIRMED (V-51, 2026-09-17).** Measured: under `park` fiber 0 suspends
+inside the critical section and fiber 1 finds the mutex held (`-2`, reported via `trylock` rather
+than hanging); under `block` the two calls serialize (400 ms, both fine). The shim and harness
+(`bench/e18/locklib.c`, `crates/ignis/src/php/locklib.rs`, `bench/php/e18_deadlock.php`,
+`bench/e18-deadlock.sh`) were written for it — they had never existed, although three documents
+cited them. Original statement: a library that takes a
 pthread mutex, calls `read` on a pipe and unlocks (research 27's `locklib.c`) **deadlocks** under
 `park` when two fibers on one thread use it (test times out; the mutex owner in the trace is the
 same thread) and **passes** under `block`. Test: `bench/e18-deadlock.sh`. A `park` run that does not
