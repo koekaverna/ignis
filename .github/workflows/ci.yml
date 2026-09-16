@@ -1,0 +1,157 @@
+# Correctness and compat suites run here (owner rule 2026-09-16); local runs are for VALIDATION numbers and perf.
+name: ci
+on:
+  push:
+  workflow_dispatch:
+env:
+  CARGO_TERM_COLOR: always
+  PHP_CONFIG: /opt/php85-zts/bin/php-config
+  LD_LIBRARY_PATH: /opt/php85-zts/lib
+jobs:
+  unit:
+    name: nextest + miri
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: nextest
+        run: timeout 900 cargo +stable nextest run --workspace 2>&1 | tee /tmp/nextest.log
+      - name: miri (zval + module helpers)
+        run: |
+          cargo +nightly miri setup
+          timeout 1200 cargo +nightly miri test -p ignis -- php::zval php::module 2>&1 | tee /tmp/miri.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: unit-logs
+          path: /tmp/*.log
+
+  smoke:
+    name: scripts/smoke.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ignis
+          POSTGRES_PASSWORD: ignis
+          POSTGRES_DB: ignis
+        options: >-
+          --health-cmd "pg_isready -U ignis" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: composer install (E7 Revolt/AMPHP examples)
+        run: cd php/amphp && timeout 600 composer install --prefer-source --no-interaction --quiet || echo "composer failed; E7 will be skipped"
+      - name: smoke (every step under timeout)
+        run: PGHOST=postgres timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-logs
+          path: |
+            /tmp/*.log
+            bench/results/
+
+  e9-temporal:
+    name: E9 temporal (sdk-core in-process, replay + negative control)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: temporal
+      # GitHub service containers cannot take a command, and the dev server needs `server start-dev`;
+      # the bench script starts it itself from $TEMPORAL.
+      - name: temporal CLI
+        run: |
+          curl -sSL "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" -o /tmp/temporal.tar.gz
+          tar -xzf /tmp/temporal.tar.gz -C /usr/local/bin temporal && temporal --version
+      - name: build with the temporal feature
+        run: timeout 2400 cargo build --release -p ignis --features temporal
+      - name: live workflow + replay + mutated replay must fail
+        run: |
+          TEMPORAL=/usr/local/bin/temporal timeout 300 bench/e9-temporal.sh 2>&1 | tee /tmp/e9.log
+          grep -q "REPLAY_OK" /tmp/e9.log && grep -q "REPLAY_FAILED" /tmp/e9.log && grep -q "Status.*COMPLETED" /tmp/e9.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e9-logs
+          path: /tmp/*.log
+
+  e15:
+    name: E15 ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [phpt, revolt, swoole, frankenphp]
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: timeout 1800 cargo build --release -p ignis
+      - name: php-src phpt suites (fibers, streams, sockets) in stock / main / fiber mode
+        if: matrix.suite == 'phpt'
+        run: |
+          timeout 2400 bench/e15-phpt.sh 2>&1 | tee /tmp/e15-phpt.log
+          scripts/ci-gate.sh phpt /tmp/e15-phpt.log
+      - name: Revolt DriverTest on IgnisDriver
+        if: matrix.suite == 'revolt'
+        run: |
+          (cd php/amphp && timeout 600 composer install --prefer-source --no-interaction --quiet)
+          timeout 900 bench/e15-revolt.sh 2>&1 | tee /tmp/e15-revolt.log
+          scripts/ci-gate.sh revolt /tmp/e15-revolt.log
+      - name: Swoole swoole_runtime through the shim
+        if: matrix.suite == 'swoole'
+        run: |
+          git clone -q --depth 1 https://github.com/swoole/swoole-src /home/user/cmp/swoole-src
+          timeout 1800 bench/e15-swoole.sh --all 2>&1 | tee /tmp/e15-swoole.log
+          scripts/ci-gate.sh swoole /tmp/e15-swoole.log
+      - name: FrankenPHP testdata through the classic-mode adapter
+        if: matrix.suite == 'frankenphp'
+        run: |
+          git clone -q --depth 1 https://github.com/php/frankenphp /home/user/frankenphp
+          timeout 900 bench/e15-frankenphp.sh 2>&1 | tee /tmp/e15-frankenphp.log
+          scripts/ci-gate.sh frankenphp /tmp/e15-frankenphp.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e15-${{ matrix.suite }}-logs
+          path: |
+            /tmp/*.log
+            bench/results/
+            /tmp/swoole-e15/results.tsv

@@ -1,0 +1,34 @@
+# Builds and pushes ghcr.io/koekaverna/ignis-php:8.5.10-zts whenever the PHP build inputs change.
+name: php-image
+on:
+  push:
+    paths:
+      - scripts/build-php.sh
+      - docker/php.Dockerfile
+      - .github/workflows/php-image.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/php.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/koekaverna/ignis-php:8.5.10-zts
+            ghcr.io/koekaverna/ignis-php:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

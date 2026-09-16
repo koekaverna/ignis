@@ -1,0 +1,9 @@
+# minimum pass counts for scripts/ci-gate.sh (from V-23; update only with a VALIDATION entry)
+phpt.main.Zend_tests_fibers 108
+phpt.main.ext_sockets_tests 80
+phpt.main.ext_standard_tests_streams 131
+phpt.fiber.Zend_tests_fibers 77
+phpt.fiber.ext_sockets_tests 75
+phpt.fiber.ext_standard_tests_streams 116
+swoole.pass 42
+frankenphp.pass 29
