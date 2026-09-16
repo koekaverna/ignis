@@ -236,6 +236,10 @@ final class Loop
             throw new \LogicException('Loop already running');
         }
         self::$running = true;
+        if (!self::$chaosInit) {
+            self::chaosInit();
+            self::gcInit();
+        }
         try {
             while (!$stop()) {
                 // 1. start new pool fibers
@@ -270,6 +274,10 @@ final class Loop
                 // (stream op, sleep) is not in $waiting but its op is in flight (E15c fix).
                 if (self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0) {
                     break;
+                }
+                if (self::$loopGc && gc_status()['roots'] >= self::$gcRoots) {
+                    gc_collect_cycles(); // idle point: no fiber is mid-request here
+                    ++self::$gcRuns;
                 }
                 $t = hrtime(true);
                 $events = \ignis_poll(-1);
@@ -342,6 +350,29 @@ final class Loop
     public static float $chaosP = 0.5;
     public static int $chaosYields = 0;
     private static bool $chaosInit = false;
+
+    /**
+     * E2'/E13': GC off the hot path. With IGNIS_LOOP_GC (default on) the engine's automatic cycle
+     * collection is disabled and the loop runs gc_collect_cycles() itself right before blocking
+     * on the reactor once the root buffer holds IGNIS_LOOP_GC_ROOTS (default 5000) entries —
+     * never in the middle of a request's fiber.
+     */
+    public static int $gcRoots = 5000;
+    public static int $gcRuns = 0;
+    private static bool $loopGc = false;
+
+    private static function gcInit(): void
+    {
+        $env = getenv('IGNIS_LOOP_GC');
+        self::$loopGc = $env === false || ($env !== '' && $env !== '0');
+        $n = getenv('IGNIS_LOOP_GC_ROOTS');
+        if ($n !== false && is_numeric($n)) {
+            self::$gcRoots = max(100, (int) $n);
+        }
+        if (self::$loopGc) {
+            gc_disable();
+        }
+    }
 
     private static function chaosInit(): void
     {

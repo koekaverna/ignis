@@ -30,6 +30,40 @@ static SLOT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
 thread_local! {
     /// Counts switches (for the bench output only).
     pub static SWITCHES: Cell<u64> = const { Cell::new(0) };
+    /// E13': the superglobals of the "unisolated" world ({main} and every fiber that never called
+    /// `ignis_set_superglobals`). Saved when leaving that world for an isolated fiber, restored on
+    /// the way back. Switches between two unisolated fibers cost nothing.
+    static BASE: std::cell::RefCell<Option<[sys::zval; 4]>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Mark the running fiber as isolated: it gets its own slot (E13'). Called by `ignis_set_superglobals`.
+unsafe fn isolate_current() {
+    unsafe {
+        let base = sys::tsrm_get_ls_cache() as *mut u8;
+        let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
+        let fiber = (*eg).active_fiber;
+        if fiber.is_null() {
+            return; // {main}: the base world itself
+        }
+        let slot = slot_of(&raw mut (*fiber).context);
+        if (*slot).is_null() {
+            // This fiber ran in the base world until now: what the symbol table holds at this
+            // moment IS the base world — remember it before the request's values go in.
+            let snap = snapshot();
+            BASE.with(|b| {
+                let mut b = b.borrow_mut();
+                if let Some(old) = b.as_mut() {
+                    release(old);
+                }
+                *b = Some(snap);
+            });
+            *slot = Box::into_raw(Box::new(undef4()));
+        }
+    }
+}
+
+unsafe fn undef4() -> [sys::zval; 4] {
+    unsafe { [undef(), undef(), undef(), undef()] }
 }
 
 unsafe fn slot_of(ctx: *mut sys::zend_fiber_context) -> *mut *mut [sys::zval; 4] {
@@ -104,19 +138,37 @@ unsafe extern "C" fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys:
     // contexts' reserved slots and freed in on_destroy.
     unsafe {
         SWITCHES.with(|c| c.set(c.get() + 1));
-        let snap = snapshot();
         let from_slot = slot_of(from);
-        if (*from_slot).is_null() {
-            *from_slot = Box::into_raw(Box::new(snap));
-        } else {
+        let to_slot = slot_of(to);
+        let from_isolated = !(*from_slot).is_null();
+        let to_isolated = !(*to_slot).is_null();
+        if !from_isolated && !to_isolated {
+            return; // both share the base world: nothing to swap (E13' lazy swap)
+        }
+        if from_isolated {
+            let snap = snapshot();
             release(&mut **from_slot);
             **from_slot = snap;
+        } else {
+            // Leaving the base world for an isolated fiber: remember the base as it is now.
+            let snap = snapshot();
+            BASE.with(|b| {
+                let mut b = b.borrow_mut();
+                if let Some(old) = b.as_mut() {
+                    release(old);
+                }
+                *b = Some(snap);
+            });
         }
-        let to_slot = slot_of(to);
-        if !(*to_slot).is_null() {
+        if to_isolated {
             install(&**to_slot);
+        } else {
+            BASE.with(|b| {
+                if let Some(base) = b.borrow().as_ref() {
+                    install(base);
+                }
+            });
         }
-        // else: first entry into `to` → inherit the resumer's entries (already installed).
     }
 }
 
@@ -177,6 +229,7 @@ pub unsafe extern "C" fn zif_ignis_set_superglobals(ex: *mut sys::zend_execute_d
             return;
         }
         let vals = [*z0, *z1, *z2, *z3];
+        isolate_current(); // captures the base world first (E13')
         install(&vals);
         zval::set_null(rv);
     }
