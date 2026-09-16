@@ -4,3 +4,11 @@
 *.log
 *.sqlite
 /vendor
+# Owner note 2026-09-16: nothing removed by the one-time history rewrite may come back.
+/target-*/
+target-*/
+vendor-php/
+php-src*/
+**/vendor/
+*.so
+*.a
