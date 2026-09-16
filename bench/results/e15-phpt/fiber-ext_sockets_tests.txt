@@ -1,5 +1,7 @@
-/home/user/php-src/ext/sockets/tests/socket_addrinfo_bind.phpt
-/home/user/php-src/ext/sockets/tests/socket_addrinfo_connect.phpt
-/home/user/php-src/ext/sockets/tests/socket_create_listen_invalid_port.phpt
-/home/user/php-src/ext/sockets/tests/socket_create_pair.phpt
-/home/user/php-src/ext/sockets/tests/socket_set_nonblock.phpt
+/home/koe/php-src/ext/sockets/tests/socket_addrinfo_bind.phpt
+/home/koe/php-src/ext/sockets/tests/socket_addrinfo_connect.phpt
+/home/koe/php-src/ext/sockets/tests/socket_create_listen.phpt
+/home/koe/php-src/ext/sockets/tests/socket_create_listen_invalid_port.phpt
+/home/koe/php-src/ext/sockets/tests/socket_create_pair.phpt
+/home/koe/php-src/ext/sockets/tests/socket_sendto_zerocopy.phpt
+/home/koe/php-src/ext/sockets/tests/socket_set_nonblock.phpt

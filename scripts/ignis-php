@@ -89,13 +89,19 @@ done
 
 export IGNIS_PHP_INI="$tmpini"
 
+# A7 (C22): a hung test used to leave an orphaned binary bound to the test's fixed port, which
+# poisoned later tests with "Address already in use". Two findings from measuring it:
+#   - run-tests.php enforces its per-test timeout by killing the `sh -c` it spawned, NOT this
+#     wrapper, so neither a kill-the-process-group handler (the roadmap's original A7 wording)
+#     nor a bare `exec` here prevents the orphan: the kill lands one level above us either way.
+#   - an EXIT trap is no help either, since the kill can be SIGKILL.
+# So the binary is given a hard upper bound on its own life instead: orphaned or not, it dies.
+# IGNIS_PHPT_TIMEOUT must stay above run-tests' --set-timeout, so it only ever catches orphans.
+# `exec` still removes one level from the chain; the EXIT trap frees the ini if exec fails, and
+# on the normal path bench/e15-phpt.sh clears the directory once per run.
 if [ "${IGNIS_PHPT_MODE:-main}" = "fiber" ]; then
   export IGNIS_PHPT_FILE="$script"
-  "$IGNIS_BIN" "$HARNESS" ${script_args+"${script_args[@]}"}
+  exec timeout -s KILL "${IGNIS_PHPT_TIMEOUT:-20}" "$IGNIS_BIN" "$HARNESS" ${script_args+"${script_args[@]}"}
 else
-  "$IGNIS_BIN" "$script" ${script_args+"${script_args[@]}"}
+  exec timeout -s KILL "${IGNIS_PHPT_TIMEOUT:-20}" "$IGNIS_BIN" "$script" ${script_args+"${script_args[@]}"}
 fi
-rc=$?
-rm -f "$tmpini"
-trap - EXIT INT TERM
-exit "$rc"

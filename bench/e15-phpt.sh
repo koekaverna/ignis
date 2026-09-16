@@ -14,11 +14,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
+# scripts/ignis-php execs the binary (A7) and so cannot remove its own tmp ini; clear them per run.
+rm -rf "${IGNIS_PHPT_TMPDIR:-/tmp/e15-phpt}"
 PHPSRC=${PHPSRC:-/home/user/php-src}
 STOCK=${STOCK:-/opt/php85-zts/bin/php}
 OUT=$ROOT/bench/results/e15-phpt
 SUITE_TIMEOUT=${SUITE_TIMEOUT:-1200}     # 20 min cap per suite run
 TEST_TIMEOUT=${TEST_TIMEOUT:-15}         # per-test timeout handed to run-tests (--set-timeout)
+export IGNIS_PHPT_TIMEOUT=${IGNIS_PHPT_TIMEOUT:-$((TEST_TIMEOUT + 5))}  # A7: orphan ceiling, always above run-tests' own timeout
 
 SUITES=(Zend/tests/fibers ext/standard/tests/streams ext/sockets/tests)
 MODES=(stock main fiber)
