@@ -298,7 +298,7 @@ A `--image ghcr.io/koekaverna/ignis:TAG` mode that runs the same route checks ov
 binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.php route table and
 `smoke: GREEN`.
 
-### H-7 IDE/static-analysis stubs for the runtime's functions `agent` `in progress (batch 2)`
+### H-7 IDE/static-analysis stubs for the runtime's functions `agent` `done (validated by main: stub set == module.rs set, php -l ok, guard yields to the real function)`
 **What.** Every `ignis_*` function (`ignis_submit_sleep`, `ignis_poll`, `ignis_watch`, `ignis_cancel`,
 `ignis_serve`, `ignis_respond`, `ignis_stats`, `ignis_inflight`, `ignis_pg_*`, `ignis_offload_*`,
 `ignis_grpc_*`, `ignis_route_*`, `ignis_set_superglobals`, `ignis_cancel_parked_any`, and the

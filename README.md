@@ -24,9 +24,9 @@ while at least one worker is alive and not stalled, 503 otherwise, so a load bal
 sending to a wedged process even when PHP could not say so.
 
 The entry script is either a plain script that calls `Ignis\serve()` (see
-[examples/hello_server.php](examples/hello_server.php)) or a framework runtime —
-[php/symfony/worker.php](php/symfony/worker.php) boots an untouched `symfony/skeleton`
-`public/index.php` through `symfony/runtime`.
+[examples/hello_server.php](examples/hello_server.php)) or a framework runtime — an untouched
+`symfony/skeleton`'s own `public/index.php`, through `symfony/runtime`'s `extra.runtime.class`
+hook (see [Symfony](#symfony) below).
 
 ## Configure
 
@@ -47,6 +47,12 @@ the default.
 | `budget.queue` | `4096` | waiting requests before `503` + `retry-after` |
 | `exempt` | `["/_ignis/"]` | path prefixes admitted regardless of the budget |
 
+Every `ignis_*` function is defined in Rust, so an IDE, PHPStan or Psalm sees "unknown function" at
+call sites unless it also loads `php/stubs/ignis.php` (BACKLOG H-7) — pull it in via `ignis/runtime`'s
+`autoload-dev.files` (composer, dev only), or `require 'php/stubs/ignis.php';` directly in your
+analyser's bootstrap. Each stub is `function_exists()`-guarded, so loading it under the real binary
+is a no-op.
+
 ## Install
 
 ```
@@ -64,8 +70,8 @@ docker run -p 8080:8080 \
   ghcr.io/koekaverna/ignis
 ```
 
-with `entry = "/app/worker.php"` (Symfony: copy [php/symfony/worker.php](php/symfony/worker.php)
-next to your app) and `listen = "0.0.0.0:8080"` in that file. The userland lives at
+with `entry = "/app/public/index.php"` (Symfony: see [Symfony](#symfony) below for the entry
+script your app needs, none) and `listen = "0.0.0.0:8080"` in that file. The userland lives at
 `/opt/ignis/php` inside the image. A static binary is not shipped yet — `libphp` pulls in ~35
 shared libraries through libcurl — so the image is the artifact for now.
 
@@ -82,10 +88,16 @@ app's own PHP is older):
 ```
 composer config platform.php 8.5.10
 composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php","options":{"symlink":false}}'
-composer require ignis/runtime:@dev
+composer require ignis/runtime:@dev --no-scripts
 composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
 composer dump-autoload
+mkdir -p var && chmod -R a+rwX var
 ```
+
+`--no-scripts` matters when composer's own PHP is older than 8.4: `platform.php` satisfies the
+solver, but the generated `vendor/composer/platform_check.php` checks the interpreter actually
+running Flex's `cache:clear` hook and fatals. Nothing is lost — Symfony warms its cache on the
+first request. With `--no-scripts` nothing creates `var/`, hence the `mkdir`.
 
 `ignis.toml`:
 
@@ -107,8 +119,12 @@ Two traps (V-40):
 - `APP_RUNTIME=…` in `.env` does **nothing**: `symfony/runtime` reads it from `$_SERVER` before
   `.env` is loaded, so `public/index.php` runs as a single CGI request, prints the page and exits
   0 — the runtime class belongs in `composer.json`'s `extra.runtime.class`, set above.
-- `var/` must be writable by the image's `ignis` user: `chmod -R a+rwX var` after running
-  `composer` as root.
+- `var/` must be writable by the image's `ignis` user (the `chmod` above); files composer wrote
+  as root inside a container cannot be removed from the host without root — clean up through the
+  same image.
+- This recipe serves the skeleton in **dev mode** (`APP_ENV=dev` is the skeleton's default): the
+  welcome page is a 404 and the profiler is on. Set `APP_ENV=prod` in `.env.local` for anything
+  you measure or expose.
 
 ## Build from source
 

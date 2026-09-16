@@ -22,6 +22,11 @@
             "Ignis\\Revolt\\": "amphp/src/"
         }
     },
+    "autoload-dev": {
+        "files": [
+            "stubs/ignis.php"
+        ]
+    },
     "config": {
         "allow-plugins": false
     }
