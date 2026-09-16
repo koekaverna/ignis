@@ -346,3 +346,12 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   bumps the version, refreshes Cargo.lock offline, commits, and prints the tag commands it must not
   run (the session git proxy refuses tag pushes). My own worktree dry run: both files at 0.0.2-rc.1,
   commands printed, worktree removed. The first real run is the owner's tag push.
+- 2026-09-16T21:45Z — **Batch 2 complete; M5-4 validated** (sonnet): `.github/workflows/nightly.yml`
+  on a schedule + dispatch, never on push — E1/E2/hello/E16/B1-p99 each printed beside its
+  threshold, a regression opens or updates a `nightly: regression <date>` issue. The agent caught
+  its own bug before reporting: the PASS test was `value < threshold` for every metric, which would
+  have passed a halved throughput — now `dir=gt` for hello. My run of the E1/E2 gate: 1144.3 ms,
+  201.08 ms, 3.48 µs. CI on the baseline-54 push is green on all seven jobs (swoole read 55). Found
+  on the way: a clean `exit()` now logs as a fatal at `warn` — H-10, mine.
+  Batch 2 tally: H-2, H-3, H-7, M5-1, M5-4 validated; batch 1: eight of eight, M3-3's number
+  pending my re-run.

@@ -248,7 +248,7 @@ metrics; the log floor and `RUST_LOG`; what a respawn looks like in the log; gra
 M4-5 lands.
 **Acceptance.** Every number cites a V-n; every env var and toml key in `config.rs` is documented.
 
-### M5-4 Nightly perf job `agent` `in progress (batch 2)`
+### M5-4 Nightly perf job `agent` `done (validated by main: schedule+dispatch only, E1 1144.3 ms / E2 201.08 ms + 3.48 us on my run, dir=gt for throughput; the runner-side numbers wait for the first dispatch)`
 **What.** `.github/workflows/nightly.yml`: E1, E2', E4 hello, E14 (if PG available), E16, B1's p99
 pair, with thresholds from VALIDATION; a failure opens an issue with the numbers. Runs on a
 schedule, never on push.
@@ -318,6 +318,14 @@ calling `ignis_inflight()` still reaches the real function (the guard works).
 still leaves an empty header row in a results file that is committed history. Move the header
 write to after the preflight passes. **Acceptance.** `ONLY=franken bash bench/compare.sh` on this
 box leaves `git status --short bench/results/compare.md` empty.
+
+### H-10 `exit()` is logged as a fatal `main` `open`
+**What.** Since the log floor moved to `warn` (2026-09-16), every script that ends with an explicit
+`exit()` prints `WARN php_execute_script returned false (fatal error or exit)` — `bench/php/e1_sleep_10k.php`
+and `e2_all.php` do it on every run. A clean exit is not a warning. In `crates/ignis/src/php/embed.rs`
+distinguish `EG(exit_status)` from a real fatal (the `Engine::eval` sentinel already does this for
+`-r`): warn only on a fatal, `debug` on exit. **Acceptance.** Running `e1_sleep_10k.php` prints no
+WARN; a script with `trigger_error(..., E_USER_ERROR)` still prints one. `main` (guarded path).
 
 ### H-8 Retire the `IGNIS_ADDR` name `agent` `open`
 **What.** `bench/e15-frankenphp.sh` sets `IGNIS_ADDR`; `examples/classic_server.php` and
