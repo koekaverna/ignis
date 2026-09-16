@@ -1373,3 +1373,39 @@ fix `/stats` and `/_ignis/health` agree at 0.
 
 **Not run here**: the Symfony leg (serve a `symfony/skeleton` with no env vars) — this box has no
 composer vendor tree. Carried into M3, where the recipe gets built and verified together.
+
+## V-39 — M2 "Install": the runtime image serves with nothing but itself (CONFIRMED locally; published by CI)
+
+Date: 2026-09-16T18:4xZ. Box: this one. `docker build -f docker/Dockerfile -t ignis:local .` from
+the repo root: **55.6 s wall** (build stage FROM `ghcr.io/koekaverna/ignis-php:8.5.10-zts` + rustup,
+cache mounts for the cargo registry and `target`; runtime stage `ubuntu:24.04`). Port publishing is
+broken on this docker daemon (bindings recorded, never applied — noted in research 24), so the
+probe runs inside the container over bash's `/dev/tcp`, which is also how `.github/workflows/image.yml`
+checks the image it pushes.
+
+```
+$ docker run -d --name ignis-m2 ignis:local
+$ docker exec ignis-m2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /_ignis/health HTTP/1.0\r\n\r\n" >&3; cat <&3'
+{"status":"ok","threads":24,"stalled":0,"restarts":0}
+$ … GET / …
+Hello, World!
+```
+
+| check | result |
+|---|---|
+| answers `/_ignis/health` from a cold start | **ok** within the 20 s probe window, 24 threads (the host's cores; `available_parallelism` reports a cgroup CPU quota when one is set — std's documented behaviour, not measured here) |
+| serves the entry script | `/` → `Hello, World!` |
+| depends on nothing outside the image | `ldd /usr/local/bin/ignis`: **0** "not found"; `libphp.so => /opt/php85-zts/lib/libphp.so` — the rpath compiled in by `build.rs`, so no `LD_LIBRARY_PATH` |
+| runs unprivileged | `whoami` → `ignis` |
+| size | **64 MB** (runtime stage: six apt libraries, `libphp.so`, the binary, 336 K of userland, the examples) |
+| log at the default `warn` floor | empty |
+
+The other half of the acceptance — "from a downloaded artifact on a fresh box" — is what
+`.github/workflows/image.yml` does on this push: build, push `ghcr.io/koekaverna/ignis:{latest,sha}`,
+then run the pushed image and repeat the two checks above against it. M2 is claimed only when that
+run is green.
+
+Not done, kept on M2's list: a static binary. There is no `libphp.a` (`--enable-embed=shared`), and
+`libphp.so` pulls ~35 shared libraries through libcurl (krb5, gnutls, ldap, ssh2, rtmp…), so a
+`-static-pie` build is a rebuild of PHP with a trimmed curl — a separate piece of work, not a
+blocker for "install in under two minutes".

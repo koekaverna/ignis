@@ -273,3 +273,14 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   about itself. `ignis --version`. README.md and ignis.toml.example written. Found and fixed a
   watchdog false positive on the way: the stall clock started at `poll` entry, so a thread that had
   been *waiting* looked *stuck* on its first request.
+- 2026-09-16T18:45Z — **M2 "Install" built and verified locally (V-39).** The audit for it: the
+  binary is 48 MB and `libphp.so` drags ~35 shared libraries through libcurl, and there is no
+  `libphp.a`, so a downloadable static binary is a PHP rebuild away — but the PHP builder image was
+  already on GHCR, so the first artifact is a runtime image: `docker/Dockerfile` (build stage FROM
+  the builder + one rustup; runtime `ubuntu:24.04` + six apt libraries + `libphp.so` at the rpath
+  path + binary + userland + examples, unprivileged user), `docker/ignis.toml` binding `0.0.0.0`
+  because `127.0.0.1` is unreachable from outside a container, `.dockerignore` so the context does
+  not ship `target/`, and `.github/workflows/image.yml` which pushes `ghcr.io/koekaverna/ignis` and
+  then smoke-tests the pushed image itself. Local: 55.6 s build, **64 MB**, health ok on 24 threads,
+  `/` answers, `ldd` 0 "not found", runs as `ignis`. The "downloaded artifact" half of the
+  acceptance is CI's on this push.

@@ -47,7 +47,29 @@ the default.
 | `budget.queue` | `4096` | waiting requests before `503` + `retry-after` |
 | `exempt` | `["/_ignis/"]` | path prefixes admitted regardless of the budget |
 
-## Build (until there is a release artifact)
+## Install
+
+```
+docker run -p 8080:8080 ghcr.io/koekaverna/ignis
+curl http://127.0.0.1:8080/_ignis/health
+```
+
+The image (64 MB, built and smoke-tested by CI on every push to `main`) serves the hello entry on
+its own. To serve your app, mount it and point the config at its entry script:
+
+```
+docker run -p 8080:8080 \
+  -v ./ignis.toml:/etc/ignis/ignis.toml \
+  -v ./app:/app \
+  ghcr.io/koekaverna/ignis
+```
+
+with `entry = "/app/worker.php"` (Symfony: copy [php/symfony/worker.php](php/symfony/worker.php)
+next to your app) and `listen = "0.0.0.0:8080"` in that file. The userland lives at
+`/opt/ignis/php` inside the image. A static binary is not shipped yet — `libphp` pulls in ~35
+shared libraries through libcurl — so the image is the artifact for now.
+
+## Build from source
 
 Ignis needs PHP 8.5.10 ZTS with the embed SAPI at `/opt/php85-zts`; distribution packages are
 NTS and will not do.

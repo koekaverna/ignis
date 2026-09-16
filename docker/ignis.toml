@@ -1,0 +1,19 @@
+# /etc/ignis/ignis.toml inside ghcr.io/koekaverna/ignis. Override by mounting your own file:
+#   docker run -p 8080:8080 -v ./ignis.toml:/etc/ignis/ignis.toml -v ./app:/app ghcr.io/koekaverna/ignis
+# Every key is optional; an unknown key is an error. Full reference: ignis.toml.example in the repo.
+
+# The image ships the hello server so `docker run` answers on its own. Point this at your app's
+# entry script (php/symfony/worker.php for Symfony) once it is mounted.
+entry = "/opt/ignis/examples/hello_server.php"
+
+# Inside a container 127.0.0.1 is unreachable from the host, so the image binds all interfaces.
+# The binary's own default stays 127.0.0.1:8080.
+listen = "0.0.0.0:8080"
+
+# threads: default = the container's available parallelism (honours cgroup CPU limits).
+# offload: synchronous workers for curl_* / PDO / SQLite3; each is a full PHP thread. Default 0.
+# offload = 2
+
+[budget]
+fibers = 1024
+queue = 4096

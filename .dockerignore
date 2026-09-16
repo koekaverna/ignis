@@ -1,0 +1,10 @@
+# docker build context (docker/Dockerfile): the repo minus what the image never needs.
+target
+target-async
+.git
+php/*/vendor
+php/symfony/app
+php/amphp/vendor
+bench/results
+docs
+*.md
