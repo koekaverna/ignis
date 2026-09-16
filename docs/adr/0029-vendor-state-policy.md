@@ -1,6 +1,6 @@
 # ADR-0029 — Vendor state policy: classifying and isolating statics a framework did not fiber-scope
 
-Status: proposed (accepted-as-policy is the main agent's call). Rests on ADR-0006 (superglobal swap
+Status: **accepted as policy** (main agent, 2026-09-17, after reading the scribe's draft against the owner's spec; the `ignis audit` plugin and the allowlist are unbuilt).
 model), research 25 (`illuminate/container` v12.0.0 `Container::$instance`), pain-map Swoole 1
 (statics change on switch) and FrankenPHP 1 (worker mode needs a leak-free app).
 
@@ -57,4 +57,4 @@ scanner isn't saving work — classification reverts to a research note per fram
 
 ## Status
 
-proposed
+accepted as policy (main agent, 2026-09-17); implementation open
