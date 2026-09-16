@@ -90,7 +90,7 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## Still open
 
-E10 (tonic gRPC), E14 (runtime-owned connection pool). E9 is done in prototype scope (no signals/queries/cancel, `json/plain` payloads only — V-19). E10/E14 not started: each is a multi-hour build with a new dependency tree (tonic, tokio-postgres) and E14 needs a PostgreSQL on the box; the reactor's `Op::Custom` seam (added for Temporal) is the integration point for both.
+E10 (tonic gRPC, Cycle 14 in progress), E15 (compat suites: php-src fibers/streams/sockets under ignis, Revolt DriverTest, Swoole runtime-hook shim, FrankenPHP testdata, Symfony/Doctrine chaos mode — added by the owner at 01:55Z, next after E10), E14 (runtime-owned connection pool). E9 is done in prototype scope (no signals/queries/cancel, `json/plain` payloads only — V-19). E10/E14 not started: each is a multi-hour build with a new dependency tree (tonic, tokio-postgres) and E14 needs a PostgreSQL on the box; the reactor's `Op::Custom` seam (added for Temporal) is the integration point for both.
 
 ## Ranked recommendation for the next 3 cycles
 
