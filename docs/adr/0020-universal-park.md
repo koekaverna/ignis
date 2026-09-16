@@ -1,7 +1,7 @@
 # ADR-0020 — Universal park: the binary interposes the blocking libc calls behind a fiber gate
 
-Status: **DRAFT until research 27 (locks) lands** — the policy table's `block` rows and acceptance
-(5)'s test library come from it. Owner's expectation E18 (BRIEF.md, 2026-09-16, "ADR first").
+Status: **accepted** (2026-09-16, research 26/27/28; H32–H36 open). Owner's expectation E18
+(BRIEF.md, 2026-09-16, "ADR first").
 Affects pain-map items: Swoole 5 (incomplete hooks — this is the general answer), PHP-FPM 1
 (in-process C I/O that never touches php_stream: libcurl, libpq), RoadRunner 1 (state discipline:
 handles stay on the fiber's thread). Depends on ADR-0007 (the stream factory stays), ADR-0009
@@ -58,6 +58,25 @@ request-path call sites.
 5. **Stays as it is.** The stream factory (ADR-0007). Offload (ADR-0016) remains the path for a
    library on `block` and for `SQLite3` (disk I/O). Feature `universal-park` so the overhead bench
    has its control build; `IGNIS_NO_UNIVERSAL_PARK=1` is the hook-off control at run time.
+
+## Policy table (research 27, versions installed here: OpenSSL 3.5.5, curl 8.18.0, libpq 18.6, libphp 8.5.10)
+
+| library | locks that matter | can a blocking syscall run while one is held? | policy |
+|---|---|---|---|
+| libssl / libcrypto | `err_string_lock` (string table only; the ERR stack is per-thread), RAND global lock (pointer publish only), per-DRBG lock, session-cache locks, `bio_lookup_lock` | Record and state-machine I/O (`ssl/record/`, `ssl/statem/`) take no `CRYPTO_THREAD_*` lock; the one exception is the primary DRBG's reseed, which calls `getrandom(…, 0)` under `drbg->lock` — `getrandom` is not an exported symbol, so the gate never sees it | **`park`** (revisit if `getrandom` ever joins the list) |
+| libcurl | `Curl_share_lock` (a no-op unless the app calls `curl_share_init`; PHP's ext/curl does not); the threaded resolver's helper thread | The fiber thread waits on a socketpair fd through curl's own pollset, never on a condvar; `Curl_async_await` uses a raw `pthread_join` only at teardown and is documented as an API to avoid | **`park`** |
+| libpq | `pg_g_threadlock` | Wraps GSSAPI/SSPI negotiation in `fe-auth.c` only; nothing around `pqSocketCheck` or `pqsecure_read/write`; the OpenSSL-locking dance in `fe-secure-openssl.c` is gone | **`park`**, with GSSAPI/Kerberos auth `block` until measured (acceptance 2 uses password/SCRAM) |
+| libphp | TSRM mutexes, the opcache SHM lock, reentrancy locks | The traced hot sites open files *before* taking the SHM lock, but the compile/execute path was not walked exhaustively, and a return address cannot split libphp into safe and unsafe sites | **`block`** (also: its stream I/O is ADR-0007's) |
+| anything else (libz, libonig, libsqlite3, libnghttp2, libssh2, libkrb5, libgnutls…) | not analysed | — | **`block`** (the default) |
+
+TLS backend fact that collapses the kill criterion's two names into one lock surface: `ldd` shows
+libcurl linking both libssl.so.3 and libgnutls.so.30, but `curl --version` reports OpenSSL/3.5.5 —
+gnutls arrives through libssh2. ext/curl and ext/openssl share OpenSSL 3.5.5's locks.
+
+Acceptance (5)'s test library (`bench/e18/locklib.c`, specified in research 27): a plain
+non-recursive `pthread_mutex_t`, `lock; read(pipe); unlock`. Under `park`, two fibers on one OS
+thread — not the same stack re-locking — produce a hang, not `EDEADLK`; the test detects it with
+`pthread_mutex_timedlock` on the harness side and corroborates with `gdb -p … thread apply all bt`.
 
 ## Resolver, per library (research 26)
 

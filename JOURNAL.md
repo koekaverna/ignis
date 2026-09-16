@@ -400,3 +400,12 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   the wrong sentence quoted. The export list is 31 symbols from `nm`, `__poll_chk` included (libssh2,
   libkrb5 only). Acceptance (3) is per library: curl through `poll`, libpq (`src/common/ip.c:65`,
   synchronous) and libphp through the interposed `getaddrinfo`.
+- 2026-09-17T00:05Z — **ADR-0020 accepted; E18's research stage is complete (26, 27, 28).** Research
+  27 (sonnet): from source at the installed tags, OpenSSL 3.5.5's record/state-machine I/O takes no
+  lock (`park`; the primary DRBG reseeds under its lock via `getrandom`, which is not an exported
+  symbol), libcurl's share lock is a no-op without `curl_share_init` and its resolver thread hands
+  results over an fd (`park`), libpq's `pg_g_threadlock` wraps only GSSAPI negotiation (`park`,
+  GSSAPI `block`), libphp `block`. ext/curl's TLS is OpenSSL, not gnutls — one lock surface for the
+  kill criterion. Acceptance (5)'s shim specified with `pthread_mutex_timedlock` detection. The pg
+  block (M4-1/M4-11/M4-12) passed smoke and phpt and is committed. E18-B (the five benches, control
+  arms) is with a bencher agent; E18-I (implementation, mine) is next.

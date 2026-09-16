@@ -146,7 +146,7 @@ or `recv`/`send`). Deliverable `docs/research/26-e18-blocking-symbols.md` with t
 versions. **Acceptance.** Every symbol in the ADR's export list appears in this note with the
 library that imports it and the call site, from `nm` and source, not memory.
 
-### E18-R2 Who holds a lock across a blocking call `research` `in progress (batch 5)`
+### E18-R2 Who holds a lock across a blocking call `research` `done (research 27: OpenSSL park, libcurl park, libpq park-except-GSSAPI, libphp block; locklib spec)`
 From the installed versions' source (`curl --version`, `openssl version`, `pg_config --version`;
 clone the matching tags under /tmp/cmp): does OpenSSL 3 hold any `CRYPTO_THREAD_*` lock across
 `BIO_read`/`BIO_write` or `RAND_bytes`; does libcurl hold `Curl_share_lock`/the multi handle's
@@ -163,7 +163,7 @@ running `curl_easy_perform` on a local URL: the interposer must be hit from insi
 does Rust std keep working with `read`/`write` interposed; does `--export-dynamic-symbol` work
 with the linker cargo uses here. Deliverable `docs/research/28-e18-interposition.md`.
 
-### E18-A ADR-0020 `main` `draft written (docs/adr/0020-universal-park.md) — policy table and acceptance (5)'s test library wait for R2`
+### E18-A ADR-0020 `main` `done (accepted; policy table from research 27; H32–H36 open)`
 Symbol list, gate, policy table with defaults, reentrancy guard (our own reactor calls `poll`;
 nested calls must fall through), `connect` via temporary `O_NONBLOCK` + park-on-writable + flag
 restore, `getaddrinfo` via a resolver `Op` with glibc-compatible `addrinfo` allocation (and
