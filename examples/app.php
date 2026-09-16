@@ -12,6 +12,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../php/ignis.php';
 require __DIR__ . '/../php/pg/ignis-pg.php'; // E14: runtime-owned PostgreSQL pool (route /db needs PG_DSN)
+require __DIR__ . '/../php/offload/ignis-offload.php'; // E16: offload pool (route /offload needs --offload N)
 
 use Ignis\Future;
 use Ignis\Http\Request;   // → E4 (hyper transport)
@@ -74,6 +75,7 @@ Ignis\serve(static function (Request $req) use ($pdo): Response {
         '/upstream'  => Response::json(upstreamJson('http://127.0.0.1:8080/dashboard')), // self-call, suspends (E6)
         '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
         '/db'        => Response::json(dbDemo()),                                             // pool lease per fiber, transaction pins it (E14)
+        '/offload'   => Response::json(offloadDemo()),                                        // blocking code on a sync worker thread, fiber parks (E16)
         '/sleep'     => (static function () use ($req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
@@ -97,4 +99,15 @@ function dbDemo(): array
         'sleep_ms' => (int) $l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0]['d'],
         'pool' => $pool->stats(),
     ]);
+}
+
+/** E16: a named function runs on a synchronous worker thread with its own PHP context; this fiber parks meanwhile. */
+function offloadDemo(): array
+{
+    if ((Ignis\Offload\Client::stats()['workers'] ?? 0) === 0) {
+        return ['offload' => 'start ignis with --offload N to enable'];
+    }
+    $t = hrtime(true);
+    $upper = Ignis\offload('strtoupper', 'hello from a worker thread'); // any function the worker can resolve; closures are not copied
+    return ['result' => $upper, 'round_trip_us' => (int) ((hrtime(true) - $t) / 1e3), 'pool' => Ignis\Offload\Client::stats()];
 }
