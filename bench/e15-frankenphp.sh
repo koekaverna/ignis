@@ -20,7 +20,7 @@ printf 'session.use_cookies=0\nsession.cache_limiter=\nsession.save_path=%s\n' "
 export FRANKENPHP_TEST_PHP_SERVER_ENV_IN_GETENV=hello FRANKENPHP_PREPARED=prepared_value
 export CUSTOM_OS_ENV_VARIABLE=custom_env_variable_value LITERAL_ZERO=0 EMPTY= test=
 
-IGNIS_PHP_INI=$D/php.ini DOCROOT=$DOCROOT IGNIS_ADDR=127.0.0.1:$PORT \
+IGNIS_PHP_INI=$D/php.ini DOCROOT=$DOCROOT IGNIS_LISTEN=127.0.0.1:$PORT \
   timeout 600 "$BIN" --threads "${THREADS:-2}" examples/classic_server.php > "$D/server.log" 2>&1 &
 SRV=$!
 for _ in $(seq 1 50); do curl -s -o /dev/null "$BASE/index.php" && break; sleep 0.1; done

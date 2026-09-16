@@ -13,10 +13,9 @@ if (!function_exists('frankenphp_handle_request')) {
     function frankenphp_finish_request(): bool { return Ignis\Classic\finish_request(); }
 }
 
-// IGNIS_ADDR is the older name (still set by bench/e15-frankenphp.sh); IGNIS_LISTEN wins when both are set.
 Ignis\Classic\serve(
     getenv('DOCROOT') ?: __DIR__ . '/../../frankenphp/testdata',
-    getenv('IGNIS_LISTEN') ?: (getenv('IGNIS_ADDR') ?: '127.0.0.1:8080'),
+    getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080',
     'index.php',
     ['FRANKENPHP_WORKER' => '1'],
     // _executor.php is require_once'd and Ignis keeps included_files for the thread's lifetime: from the second

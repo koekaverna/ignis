@@ -334,7 +334,7 @@ boundary so the example passes PHPStan level 6 with `php/stubs/ignis.php` loaded
 **Acceptance.** `phpstan analyse -l 6 examples/grpc_server.php --autoload-file php/stubs/ignis.php`
 reports 0 errors (phpstan via the builder image's composer, `composer global require phpstan/phpstan`).
 
-### H-8 Retire the `IGNIS_ADDR` name `agent` `in progress (batch 3)`
+### H-8 Retire the `IGNIS_ADDR` name `agent` `done (validated by main: no code hits, classic_server answers on IGNIS_LISTEN)`
 **What.** `bench/e15-frankenphp.sh` sets `IGNIS_ADDR`; `examples/classic_server.php` and
 `examples/grpc_server.php` fall back to it (H-1). One name: `IGNIS_LISTEN` everywhere, fallback
 removed. **Acceptance.** `grep -rn IGNIS_ADDR --include=*.sh --include=*.php --include=*.md . | grep -v JOURNAL | grep -v VALIDATION` is empty.

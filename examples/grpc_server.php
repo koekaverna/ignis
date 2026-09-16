@@ -10,8 +10,7 @@ use Ignis\Grpc\Proto;
 use Ignis\Http\Request;
 use Ignis\Http\Response;
 
-// IGNIS_ADDR is the older name; IGNIS_LISTEN wins when both are set.
-$addr = getenv('IGNIS_LISTEN') ?: (getenv('IGNIS_ADDR') ?: '127.0.0.1:8080');
+$addr = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';
 $self = new Client('http://' . $addr);
 
 $methods = [
