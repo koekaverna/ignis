@@ -40,4 +40,15 @@ Small decisions taken without asking (the big ones are ADRs in docs/adr/). Newes
 - **ADR-0018 kill criterion 2 (A4, `ext/sockets` overhead).** Measured at roughly 1–2 µs against a 0.36 µs bar (V-29); the bar was set at 10 % of the fiber round trip but the hook adds a syscall to an already syscall-bound call, which no readiness-probe design meets on this box. A replacement criterion is proposed in the ADR addendum (hook cost < 25 % of the wrapped operation, measured where a syscall can be resolved, compared against blocking the whole thread). Accept or reject.
 - **A6 (TLS read-ahead invisible to `stream_select`) is handed on, not fixed.** The sound fix is an eventfd the stream owns, handed out by `op_cast` — reproduced and diagnosed (docs/research/23), but judged larger than a Phase A item. Schedule it into Phase B, or leave it open.
 - **A3's acceptance criterion ("RSS within ±2 % between the 1M and 10M checkpoints") was shown unsatisfiable by construction** (V-30): RSS is front-loaded, growth stops trending around 5M, and readings past that swing ±10–12 % between adjacent checkpoints — wider than the ±2 % the criterion asks of two single points. Proposed restatement: "no monotonic trend past 5M". Accept or reject.
-- **Five bench scripts still hardcode `/home/user`.** Fixing them touches the CI symlink. Fix now, or leave.
+- ~~**Five bench scripts still hardcode `/home/user`.**~~ **Done 2026-09-16** — all five fixed with a
+  CI-first fallback (`$PHPSRC`/`$FP`/`$SWOOLE_SRC` → `/home/user/...` when present → `$HOME`), so the
+  CI symlink keeps working. Two were worse than "untidy": `e7-revolt.sh` pointed `IGNIS_PHP_INI` at
+  another machine, so the ini silently did not apply, and `e15-chaos.sh` generated a `run.php` that
+  required an absolute path from that box. `bench/frankenphp/Caddyfile` and `bench/fpm/nginx.conf`
+  were left alone on purpose: neither comparison server is installed here, so a change is
+  unverifiable.
+- **H31 — a request accepted and never answered, ~1 in 400–1200 under inbound load (V-34).** Found
+  once the port collision stopped hiding E6. Characterised and reproducible
+  (`bench/php/e6_underload.php`), root cause not found; it is accept-path/hyper work. It sits
+  under B1's acceptance numbers, which are measured with the same storm shape, so: fix before B1,
+  or accept that B1's numbers carry a 0.1–0.3 % unanswered floor and say so in its V-n.
