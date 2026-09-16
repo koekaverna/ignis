@@ -420,3 +420,13 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   library's own `poll` is what parks" (H31 at the syscall layer). E1/E2 unchanged on the park build.
   Left open: E18-I1 (the agent's pgsql bench exits silently under park), stage 2. The phpt "0 passed"
   was a relative `IGNIS_BIN` — re-running with an absolute path.
+- 2026-09-17T02:30Z — **Owner ADR sweep complete: 36 ADRs, indexed.** Twenty-two topics from the
+  owner's note: six landed as addenda to existing ADRs (0002, 0006, 0009, 0015, 0016, 0020), eight
+  accepted ADRs written by main (0021 layers, 0022 observability, 0023 validation, 0024 non-goals,
+  0025 memory, 0026 timers, 0027 build/distribution, 0028 Laravel), eight proposed/deferred drafted
+  by scribe and checked by main (0029–0036: vendor state, preemption, WS/SSE, inbound TLS/h3,
+  per-thread reactor, GC/destructors, security, naming). One commit and one push per ADR as
+  instructed — 24 pushes, each a queued CI run under H-4's never-cancel rule. `docs/adr/README.md`
+  is the index; ROADMAP has an ADR map. Two owner statements corrected against the record while
+  writing: E18 is not "not started" (stage 1 is built and measured, V-45), and 0029's
+  "accepted as policy" is set by main after reading the draft, not by the drafter.

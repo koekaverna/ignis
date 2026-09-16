@@ -93,3 +93,12 @@ numbers are what the product stands on. Rules that do not change: numbers or it 
 hook claim against its control; a subagent's number enters VALIDATION only after main re-ran it.
 First act under the new mission: M1 shipped the same day (config.rs, `serve`, `/_ignis/health`,
 README, ignis.toml.example).
+
+## ADR sweep (owner note, 2026-09-17)
+
+Every decision, rejection and deferral now has an ADR; `docs/adr/README.md` is the index. Rules
+adopted from the note and kept: status vocabulary accepted | proposed | deferred (with trigger) |
+rejected | superseded-by; only the main agent sets "accepted"; every number cites a V-n or says
+"unmeasured"; owner estimates are labelled as such. Addenda over renumbering. One commit per ADR,
+pushed one at a time. Where the note and the record disagreed, the record won and the ADR says so
+(ADR-0020 addendum on E18's state; ADR-0009 addendum on `spawn()` semantics today).

@@ -402,7 +402,7 @@ The API spec should show a handler reading `Ignis\Loop::budgetStats()` and the d
 say the runtime answers `/_ignis/health` itself. **Constraints.** "Change it only with intent"
 (CLAUDE.md): add, do not restructure; keep every existing route.
 
-### H-4 CI concurrency: a push every few minutes cancels every run `agent` `done (main: YAML ok, comment trimmed; behavioural check on the next two pushes)`
+### H-4 CI concurrency: a push every few minutes cancels every run `agent` `done — behavioural check 2026-09-17: the in-progress run survives; queued runs still collapse to the newest (GitHub keeps one pending per group), so a burst is verified by the tip's run — recorded in docs/orchestration.md`
 Observed 2026-09-16: three CI runs in a row ended `cancelled` because the next push superseded
 them; the gate never completed. Decide in `ci.yml`: keep cancel-in-progress but add a
 `workflow_dispatch` "full gate" that is never cancelled, **or** drop cancel-in-progress for `main`.

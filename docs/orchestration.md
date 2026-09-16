@@ -58,6 +58,10 @@ needs an FFI change or when two agent runs disagree.
 ## Commit and CI cadence
 
 CI used to cancel the in-flight run on every push; three pushes in ten minutes on 2026-09-16 meant
-no run of the full gate completed. Since H-4, runs on `main` are never cancelled — they queue. So:
-push per batch, not per item, or the queue grows by one full run per push. Never leave more than
-30 minutes of work uncommitted (CLAUDE.md) — commit locally as you go; the *push* is what batches.
+no run of the full gate completed. Since H-4 the *in-progress* run on `main` is never cancelled.
+What H-4 does not change (observed 2026-09-17 after 24 pushes in a row): GitHub keeps at most one
+*queued* run per concurrency group and collapses older queued runs into the newest, so a burst of
+pushes is validated by the run of the **last** commit only — the intermediate ones show
+"cancelled" without having failed. So: push per batch, not per item, and read the tip's run as
+the verdict for the batch. Never leave more than 30 minutes of work uncommitted (CLAUDE.md) —
+commit locally as you go; the *push* is what batches.

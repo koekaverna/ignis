@@ -23,7 +23,24 @@ file, no `serve` command, no install path, no health endpoint, and the defaults 
 | **M4 Operate** | see what the server is doing and survive a bad dependency: `/_ignis/metrics`, graceful reload, hold-time on leases, a bulkhead per dependency, a cap on connections | a dependency at 100 % failure is visible in metrics within 1 s and leaves other routes at ≥ 95 % throughput; `SIGHUP` drains and respawns without dropping a request; RSS stays under a configured ceiling while 100k clients hold connections | B2, B8, Phase D metrics + reload, hold-time tracking |
 | **M5 Ship** | download a versioned release with a changelog, and follow a migration guide from php-fpm / FrankenPHP / RoadRunner | **Workflows written, not yet exercised (M5-1, M5-4)** — `.github/workflows/release.yml` (build + push the tagged image, `ignis --version` == tag, binary + `libphp.so` tarball, release notes) and `nightly.yml` (E1/E2'/hello/E14/E16/B1-p99 vs thresholds) both dry-run clean but have not run against a real `v*` tag or a real schedule dispatch — the tag push is refused by the session git proxy (owner action). Docs done: `docs/migrate.md` (M5-2) and `docs/operate.md` (M5-3), every claim with a V-n. | Phase D docs, nightly perf job |
 
-Order: M1 → M2 → M3 → M4 → M5. M2 before M3 because a recipe nobody can install is not a recipe.
+Order: M1 → M2 → M3 → M4 → M5.
+
+## ADR map (docs/adr/README.md)
+
+| milestone / item | decisions it rests on |
+|---|---|
+| M1 Run | ADR-0019 (budget defaults), ADR-0022 (health from the runtime), ADR-0026 (timers) |
+| M2 Install | ADR-0027 (own PHP build, the image as the artifact, static deferred) |
+| M3 Real apps unchanged | ADR-0011 (Symfony), ADR-0028 (Laravel: classic + budget 1 now), ADR-0006 addendum (fiber-scoped services), ADR-0029 (vendor state) |
+| M4 Operate | ADR-0022 (observability), ADR-0009 addendum (deadlines/cancellation gaps), ADR-0015 addenda (pool rules), ADR-0025 (memory: the connection cap), ADR-0030 (preemption, proposed) |
+| M5 Ship | ADR-0027 (distribution), ADR-0023 (validation rules), ADR-0035 (security), ADR-0036 (naming) |
+| E18 Universal park | ADR-0020 (+ addendum: the owner's design element by element), ADR-0021 (layers), ADR-0016 addendum (offload boundary) |
+| B7 TLS read-ahead | ADR-0017, research 23 |
+| B8 connection cap | ADR-0025 |
+| Phase C protocol depth | ADR-0013, ADR-0014, ADR-0031 (WS/SSE), ADR-0032 (inbound TLS/h3) |
+| Known unknown 3 (scaling past 4 threads) | ADR-0004, ADR-0033 (per-thread reactor, deferred) |
+
+ M2 before M3 because a recipe nobody can install is not a recipe.
 
 **Deferred from the product, kept as R&D**: B3 in-process Table, B4 native MySQL/Redis (the offload
 router already covers them), B5 allocator-level leak detector, B7 TLS read-ahead in `stream_select`
