@@ -16,15 +16,17 @@ use tokio::net::TcpListener;
 
 use crate::reactor::{HttpRequest, Reactor};
 
-/// Reactors of every PHP thread that called `ignis_serve`; requests are
-/// dispatched round-robin (ADR-0004).
+/// Reactors of every PHP thread that called `ignis_serve`; each request goes
+/// to the thread with the fewest unanswered requests, ties rotating (ADR-0010).
 struct Registry {
     reactors: Mutex<Vec<Arc<Reactor>>>,
     next: AtomicUsize,
 }
 
 static REGISTRY: OnceLock<Arc<Registry>> = OnceLock::new();
-static BOUND: OnceLock<SocketAddr> = OnceLock::new();
+/// Bind-once state, held under a mutex so concurrent `ignis_serve` calls from
+/// several PHP threads cannot race (the second would fail with EADDRINUSE).
+static BOUND: Mutex<Option<SocketAddr>> = Mutex::new(None);
 
 impl Registry {
     fn pick(&self) -> Option<Arc<Reactor>> {
@@ -32,8 +34,29 @@ impl Registry {
         if rs.is_empty() {
             return None;
         }
-        let i = self.next.fetch_add(1, Ordering::Relaxed) % rs.len();
-        Some(rs[i].clone())
+        let n = rs.len();
+        let start = self.next.fetch_add(1, Ordering::Relaxed) % n;
+        let mut best = start;
+        let mut best_load = usize::MAX;
+        for k in 0..n {
+            let i = (start + k) % n;
+            let load = rs[i].pending_requests();
+            if load < best_load {
+                best_load = load;
+                best = i;
+                if load == 0 {
+                    break;
+                }
+            }
+        }
+        Some(rs[best].clone())
+    }
+}
+
+/// Removes a PHP thread's reactor from dispatch (its script ended or died).
+pub fn unregister(reactor: &Arc<Reactor>) {
+    if let Some(registry) = REGISTRY.get() {
+        registry.reactors.lock().unwrap().retain(|r| !Arc::ptr_eq(r, reactor));
     }
 }
 
@@ -42,15 +65,19 @@ impl Registry {
 /// bound address. Later calls (other PHP threads) only register.
 pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> Result<SocketAddr> {
     let registry = REGISTRY.get_or_init(|| Arc::new(Registry { reactors: Mutex::new(Vec::new()), next: AtomicUsize::new(0) }));
-    reactor.server_started();
-    registry.reactors.lock().unwrap().push(reactor);
-    if let Some(bound) = BOUND.get() {
-        return Ok(*bound);
+    let mut bound = BOUND.lock().unwrap();
+    if let Some(b) = *bound {
+        reactor.server_started();
+        registry.reactors.lock().unwrap().push(reactor);
+        return Ok(b);
     }
     let addr: SocketAddr = addr.parse().with_context(|| format!("bad listen address {addr:?}"))?;
     let listener = rt.block_on(TcpListener::bind(addr)).with_context(|| format!("bind {addr}"))?;
     let local = listener.local_addr()?;
-    let _ = BOUND.set(local);
+    *bound = Some(local);
+    drop(bound);
+    reactor.server_started();
+    registry.reactors.lock().unwrap().push(reactor);
     let registry = registry.clone();
     rt.spawn(async move {
         loop {

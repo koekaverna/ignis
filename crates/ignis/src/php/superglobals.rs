@@ -162,19 +162,16 @@ pub unsafe extern "C" fn zif_ignis_set_superglobals(ex: *mut sys::zend_execute_d
     // SAFETY: VM frame on the PHP thread; the four HashTables are VM-owned and
     // we store an addref'd zval pointing at each.
     unsafe {
-        let (mut h0, mut h1, mut h2, mut h3): (*mut sys::HashTable, *mut sys::HashTable, *mut sys::HashTable, *mut sys::HashTable) =
+        // Parse as array zvals and copy the zval bits verbatim: their type flags
+        // already say whether the array is refcounted. Forging IS_ARRAY_EX on an
+        // immutable literal (`[]` is the process-shared zend_empty_array) made
+        // several threads bump a shared refcount and corrupted the heap (V-15).
+        let (mut z0, mut z1, mut z2, mut z3): (*mut sys::zval, *mut sys::zval, *mut sys::zval, *mut sys::zval) =
             (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
-        if sys::zend_parse_parameters(zval::num_args(ex), c"hhhh".as_ptr(), &mut h0, &mut h1, &mut h2, &mut h3) != sys::SUCCESS {
+        if sys::zend_parse_parameters(zval::num_args(ex), c"aaaa".as_ptr(), &mut z0, &mut z1, &mut z2, &mut z3) != sys::SUCCESS {
             return;
         }
-        let hts = [h0, h1, h2, h3];
-        let mut vals = [undef(), undef(), undef(), undef()];
-        for i in 0..4 {
-            vals[i].value.arr = hts[i];
-            vals[i].u1.type_info = sys::IGNIS_IS_ARRAY_EX;
-            // The VM owns one reference (the argument); install() adds one for
-            // the table, so no extra addref here.
-        }
+        let vals = [*z0, *z1, *z2, *z3];
         install(&vals);
         zval::set_null(rv);
     }

@@ -71,7 +71,10 @@ fn main() -> ExitCode {
                             return 1;
                         }
                     };
-                    w.run_file(&script).unwrap_or(1)
+                    let status = w.run_file(&script).unwrap_or(1);
+                    // The script is over (normally or by fatal): stop routing requests here.
+                    php::http_unregister_current();
+                    status
                 })
                 .expect("spawn php thread"),
         );

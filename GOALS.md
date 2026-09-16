@@ -10,7 +10,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E2 | `Ignis\all()` of three 200 ms calls returns in < 230 ms; per-fiber overhead < 100 µs | **CONFIRMED** 202 ms, 22 µs (V-3). Raised: E2' = per-fiber overhead < 5 µs with a warm fiber pool (no mmap/munmap per request) |
 | E3 | RSS flat (±2%) over 1,000,000 requests in worker mode | **CONFIRMED** (V-10): 1.5M hello, RSS −2.5%, PHP heap flat to the byte; 4.6M requests total. Raised: E3' = re-run with streams (E6) and state swap (E13) enabled, 4 threads, 10M requests |
 | E4 | Hello-world throughput ≥ FrankenPHP worker mode on the same box, p99 lower | **CONFIRMED** on 1 thread (V-6): 4.6× throughput, p99 5.8× lower. Raised: E4' = same with Ignis@4 threads vs FrankenPHP@4 workers, and with `$_SERVER` populated (E13) so the work is comparable |
-| E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | **CONFIRMED** scaled (V-9): 3.7–3.98× in-process, 3.49× over HTTP. Raised: E5' = least-inflight dispatch so /cpu p99 at 4 threads ≤ FrankenPHP's |
+| E5 | 8 threads ≥ 6.5× single-thread throughput on CPU-bound work (this box has 4 vCPU: target is scaled to 4 threads ≥ 3.25×, see note) | **CONFIRMED** scaled (V-9): 3.7–3.98× in-process, 3.49× over HTTP. Raised: E5' = least-inflight dispatch so /cpu p99 at 4 threads ≤ FrankenPHP's → **DONE** (V-15: 12.4–12.8 ms vs 15.6 ms) |
 | E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | **CONFIRMED for tcp streams** (V-12: 3 × 200 ms fetches in 203 ms on one thread, hook-disabled control stalls). **REFUTED for PDO sqlite via hooks** (no stream layer). Raised: E6' = `ssl://` (TLS on tokio) + PDO pgsql over the hooked tcp transport (pgsql's libpq uses its own sockets, so that needs the native driver, E14) |
 | E7 | Revolt-compatible driver over the Ignis reactor runs AMPHP examples unchanged | OPEN |
 | E8 | symfony/runtime adapter boots symfony/skeleton in worker mode; RequestStack fiber-scoped | OPEN |
@@ -27,9 +27,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 4: E3~~ DONE (V-10).
 
-~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14).
+~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15).
 
-Next question (Cycle 9): E5' — does least-inflight dispatch close the /cpu p99 gap vs FrankenPHP at 4 threads (V-9: 17.5 vs 15.6 ms)? Then E8 (Symfony via symfony/runtime, fiber-scoped RequestStack) as far as the night allows.
+Next question (Cycle 10): E8 — does symfony/skeleton boot once in worker mode behind a symfony/runtime adapter over `Ignis\serve`, with a fiber-scoped RequestStack so two interleaved requests never see each other's Request?
 
 ## Ranking (after Cycle 0, kept for history)
 

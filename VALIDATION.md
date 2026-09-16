@@ -381,3 +381,21 @@ Date: 2026-09-16T03:5xZ. Command: `bench/e11-cancel.sh` (1 PHP thread, release).
 | E6 after cancellations | works (102.6 ms) | green → CONFIRMED |
 
 Mechanism (ADR-0009): a `Drop` guard in hyper's service future emits `Outcome::Cancelled { dropped_at }`; the loop throws `Ignis\CancelledException` into the request fiber and every child spawned under its fiber-scoped request id (`Fiber::throw` for userland parks, `ignis_cancel_parked_any` → `zend_fiber_resume_exception` for C stream parks). Deadlines are timer ops tagged with the request id; `DeadlineExceededException` becomes 504.
+
+## V-15 — H17 (E5'): least-inflight dispatch; two multi-thread bugs found and fixed on the way (CONFIRMED)
+
+Date: 2026-09-16T04:3xZ. Build: release, ADR-0010 dispatch. Load: `wrk -t1 -c64 -d10s` on `/cpu`, `wrk -t2 -c64 -d10s` on `/`, server `--threads 4`, same box.
+
+| metric | round-robin (V-9) | **least-inflight** | FrankenPHP@4 workers (V-9) | target |
+|---|---|---|---|---|
+| `/cpu` req/s | 9,285 | **9,124 / 9,321** | 7,278 | ≥ 9k → CONFIRMED |
+| `/cpu` p99 | 17.5 ms | **12.75 / 12.37 ms** | 15.6 ms | ≤ 15.6 ms → CONFIRMED |
+| hello req/s, 4 threads | 105,200 | **112,511** (p99 2.41 ms) | 16,583 | no regression → CONFIRMED |
+| `bench/e13-http.sh` at 4 threads | — | 200/200 correct | — | — |
+
+Two bugs surfaced only under sustained 4-thread load (the earlier 4-thread numbers in V-9 predate the superglobals observer, streams and cancellation):
+
+1. **Bind race** (`http.rs`): several PHP threads called `ignis_serve` at once; the bind-once check was not atomic, the loser threw `EADDRINUSE`, its script died, and its already-registered reactor kept receiving requests nobody answered (wrk: hundreds of thousands of write errors). Fixed: bind under a mutex; a thread whose script ends now deregisters its reactor.
+2. **Heap corruption from a forged refcount flag** (`superglobals.rs`): `ignis_set_superglobals` stored its array arguments with `IS_ARRAY_EX` (refcounted) type flags regardless of the array. A literal `[]` is the process-shared immutable `zend_empty_array`; four threads incrementing/decrementing its refcount concurrently corrupted it → `zend_mm_heap corrupted` after a few seconds of load. Bisected by disabling subsystems (`IGNIS_NO_SUPERGLOBALS=1` survived, `IGNIS_NO_STREAM_HOOK=1` died). Fixed by copying the argument zvals verbatim (their flags are authoritative). Lesson recorded in DECISIONS.md: never construct a zval's type_info by hand for data PHP handed us.
+
+Both fixed versions ran 2 × 10 s of `/cpu` + 10 s hello at 4 threads with 0 socket errors and no abort.

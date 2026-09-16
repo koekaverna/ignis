@@ -285,6 +285,11 @@ impl Reactor {
         }
     }
 
+    /// Requests delivered to this thread's loop and not yet answered (ADR-0010).
+    pub fn pending_requests(&self) -> usize {
+        self.responders.lock().unwrap().len()
+    }
+
     pub fn server_started(&self) {
         self.servers.fetch_add(1, Ordering::Relaxed);
     }

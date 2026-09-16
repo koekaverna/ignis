@@ -60,3 +60,7 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T00:05:15Z C8 RESEARCH/DECIDE/HYPOTHESIZE — research 08, ADR-0009, H16.
 - 2026-09-16T00:11:56Z C8 VALIDATE — H16/E11 CONFIRMED (V-14): 20/20 disconnects cancelled incl. children, finally ran, worst latency 0.78 ms; deadline 504 at 102 ms; E6 still green.
 - 2026-09-16T00:11:56Z C8 REASSESS — E11' = under load; Cycle 9 = E5' least-inflight dispatch (small), then E8 Symfony attempt.
+- 2026-09-16T00:12:46Z C9 START — question: does least-inflight dispatch close the /cpu p99 gap vs FrankenPHP at 4 threads (E5')?
+- 2026-09-16T00:12:46Z C9 IMPLEMENT — Registry::pick = least pending_requests() with rotating ties.
+- 2026-09-16T00:19:13Z C9 VALIDATE — H17/E5' CONFIRMED (V-15): /cpu@4 p99 12.4-12.8ms (FrankenPHP 15.6), 9.1-9.3k rps, hello 112k. Found+fixed: ignis_serve bind race; forged IS_ARRAY_EX refcount on immutable [] corrupting the heap under 4 threads.
+- 2026-09-16T00:19:13Z C9 REASSESS — soak rule added (DECISIONS); Cycle 10 = E8 Symfony (skeleton installing from source in background).
