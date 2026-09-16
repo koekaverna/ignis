@@ -3,7 +3,6 @@ name: ci
 on:
   push:
     branches: [night-1]
-    branches-ignore: ['claude/**']
   pull_request:
   workflow_dispatch:
 # A new push cancels the previous run of the same branch.

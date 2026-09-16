@@ -4,7 +4,6 @@ name: php-image
 on:
   push:
     branches: [night-1]
-    branches-ignore: ['claude/**']
     paths:
       - scripts/build-php.sh
       - docker/php.Dockerfile
