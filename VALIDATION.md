@@ -1116,3 +1116,62 @@ before A5 landed.
 | `ext/sockets/tests` | 91/1 | 86/6 |
 
 Unit tests (nextest-equivalent): 10/10.
+
+## V-33 — reactor round-trip latency is a wakeup pair, and `IGNIS_POLL_SPIN_US` (H30)
+
+Machine: this box, 4 vCPU, WSL2 (`Linux 6.18.33.2-microsoft-standard-WSL2`), quiet, load < 0.5.
+PHP 8.5.10 ZTS+embed, `cargo build --release -p ignis`. Every figure is the median of 3 reps of
+N=5000 ops unless stated.
+
+**Decomposition** — `./target/release/ignis bench/php/reactor_latency.php`
+
+| leg | what it crosses | µs/op |
+|---|---|---|
+| php-only: `ignis_watch` on an always-writable fd | zif only, tokio never sees it | 13.9 |
+| channels: `Ignis\sleep(0)` | mpsc → dispatcher → crossbeam; no timer, no epoll, no dup | 110.1–124.8 |
+| epoll: two-fiber socketpair ping-pong | real `Op::Watch`: dup + `AsyncFd` + wait + drop | 55.3 |
+
+The epoll leg is **cheaper** than the channels leg — a ping-pong has two fibers, so its wakeups
+already batch. Registration is not the cost.
+
+**Amortization** (`Ignis\sleep(0)`, spin off): 1 fiber **93.1–96.1 µs**, 2 → 49.3, 4 → 22.6,
+8 → 11.0, 32 → 2.64, 128 → **0.58 µs/op**. Cost × batch = 74–98 µs throughout: one fixed wakeup per
+`poll()`, shared by everything that wakeup drains.
+
+**Platform floor** — two threads, two `std::sync::mpsc` channels, 20 000 round trips, `rustc -O`:
+**57.5 / 57.3 µs** per round trip (the same two wakeups). So over half of our fixed cost is the
+scheduler on this box; the remainder is tokio's wake + the dispatcher.
+
+**`IGNIS_POLL_SPIN_US` sweep**, concurrency 1: 0 → 96.1, 20 → 63.2, 50 → 36.8, **100 → 30.0**,
+200 → 30.3 µs/op. Plateau at 100; the floor is one remaining wakeup (the submit still wakes tokio).
+
+**Spin on (100) vs off, throughput and CPU** — 20 000 ops, `getrusage`, one process:
+
+| fibers | µs/op off → on | cpu µs/op off → on |
+|---|---|---|
+| 1 | 109.66 → 37.44 | 121.02 → 71.21 |
+| 8 | 14.40 → 3.75 | 16.73 → 7.02 |
+| 32 | 3.53 → 0.95 | 4.66 → 1.83 |
+| 128 | 0.72 → 0.36 | 1.37 → 0.72 |
+
+CPU per op is *lower* with the spin at every concurrency: a futex sleep and wake costs the kernel
+more than a short spin. **Saturated box** (4 parallel processes, all 4 vCPU busy) — conc 1:
+131.2–132.3 → 42.7–43.8 µs/op; conc 8: 17.05–17.25 → 5.17–5.36. No contention penalty.
+**Idle server** (`--threads 4`, a listener, no traffic, 5 s): **0 CPU ticks** either way — the
+`inflight() > 0` guard means an idle thread never spins.
+
+**Where the spin does not pay.** It only wins if the completion lands inside the window:
+
+| workload | off | on |
+|---|---|---|
+| serial `SELECT 1` over the libpq path (research 24) | 231.0 / 242.2 µs | **172.4 / 190.9 µs** |
+| concurrent pg, 20 fibers × 100 queries | 22 112 q/s | 21 410 q/s |
+| sequential `GET /` hello, 30 reqs, median | 1.31 / 1.37 ms | 1.48 / 1.56 ms |
+| sequential `GET /sleep?ms=1`, 30 reqs, median | 3.68 / 3.76 ms | 3.84 / 3.97 ms |
+
+A millisecond-scale wait pays the 100 µs and then sleeps anyway. Hence **off by default**.
+
+**Regression net for the reactor change**: `cargo nextest run --workspace` 10/10;
+`bench/e15-phpt.sh` locally — fibers main 108 / fiber 78, sockets main 91 / fiber 84, streams main
+133 / fiber 125, all at or above the baseline raised this morning. `scripts/smoke.sh` could not
+complete: an unrelated container holds `:8080`, which the app.php leg hardcodes.

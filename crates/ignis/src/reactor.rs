@@ -252,6 +252,9 @@ pub struct Reactor {
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
     last_active_us: AtomicU64,
     created: std::time::Instant,
+    /// Microseconds `poll` spins on `try_recv` before sleeping the thread (H30, `IGNIS_POLL_SPIN_US`).
+    /// 0 = off. Read once here so the hot path never touches the environment.
+    spin_us: u64,
 }
 
 type ConnMap = Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<ConnCmd>>>>;
@@ -525,6 +528,7 @@ impl Reactor {
             streams: Mutex::new(HashMap::new()),
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
+            spin_us: std::env::var("IGNIS_POLL_SPIN_US").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
         })
     }
 
@@ -671,12 +675,34 @@ impl Reactor {
         if self.inflight() == 0 && self.servers.load(Ordering::Relaxed) == 0 {
             return out;
         }
-        let first = match timeout {
-            Some(t) => match self.from_tokio.recv_timeout(t) {
-                Ok(c) => Some(c),
-                Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => None,
+        // H30: the cost of a round trip is a futex wakeup pair, not the work. On this box a bare
+        // two-thread ping-pong is 57 us, and the reactor round trip is 93 us at one fiber in flight
+        // but 0.58 us at 128 — the same fixed cost divided by the batch one `poll` drains. When a
+        // completion is already on its way, spinning briefly catches it without sleeping the thread.
+        // Off by default because an idle thread would burn the spin every wakeup for nothing.
+        let mut first = None;
+        if self.spin_us > 0 && self.inflight() > 0 {
+            let deadline = std::time::Instant::now() + Duration::from_micros(self.spin_us);
+            loop {
+                match self.from_tokio.try_recv() {
+                    Ok(c) => {
+                        first = Some(c);
+                        break;
+                    }
+                    Err(_) if std::time::Instant::now() >= deadline => break,
+                    Err(_) => std::hint::spin_loop(),
+                }
+            }
+        }
+        let first = match first {
+            Some(c) => Some(c),
+            None => match timeout {
+                Some(t) => match self.from_tokio.recv_timeout(t) {
+                    Ok(c) => Some(c),
+                    Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => None,
+                },
+                None => self.from_tokio.recv().ok(),
             },
-            None => self.from_tokio.recv().ok(),
         };
         if let Some(c) = first {
             out.push(c);

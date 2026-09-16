@@ -148,3 +148,22 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   greps `IGNIS_PASSED=<n>` and `bench/e15-revolt.sh` never printed it, so it reported "no baseline
   yet" and protected nothing. The script now emits it; its baseline gets set from the next CI run
   rather than from a number typed here.
+- 2026-09-16T12:20Z — **H30 / V-33: the reactor round trip is a wakeup pair, not work.** Chased the
+  ~120 µs from research 24. My going-in guess — per-op epoll registration in `watch_fd` — was
+  **wrong**: the real-`Op::Watch` leg (55.3 µs) is cheaper than the pure-channel leg (110–125 µs),
+  because a ping-pong already batches two fibers. The cost is one futex wakeup per `poll()`, shared
+  by the batch it drains: 93.1 µs at 1 fiber, 0.58 µs at 128, product constant at 74–98 µs. A bare
+  two-thread `std::mpsc` ping-pong on this box is 57.4 µs, so over half of it is the platform.
+  Added `IGNIS_POLL_SPIN_US` (bounded `try_recv` spin before sleeping, guarded on `inflight() > 0`,
+  **off by default**): concurrency 1 goes 96.1 → 30.0 µs, CPU per op falls at every concurrency,
+  no penalty on a saturated box, 0 CPU when idle. But it only pays for sub-100 µs completions — a
+  serial local pg query improves 1.27–1.34×, while `GET /sleep?ms=1` gets slightly *worse*. Knob,
+  not a default.
+- 2026-09-16T12:20Z — **`bench/e15-phpt.sh` was silently passing locally.** It hardcoded
+  `/home/user/php-src`, and with no tree there it still ran every suite to completion and printed
+  `?` with zero passes — exit 0. Only CI caught it, and only because 0 < baseline. Now resolves
+  `PHPSRC` → `/home/user/php-src` → `$HOME/php-src` and hard-fails when the tree is missing. This
+  is part of owner decision (d); the other four scripts still carry the hardcode.
+- 2026-09-16T12:20Z — `cargo-nextest` was missing from this box (the documented runner). Installed
+  from the upstream prebuilt binary at the owner's suggestion; a fallback I had added to
+  `scripts/smoke.sh` was reverted in favour of the real tool.

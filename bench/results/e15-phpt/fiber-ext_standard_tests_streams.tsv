@@ -34,7 +34,7 @@ PASSED	/home/koe/php-src/ext/standard/tests/streams/bug64770.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug65483.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug67626.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug68948.phpt
-FAILED	/home/koe/php-src/ext/standard/tests/streams/bug69521.phpt
+PASSED	/home/koe/php-src/ext/standard/tests/streams/bug69521.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug70198.phpt
 FAILED	/home/koe/php-src/ext/standard/tests/streams/bug70362.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug71245.phpt
@@ -94,7 +94,7 @@ FAILED	/home/koe/php-src/ext/standard/tests/streams/gh8409.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/gh8472.phpt
 SKIPPED	/home/koe/php-src/ext/standard/tests/streams/gh9590-001.phpt
 SKIPPED	/home/koe/php-src/ext/standard/tests/streams/gh9590-002.phpt
-FAILED	/home/koe/php-src/ext/standard/tests/streams/ghsa-3cr5-j632-f35r.phpt
+PASSED	/home/koe/php-src/ext/standard/tests/streams/ghsa-3cr5-j632-f35r.phpt
 FAILED	/home/koe/php-src/ext/standard/tests/streams/glob-wrapper.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/non_finite_values.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/nonblocking_stdin.phpt
@@ -137,7 +137,7 @@ PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_file_va
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_process_basic.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_basic.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation1.phpt
-FAILED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.phpt
+PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation4.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_get_transports.phpt

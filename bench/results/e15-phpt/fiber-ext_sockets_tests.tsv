@@ -48,7 +48,7 @@ PASSED	/home/koe/php-src/ext/sockets/tests/socket_create_pair_sockexec.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_defer_acp.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_dontfragment.phpt
 SKIPPED	/home/koe/php-src/ext/sockets/tests/socket_dontfragment_bsd.phpt
-PASSED	/home/koe/php-src/ext/sockets/tests/socket_export_stream-1.phpt
+FAILED	/home/koe/php-src/ext/sockets/tests/socket_export_stream-1.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_export_stream-2.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_export_stream-3.phpt
 SKIPPED	/home/koe/php-src/ext/sockets/tests/socket_export_stream-4-win.phpt

@@ -16,7 +16,11 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 # scripts/ignis-php execs the binary (A7) and so cannot remove its own tmp ini; clear them per run.
 rm -rf "${IGNIS_PHPT_TMPDIR:-/tmp/e15-phpt}"
-PHPSRC=${PHPSRC:-/home/user/php-src}
+# php-src tree: explicit PHPSRC wins, then CI's /home/user/php-src, then this machine's $HOME.
+# Without the last one the suite used to run to completion against a missing tree and report "?"
+# with zero passes everywhere — a silent pass locally (CI only caught it because 0 < baseline).
+PHPSRC=${PHPSRC:-$([ -d /home/user/php-src ] && echo /home/user/php-src || echo "$HOME/php-src")}
+[ -d "$PHPSRC/Zend/tests" ] || { echo "no php-src tree at $PHPSRC (set PHPSRC=...)"; exit 2; }
 STOCK=${STOCK:-/opt/php85-zts/bin/php}
 OUT=$ROOT/bench/results/e15-phpt
 SUITE_TIMEOUT=${SUITE_TIMEOUT:-1200}     # 20 min cap per suite run

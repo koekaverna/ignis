@@ -2,16 +2,13 @@
 /home/koe/php-src/ext/standard/tests/streams/bug60106-001.phpt
 /home/koe/php-src/ext/standard/tests/streams/bug60106-002.phpt
 /home/koe/php-src/ext/standard/tests/streams/bug64433.phpt
-/home/koe/php-src/ext/standard/tests/streams/bug69521.phpt
 /home/koe/php-src/ext/standard/tests/streams/bug70362.phpt
 /home/koe/php-src/ext/standard/tests/streams/bug77664.phpt
 /home/koe/php-src/ext/standard/tests/streams/gh10031.phpt
 /home/koe/php-src/ext/standard/tests/streams/gh11418.phpt
 /home/koe/php-src/ext/standard/tests/streams/gh14506.phpt
 /home/koe/php-src/ext/standard/tests/streams/gh8409.phpt
-/home/koe/php-src/ext/standard/tests/streams/ghsa-3cr5-j632-f35r.phpt
 /home/koe/php-src/ext/standard/tests/streams/glob-wrapper.phpt
 /home/koe/php-src/ext/standard/tests/streams/stream_context_tcp_nodelay_server.phpt
-/home/koe/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation2.phpt
 /home/koe/php-src/ext/standard/tests/streams/stream_select_null_usec.phpt
 /home/koe/php-src/ext/standard/tests/streams/user_streams_context_001.phpt

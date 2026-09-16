@@ -65,3 +65,32 @@ parity. Time box: one cycle.
 for 20×200 ms, 20/20 ok, control stalls (V-29). Parity 86 passed / 6 failed — one better than
 baseline, zero new failures. The overhead criterion is exceeded and, more importantly, was
 unmeasurable as written: see V-29 and the ADR-0018 addendum.
+
+## H30 (reactor round-trip latency at low concurrency) — CONFIRMED, and the fix is narrower than the finding
+
+**Statement.** The ~120 µs per reactor round trip seen in research 24 at concurrency 1 is not work
+but a cross-thread wakeup pair, so it is a fixed cost per `poll()` wakeup divided by the batch that
+wakeup drains — and a bounded spin on `try_recv` before sleeping the thread removes most of it.
+
+**Test.** `bench/php/reactor_latency.php`: three legs differing in one thing each — `ignis_watch`
+on an already-ready fd (never reaches tokio), `Ignis\sleep(0)` (crosses both channels, no timer and
+no epoll: `Op::Sleep { us: 0 }` completes in the dispatcher task), and a two-fiber ping-pong over a
+socketpair (a real `Op::Watch`: dup + `AsyncFd` + drop). Plus an amortization curve at 1…128
+fibers, a bare two-thread `std::mpsc` ping-pong in Rust as the platform floor, and
+`IGNIS_POLL_SPIN_US` swept 0…200. Time box: one cycle.
+
+**Expected.** If the cost is epoll registration, the ping-pong leg is the expensive one and the
+curve is flat. If it is the wakeup, the ping-pong leg is *not* special and the curve falls as
+1/batch.
+
+**Result: CONFIRMED — it is the wakeup.** The fixed cost is 74–98 µs whatever the batch size
+(93.1 µs at 1 fiber, 0.58 µs at 128 — the product is constant), the platform floor for the same two
+wakeups is 57.3–57.5 µs on this box, and the epoll leg is *cheaper* than the channels leg because
+a ping-pong already has two fibers batching. My going-in guess (epoll registration per op) was
+wrong. V-33.
+
+**The fix is real but narrow.** `IGNIS_POLL_SPIN_US=100` cuts concurrency-1 from 96.1 to 30.0 µs
+and lowers CPU per op at every concurrency, with no penalty on a saturated box and zero cost when
+idle. But it only pays when the completion lands inside the spin window: a serial local pg query
+improves 1.27–1.34×, while `GET /sleep?ms=1` gets *worse* (3.68→3.84 ms) because a millisecond-scale
+wait pays the spin and then sleeps anyway. Shipped off by default as a tuning knob, not a default.
