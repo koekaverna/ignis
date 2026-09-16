@@ -204,3 +204,13 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   `e15-swoole.sh` and `e15-frankenphp.sh` now fall back to `$HOME`. `bench/frankenphp/Caddyfile`
   and `bench/fpm/nginx.conf` left alone — neither comparison server is installed here, so a change
   would be unverifiable; `bench/results/e10-build-complexity.md` is a recorded measurement.
+- 2026-09-16T14:25Z — **A3 closed against the restated criterion (V-35).** Owner accepted "no
+  monotonic trend past 5M" and the re-run by main that I made a condition of it. 10,266,805 requests
+  over a `/whoami` → `/dashboard` → `/offload` mix at 4 threads + 4 offload workers: past 5M the RSS
+  readings are 64,612 → 62,492 → 65,824 → 63,220 → 63,320 kB — a 62.5–65.8 MB band with no trend.
+  0 restarts, 0 stalled, 0 non-2xx, server log empty. New driver committed as `bench/a3-soak.sh`,
+  which prints a checkpoint per chunk rather than two endpoints — the shape the old criterion could
+  not see. My curve is *not* the bencher's (+16.7 % here between the same points against their
+  +50 %, 62–70 MB against 87–110): different route weights and no PG leg. They agree on what the
+  criterion now asks — front-loaded growth that stops trending — and that is the point of restating
+  it as a trend rather than a pair of endpoints.

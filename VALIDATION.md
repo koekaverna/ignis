@@ -1195,3 +1195,45 @@ Captured failing body: `{"bodies":["slept\n",false,"slept\n"],"ms":203.9}` with
 our subscriber level — worth fixing before the next attempt).
 
 Excluded by the table above: the hooked client on its own, the self-call shape, and a startup race.
+
+## V-35 — A3 re-run by main: RSS over 10.27M requests shows no monotonic trend past 5M (CONFIRMED)
+
+Date: 2026-09-16T14:2xZ. Box: 24-thread Ryzen AI 9 HX 370 / 30 GB, WSL2, quiet. Command:
+
+```
+TARGET=10000000 DUR=30s bench/a3-soak.sh
+# ./target/release/ignis --threads 4 --offload 4 --supervise bench/php/a3-soak.php on 127.0.0.1:8099
+# wrk -t4 -c200 -d30s cycling /whoami?x=1 -> /dashboard?user=7 -> /offload
+```
+
+Acceptance is the criterion the owner restated on this date ("no monotonic trend past 5M"),
+replacing "RSS within ±2 % between 1M and 10M". This run is the main agent's own; the earlier curve
+in V-30 was the bencher's and rule C15 does not admit it.
+
+| requests | RSS kB | fibers | idle | restarts | stalled |
+|---|---|---|---|---|---|
+| 1,778,047 | 54,280 | 43 | 42 | 0 | 0 |
+| 1,807,647 | 70,004 | 172 | 171 | 0 | 0 |
+| 2,918,790 | 62,960 | 172 | 171 | 0 | 0 |
+| 4,641,175 | 62,572 | 172 | 171 | 0 | 0 |
+| 4,670,575 | 65,508 | 177 | 174 | 0 | 0 |
+| 5,760,577 | 64,612 | 174 | 173 | 0 | 0 |
+| 7,489,789 | 62,492 | 187 | 186 | 0 | 0 |
+| 7,519,189 | 65,824 | 179 | 178 | 0 | 0 |
+| 8,589,143 | 63,220 | 184 | 183 | 0 | 0 |
+| **10,266,805** | **63,320** | 184 | 183 | **0** | **0** |
+
+**Past 5M: 64,612 → 62,492 → 65,824 → 63,220 → 63,320 — oscillation in a 62.5–65.8 MB band with no
+trend. Criterion met.** 0 supervisor restarts, 0 stalled threads, no non-2xx reported by wrk in any
+chunk, server log empty.
+
+The step at the second checkpoint is the fiber pool sizing itself to the concurrency of the
+`/dashboard` route (43 → 172 fibers), exactly the shape V-10 recorded at 1 thread; afterwards the
+pool is flat and so is RSS.
+
+**This is not the same curve the bencher measured** (V-30 context: +50 % between 1M and 10M, an
+87–110 MB band). Between the same two points here it is 54,280 → 63,320 kB, +16.7 %, in a 62–70 MB
+band. Different driver: this one has no PostgreSQL leg and weights the routes differently. The two
+runs agree on the thing the criterion now asks about — the growth is front-loaded and stops
+trending — and disagree on magnitude, which is why the criterion is about the trend and not about a
+pair of endpoints.
