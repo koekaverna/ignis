@@ -1,0 +1,19 @@
+[package]
+name = "grpc-baseline"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+description = "Pure tonic/hyper gRPC hello with the same opaque-bytes codec as Ignis, minus PHP: the ceiling for V-20."
+
+[workspace]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+hyper = { version = "1", features = ["http2", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "http2"] }
+http = "1"
+bytes = "1"
+tonic = { version = "0.14", default-features = false, features = ["server"] }
+
+[profile.release]
+lto = "thin"

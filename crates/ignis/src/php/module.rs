@@ -82,6 +82,10 @@ static ARGINFO_CANCEL: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic
 static ARGINFO_T2: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"worker"), arg_info(c"json")]);
 #[allow(dead_code)]
 static ARGINFO_T3: SyncStatic<[sys::zend_internal_arg_info; 4]> = SyncStatic([arg_info_head(3), arg_info(c"a"), arg_info(c"b"), arg_info(c"c")]);
+static ARGINFO_GRPC2: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"id"), arg_info(c"message")]);
+static ARGINFO_GRPC3: SyncStatic<[sys::zend_internal_arg_info; 4]> = SyncStatic([arg_info_head(3), arg_info(c"id"), arg_info(c"code"), arg_info(c"message")]);
+static ARGINFO_GRPC4: SyncStatic<[sys::zend_internal_arg_info; 5]> =
+    SyncStatic([arg_info_head(4), arg_info(c"url"), arg_info(c"path"), arg_info(c"message"), arg_info(c"streaming")]);
 static ARGINFO_WATCH: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"stream"), arg_info(c"mode")]);
 static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
     arg_info_head(4),
@@ -156,6 +160,8 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                 Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
                 Outcome::Ready => sys::add_index_long(rv, c.id, 1),
                 Outcome::Json(json) => sys::add_index_stringl(rv, c.id, json.as_ptr() as *const c_char, json.len()),
+                Outcome::Blob(Some(b)) => sys::add_index_stringl(rv, c.id, b.as_ptr() as *const c_char, b.len()),
+                Outcome::Blob(None) => sys::add_index_null(rv, c.id),
                 Outcome::Failed(msg) => {
                     let mut item: sys::zval = std::mem::zeroed();
                     zval::set_new_array(&mut item);
@@ -296,6 +302,70 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
     }
 }
 
+/// `ignis_grpc_send(int $id, string $message): bool` — one response message (E10).
+unsafe extern "C" fn zif_ignis_grpc_send(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: args are VM-owned for the call; the message is copied before returning.
+    unsafe {
+        let mut id: sys::zend_long = 0;
+        let mut msg: *mut c_char = ptr::null_mut();
+        let mut len: usize = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"ls".as_ptr(), &mut id, &mut msg, &mut len) != sys::SUCCESS {
+            return;
+        }
+        let b = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(msg as *const u8, len));
+        zval::set_bool(rv, reactor().stream_send(id as u64, b));
+    }
+}
+
+/// `ignis_grpc_end(int $id, int $code, string $message): bool` — finish a response stream (E10).
+unsafe extern "C" fn zif_ignis_grpc_end(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above.
+    unsafe {
+        let mut id: sys::zend_long = 0;
+        let mut code: sys::zend_long = 0;
+        let mut msg: *mut c_char = ptr::null_mut();
+        let mut len: usize = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"lls".as_ptr(), &mut id, &mut code, &mut msg, &mut len) != sys::SUCCESS {
+            return;
+        }
+        let m = String::from_utf8_lossy(std::slice::from_raw_parts(msg as *const u8, len)).into_owned();
+        zval::set_bool(rv, reactor().stream_end(id as u64, code as i32, m));
+    }
+}
+
+/// `ignis_grpc_call(string $url, string $path, string $message, bool $streaming): int` — op id (E10 client).
+unsafe extern "C" fn zif_ignis_grpc_call(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above; everything is copied into owned Rust data before the future is built.
+    unsafe {
+        let (mut u, mut ul, mut p, mut pl, mut m, mut ml): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
+            (ptr::null_mut(), 0, ptr::null_mut(), 0, ptr::null_mut(), 0);
+        let mut streaming: bool = false;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"sssb".as_ptr(), &mut u, &mut ul, &mut p, &mut pl, &mut m, &mut ml, &mut streaming)
+            != sys::SUCCESS
+        {
+            return;
+        }
+        let url = String::from_utf8_lossy(std::slice::from_raw_parts(u as *const u8, ul)).into_owned();
+        let path = String::from_utf8_lossy(std::slice::from_raw_parts(p as *const u8, pl)).into_owned();
+        let msg = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(m as *const u8, ml));
+        let id = reactor().submit(Op::Custom(crate::grpc::call(url, path, msg, streaming)));
+        zval::set_long(rv, id as i64);
+    }
+}
+
+/// `ignis_grpc_recv(int $stream): int` — op id; payload is the next message or null at the end (E10 client).
+unsafe extern "C" fn zif_ignis_grpc_recv(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: as above.
+    unsafe {
+        let mut h: sys::zend_long = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut h) != sys::SUCCESS {
+            return;
+        }
+        let id = reactor().submit(Op::Custom(crate::grpc::recv(h as u64)));
+        zval::set_long(rv, id as i64);
+    }
+}
+
 const fn fe(
     name: &'static CStr,
     handler: unsafe extern "C" fn(*mut sys::zend_execute_data, *mut sys::zval),
@@ -326,7 +396,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 10]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 14]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -336,12 +406,16 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 10]> = SyncStatic([
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
+    fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
+    fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 17]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 21]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -358,10 +432,14 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 17]> = SyncStatic([
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
+    fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
+    fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 12]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 16]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -371,6 +449,10 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 12]> = SyncStatic([
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
+    fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
+    fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
+    fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_park_on", crate::backend::async_core::zif_ignis_park_on, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_op_result", crate::backend::async_core::zif_ignis_op_result, ARGINFO_ONE.0.as_ptr(), 1),
     fe_end(),
@@ -434,7 +516,7 @@ mod tests {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
         let names: Vec<String> = FUNCTIONS.0.iter().filter(|f| !f.fname.is_null()).map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string()).collect();
-        for n in ["ignis_stats", "ignis_set_superglobals", "ignis_respond", "ignis_poll"] {
+        for n in ["ignis_stats", "ignis_set_superglobals", "ignis_respond", "ignis_poll", "ignis_grpc_send", "ignis_grpc_end", "ignis_grpc_call", "ignis_grpc_recv"] {
             assert!(names.contains(&n.to_string()), "{n} missing");
         }
         let sg = FUNCTIONS.0.iter().find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals").unwrap();

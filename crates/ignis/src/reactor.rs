@@ -93,8 +93,13 @@ pub enum Outcome {
     Json(String),
     /// PHP-facing failure of a `Custom` op: `['kind' => 'error', 'message' => ..]`.
     Failed(String),
+    /// PHP-facing binary result of a `Custom` op (E10 gRPC): a string, or null for end-of-stream.
+    Blob(Option<Bytes>),
     Error(String),
 }
+
+/// One message of a gRPC response stream (E10): bytes, or a terminal `(code, message)` status.
+pub type GrpcMsg = Result<Bytes, (i32, String)>;
 
 #[derive(Debug)]
 pub struct Completion {
@@ -113,6 +118,8 @@ pub struct Reactor {
     done_tx: Sender<Completion>,
     from_tokio: Receiver<Completion>,
     responders: Mutex<HashMap<u64, oneshot::Sender<HttpResponse>>>,
+    /// gRPC response streams PHP is still filling (E10, ADR-0014).
+    streams: Mutex<HashMap<u64, mpsc::UnboundedSender<GrpcMsg>>>,
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
     last_active_us: AtomicU64,
     created: std::time::Instant,
@@ -264,6 +271,7 @@ impl Reactor {
             done_tx,
             from_tokio,
             responders: Mutex::new(HashMap::new()),
+            streams: Mutex::new(HashMap::new()),
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
         })
@@ -301,9 +309,43 @@ impl Reactor {
         (id, rx)
     }
 
+    /// Tokio side (E10): deliver a gRPC request; PHP fills the returned stream via `stream_send`/`stream_end`.
+    pub fn deliver_stream_request(&self, req: HttpRequest) -> (u64, mpsc::UnboundedReceiver<GrpcMsg>) {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.streams.lock().unwrap().insert(id, tx);
+        self.inflight.fetch_add(1, Ordering::Relaxed);
+        if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
+            self.streams.lock().unwrap().remove(&id);
+        }
+        (id, rx)
+    }
+
+    /// PHP-thread side (E10): one response message. False if the stream is unknown or the client is gone.
+    pub fn stream_send(&self, id: u64, msg: Bytes) -> bool {
+        match self.streams.lock().unwrap().get(&id) {
+            Some(tx) => tx.send(Ok(msg)).is_ok(),
+            None => false,
+        }
+    }
+
+    /// PHP-thread side (E10): finish the stream with a gRPC status (0 = OK).
+    pub fn stream_end(&self, id: u64, code: i32, message: String) -> bool {
+        match self.streams.lock().unwrap().remove(&id) {
+            Some(tx) => {
+                if code != 0 {
+                    let _ = tx.send(Err((code, message)));
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Tokio side: the response future for `id` was dropped before PHP answered.
     pub fn cancel_request(&self, id: u64) {
-        if self.responders.lock().unwrap().remove(&id).is_some() {
+        let known = self.responders.lock().unwrap().remove(&id).is_some() || self.streams.lock().unwrap().remove(&id).is_some();
+        if known {
             self.inflight.fetch_add(1, Ordering::Relaxed);
             let _ = self.done_tx.send(Completion { id, outcome: Outcome::Cancelled { dropped_at: std::time::Instant::now() } });
         }
@@ -330,7 +372,7 @@ impl Reactor {
 
     /// Requests delivered to this thread's loop and not yet answered (ADR-0010).
     pub fn pending_requests(&self) -> usize {
-        self.responders.lock().unwrap().len()
+        self.responders.lock().unwrap().len() + self.streams.lock().unwrap().len()
     }
 
     pub fn server_started(&self) {

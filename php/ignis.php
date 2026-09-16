@@ -280,7 +280,7 @@ final class Loop
     private static function dispatchRequest(int $id, array $raw): void
     {
         $handler = self::$requestHandler;
-        $request = new Http\Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body']);
+        $request = new Http\Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body'], $id);
         self::spawn(static function () use ($handler, $request, $id): void {
             self::$requestFibers[$id] = \Fiber::getCurrent();
             Scope::set('ignis.request', $id);
@@ -303,7 +303,9 @@ final class Loop
                 unset(self::$requestFibers[$id], self::$children[$id]);
                 Scope::set('ignis.request', null);
             }
-            \ignis_respond($id, $response->status, $response->headers, $response->body);
+            if ($response->status !== 0) { // 0 = detached: the handler answered through another channel (gRPC, E10)
+                \ignis_respond($id, $response->status, $response->headers, $response->body);
+            }
         });
     }
 
@@ -447,6 +449,8 @@ final class Request
         public readonly string $uri,
         public readonly array $headers,
         public readonly string $body,
+        /** Reactor request id (E10: gRPC handlers answer through it; 0 outside a served request). */
+        public readonly int $id = 0,
     ) {
     }
 
@@ -529,6 +533,12 @@ final class Response
     public static function text(string $body, int $status = 200): self
     {
         return new self($body, $status, ['content-type' => 'text/plain; charset=utf-8']);
+    }
+
+    /** The handler already answered through another channel (gRPC stream, E10); the loop sends nothing. */
+    public static function detached(): self
+    {
+        return new self('', 0, []);
     }
 
     public static function json(mixed $data, int $status = 200): self

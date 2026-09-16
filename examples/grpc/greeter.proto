@@ -1,0 +1,15 @@
+// Schema for the load tools (ghz, grpcurl). Ignis itself never compiles it: PHP encodes the bytes.
+syntax = "proto3";
+package ignis;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply);          // unary
+  rpc Countdown (CountRequest) returns (stream Tick);        // server-streaming, 10 ms apart
+  rpc Slow (HelloRequest) returns (HelloReply);              // unary, sleeps 200 ms in the fiber
+  rpc Proxy (HelloRequest) returns (HelloReply);             // unary; calls Slow on itself through the runtime's client
+}
+
+message HelloRequest { string name = 1; }
+message HelloReply   { string message = 1; }
+message CountRequest { int32 n = 1; }
+message Tick         { int32 i = 1; string at = 2; }

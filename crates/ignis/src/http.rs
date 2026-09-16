@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -124,7 +124,11 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
     Ok(local)
 }
 
-async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, hyper::Error> {
+async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Response<tonic::body::Body>, hyper::Error> {
+    // E10 (ADR-0014): gRPC shares the listener; tonic frames it, PHP serves it.
+    if crate::grpc::is_grpc(&req) {
+        return Ok(crate::grpc::serve(reactor, req).await);
+    }
     let (parts, body) = req.into_parts();
     let body = match body.collect().await {
         Ok(c) => c.to_bytes(),
@@ -163,7 +167,7 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
             for (k, v) in r.headers {
                 b = b.header(k, v);
             }
-            Ok(b.body(Full::new(r.body)).unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR, "bad response headers\n")))
+            Ok(b.body(crate::grpc::plain_body(r.body)).unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR, "bad response headers\n")))
         }
         // PHP dropped the responder without answering (handler crashed hard).
         Err(_) => Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n")),
@@ -176,6 +180,10 @@ fn rx_id(rx: &(u64, tokio::sync::oneshot::Receiver<crate::reactor::HttpResponse>
     rx.0
 }
 
-fn simple(status: StatusCode, msg: &'static str) -> Response<Full<Bytes>> {
-    Response::builder().status(status).header("content-type", "text/plain").body(Full::new(Bytes::from_static(msg.as_bytes()))).unwrap()
+fn simple(status: StatusCode, msg: &'static str) -> Response<tonic::body::Body> {
+    Response::builder()
+        .status(status)
+        .header("content-type", "text/plain")
+        .body(crate::grpc::plain_body(Bytes::from_static(msg.as_bytes())))
+        .unwrap()
 }
