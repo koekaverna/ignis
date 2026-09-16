@@ -66,13 +66,17 @@ $pdo = new \PDO('sqlite::memory:');
 $pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
 $pdo->exec("INSERT INTO users (name) VALUES ('ada'), ('grace')");
 
-Ignis\serve(static function (Request $req) use ($pdo): Response {
+// The listen address is one value: the self-call below must follow it, or a box with something
+// else on :8080 silently exercises that stranger instead of this process (smoke.sh, 2026-09-16).
+$listen = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';
+
+Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
     return match ($req->path()) {
         '/'          => Response::text("hello from fiber\n"),
         '/deadline'  => (static function (): Response { Ignis\deadline(100); Ignis\sleep(1000); return Response::text("never\n"); })(),
         '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
         '/users'     => Response::json(usersFromDb($pdo)),
-        '/upstream'  => Response::json(upstreamJson('http://127.0.0.1:8080/dashboard')), // self-call, suspends (E6)
+        '/upstream'  => Response::json(upstreamJson("http://$listen/dashboard")), // self-call, suspends (E6)
         '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
         '/db'        => Response::json(dbDemo()),                                             // pool lease per fiber, transaction pins it (E14)
         '/offload'   => Response::json(offloadDemo()),                                        // blocking code on a sync worker thread, fiber parks (E16)
@@ -82,7 +86,7 @@ Ignis\serve(static function (Request $req) use ($pdo): Response {
         })(),
         default      => Response::text("not found\n", 404),
     };
-});
+}, $listen);
 
 /** E14: one lease per fiber; a transaction keeps one backend; the query parks the fiber, not the thread. */
 function dbDemo(): array

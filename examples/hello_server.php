@@ -9,7 +9,11 @@ ini_set('memory_limit', '1G');
 use Ignis\Http\Request;
 use Ignis\Http\Response;
 
-Ignis\serve(static function (Request $req): Response {
+// One address for the listener and the /fetch self-call below: with the two hardcoded apart,
+// a stranger holding :8080 answered the self-call and E6 reported ok=0 (2026-09-16).
+$listen = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';
+
+Ignis\serve(static function (Request $req) use ($listen): Response {
     return match ($req->path()) {
         '/'      => Response::text("Hello, World!\n"),
         '/sleep' => (static function () use ($req): Response {
@@ -45,15 +49,15 @@ Ignis\serve(static function (Request $req): Response {
             Ignis\sleep(1000);
             return Response::text("finished\n");
         })(),
-        '/fetch' => (static function (): Response {
+        '/fetch' => (static function () use ($listen): Response {
             // E6: unmodified file_get_contents() over http:// suspends this fiber; the server serves
             // its own /sleep endpoints meanwhile — on ONE thread this can only work if it suspends.
             $t0 = hrtime(true);
             $ms = (int) ($_GET['ms'] ?? 200);
             $bodies = Ignis\all([
-                Ignis\async(static fn () => file_get_contents("http://127.0.0.1:8080/sleep?ms=$ms")),
-                Ignis\async(static fn () => file_get_contents("http://127.0.0.1:8080/sleep?ms=$ms")),
-                Ignis\async(static fn () => file_get_contents("http://127.0.0.1:8080/sleep?ms=$ms")),
+                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
             ]);
             return Response::json(['bodies' => $bodies, 'ms' => round((hrtime(true) - $t0) / 1e6, 1)]);
         })(),
@@ -88,4 +92,4 @@ Ignis\serve(static function (Request $req): Response {
         ]),
         default  => Response::text("not found\n", 404),
     };
-}, getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080');
+}, $listen);

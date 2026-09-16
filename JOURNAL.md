@@ -167,3 +167,25 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T12:20Z — `cargo-nextest` was missing from this box (the documented runner). Installed
   from the upstream prebuilt binary at the owner's suggestion; a fallback I had added to
   `scripts/smoke.sh` was reverted in favour of the real tool.
+- 2026-09-16T13:05Z — **the smoke gate was measuring someone else's server.** `:8080` on this box is
+  held permanently by the neighbouring `../symfony-ignis` project. Every bench hardcoded that port,
+  started its own server (which exits 255 with `bind: Address already in use` — the runtime fails
+  loudly, the scripts sent it to `/dev/null`), and then accepted *any* answer on `:8080` as
+  readiness. So the suite curled the stranger and reported its replies as ours: app.php printed
+  Symfony 404s, `e13_http` read **200 mismatches out of 200**, `e6-fetch` read **ok=0**. Fixed by
+  giving each script and each example one address (`IGNIS_LISTEN`, default unchanged at
+  `127.0.0.1:8080`) plus a `kill -0` liveness check after the readiness loop:
+  `bench/{e13-http,e6-fetch,e11-cancel,e12-isolation,e7-revolt}.sh`, `scripts/smoke.sh`,
+  `examples/{app,hello_server}.php`. The examples' **self-calls** were the subtle half — `/fetch`
+  and `/upstream` fetched `http://127.0.0.1:8080/...` regardless of where they were listening.
+  After the fix: `e13_http` mismatches **200 → 0**, E6 **ok=0 → 49-50/50** at 206-257 ms for
+  3 × 200 ms, app.php answers its own routes.
+- 2026-09-16T13:05Z — newly visible once E6 actually ran: **one request in 50 fails in ~1 of 3 bench
+  runs** (`ok=49`), and `bench/e6-fetch.sh` ends with `[ "$ok" = "$N" ]`, so smoke stops there. Not a
+  regression — the test was not executing on this box before today. Not reproducible under load:
+  150 concurrent `/fetch` after warm-up gave **150/150** with an empty server log, so the lead is a
+  startup race (the bench fires immediately after the readiness probe), not a concurrency defect.
+  Left as an assertion that fails rather than a tolerance that hides it.
+- 2026-09-16T13:05Z — `wrk` was missing from this box (all of V-6/V-15/E4 were measured with it).
+  Rebuilt 4.2.0 from source into `~/.cargo/bin`; the build tree under `/tmp/cmp` was deleted per the
+  disk rule. B1 needs it.

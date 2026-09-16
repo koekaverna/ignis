@@ -14,9 +14,14 @@ echo "== build (release)"; timeout 900 cargo build --release -q -p ignis
 echo "== unit tests";      timeout 900 cargo nextest run --workspace 2>&1 | tail -1
 echo "== hello";           $T ./target/release/ignis examples/hello.php
 echo "== app.php (API spec: served in the background, routes curled)"
-$T ./target/release/ignis examples/app.php >/dev/null 2>&1 & APP=$!; for _ in $(seq 1 50); do curl -sf http://127.0.0.1:8080/ >/dev/null && break; sleep 0.1; done
-for r in / "/dashboard?user=7" /users "/upstream" "/whoami?x=1" /deadline "/sleep?ms=5"; do printf "%-20s -> %s\n" "$r" "$(curl -s -m 5 -w " [%{http_code}]" "http://127.0.0.1:8080$r" | tr -d "\n" | cut -c1-90)"; done
-kill $APP; wait $APP 2>/dev/null || true
+# One address for the server and every curl below. Override with IGNIS_LISTEN when :8080 is taken —
+# before this, a stranger on :8080 was curled instead and its answers were reported as ours.
+export IGNIS_LISTEN="${IGNIS_LISTEN:-127.0.0.1:8080}"
+$T ./target/release/ignis examples/app.php >/dev/null 2>&1 & APP=$!
+up=0; for _ in $(seq 1 50); do curl -sf "http://$IGNIS_LISTEN/" >/dev/null && { up=1; break; }; sleep 0.1; done
+[ "$up" = 1 ] || { echo "app.php never answered on $IGNIS_LISTEN (port taken? set IGNIS_LISTEN=127.0.0.1:8099)"; kill $APP 2>/dev/null; exit 1; }
+for r in / "/dashboard?user=7" /users "/upstream" "/whoami?x=1" /deadline "/sleep?ms=5"; do printf "%-20s -> %s\n" "$r" "$(curl -s -m 5 -w " [%{http_code}]" "http://$IGNIS_LISTEN$r" | tr -d "\n" | cut -c1-90)"; done
+kill $APP 2>/dev/null || true; wait $APP 2>/dev/null || true
 echo "== E2 (all() < 230 ms, per-fiber < 100 us)"; N=10000 $T ./target/release/ignis bench/php/e2_all.php
 echo "== E1 (10k fibers x 1000 ms < 1200 ms; warm pool round counts)"
 out=$(N=10000 MS=1000 $T ./target/release/ignis bench/php/e1_sleep_10k.php | tail -1); echo "$out"
