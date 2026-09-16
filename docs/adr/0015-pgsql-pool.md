@@ -28,3 +28,32 @@ Status: accepted (Cycle 16, 2026-09-16; V-21). Amended 2026-09-16 (V-42/V-43/V-4
    the unit PHP holds"): the runtime holds a second reference for exactly this case.
 3. **Hold time is visible** (V-44): `oldest_lease_ms` and `leases_over_warn` in `ignis_pg_stats()`,
    and a warn line at release past `IGNIS_PG_LEASE_WARN_MS` (default 5000).
+
+## Addendum 2 (owner ADR sweep, 2026-09-17) — pool rules, built or not
+
+**Status: accepted** (main agent) for the rules; each is marked.
+
+| rule | status |
+|---|---|
+| A nested `acquire` from the same fiber **inside a transaction** returns the pinned connection (transaction-aware pool) | **unbuilt** — today a second acquire in a fiber is `LeaseError` in every case (V-21: 38 µs, 0 ops). This rule replaces the error *for that case only*; a genuinely second lease outside a transaction stays an error |
+| `idle_timeout` strictly below the upstream's and the load balancer's idle timeout | **unbuilt** — no idle timeout on pooled connections today |
+| Jittered `max_lifetime` | **unbuilt** |
+| DNS re-resolved on reconnect | **by construction, unmeasured** — tokio-postgres connects from the DSN each time a connection is created, so a reconnect resolves again; no test pins it |
+| Transparent retry only outside transactions | **unbuilt** — no retry today; a failed reset closes the connection (§3) |
+| Drain on shutdown with a deadline | **unbuilt** — BACKLOG M4-5 |
+| For HTTP pools: a connection returns to the pool when the response object is dropped, not only when read to EOF | **not applicable yet** — there is no runtime-owned HTTP client pool; hooked streams are per call (ADR-0007) |
+| Process-wide pool per DSN | **built** (V-43 addendum, M4-12) |
+| Leases survive a thread death | **built** (V-42 addendum, M4-11) |
+| Hold-time visible and logged | **built** (V-44, M4-1) |
+| Lease per fiber, transaction pins it, reset on return | **built** (V-21) |
+
+**Options rejected.** PHP-owned connections with `pconnect` semantics (pain-map RoadRunner 8:
+leaked transactions); a pool per thread (V-43 showed what that costs: `threads × max`).
+
+**Consequences.** Better: the transaction-aware acquire removes the most common `LeaseError`
+users will hit (a repository called inside a transaction). Worse: until `idle_timeout` and
+`max_lifetime` exist, a connection can outlive the server's or balancer's idle window and fail on
+first use after a quiet period — a known gap, not a surprise. Affects E14, B4, M4-2.
+
+**Trigger for the unbuilt rows.** The first application deployed behind a load balancer with an
+idle timeout, or the first `LeaseError` report from inside a transaction — whichever comes first.
