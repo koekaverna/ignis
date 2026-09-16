@@ -49,6 +49,13 @@ struct Sock {
     peer: String,
     /// `stream_set_blocking()`: false = reads return what is there (or nothing) without parking.
     blocking: bool,
+    /// `stream_set_timeout()` (A1): read timeout in µs, `None` = wait forever. Honoured by
+    /// `op_read`; without it a `fread()` with no data parked the fiber for ever
+    /// (php-src stream_get_meta_data_socket_variation2 timed the whole process out).
+    read_timeout_us: Option<u64>,
+    /// Set when a read hit `read_timeout_us`; reported by `stream_get_meta_data()` and cleared
+    /// by the next successful read, as xp_socket does.
+    timed_out: bool,
 }
 
 static ORIG_SSL: OnceLock<sys::php_stream_transport_factory> = OnceLock::new();
@@ -124,7 +131,7 @@ pub unsafe fn adopt_fd(fd: c_int) -> *mut sys::php_stream {
         let id = reactor().submit(Op::Adopt { fd: dup });
         match await_op(id) {
             Some(Outcome::Connected { conn, fd, local, peer }) => {
-                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer, blocking: true });
+                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer, blocking: true, read_timeout_us: None, timed_out: false });
                 sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
             }
             _ => ptr::null_mut(),
@@ -274,7 +281,7 @@ unsafe extern "C" fn ignis_tcp_factory(
             let Some(orig) = orig else { return ptr::null_mut() };
             return orig(proto, protolen, res, reslen, persistent_id, options, flags, timeout, context);
         }
-        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls, fd: -1, local: String::new(), peer: String::new(), blocking: true });
+        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls, fd: -1, local: String::new(), peer: String::new(), blocking: true, read_timeout_us: None, timed_out: false });
         sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
     }
 }
@@ -304,7 +311,39 @@ unsafe extern "C" fn op_read(stream: *mut sys::php_stream, buf: *mut c_char, cou
         let s = sock_of(stream);
         if (*s).pos >= (*s).pending.len() && !(*s).eof {
             let max = count.max(8192);
-            let id = if (*s).blocking {
+            (*s).timed_out = false;
+            // A1: with a `stream_set_timeout()` deadline the read must be abandonable, and an
+            // `Op::Read` cannot be cancelled — a timer that won would strand it and lose the bytes
+            // it later delivers. So wait on READINESS (`Op::Watch`, cancellable) against the timer
+            // and only then take the data with a non-blocking `Op::TryRead`. Costs one extra
+            // reactor hop, paid solely when a timeout is set; the untimed path below is unchanged.
+            // Known gap (roadmap A6): on a TLS stream readiness of the raw fd is not the same as
+            // plaintext being available, because rustls buffers records the fd no longer shows.
+            if let Some(us) = (*s).read_timeout_us
+                && (*s).blocking
+                && (*s).fd >= 0
+            {
+                let r = reactor();
+                let watch = r.submit(Op::Watch { fd: (*s).fd, write: false });
+                let timer = r.submit(Op::Sleep { us });
+                let ids = [watch, timer];
+                let woke = await_any(&ids);
+                for id in &ids {
+                    if woke.as_ref().map(|w| w.0) != Some(*id) {
+                        r.submit(Op::CancelWatch { target: *id });
+                    }
+                }
+                let Some((woke_id, _)) = woke else {
+                    return -1; // unwound while parked
+                };
+                if woke_id == timer {
+                    // Stock xp_socket reports a timeout as "no bytes this call", with the flag
+                    // visible through stream_get_meta_data(); it is not EOF and not an error.
+                    (*s).timed_out = true;
+                    return 0;
+                }
+            }
+            let id = if (*s).blocking && (*s).read_timeout_us.is_none() {
                 reactor().submit(Op::Read { conn: (*s).conn, max })
             } else {
                 reactor().submit(Op::TryRead { conn: (*s).conn, max })
@@ -489,7 +528,7 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
             sys::PHP_STREAM_OPTION_META_DATA_API => {
                 let s = sock_of(stream);
                 let arr = ptrparam as *mut sys::zval;
-                sys::add_assoc_bool_ex(arr, c"timed_out".as_ptr(), 9, false);
+                sys::add_assoc_bool_ex(arr, c"timed_out".as_ptr(), 9, (*s).timed_out);
                 sys::add_assoc_bool_ex(arr, c"blocked".as_ptr(), 7, (*s).blocking);
                 sys::add_assoc_bool_ex(arr, c"eof".as_ptr(), 3, (*s).eof && (*s).pos >= (*s).pending.len());
                 OK
@@ -516,8 +555,20 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                 }
                 OK
             }
-            // Timeouts are the reactor's business; accept silently.
-            sys::PHP_STREAM_OPTION_READ_TIMEOUT => OK,
+            // A1: `stream_set_timeout()` — ptrparam is a `struct timeval`. Previously accepted and
+            // ignored, which made a `fread()` with no data park for ever instead of timing out.
+            sys::PHP_STREAM_OPTION_READ_TIMEOUT => {
+                let s = sock_of(stream);
+                let tv = ptrparam as *const libc::timeval;
+                if tv.is_null() {
+                    (*s).read_timeout_us = None;
+                } else {
+                    let us = (*tv).tv_sec as i64 * 1_000_000 + (*tv).tv_usec as i64;
+                    // A negative timeval means "no timeout", as xp_socket reads it.
+                    (*s).read_timeout_us = if us > 0 { Some(us as u64) } else { None };
+                }
+                OK
+            }
             _ => NOTIMPL,
         }
     }
