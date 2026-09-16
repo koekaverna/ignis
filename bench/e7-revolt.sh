@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 # Listen address for the server this script starts and every URL below. Override with
 # IGNIS_LISTEN when :8080 is taken; the examples read the same variable, so the server and
 # the client can never disagree and curl a stranger that happens to hold the port.
-ADDR="${IGNIS_LISTEN:-$ADDR}"; export IGNIS_LISTEN="$ADDR"
+ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
 BIN=./target/release/ignis; EX=php/amphp/vendor/revolt/event-loop/examples; AEX=php/amphp/examples
 export IGNIS_PHP_INI=/home/user/ignis/php/amphp/ignis.ini IGNIS_NO_STREAM_HOOK=1
 run() { # driver script [stdin-file]
@@ -13,8 +13,11 @@ run() { # driver script [stdin-file]
   if [ $# -gt 0 ]; then REVOLT_DRIVER="$d" timeout 30 $BIN "$s" < "$1" 2>&1; else REVOLT_DRIVER="$d" timeout 30 $BIN "$s" 2>&1 </dev/null; fi
 }
 SEL='Revolt\EventLoop\Driver\StreamSelectDriver'; IGN='Ignis\Revolt\IgnisDriver'
-$BIN --threads 1 examples/hello_server.php >/dev/null 2>&1 & SRV=$!; for _ in $(seq 1 50); do curl -sf "http://$ADDR/" >/dev/null && break; sleep 0.1; done
-kill -0 $SRV 2>/dev/null || { echo "server died on startup (port taken? set IGNIS_LISTEN)"; exit 1; }
+$BIN --threads 1 examples/hello_server.php >/dev/null 2>&1 & SRV=$!; up=0; for _ in $(seq 1 50); do curl -sf "http://$ADDR/" 2>/dev/null | grep -q "Hello, World!" && { up=1; break; }; sleep 0.1; done
+if [ "${up:-0}" != 1 ] || ! kill -0 $SRV 2>/dev/null; then
+  echo "our server never answered on $ADDR (port taken? set IGNIS_LISTEN); see the server log"
+  kill $SRV 2>/dev/null; exit 1
+fi
 printf 'hello world\nsecond line\n' > /tmp/ignis-stdin.txt
 fail=0
 for s in $EX/timers.php $EX/ticks.php $EX/fiber-local-automatic.php $EX/fiber-local-manual.php $EX/invalid-callback-return.php $EX/consume-stdin.php $AEX/amp-delay-async.php $AEX/amp-socket-client.php; do
