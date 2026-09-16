@@ -124,3 +124,32 @@ reverses this ADR's claim that universal park covers TLS at all.
 
 Whether `park` becomes the default for libcurl and libpq in `ignis.toml.example` — after H32–H36
 and the kill-criterion run are green, as a separate decision with the E15 numbers beside it.
+
+## Addendum (owner ADR sweep, 2026-09-17) — the owner's design, element by element, against what is built
+
+The owner's note lists E18 as "proposed, not started". The record disagrees on the mechanism and
+agrees on the rest: stage 1 is built behind a default-off feature and measured (V-45), the
+elements below are not. Status per element:
+
+| owner's element | status |
+|---|---|
+| Export the ~25 blocking libc symbols behind a thread-local "fiber active" gate | **built, 11 symbols** (V-45: read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep); research 26's list is 31 with `__poll_chk`; the rest is stage 2 |
+| Caller-library policy `park | offload | block` | **park \| block built** (`IGNIS_PARK`, default block); **`offload` unbuilt** — routing a call to a worker from inside the interposer, so a library on `offload` neither blocks the thread nor parks; ties to ADR-0016 |
+| Address-interval map from `dl_iterate_phdr` | **unbuilt** — today `dladdr` once per call site, cached by return address; the interval map is the cheaper lookup for the first hit and needed before the policy can be per *symbol* within a library (BACKLOG E18-C item 2) |
+| **Detector-first rollout**: block + measure + report before any park | **unbuilt, and it is the rollout order** — `IGNIS_PARK_TRACE=1` prints decisions (V-45); a report mode that counts would-park call sites per library while forwarding everything is the detector, and it runs against the E15 suites and a real application before any library goes on `park` |
+| pthread_mutex accounting: never park while holding a lock; switch to the lock holder instead of blocking | **unbuilt** — interposing `pthread_mutex_lock/unlock` with a per-thread depth counter; parking at depth > 0 is refused (forward, i.e. block). "Switch to the holder" needs the holder to be a fiber on the same thread and is the H36 hazard turned into a scheduling rule. Research 27's verdicts stand until this exists |
+| `getaddrinfo` replaced whole (runtime resolver, glibc-compatible `addrinfo`, `freeaddrinfo` interposed) | **unbuilt** — stage 2; per library: curl parks through `poll` already, libpq/libphp need this |
+| Cancellation surfaces as `ECANCELED` | **unbuilt** — stage 2; today a cancelled parked call falls back to blocking (V-45); ADR-0009 addendum item 2 |
+| Regular files need io_uring or offload | **recorded** — a regular fd forwards (epoll refuses it); file I/O stays layer 3 (ADR-0021) until io_uring is measured; io_uring is off unless enabled (ADR-0035) |
+| Kill criteria "as discussed" | **recorded verbatim** above, plus H36's hazard test |
+| glibc-internal-alias limitation | **recorded**: a call that stays *inside* glibc — `fread` → `_IO_file_read` → the internal `__read` alias — never reaches an exported symbol, so stdio-based I/O in a library is not interposed; the fortified `__*_chk` entry points are interposed only where research 26 found them imported (`__poll_chk`, stage 2) |
+
+**What stage 1 taught that the note did not have:** a data call on a non-blocking fd must
+forward — curl probes with `recv` and blocks in its own `poll`; parking the probe hung the first
+`curl_exec` (V-45). And the slope: 100 concurrent 200 ms operations take ~300 ms on one thread
+because the libraries' own CPU work serialises, not because of the parking (V-45, same at 4 server
+threads).
+
+**Status after this addendum:** accepted for the mechanism and stage 1; the elements marked
+unbuilt are the plan for stage 2 in the order listed, detector mode first. The feature stays off
+by default until H32–H36 are green with the detector's report attached.
