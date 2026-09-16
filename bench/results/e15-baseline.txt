@@ -1,9 +1,11 @@
-# minimum pass counts for scripts/ci-gate.sh (from V-23, raised per V-26 addendum; update only with a VALIDATION entry)
+# minimum pass counts for scripts/ci-gate.sh — raised 2026-09-16 from two CI runs of 3112a96 (run 35086872504 + its E15 phpt rerun).
+# Values are the MINIMUM across those two samples: fiber streams read 125 then 124, so the gate sits at 124.
+# swoole.pass 42 -> 55 is from one sample only (the A4 ext/sockets hooks moved it); lower it with evidence if it flaps.
 phpt.main.Zend_tests_fibers 108
-phpt.main.ext_sockets_tests 80
-phpt.main.ext_standard_tests_streams 132
+phpt.main.ext_sockets_tests 89
+phpt.main.ext_standard_tests_streams 133
 phpt.fiber.Zend_tests_fibers 78
-phpt.fiber.ext_sockets_tests 75
-phpt.fiber.ext_standard_tests_streams 120
-swoole.pass 42
+phpt.fiber.ext_sockets_tests 83
+phpt.fiber.ext_standard_tests_streams 124
+swoole.pass 55
 frankenphp.pass 29

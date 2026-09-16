@@ -132,3 +132,15 @@ echo "== summary lines"
 echo "   ignis  IgnisDriver          : $IGN_LINE"
 echo "   stock  StreamSelectDriver   : $SELC_LINE   (same class shape)"
 echo "   stock  StreamSelectDriverTest: $SEL_LINE   (as shipped)"
+
+# Gate input: scripts/ci-gate.sh greps IGNIS_PASSED=<n>. Without this line the revolt gate
+# reported "no baseline yet" and protected nothing (found 2026-09-16 raising the E15 baseline).
+pass_count() { # phpunit summary line -> tests that passed
+    local l=$1 t f e
+    if [[ $l =~ OK\ \(([0-9]+)\ tests ]]; then echo "${BASH_REMATCH[1]}"; return; fi
+    if [[ $l =~ Tests:\ ([0-9]+) ]]; then t=${BASH_REMATCH[1]}; else echo 0; return; fi
+    [[ $l =~ Failures:\ ([0-9]+) ]] && f=${BASH_REMATCH[1]} || f=0
+    [[ $l =~ Errors:\ ([0-9]+) ]] && e=${BASH_REMATCH[1]} || e=0
+    echo $(( t - f - e ))
+}
+echo "IGNIS_PASSED=$(pass_count "$IGN_LINE")"

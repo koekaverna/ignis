@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T03:58Z, Cycle 19 running; Cycles 0–18 closed)
+# STATUS — Ignis (updated 2026-09-16T10:47:24Z — Phase A closed on `3112a96`; night 1 = Cycles 0–21, Phase A = C22)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket/TLS session. Every number below links to a VALIDATION.md entry; anything without one says "not measured".
 
@@ -20,11 +20,11 @@
 | **E8** symfony/skeleton in worker mode, fiber-scoped RequestStack, sessions on | **0/100** mismatches across suspensions; **7.2k req/s (1 thread) / 25.2k (4 threads)** through the kernel | V-16 + addendum |
 | **E9** Temporal: PHP workflow (2 activities + 500 ms timer) as a suspended fiber; deterministic replay | live run **COMPLETED in 1224 ms**, 5 activations; replay of the 22-event history **OK**; mutated workflow **FAILS** (TMPRL1100) | V-18, V-19 |
 | **E10** gRPC unary + server-streaming in PHP on the shared listener; runtime-owned client parks the fiber | **16.7k req/s, p99 7.8 ms** (1 thread) vs pure-tonic ceiling 21.1k/6.3 ms vs RoadRunner 5.1k–11.4k/12.6–17.8 ms; 100 × 200 ms calls **215 ms** vs RR 5.03 s; client: 217 ms | V-20 |
-| **E11** disconnect cancels the request fiber + children; `Ignis\deadline()` | **0.78 ms** worst cancel latency, 20/20 `finally` ran, no phantom work; 504 at 102 ms for a 100 ms deadline | V-14 |
+| **E11** disconnect cancels the request fiber + children; `Ignis\deadline()` | **0.78 ms** worst cancel latency, 20/20 `finally` ran, no phantom work; 504 at 102 ms for a 100 ms deadline. Phase A found and fixed a defect where a disconnect could kill the whole worker thread (6 dead threads in 10.08M requests under burst load, without `--supervise` the process itself died); after the fix, 12 burst rounds of `wrk -t4 -c200 -d5s` leave the server alive with 0 fatals / 0 restarts, and cancellation got *faster*: 279 µs worst latency, 20/20 cancelled, 40/40 `finally` blocks | V-14, V-30 |
 | **E12** fatal / CPU spin in one thread; supervisor respawn | fatal killed 1 of 4 workers, hello uninterrupted at 134k req/s, respawn inside the 50 ms tick, no opcache reset; spin stalled 1 thread (others 90k req/s, p99 2.67 ms); recovery **95.7%** | V-17 |
 | **E13** fiber-scoped `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` + `Ignis\Scope` | **0 mismatches** (300 in-process checks, 200 concurrent HTTP); **+100 ns** per fiber switch | V-11 |
 | **E14** runtime-owned PostgreSQL pool, lease per fiber, transaction pins, one-round-trip reset | 200 fibers over 20 connections in **1046 ms** warm (ideal 1000); LeaseError in 38 µs with 0 ops; SET/temp do not leak; **112 µs/query**, 7.3k q/s on one thread | V-21 |
-| **E15** compat suites — **DONE** | phpt main mode **108/108 fibers, 80/80 sockets, 132/138 streams** of stock (fiber mode 78/75/120), 0 upstream failures; Revolt `DriverTest` **81 tests / 222 assertions / 0 failures** = StreamSelectDriver; Swoole shim **44/153** with the missing-hook ranking; FrankenPHP testdata **29 pass / 4 fail / 33 skip**; Symfony + Doctrine (10 849 tests per mode) under chaos scheduling **0 new failures**, 1 ignis-only failure (php-cli stdin script, not applicable) | V-22, V-23 + addendum, V-26 addendum, V-27 |
+| **E15** compat suites — **DONE**, refreshed post-Phase-A on a different (24-core) box | phpt main mode **108/110 fibers, 89/118 sockets, 133/160 streams**; fiber mode **78/110 fibers, 83/118 sockets, 125/160 streams** (suite sizes differ from the 4 vCPU box's 108/80/138 because this box runs more of each suite — an environment/kernel difference, not an Ignis effect, per research 21); Swoole shim **55/153** (up from 44 — A4's `ext/sockets` hooks moved it); FrankenPHP testdata **29 pass** (fail/skip not reported by this CI run); Revolt `DriverTest` and the Symfony/Doctrine chaos numbers unchanged from V-23 addendum / V-27 | V-22, V-23 + addendum, V-26 addendum, V-27 for the original numbers; refreshed phpt/Swoole/FrankenPHP counts are from **CI run 35086872504 on `3112a96`**, not yet a V-n |
 | **E16** offload pool (own TSRM context), `Ignis\offload()`, auto-routing of `curl_*`/`PDO`/`SQLite3` with no code changes | 100 × 200 ms blocking calls: **2608 ms on 8 workers, 243 ms on 100** (fiber thread kept ticking); auto-routed `new PDO`+query 100 × 200 ms: 3454 ms on 8; `curl_exec` + `CURLOPT_WRITEFUNCTION` on the caller; **13–67 µs** copy, 17–45 µs per routed call | V-24 + addendum |
 | backend (b): true-async fork builds (61/61 reference-scheduler tests) and runs E1 on engine coroutines via a 14-line idle hook | 1165–1177 ms for 10k × 1000 ms | V-7, V-8 |
 
@@ -45,6 +45,20 @@
 ## Key finding of the night
 
 Zend allocates and frees a fresh mmap'd C stack per fiber; in a multi-threaded process that costs page faults + `munmap` + cross-CPU TLB shootdowns = **~50% of PHP-thread CPU** at 10k fibers (V-2 perf profile), while the userland scheduler and the Rust side are < 1%. Keeping fibers alive in a pool removes it (V-4: overhead 153 → 41 ms, per-job 16 → 4.5 µs); `fiber.stack_size` is irrelevant (64K–2M within 1%). Everything built afterwards — HTTP, streams, TLS, gRPC, pool leases, offload — is a hop onto that one pooled-fiber/one-poll-point loop.
+
+## Phase A (closed — ROADMAP.md; harden what exists, C22)
+
+| item | status | evidence |
+|---|---|---|
+| A1 — 3 stream defects (`stream_set_timeout()`, port-literal wrap, connect `$errstr`/`$errno`) | **DONE** | V-31 |
+| A2 — real-timer path (timer wheel) | **DEMOTED** — both acceptance numbers were already met before any work (warm `sleep(1)` 3.82–3.94 µs vs a < 5 µs target; E1 overhead 144–146 ms vs < 150 ms) | no V-n — JOURNAL 2026-09-16T08:15:50Z |
+| A3 — RSS soak, 1M→10M requests | **RUN** — the ±2 % criterion is shown unsatisfiable by construction (RSS is front-loaded, growth stops trending ~5M, then oscillates ±10–12 % between adjacent checkpoints); real yield was a defect, fixed | V-30 |
+| A4 — `ext/sockets` parks the fiber | **DONE** | V-29 |
+| A5 — php-cli parity (`-r`, `--`) | **DONE** | V-32 |
+| A6 — TLS read-ahead invisible to `stream_select` | **HANDED ON** — reproduced + diagnosed, not fixed; the sound fix is an eventfd handed out by `op_cast`, judged larger than a Phase A item | no V-n — docs/research/23 |
+| A7 — `run-tests.php` orphans `ignis` children on `--set-timeout` | **DONE** | V-28 (bug70198) |
+
+Owner sign-off still needed on four points from Phase A — see "Owner decisions outstanding" at the bottom of DECISIONS.md.
 
 ## Run everything (5 commands)
 
@@ -101,12 +115,13 @@ crates.io: **taken** (`ignis` 0.1.0, unrelated); Packagist: free; GitHub: three 
 
 ## Still open
 
-The loop was stopped by the owner at 2026-09-16T05:12:43Z; the plan from here is **ROADMAP.md** (phases A–D, each item with the V-n it extends and a done-when number).
+The loop was stopped by the owner at 2026-09-16T05:12:43Z; Phase A (harden what exists) is now closed too. The plan from here is **ROADMAP.md** phases B–D, each item with the V-n it extends and a done-when number; four Phase A follow-ups need an owner decision first (DECISIONS.md, "Owner decisions outstanding").
 
- E3' (10M requests, 4 threads, streams + state enabled); fiber-budget pool cap with request queueing (V-5 memory note); per-endpoint budget + circuit breaker (pain map PHP-FPM 2); in-process Table (RoadRunner 4); MySQL/Redis drivers; allocator-level leak detector; E9' (signals/queries/cancellation), E10' (client-streaming/bidi, TLS on the listener), E8' (multi-value `Set-Cookie`), E7' (AMPHP on hooked transports, signals); the 12 fiber-only phpt stream failures classified as ours in the V-26 addendum (unix-socket names, error texts, `timed_out` meta, select usec validation, `fclose(STDIN)`).
+E3' (10M requests, 4 threads, streams + state enabled); A6's TLS-read-ahead fix (eventfd via `op_cast`, proposed for Phase B — see DECISIONS.md); fiber-budget pool cap with request queueing (V-5 memory note); per-endpoint budget + circuit breaker (pain map PHP-FPM 2); in-process Table (RoadRunner 4); MySQL/Redis drivers; allocator-level leak detector; E9' (signals/queries/cancellation), E10' (client-streaming/bidi, TLS on the listener), E8' (multi-value `Set-Cookie`), E7' (AMPHP on hooked transports, signals); phpt fiber-mode stream failures classified as ours — the count and its composition changed with the box (V-26 addendum's 12-of-138 on the old 4 vCPU box vs V-31's 15-of-160 here; not the same failing tests, see research 21).
 
-## Ranked recommendation for the next 3 cycles
+## Ranked recommendation
 
-1. **E2' is met (V-28 addendum); the next per-fiber win is the real-timer path** (5.5–6.4 µs: a `tokio::spawn` per sleep — a timer wheel/DelayQueue in the reactor task would remove it). Profile before touching — every per-fiber figure before V-28 was taken under load.
-2. **Validate what was pushed unmeasured**: E12' (in-flight requests on a dying thread must get 500, `bench/e12-inflight.sh`), the fatal → 500 mapping, then E3' at 4 threads with streams/state/offload on for 10M requests — the RSS claim (V-10) predates E6, E13, E14 and E16.
-3. **Take the pain map's remaining structural items**: pool cap + request queueing (fiber budget), per-endpoint budget/circuit breaker for slow dependencies, in-process Table, then MySQL/Redis as native drivers with the E14 lease shape (ADR-0015) and the offload router as the fallback (ADR-0016).
+1. **Get the owner decisions in DECISIONS.md resolved** — they gate what Phase B actually contains (ADR-0018's overhead criterion, A6's eventfd size, A3's restated criterion, the hardcoded-path bench scripts).
+2. **A6 (TLS read-ahead) if handed into Phase B**: the eventfd-via-`op_cast` design from docs/research/23 is already chosen, just not built.
+3. **Validate what was pushed unmeasured**: E12' (in-flight requests on a dying thread must get 500, `bench/e12-inflight.sh`), the fatal → 500 mapping, then E3' at 4 threads with streams/state/offload on for 10M requests — the RSS claim (V-10) predates E6, E13, E14 and E16.
+4. **Take Phase B's structural items**: pool cap + request queueing (fiber budget, B1), per-endpoint budget/circuit breaker (B2), in-process Table (B3), then MySQL/Redis as native drivers with the E14 lease shape (B4, ADR-0015) and the offload router as the fallback (ADR-0016).

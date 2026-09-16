@@ -1013,3 +1013,106 @@ JOURNAL and summarised here only as context: RSS grew ~+50 % between the 1M and 
 the growth is front-loaded and stops trending at roughly 5M, after which readings oscillate in an
 87–110 MB band. A duplicate re-run was deliberately not performed: RSS is not a noisy quantity across
 runs, so repeating an identical configuration would have re-measured what was never in doubt.
+
+## V-31 — A1: three stream defects the C22 triage classified as 'ours', fixed (CONFIRMED)
+
+Date: 2026-09-16T09:19:55Z (part 1) – 2026-09-16T09:23:43Z (part 2, complete). Box: 24-thread Ryzen
+AI 9 HX 370 / 30 GB, WSL2 (research 21 machine state: `Linux 6.18.33.2-microsoft-standard-WSL2`) —
+**not** the 4 vCPU box every pre-Phase-A V-n was taken on. PHP 8.5.10 ZTS+embed at `/opt/php85-zts`.
+Commits: `17aaa0f` (part 1), `fdeff4a` (part 2).
+
+### The three defects
+
+1. **`stream_set_timeout()` was accepted and ignored** (`PHP_STREAM_OPTION_READ_TIMEOUT` returned OK,
+   `timed_out` was hard-coded `false`), so a `fread()` with no data parked the fiber forever — the
+   defect that hung the porter's whole suite run and forced a manual SIGKILL
+   (`stream_get_meta_data_socket_variation2`). Fix: `Sock` gains `read_timeout_us`/`timed_out`; with a
+   deadline set, `op_read` waits on a cancellable `Op::Watch` + `Op::Sleep` and then takes the bytes
+   with a non-blocking `Op::TryRead` (an `Op::Read` cannot be cancelled, so a winning timer would
+   strand it and lose the bytes it later delivers). Untimed reads keep the old single-hop path.
+   `stream_get_meta_data_socket_variation2` now passes in 0.123 s.
+2. **Port literals above 65535 were rejected instead of wrapping** (bug69521): `parse_host_port`
+   parsed the port straight into `u16`, so `tcp://127.0.0.1:74321` failed with errno 0 inside a fiber
+   while `{main}` and the stock CLI connected fine (stock does `atoi()` into an unsigned short, i.e.
+   it wraps: 74321 → 8785). Fix: the parse goes through `i64` and truncates like the C cast.
+3. **Connect failures left `$errstr`/`$errno` empty** (ghsa-3cr5-j632-f35r): an unparseable address
+   set `returncode = -1` with no `error_text`, and a NUL byte in the host reached the resolver instead
+   of being rejected up front. Fix: both paths now set `error_text`, the NUL case with stock's exact
+   wording ("The hostname must not contain null bytes").
+
+### Command
+
+```
+PHPSRC=/home/koe/php-src bash bench/e15-phpt.sh
+```
+(`docs/research/21-phase-a-phpt-triage.md`; suites: `Zend/tests/fibers`, `ext/standard/tests/streams`,
+`ext/sockets/tests`, modes stock/main/fiber via `scripts/ignis-php` + `IGNIS_PHPT_MODE=fiber`.)
+
+### Full-suite A/B, `ext/standard/tests/streams`, this box
+
+| stage | main (pass/fail) | fiber (pass/fail) |
+|---|---|---|
+| before any A1 patch | 130/9 | 122/17 |
+| after part 1 (`stream_set_timeout`, `17aaa0f`) | 131/8 (`bug60106-001` recovered) | not measured standalone — part 2 landed next |
+| after part 2 (port wrap + errstr/errno, `fdeff4a`) | **131/8** (unchanged) | **124/15** |
+
+Zero new failures at any stage. The roadmap's stated target ("fiber streams ≥ 128/138") is **not
+comparable**: it was set against the old 4 vCPU box's 120/138, while this box runs 160
+`ext/standard/tests/streams` tests and starts from 122/17. The three defects the C22 triage (research
+21) classified as "ours" are now fixed; the remaining 15 fiber-mode failures are harness artefacts
+(stack frames from `phpt-harness.php`/`ignis.php`, `open_basedir` rejecting the harness path) and
+CLI-only semantics, classified separately in the research-21/V-26-addendum triage.
+
+Method note carried over from the JOURNAL: some of these tests are **not reproducible in isolation**
+(`bug46024`/`bug70362` fail alone, pass in the suite) and the suite itself has a few tests of
+run-to-run variance, so only full-suite A/B on the same box is valid — single-test or cross-run
+comparisons are not.
+
+Known gap left open (roadmap A6): on a TLS stream the part-1 timeout path watches the raw fd, which is
+not the same as plaintext being available, because rustls buffers whole records.
+
+## V-32 — A5: php-cli parity for `-r <code>` and `--` (script on stdin) in the embed SAPI (CONFIRMED)
+
+Date: 2026-09-16T09:37:50Z. Box: 24-thread Ryzen AI 9 HX 370 / 30 GB, WSL2 (same box as V-29/V-30/V-31).
+PHP 8.5.10 ZTS+embed at `/opt/php85-zts`. Commit: `3685afd`.
+
+### What was added
+
+`Engine::eval` (`crates/ignis/src/php/embed.rs`), wired to `-r <code>` and `--` (script on stdin) in
+`crates/ignis/src/main.rs`. Two corrections forced by measurement, both recorded in the commit and
+JOURNAL: `zend_eval_stringl` leaves the error pending and prints nothing, so a parse error exited 255
+in silence where php-cli reports it — the `_ex` form with `handle_exceptions=true` is required; and
+with that form an `exit()` also returns `FAILURE`, so the return code alone cannot separate `exit(0)`
+from a parse error — a sentinel written into `EG(exit_status)` before the call (via `set_exit_status`)
+distinguishes them.
+
+### Exit-code parity
+
+Six cases checked against the stock CLI, all matching: `exit(0)`, `exit(7)`, `exit(255)`, a clean run,
+a parse error, an uncaught throw. The exact shell invocations for each of the six are **not recorded**
+verbatim in JOURNAL or the commit — only the case list and "exit codes match the stock CLI on all six
+cases" are. The general invocation shapes (from `main.rs`'s `-r`/`--` argument handling, sourced) are
+`./target/release/ignis -r '<code>'` and `./target/release/ignis --` with the script on stdin.
+
+### Re-exec verified
+
+A script running under ignis can re-exec `PHP_BINARY -r ...` and feed `PHP_BINARY --` a script on
+stdin; both were verified end to end (exact command text not recorded).
+
+### Deliberately not implemented
+
+`-S` (php-cli's development server): Ignis has its own HTTP front door, and re-creating php-cli's dev
+server was not justified by any test here. The Symfony acceptance test named in ROADMAP.md
+(`CacheWarmerAggregateTest::testWarmupRecoversFromCorruptedDeprecationLog`, which runs
+`PHP_BINARY -- <script on stdin>`) **cannot run on this box** — no composer vendor tree; see V-27's
+"not applicable" classification of the same test under chaos mode, for the same underlying reason
+before A5 landed.
+
+### Suites after the change (unaffected by A5, recorded as a regression check)
+
+| suite | main | fiber |
+|---|---|---|
+| `ext/standard/tests/streams` | 130/9 | 124/15 |
+| `ext/sockets/tests` | 91/1 | 86/6 |
+
+Unit tests (nextest-equivalent): 10/10.
