@@ -35,13 +35,30 @@ machine-state problem); endpoint-pair soak criteria (rejected by V-35).
 5. **Chaos mode is the standard for framework suites**: a random fiber switch at every await point,
    zero new failures against stock PHP (V-27, 10,849 tests per mode).
 6. **Every hook claim runs against its off switch** (`IGNIS_NO_*`, `IGNIS_NO_UNIVERSAL_PARK`).
-7. **FFI fuzzing is planned** (unbuilt): proptest over `zval` argument decoding and the stream op
+7. **Three tiers, by what a change is** (owner, 2026-09-16) — running everything on every change was
+   duplicating CI on the dev box and made deletions slow:
+   - **per change** (seconds, always, before any commit): `cargo build`, `cargo nextest`, and the
+     probe scripts for what actually changed (e.g. `bench/php/e18_timeo.php` for a timeout path).
+   - **per deletion** (ADR-0037 §6's rule, unchanged): the suite *that created the deleted code* —
+     nothing more. Deleting the `sleep()` hook gates on the phpt fibers suite (V-22); deleting
+     `ext/sockets` hooks on phpt sockets + the Swoole shim (V-29); deleting the transport factory
+     on phpt streams + Revolt + chaos (V-12, V-25, V-26). The other suites run in CI on the push.
+   - **per epic** (a cycle of ADR-0037, a milestone, before an ADR moves to *accepted*): the full
+     E15 set, chaos, soak, `scripts/smoke.sh`, and the performance set (E1, E2, E4, E5, and the
+     on/off comparison when a mechanism changed), one at a time on a quiet box.
+   CI still runs every suite on every push — that is the safety net that makes the narrow local
+   gate sufficient; a local full run before pushing is for when the answer is needed *before* the
+   push, not as a habit.
+8. **FFI fuzzing is planned** (unbuilt): proptest over `zval` argument decoding and the stream op
    state machine, because the three boundary bugs above were found by benches, not by tests.
 
 ## Consequences
 
-Better: a reader can tell a measurement from an estimate, and a CI green from a bench green.
-Worse: throughput regressions are caught nightly, not per push (M5-4). Affects every V-n.
+Better: a reader can tell a measurement from an estimate, and a CI green from a bench green; a
+deletion cycle costs one narrow gate locally instead of the whole set. Worse: throughput
+regressions are caught nightly, not per push (M5-4), and a defect the epic-level suites would have
+caught now surfaces in CI after the push rather than before it — accepted, because CI runs the same
+suites and the branch of record is protected by them. Affects every V-n.
 
 ## Kill criterion
 

@@ -138,3 +138,14 @@ code: readiness then the real call reproduces stock errors on listening/unconnec
 Swoole needs `~/cmp/swoole-src` (cloned), AMPHP deps installed with the `composer` Docker image
 because this PHP has no `ext/phar` and the box has no php-cli — `ext/phar` is not added to the
 product build for a dev need.
+
+## 2026-09-16 — benches and suites run per epic, not per change (owner)
+
+Owner: "можно тогда бенчи катать не на каждом изменении, а на эпиках?" Yes, and it corrects a
+perversion of ADR-0037 §6 I had introduced: §6 asks for *the test that created the deleted code*,
+and I was running phpt + Swoole + Revolt + chaos + smoke on every deletion — on a box where CI
+already runs all of them on every push. New tiers in ADR-0023 §7: per change = build + nextest +
+the probe for what changed (seconds); per deletion = only the creating suite; per epic = the full
+E15 set, chaos, soak, smoke and the perf set (E1/E2/E4/E5, on/off when a mechanism changed) on a
+quiet box, one at a time. The gate that protects `main` is unchanged — CI runs everything on every
+push.
