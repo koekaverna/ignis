@@ -208,6 +208,19 @@ unsafe extern "C" fn zif_ignis_watch(ex: *mut sys::zend_execute_data, rv: *mut s
     }
 }
 
+/// `ignis_stats(): array` — runtime counters: registered threads, threads stalled
+/// in PHP for > 1 s, and worker restarts performed by the supervisor (ADR-0012).
+unsafe extern "C" fn zif_ignis_stats(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: rv is VM-owned writable storage; values are plain integers.
+    unsafe {
+        let (stalled, threads) = crate::http::stalled_threads(Duration::from_secs(1));
+        zval::set_new_array(rv);
+        sys::add_assoc_long_ex(rv, c"threads".as_ptr(), 7, threads as i64);
+        sys::add_assoc_long_ex(rv, c"stalled".as_ptr(), 7, stalled as i64);
+        sys::add_assoc_long_ex(rv, c"restarts".as_ptr(), 8, crate::RESTARTS.load(std::sync::atomic::Ordering::Relaxed) as i64);
+    }
+}
+
 unsafe extern "C" fn zif_ignis_inflight(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: rv is VM-owned writable storage.
     unsafe { zval::set_long(rv, reactor().inflight() as i64) }
@@ -307,7 +320,8 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(not(php_async_abi))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 9]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 10]> = SyncStatic([
+    fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
@@ -320,7 +334,8 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 9]> = SyncStatic([
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 11]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 12]> = SyncStatic([
+    fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
@@ -391,9 +406,9 @@ mod tests {
     fn function_table_is_terminated() {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_cancel_parked_any");
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[2].fname) }.to_str().unwrap(), "ignis_set_superglobals");
-        assert_eq!(FUNCTIONS.0[2].num_args, 4);
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[7].fname) }.to_str().unwrap(), "ignis_respond");
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_stats");
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[3].fname) }.to_str().unwrap(), "ignis_set_superglobals");
+        assert_eq!(FUNCTIONS.0[3].num_args, 4);
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[8].fname) }.to_str().unwrap(), "ignis_respond");
     }
 }

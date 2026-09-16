@@ -422,3 +422,28 @@ Caveats (honest):
 - `intl` is not built (Symfony logs a deprecation for performance); `iconv` absent until the rebuild.
 - The runner maps one `Set-Cookie` header only; multi-cookie responses need the multi-value header path in `ignis_respond` (E8').
 - Debugging note: the first attempt overrode the `RequestStack` *class alias* in services.yaml, which created a second instance (controller got the fiber-scoped one, `HttpKernel` kept the original) — the `request_stack` service id must be overridden.
+
+## V-17 — H19 (E12): thread isolation, supervisor respawn, watchdog (CONFIRMED)
+
+Date: 2026-09-16T05:5xZ. Command: `bench/e12-isolation.sh` — `./target/release/ignis --threads 4 --supervise examples/hello_server.php` (thread 0 supervises, workers 1–4 serve).
+
+```
+baseline: {"threads":4,"stalled":0,"restarts":0}   hello 133,153 req/s
+(a) /fatal (E_USER_ERROR → bailout) during a 5 s hello load:
+    fatal request http=000 (connection closed, no response)   during: {"threads":4,"stalled":0,"restarts":1}
+    hello during the fault: 134,451 req/s, p99 2.06 ms, 0 errors
+    log: WARN worker script ended; respawning (opcache SHM untouched) slot=3 status=255
+(b) /spin?s=5 (CPU loop, no suspension point) on one worker:
+    hello on the other threads: 90,108 req/s, p99 2.67 ms, 0 errors   during spin: {"stalled":1}
+    log: WARN php threads busy for > 1 s without polling stalled=1 total=4 … stalled=0
+(c) recovery: 127,384 req/s (95.7% of baseline)   final: {"threads":4,"stalled":0,"restarts":1}   server alive
+```
+
+| check | result | target |
+|---|---|---|
+| fatal kills only its thread; others serve | 1 worker ended, hello uninterrupted (134k during) | 1 thread → CONFIRMED |
+| respawn without opcache reset | restarts=1, threads back to 4 within the 50 ms supervisor tick; no recompilation (opcache SHM is process-wide) | < 1 s → CONFIRMED |
+| CPU loop stalls one thread only; watchdog sees it | p99 on the rest 2.67 ms; `stalled=1` reported, cleared after | < 20 ms → CONFIRMED |
+| throughput after fault + stall | 95.7% of baseline | ≥ 80% → CONFIRMED |
+
+Caveats: the request that triggered the fatal gets a closed connection (http 000), not a 500 — the dying thread's responders drop and hyper's error path closes; mapping that to 500 is a small follow-up. Requests in flight on the dying thread are lost the same way (E12'). A segfault in C would still take the process down (pain map: "remains true").

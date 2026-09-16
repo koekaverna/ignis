@@ -27,17 +27,17 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 3. Sizing formula num_threads × memory_limit + GOMEMLIMIT; workers vs threads confusion → one axis: threads = cores, fibers = concurrency, memory = fiber budget; no GC heap. — **ADDRESSED** for threads/fibers (ADR-0004, V-9: `--threads N`, 3.7–4× scaling); the fiber budget (pool cap + queueing) is NOT STARTED, see V-5 memory note.
 4. Thread contention on small CPU: PHP thread yields to hand output to Caddy → buffered response channel, no thread switch per write. — **ADDRESSED** (ADR-0002: one `ignis_respond` per request, oneshot to hyper).
 5. Hot reload drops custom extensions → modules registered once per process; thread restart never re-registers. — DESIGNED (ADR-0001: module registered in MINIT once).
-6. RestartWorkers must restart all threads because of opcache → single-thread restart without opcache reset; SHM is process-level, thread only recreates its TSRM context. — NOT STARTED (E12).
+6. RestartWorkers must restart all threads because of opcache → single-thread restart without opcache reset; SHM is process-level, thread only recreates its TSRM context. — **ADDRESSED** (ADR-0012, V-17: respawned thread recreates only its TSRM context).
 7. cgo boundary cost and thread pinning → native FFI, no stack switch. — **ADDRESSED** (ADR-0001: bindgen; V-2 profile shows Rust at 0.3% of PHP-thread samples).
 
 ### Swoole
 1. Own coroutines: statics, class state and superglobals change on switch → native Fibers plus superglobal swap on the fiber-switch observer and a fiber-scoped container. — **ADDRESSED** (ADR-0006, V-11: superglobals swapped per fiber at +100 ns/switch, `Ignis\Scope` WeakMap container); userland statics remain the app's (leak detector NOT STARTED).
 2. Xdebug/Xhprof incompatibility → Fibers are supported by Xdebug natively. — ADDRESSED by construction (native `Fiber`, no custom context switching).
 3. Forgotten $response->end() holds the connection → response is the Fiber's return value; return or exception closes the connection. — **ADDRESSED** (ADR-0002, `Ignis\serve` handler returns `Response`; exception → 500; cancellation → unwinds, V-14).
-4. Deadlock when the only coroutine yields; CPU-heavy work starves others → per-thread watchdog logs long fibers with trace; work-stealing routes new requests to other threads. — PARTIAL: least-inflight dispatch keeps new requests away from busy threads (ADR-0010, V-15); watchdog NOT STARTED (E12).
+4. Deadlock when the only coroutine yields; CPU-heavy work starves others → per-thread watchdog logs long fibers with trace; work-stealing routes new requests to other threads. — **ADDRESSED** (least-inflight dispatch V-15 + watchdog V-17; the watchdog reports the thread, not yet the fiber's trace).
 5. Incomplete hooks (curl_multi etc.) → native Rust drivers for HTTP, Postgres, MySQL, Redis; stream-layer hooks for the rest. — **ADDRESSED for `tcp://` streams** (ADR-0007, V-12); `ssl://`, curl, sqlite, libpq NOT STARTED; V-7 shows the engine ABI does not cover I/O either.
-6. One blocking call stalls the whole process → stalls one thread of N; supervisor sees it via watchdog. — DESIGNED (ADR-0004: N independent threads, V-9); watchdog NOT STARTED (E12).
-7. Fatal kills the worker with every coroutine in it → fatal kills one thread; pools and Table survive. — NOT STARTED (E12).
+6. One blocking call stalls the whole process → stalls one thread of N; supervisor sees it via watchdog. — **ADDRESSED** (ADR-0012, V-17: one stalled thread, others at 90k req/s, watchdog reports it).
+7. Fatal kills the worker with every coroutine in it → fatal kills one thread; pools and Table survive. — **ADDRESSED** for the thread part (V-17: one thread dies and is respawned, service uninterrupted); pools/Table do not exist yet (E14).
 8. Ecosystem fork (Hyperf, own clients, single listeners) → plain Symfony/Laravel via symfony/runtime, AMPHP via a Revolt driver. — **ADDRESSED for AMPHP** (ADR-0008, V-13: Revolt + amphp examples unchanged on `Ignis\Revolt\IgnisDriver`); Symfony ADDRESSED via symfony/runtime (V-16).
 
 ### Engine-level (added by the owner, 2026-09-15)

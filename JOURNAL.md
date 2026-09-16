@@ -67,3 +67,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T00:21:17Z C10 START — question: does symfony/skeleton boot once in worker mode behind a symfony/runtime adapter over Ignis\serve, with a fiber-scoped RequestStack (E8)?
 - 2026-09-16T00:25:52Z C10 VALIDATE — H18/E8 CONFIRMED (V-16): skeleton boots once under Ignis\Symfony\IgnisRuntime, 0/100 RequestStack mismatches across suspensions, 7.8k rps hello through the kernel; sessions disabled until ext-session rebuild.
 - 2026-09-16T00:26:30Z C10 REASSESS — E8' (sessions, multi-cookie, 4 threads); remaining open: E9, E10, E12, E14. Cycle 11 = E12 isolation + supervisor.
+- 2026-09-16T00:28:03Z C11 START — question: does a fatal or a long CPU loop in one thread leave the others serving; can the supervisor respawn that thread without an opcache reset (E12)?
+- 2026-09-16T00:29:40Z C11 VALIDATE — H19/E12 CONFIRMED (V-17): fatal kills one worker, respawned (restarts=1) with hello at 134k rps throughout; CPU spin stalls one thread (watchdog stalled=1), others 90k rps p99 2.7ms; recovery 95.7%.

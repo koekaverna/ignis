@@ -16,6 +16,18 @@ Ignis\serve(static function (Request $req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
         })(),
+        '/fatal' => (static function (): Response {
+            // E12: a real fatal (bailout) — must kill only this thread's script.
+            trigger_error('deliberate fatal for E12', E_USER_ERROR);
+            return Response::text("unreachable\n");
+        })(),
+        '/spin'  => (static function () use ($req): Response {
+            // E12: CPU loop with no suspension point; stalls only this thread.
+            $until = hrtime(true) + (int) ($req->query('s') ?? 5) * 1_000_000_000;
+            $n = 0;
+            while (hrtime(true) < $until) { $n++; }
+            return Response::text("spun $n\n");
+        })(),
         '/slow'  => (static function (): Response {
             // E11: 5 s of work in this fiber plus a child; a client disconnect must cancel both.
             $child = Ignis\async(static function (): string { Ignis\sleep(5000); return 'child done'; });
@@ -69,6 +81,7 @@ Ignis\serve(static function (Request $req): Response {
             'cancel_age_us_max' => Ignis\Loop::$cancelAgeUsMax,
             'cancel_latency_us_max' => Ignis\Loop::$cancelLatencyUsMax,
             'slow_finally_ran' => $GLOBALS['slow_finally_ran'] ?? 0,
+            'runtime'  => function_exists('ignis_stats') ? ignis_stats() : null,
             'mem'      => memory_get_usage(),
             'mem_real' => memory_get_usage(true),
             'rss_kb'   => (int) (preg_match('/^VmRSS:\s+(\d+)/m', (string) file_get_contents('/proc/self/status'), $m) ? $m[1] : -1),

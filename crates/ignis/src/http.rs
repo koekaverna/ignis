@@ -53,6 +53,18 @@ impl Registry {
     }
 }
 
+/// Number of registered PHP threads that have not polled for longer than `limit`
+/// (a thread busy in PHP code for that long), and the total registered.
+pub fn stalled_threads(limit: std::time::Duration) -> (usize, usize) {
+    match REGISTRY.get() {
+        Some(r) => {
+            let rs = r.reactors.lock().unwrap();
+            (rs.iter().filter(|x| x.pending_requests() > 0 && x.idle_in_php() > limit).count(), rs.len())
+        }
+        None => (0, 0),
+    }
+}
+
 /// Removes a PHP thread's reactor from dispatch (its script ended or died).
 pub fn unregister(reactor: &Arc<Reactor>) {
     if let Some(registry) = REGISTRY.get() {

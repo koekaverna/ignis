@@ -92,6 +92,9 @@ pub struct Reactor {
     done_tx: Sender<Completion>,
     from_tokio: Receiver<Completion>,
     responders: Mutex<HashMap<u64, oneshot::Sender<HttpResponse>>>,
+    /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
+    last_active_us: AtomicU64,
+    created: std::time::Instant,
 }
 
 type ConnMap = Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<ConnCmd>>>>;
@@ -234,6 +237,8 @@ impl Reactor {
             done_tx,
             from_tokio,
             responders: Mutex::new(HashMap::new()),
+            last_active_us: AtomicU64::new(0),
+            created: std::time::Instant::now(),
         })
     }
 
@@ -285,6 +290,17 @@ impl Reactor {
         }
     }
 
+    /// Marks the owning PHP thread as alive (watchdog, ADR-0012).
+    pub fn touch(&self) {
+        self.last_active_us.store(self.created.elapsed().as_micros() as u64, Ordering::Relaxed);
+    }
+
+    /// Time since the PHP thread last entered `poll` (ADR-0012 watchdog).
+    pub fn idle_in_php(&self) -> Duration {
+        let now = self.created.elapsed().as_micros() as u64;
+        Duration::from_micros(now.saturating_sub(self.last_active_us.load(Ordering::Relaxed)))
+    }
+
     /// Requests delivered to this thread's loop and not yet answered (ADR-0010).
     pub fn pending_requests(&self) -> usize {
         self.responders.lock().unwrap().len()
@@ -303,6 +319,7 @@ impl Reactor {
     /// flight and no server is listening, so a userland loop can never
     /// deadlock on an empty reactor.
     pub fn poll(&self, timeout: Option<Duration>) -> Vec<Completion> {
+        self.touch();
         let mut out = Vec::new();
         if self.inflight() == 0 && self.servers.load(Ordering::Relaxed) == 0 {
             return out;

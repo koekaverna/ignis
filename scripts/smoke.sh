@@ -21,4 +21,5 @@ echo "== E13 (200 concurrent HTTP)"; bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 bench/e6-fetch.sh | tail -2
 [ -d php/amphp/vendor ] && { echo "== E7 (Revolt/AMPHP examples, both drivers)"; bench/e7-revolt.sh | grep -E "^(DIFFER|e7)"; } || echo "== E7 skipped (run: cd php/amphp && composer install --prefer-source)"
 echo "== E11 (cancellation + deadline)"; bench/e11-cancel.sh | grep -E "cancelled|status=" | head -2
+echo "== E12 (supervisor: fatal + spin)"; bench/e12-isolation.sh | grep -E "^after \(a\)|^after hello|server"
 echo "smoke: GREEN"
