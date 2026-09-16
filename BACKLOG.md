@@ -211,7 +211,7 @@ Bench: a handler that creates cycles; compare p99 and RSS with `IGNIS_LOOP_GC=1`
 
 ## M5 — Ship
 
-### M5-1 Release workflow `agent` `open`
+### M5-1 Release workflow `agent` `in progress (batch 2)`
 **What.** `.github/workflows/release.yml` on a `v*` tag: build the image with `image.yml`'s
 Dockerfile, tag `ghcr.io/koekaverna/ignis:vX.Y.Z`, attach the `ignis` binary + `libphp.so` tarball
 to the GitHub release (with a note that it needs the six runtime libraries — M2's `ldd` list),
@@ -237,7 +237,7 @@ metrics; the log floor and `RUST_LOG`; what a respawn looks like in the log; gra
 M4-5 lands.
 **Acceptance.** Every number cites a V-n; every env var and toml key in `config.rs` is documented.
 
-### M5-4 Nightly perf job `agent` `open`
+### M5-4 Nightly perf job `agent` `in progress (batch 2)`
 **What.** `.github/workflows/nightly.yml`: E1, E2', E4 hello, E14 (if PG available), E16, B1's p99
 pair, with thresholds from VALIDATION; a failure opens an issue with the numbers. Runs on a
 schedule, never on push.
@@ -263,13 +263,13 @@ same `ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"` + content-based readiness that the
 benches got (commit 52e81a5). **Acceptance.** `grep -rln "127.0.0.1:8080" bench examples php --include=*.sh --include=*.php`
 lists only files where it is the *default* inside `${IGNIS_LISTEN:-…}` or `getenv(...) ?: ...`.
 
-### H-2 `bench/frankenphp/Caddyfile` and `bench/fpm/nginx.conf` paths `agent` `open`
+### H-2 `bench/frankenphp/Caddyfile` and `bench/fpm/nginx.conf` paths `agent` `in progress (batch 2)`
 They hardcode `/home/user/ignis`. Generate them from templates at run time in `bench/compare.sh`
 (`sed` the repo root in) so the comparison runs on any checkout. **Acceptance.** `bash -n` passes
 and `bench/compare.sh` reaches the point where it needs `/opt/frankenphp-bin` (absent here) and
 says so, instead of failing on the path.
 
-### H-3 `examples/app.php` gains `/_ignis/health` mention and the budget `agent` `open`
+### H-3 `examples/app.php` gains `/_ignis/health` mention and the budget `agent` `in progress (batch 2)`
 The API spec should show a handler reading `Ignis\Loop::budgetStats()` and the doc comment should
 say the runtime answers `/_ignis/health` itself. **Constraints.** "Change it only with intent"
 (CLAUDE.md): add, do not restructure; keep every existing route.
@@ -286,6 +286,25 @@ A `--image ghcr.io/koekaverna/ignis:TAG` mode that runs the same route checks ov
 + `/dev/tcp` (as `image.yml` does), so the image is smoke-tested with the *same* assertions as the
 binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.php route table and
 `smoke: GREEN`.
+
+### H-7 IDE/static-analysis stubs for the runtime's functions `agent` `in progress (batch 2)`
+**What.** Every `ignis_*` function (`ignis_submit_sleep`, `ignis_poll`, `ignis_watch`, `ignis_cancel`,
+`ignis_serve`, `ignis_respond`, `ignis_stats`, `ignis_inflight`, `ignis_pg_*`, `ignis_offload_*`,
+`ignis_grpc_*`, `ignis_route_*`, `ignis_set_superglobals`, `ignis_cancel_parked_any`, and the
+`temporal` ones behind the feature) is defined in Rust, so an IDE, PHPStan or Psalm sees an
+"unknown function" at every call site (phpantom flagged `ignis_watch`, `ignis_stats` today). Ship
+`php/stubs/ignis.php`: one stub per function with the exact signature and return type from
+`crates/ignis/src/php/module.rs` (read-only for you) and a docblock naming the ADR/V-n, wrapped in
+`if (!function_exists(...))` guards so it is harmless if loaded under the binary. Register it in
+`php/composer.json` under `autoload-dev.files` and mention it in README's Configure section.
+**Acceptance.** `grep -oE 'fe\(c"(ignis_[a-z_]+)"' crates/ignis/src/php/module.rs | sort -u` vs the
+functions in the stub: identical sets; `php -l` passes; loading the stub under the binary then
+calling `ignis_inflight()` still reaches the real function (the guard works).
+
+### H-8 Retire the `IGNIS_ADDR` name `agent` `open`
+**What.** `bench/e15-frankenphp.sh` sets `IGNIS_ADDR`; `examples/classic_server.php` and
+`examples/grpc_server.php` fall back to it (H-1). One name: `IGNIS_LISTEN` everywhere, fallback
+removed. **Acceptance.** `grep -rn IGNIS_ADDR --include=*.sh --include=*.php --include=*.md . | grep -v JOURNAL | grep -v VALIDATION` is empty.
 
 ### H-6 Delete `bench/php/pg_async_probe.php`'s hardcoded DSN default `agent` `done (validated by main: rc=2 on both probes)`
 It defaults to `127.0.0.1` with user/password baked in. Make `PG_DSN` required with a one-line
