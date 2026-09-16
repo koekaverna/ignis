@@ -54,3 +54,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:49:31Z C6 REASSESS — E6' = ssl + native pgsql; Cycle 7 = E7 Revolt driver.
 - 2026-09-15T23:52:55Z C7 START — question: can a Revolt Driver on ignis_poll run Revolt/AMPHP examples unchanged (E7)?
 - 2026-09-15T23:57:49Z C7 IMPLEMENT — IgnisDriver (Revolt AbstractDriver: activate/dispatch/deactivate/now), ignis_watch + Op::Watch (tokio AsyncFd, regular files always ready), amphp installed from source via composer --prefer-source; 6/7 examples identical, fiber-local-manual is a timing race, amp-socket needs ext-filter (rebuilding libphp with filter/ctype/tokenizer).
+- 2026-09-16T00:03:34Z C7 VALIDATE — H15/E7 CONFIRMED (V-13): 7/8 Revolt+AMPHP examples byte-identical on IgnisDriver (1 timing race), amphp/socket TCP client works, timer benchmarks <= 1x of StreamSelectDriver.
+- 2026-09-16T00:03:34Z C7 REASSESS — E7' = AMPHP on hooked transport + signals; Cycle 8 = E11 cancellation + deadline.

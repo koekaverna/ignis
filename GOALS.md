@@ -27,9 +27,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 4: E3~~ DONE (V-10).
 
-~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks.
+~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13).
 
-Next question (Cycle 7): E7 — can a Revolt `Driver` (extending `AbstractDriver`, four methods) sit on `ignis_poll` so AMPHP examples run unchanged? Then E11 (cancellation via hyper drop → fiber exception), E5' (least-inflight dispatch), E6' (ssl).
+Next question (Cycle 8): E11 — does a client disconnect cancel the request's fiber (and its `Ignis\async` children) within 10 ms, and does one wall-clock deadline per request work? Then E5', E6' (ssl), E8 (Symfony).
 
 ## Ranking (after Cycle 0, kept for history)
 

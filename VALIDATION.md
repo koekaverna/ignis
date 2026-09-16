@@ -337,3 +337,24 @@ concurrent: n=100 ok=100 wall_ms=361      per-request ms: min 207, max 235.8
 Unit tests: 9/9 (new `tcp_connect_write_read_close` reactor test against a tokio echo server).
 
 **H14b (PDO sqlite) REFUTED for the hook approach**: `ext/pdo_sqlite` and `ext/sqlite3` use `php_stream` only for blob streams (`openBlob`), never for database I/O; libsqlite3 (system, dynamically linked: `libsqlite3.so.0`) does its own `read`/`pread`/`fsync` on the database file inside the calling thread. There is no transport or wrapper layer to intercept; a blocking sqlite query stalls the PHP thread (and every fiber on it). The honest options are a blocking-call offload pool (run the PDO call on a helper thread, suspend the fiber, resume with the result — only sound for operations that do not touch Zend state, which PDO does, so it needs a per-connection worker thread model) or the native pgsql driver path (E14 via tokio-postgres). Recorded; not attempted tonight.
+
+## V-13 — H15 (E7): Revolt/AMPHP examples unchanged on `Ignis\Revolt\IgnisDriver` (CONFIRMED)
+
+Date: 2026-09-16T03:2xZ. Command: `bench/e7-revolt.sh` — every script is run twice by the **same ignis binary**, once with `REVOLT_DRIVER=Revolt\EventLoop\Driver\StreamSelectDriver` and once with `REVOLT_DRIVER=Ignis\Revolt\IgnisDriver`; outputs are compared byte-for-byte. No example source was modified (a `vendor` symlink for their relative autoload path, and an `auto_prepend_file` defining the CLI `STDIN/STDOUT/STDERR` constants the embed SAPI lacks). AMPHP runs with the `tcp://` hook off (`IGNIS_NO_STREAM_HOOK=1`, ADR-0008) because its socket layer owns its I/O and needs real fds. libphp rebuilt with `filter`, `ctype`, `tokenizer` (league/uri needs `filter_var`).
+
+Packages (composer `--prefer-source` via the git proxy; dist downloads are blocked): revolt/event-loop 1.x, amphp/amp 3.x, amphp/socket 2.4.1 (+ amphp/dns, byte-stream, league/uri…).
+
+| example | select vs ignis | note |
+|---|---|---|
+| revolt `timers.php` (repeat + delay + suspension) | SAME | |
+| revolt `ticks.php` (defer/queue ordering) | SAME | |
+| revolt `fiber-local-automatic.php` | SAME | |
+| revolt `fiber-local-manual.php` | **DIFFER** | timing race in the example: `{main}`'s 3 s timer and the callback's 1+1+1 s timer fall due in the same millisecond; Ignis's ms-granularity poll delivers both in one tick so "3: Done." prints before main exits, select's float timeout returns to main first and the script ends. CLI php 8.4 + select matches the select run. Both interleavings are valid Revolt semantics. |
+| revolt `consume-stdin.php` (onReadable on STDIN from a file) | SAME ("23 bytes") | needed the regular-file fix: epoll returns EPERM for files, they are reported ready immediately |
+| revolt `invalid-callback-return.php` | SAME (both fail on `SIGINT`: no pcntl in this build) | |
+| amphp `amp-delay-async.php` (`async()` × 3 + `delay(0.2)` + `Future\await`) | SAME ("abc in 200 ms bucket") | |
+| amphp `amp-socket-client.php` (`Amp\Socket\connect('tcp://127.0.0.1:8080')`, write, read loop) | SAME (`status=200 body="Hello, World!\n"`) | real TCP through onReadable/onWritable → `ignis_watch` → tokio `AsyncFd`, against the Ignis hello server |
+
+Benchmarks (wall, same binary): `benchmark-timers.php` select 740 ms / **ignis 723 ms**; `benchmark-ticks-delay.php` 227 / **225 ms**; `benchmark-timers-delay.php` 342 / **325 ms** (target ≤ 2×: CONFIRMED, it is ≤ 1×).
+
+Result: 7/8 byte-identical, the 8th a documented timing race → H15 CONFIRMED. The driver is 122 lines of PHP: ADR-0001 (c)'s claim that the loop shape is Revolt-compatible holds literally.
