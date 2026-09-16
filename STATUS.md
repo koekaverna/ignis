@@ -1,6 +1,17 @@
-# STATUS — Ignis (updated 2026-09-16T10:47:24Z — Phase A closed on `3112a96`; night 1 = Cycles 0–21, Phase A = C22)
+# STATUS — Ignis (updated 2026-09-16T22:15Z — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket/TLS session. Every number below links to a VALIDATION.md entry; anything without one says "not measured".
+
+## Product (ROADMAP.md M1–M5)
+
+| milestone | status |
+|---|---|
+| M1 Run — `ignis serve`, `ignis.toml`, `/_ignis/health` | **DONE** (V-38) |
+| M2 Install — image, serving in <2 min, no PHP build | **DONE** (V-39 + addendum; `image.yml` green on `574b231`) |
+| M3 Symfony — untouched skeleton through `ignis/runtime` | **DONE** (V-40 + addendum; V-41 for the package-route bench, dev-mode 404 — not V-16's prod 200, that caveat is the point of V-41) |
+| M3 Laravel | re-scoped (research 25): M3-5a classic mode with `budget.fibers = 1` (Octane's own one-request-per-worker model, guaranteed by ADR-0019), M3-5b fiber-scoped `Container::$instance`/Facade caches (needs an ADR) — both open |
+| M4 Operate — `/_ignis/metrics`, graceful reload, bulkhead, connection cap | **not started**; the only adjacent work is the log floor already at `warn` (M1) and H-10 (fixed a clean `exit()` misread as a fatal in the log) |
+| M5 Ship — release + nightly workflows | **written** (M5-1, M5-4), dry-run clean; **not yet exercised by a real `v*` tag push or schedule dispatch** — the tag push is refused by the session git proxy and is the owner's action |
 
 ## CONFIRMED (numbers)
 
@@ -46,19 +57,19 @@
 
 Zend allocates and frees a fresh mmap'd C stack per fiber; in a multi-threaded process that costs page faults + `munmap` + cross-CPU TLB shootdowns = **~50% of PHP-thread CPU** at 10k fibers (V-2 perf profile), while the userland scheduler and the Rust side are < 1%. Keeping fibers alive in a pool removes it (V-4: overhead 153 → 41 ms, per-job 16 → 4.5 µs); `fiber.stack_size` is irrelevant (64K–2M within 1%). Everything built afterwards — HTTP, streams, TLS, gRPC, pool leases, offload — is a hop onto that one pooled-fiber/one-poll-point loop.
 
-## Phase A (closed — ROADMAP.md; harden what exists, C22)
+## Phase A (closed, C22 — full narrative in ROADMAP.md's R&D backlog)
 
-| item | status | evidence |
+| item | status | V-n |
 |---|---|---|
-| A1 — 3 stream defects (`stream_set_timeout()`, port-literal wrap, connect `$errstr`/`$errno`) | **DONE** | V-31 |
-| A2 — real-timer path (timer wheel) | **DEMOTED** — both acceptance numbers were already met before any work (warm `sleep(1)` 3.82–3.94 µs vs a < 5 µs target; E1 overhead 144–146 ms vs < 150 ms) | no V-n — JOURNAL 2026-09-16T08:15:50Z |
-| A3 — RSS soak, 1M→10M requests | **RUN** — the ±2 % criterion is shown unsatisfiable by construction (RSS is front-loaded, growth stops trending ~5M, then oscillates ±10–12 % between adjacent checkpoints); real yield was a defect, fixed | V-30 |
-| A4 — `ext/sockets` parks the fiber | **DONE** | V-29 |
-| A5 — php-cli parity (`-r`, `--`) | **DONE** | V-32 |
-| A6 — TLS read-ahead invisible to `stream_select` | **HANDED ON** — reproduced + diagnosed, not fixed; the sound fix is an eventfd handed out by `op_cast`, judged larger than a Phase A item | no V-n — docs/research/23 |
-| A7 — `run-tests.php` orphans `ignis` children on `--set-timeout` | **DONE** | V-28 (bug70198) |
+| A1 — 3 stream defects (`stream_set_timeout`, port-literal wrap, connect `$errstr`/`$errno`) | DONE | V-31 |
+| A2 — real-timer path (timer wheel) | DEMOTED — both acceptance numbers already met | — |
+| A3 — RSS soak, 1M→10M requests | RUN, criterion restated to "no monotonic trend past 5M" | V-30 |
+| A4 — `ext/sockets` parks the fiber | DONE | V-29 |
+| A5 — php-cli parity (`-r`, `--`) | DONE | V-32 |
+| A6 — TLS read-ahead invisible to `stream_select` | HANDED ON to Phase B (B7) | — |
+| A7 — `run-tests.php` orphans `ignis` children | DONE | V-28 |
 
-Owner sign-off still needed on four points from Phase A — see "Owner decisions outstanding" at the bottom of DECISIONS.md.
+Owner sign-off still needed on four points from Phase A — DECISIONS.md "Owner decisions outstanding".
 
 ## Run everything (5 commands)
 
@@ -66,14 +77,12 @@ Owner sign-off still needed on four points from Phase A — see "Owner decisions
 scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (session, iconv, openssl, curl, pdo_pgsql) → /opt/php85-zts (idempotent, ~7 min)
 cargo build --release -p ignis && cargo nextest run     # binary + unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
 scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7, E11, E12
-./target/release/ignis --threads 4 examples/hello_server.php &  bench/wrk-hello.sh   # HTTP hello on :8080
+ignis serve examples/hello_server.php & bench/wrk-hello.sh   # or: docker run -p 8080:8080 ghcr.io/koekaverna/ignis (V-38, V-39) — HTTP hello on :8080
 bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP worker vs php-fpm+nginx → bench/results/compare.md (URL_PATH=/cpu, IGNIS_THREADS_LIST="1 4")
 # per expectation: bench/e6-fetch.sh e6-ssl.sh e7-revolt.sh e8-symfony.sh e11-cancel.sh e12-isolation.sh e12-inflight.sh e13-http.sh e14-pg.sh e16-offload.sh rss-1m.sh soak-threads.sh
-# E9: cargo build --release -p ignis --features temporal && bench/e9-temporal.sh (needs /opt/gobin/temporal); probe: bench/e9-probe.sh
-# E10: bench/e10-grpc.sh (grpcurl + ghz); bench/e10-compare.sh (Ignis vs pure tonic vs RoadRunner in /tmp/cmp)
+# E9 (needs /opt/gobin/temporal): cargo build --release -p ignis --features temporal && bench/e9-temporal.sh; probe bench/e9-probe.sh — E10: bench/e10-grpc.sh (grpcurl+ghz), bench/e10-compare.sh (vs pure tonic/RoadRunner in /tmp/cmp)
 # E15: bench/e15-phpt.sh, bench/e15-revolt.sh, bench/e15-swoole.sh --all, bench/e15-frankenphp.sh (all in CI); chaos: IGNIS_CHAOS=1 ./target/release/ignis <script>
-# backend (b): scripts/build-php-async.sh; PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis
-#              N=10000 IGNIS_PHP_INI=bench/php/async-core.ini ./target-async/release/ignis bench/php/e1_async_core.php
+# backend (b): scripts/build-php-async.sh; PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis; then N=10000 IGNIS_PHP_INI=bench/php/async-core.ini ./target-async/release/ignis bench/php/e1_async_core.php
 ```
 
 ## Architecture (current best)
@@ -88,40 +97,24 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
  │ tokio-postgres pool (process-wide)   │                     │ ignis_respond / ignis_grpc_send|end        │
  │                          mpsc<Op>   ◄┼── ignis_submit_*()  │ libphp.so (ZTS, embed SAPI, module ignis)  │
  └──────────────────────────────────────┘                     └──────────────────────────────────────────┘
-                                                              offload pool (--offload M): synchronous PHP
-                                                              threads, own TSRM context; serialized args in,
-                                                              result/RemoteException out; callbacks run back
-                                                              on the calling fiber (ADR-0016, V-24)
+ offload pool (--offload M): synchronous PHP threads, own TSRM context; serialized args in, result/RemoteException out; callbacks run back on the calling fiber (ADR-0016, V-24).
  Per fiber: $_SERVER/$_GET/$_POST/$_COOKIE swapped by the zend_observer fiber-switch hook (reserved slot per context, lazy since E13').
- Streams: tcp/ssl/tls/tlsv1.2/tlsv1.3 factories replaced at MINIT; inside a fiber a stream op parks it (zend_fiber_suspend), the tokio
-          actor does the socket I/O and, for TLS, the rustls handshake/records (STARTTLS = Op::Upgrade); ignis_poll() resumes. Outside
-          fibers, server sockets and unhooked protocols stay on the stock/openssl transports.
+ Streams: tcp/ssl/tls/tlsv1.2/tlsv1.3 factories replaced at MINIT; inside a fiber a stream op parks it (zend_fiber_suspend), the tokio actor does the socket I/O and, for TLS, the rustls handshake/records (STARTTLS = Op::Upgrade); ignis_poll() resumes. Outside fibers, server sockets and unhooked protocols stay on the stock/openssl transports.
  gRPC: content-type application/grpc on the same listener → tonic framing → PHP handler fiber; Ignis\Grpc\Client calls are Op::Custom futures on a lazy h2 channel.
  PostgreSQL: pool owned by the runtime (tokio-postgres); a fiber holds a lease (Ignis\Scope), a transaction pins it, return = one-round-trip session reset.
  Rules: no Zend pointer ever crosses to tokio; PHP never awaits a tokio future; one wait point (poll) per thread.
 ```
 
-## CI
+## CI / blocked downloads
 
-`.github/workflows/ci.yml` — nextest + miri, `smoke.sh` with a Postgres service, E9 with the Temporal dev server, and the E15 matrix (phpt / revolt / swoole / frankenphp) gated by `scripts/ci-gate.sh` against `bench/results/e15-baseline.txt`; timeouts everywhere, failed-step logs as artifacts. `php-image.yml` builds `ghcr.io/koekaverna/ignis-php:8.5.10-zts` from `scripts/build-php.sh` when its inputs change. Both run on `night-1` only. Rule: compat/correctness suites run in CI; local runs produce the VALIDATION numbers and perf.
-
-## Blocked downloads (network allowlist)
-
-`www.php.net`, `pecl.php.net` (403 — grpc C-core built from the git clone instead), `ppa.launchpadcontent.net` (ondrej PPA), `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works), composer dist downloads (`--prefer-source` used). Mirrors used: git clone for php-src, `index.crates.io` for crates, Ubuntu archive for tools.
-
-## Name collision check (owner addendum)
-
-crates.io: **taken** (`ignis` 0.1.0, unrelated); Packagist: free; GitHub: three unrelated `ignis` projects (Python widgets, Obsidian app, Blazor). Alternatives proposed, nothing renamed: **`ignis-rt`** or **`fyra`**.
+`ci.yml` (nextest+miri, `smoke.sh`, E9, the E15 matrix gated against `bench/results/e15-baseline.txt`), `php-image.yml` (builder image) and `image.yml` (runtime image, V-39 addendum) run today; `release.yml`/`nightly.yml` exist (M5-1, M5-4) but have not run against a real tag/schedule. Network allowlist blocks `www.php.net`, `pecl.php.net` (403 — grpc C-core built from the git clone instead), `ppa.launchpadcontent.net`, `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works), composer dist downloads (`--prefer-source` used). Name collision (owner addendum): crates.io taken (unrelated `ignis` 0.1.0), Packagist free, GitHub three unrelated — nothing renamed.
 
 ## Still open
 
-The loop was stopped by the owner at 2026-09-16T05:12:43Z; Phase A (harden what exists) is now closed too. The plan from here is **ROADMAP.md** phases B–D, each item with the V-n it extends and a done-when number; four Phase A follow-ups need an owner decision first (DECISIONS.md, "Owner decisions outstanding").
-
-E3' (10M requests, 4 threads, streams + state enabled); A6's TLS-read-ahead fix (eventfd via `op_cast`, proposed for Phase B — see DECISIONS.md); fiber-budget pool cap with request queueing (V-5 memory note); per-endpoint budget + circuit breaker (pain map PHP-FPM 2); in-process Table (RoadRunner 4); MySQL/Redis drivers; allocator-level leak detector; E9' (signals/queries/cancellation), E10' (client-streaming/bidi, TLS on the listener), E8' (multi-value `Set-Cookie`), E7' (AMPHP on hooked transports, signals); phpt fiber-mode stream failures classified as ours — the count and its composition changed with the box (V-26 addendum's 12-of-138 on the old 4 vCPU box vs V-31's 15-of-160 here; not the same failing tests, see research 21).
+M4 Operate: metrics (M4-4), graceful reload (M4-5), hold-time on leases (M4-1), per-dependency bulkhead + breaker (M4-2/B2 — pain-map PHP-FPM 2, still NOT STARTED), connection cap at the listener (M4-3/B8 — the RSS half of B1's acceptance a fiber budget alone cannot meet, V-37). M5's real tag push and nightly dispatch are the owner's. M3: Laravel (M3-5a/M3-5b), Packagist publication (M3-6), the prod-mode Symfony bench leg (M3-8). R&D backlog deferred from the product (DECISIONS.md): in-process Table (B3), native MySQL/Redis (B4), allocator-level leak detector (B5), static binary (M5-5/B6), TLS read-ahead via `op_cast`-owned eventfd (B7).
 
 ## Ranked recommendation
 
-1. **Get the owner decisions in DECISIONS.md resolved** — they gate what Phase B actually contains (ADR-0018's overhead criterion, A6's eventfd size, A3's restated criterion, the hardcoded-path bench scripts).
-2. **A6 (TLS read-ahead) if handed into Phase B**: the eventfd-via-`op_cast` design from docs/research/23 is already chosen, just not built.
-3. **Validate what was pushed unmeasured**: E12' (in-flight requests on a dying thread must get 500, `bench/e12-inflight.sh`), the fatal → 500 mapping, then E3' at 4 threads with streams/state/offload on for 10M requests — the RSS claim (V-10) predates E6, E13, E14 and E16.
-4. **Take Phase B's structural items**: pool cap + request queueing (fiber budget, B1), per-endpoint budget/circuit breaker (B2), in-process Table (B3), then MySQL/Redis as native drivers with the E14 lease shape (B4, ADR-0015) and the offload router as the fallback (ADR-0016).
+1. **M4-3 (cap connections at the listener, B8)** — closes the RSS half of B1's acceptance a fiber budget alone cannot meet (V-37: ~33 kB per held connection), and the fix pain-map PHP-FPM 6 / FrankenPHP 3 still need; then **M4-2 (per-dependency bulkhead + breaker, B2)** — pain-map PHP-FPM 2, still NOT STARTED, `pg::acquire` waits unboundedly today.
+2. **M3-5a (Laravel, classic mode, `budget.fibers = 1`)** — a second real framework on the existing ADR-0019 mechanism, no FFI change, `agent` lane.
+3. **M5's real tag push** — the release and nightly workflows (M5-1, M5-4) are written and dry-run clean; only a `v*` tag push and a schedule dispatch are missing to close M5.
