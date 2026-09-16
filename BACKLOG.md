@@ -193,7 +193,7 @@ a per-thread atomic the watchdog reads.
 **Acceptance.** `/spin?s=5` in `examples/hello_server.php` produces one `warn!` with `uri=/spin?s=5`
 and `age_ms` ≥ 1000 within 1.5 s of the stall.
 
-### M4-8 Pool survival across a thread respawn `agent` `open`
+### M4-8 Pool survival across a thread respawn `agent` `in progress (batch 4)`
 **What.** Pain map FrankenPHP 7 / Swoole 7: "pools survive" is claimed (ADR-0015: the pool is
 runtime-owned) but **not measured**. Bench: hold a PG lease on thread A, kill A with `/fatal`,
 verify the pool's connection count is unchanged and the lease was reset (`DISCARD ALL` ran).
@@ -327,7 +327,7 @@ distinguish `EG(exit_status)` from a real fatal (the `Engine::eval` sentinel alr
 `-r`): warn only on a fatal, `debug` on exit. **Acceptance.** Running `e1_sleep_10k.php` prints no
 WARN; a script with `trigger_error(..., E_USER_ERROR)` still prints one. `main` (guarded path).
 
-### H-11 `examples/grpc_server.php` fails static analysis `agent` `open`
+### H-11 `examples/grpc_server.php` fails static analysis `agent` `in progress (batch 4)`
 **What.** phpantom flags lines 24–25: an `int` parameter receives `int|float` (the request's number
 fields are decoded from JSON). Pre-existing, not from today's edits. Cast or validate at the
 boundary so the example passes PHPStan level 6 with `php/stubs/ignis.php` loaded (H-7).
