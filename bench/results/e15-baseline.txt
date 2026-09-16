@@ -3,7 +3,9 @@
 # revolt.pass: the gate reported "no baseline yet" until the bench was made to print
 # IGNIS_PASSED; 80 is two agreeing CI samples (81 tests, 1 known timing race). A second
 # race would trip it — lower with evidence, do not widen it blind.
-# swoole.pass 42 -> 55 is from one sample only (the A4 ext/sockets hooks moved it); lower it with evidence if it flaps.
+# swoole.pass: 42 -> 55 this morning from one sample; it flapped the same day (55, 55, 54 on runs 35113503577,
+# 35116773532, 35117600341 — the diffs were all pre-existing shim failures, one timing-dependent case flipped),
+# so the gate sits at the minimum, 54.
 phpt.main.Zend_tests_fibers 108
 phpt.main.ext_sockets_tests 89
 phpt.main.ext_standard_tests_streams 133
@@ -11,5 +13,5 @@ phpt.fiber.Zend_tests_fibers 78
 phpt.fiber.ext_sockets_tests 83
 phpt.fiber.ext_standard_tests_streams 124
 revolt.pass 80
-swoole.pass 55
+swoole.pass 54
 frankenphp.pass 29
