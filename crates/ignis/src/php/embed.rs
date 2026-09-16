@@ -81,6 +81,48 @@ impl Engine {
     pub fn run_file(&mut self, path: &Path) -> Result<i32> {
         run_file_on_current_thread(path)
     }
+
+    /// A5: runs PHP source instead of a file — the embed SAPI's equivalent of php-cli's `-r` and of
+    /// a script fed on stdin (`--`). Tests that re-exec `PHP_BINARY` use both, and the embed had
+    /// neither, so `scripts/ignis-php` had to delegate those invocations to the stock CLI.
+    /// Returns PHP's exit status, like `run_file`.
+    pub fn eval(&mut self, code: &str, name: &str) -> Result<i32> {
+        let code = CString::new(code.trim_start().trim_start_matches("<?php"))?;
+        let name = CString::new(name)?;
+        // SAFETY: the request is active on this thread; zend_eval_stringl_ex compiles and runs the
+        // code in the current scope, exactly as php-cli does for -r. The `_ex` form with
+        // handle_exceptions=true is required: the plain zend_eval_stringl leaves the error pending
+        // and prints nothing, so a parse error exited 255 in silence while php-cli reports it.
+        // With handle_exceptions an `exit()` also comes back as FAILURE, so the return code alone
+        // cannot tell `exit(0)` from a parse error — both would look like "failed, status 0".
+        // A sentinel in EG(exit_status) distinguishes them: only exit() overwrites it.
+        unsafe { set_exit_status(SENTINEL) };
+        let rc = unsafe { sys::zend_eval_stringl_ex(code.as_ptr(), code.as_bytes().len(), std::ptr::null_mut(), name.as_ptr(), true) };
+        // SAFETY: on a PHP thread after startup, same contract as run_file's use of it.
+        let status = unsafe { exit_status() };
+        if status != SENTINEL {
+            return Ok(status); // exit(N) was called, N == 0 included
+        }
+        unsafe { set_exit_status(0) };
+        // A parse error or an uncaught throw: PHP has already printed it, and php-cli exits 255.
+        if rc != sys::SUCCESS { Ok(255) } else { Ok(0) }
+    }
+}
+
+/// A value `exit()` can never leave behind, used by `Engine::eval` to tell an `exit(0)` from a
+/// failure that never set a status at all.
+const SENTINEL: i32 = i32::MIN;
+
+/// Sets `EG(exit_status)`.
+///
+/// # Safety
+/// PHP thread after startup; same contract as [`exit_status`].
+unsafe fn set_exit_status(v: i32) {
+    unsafe {
+        let base = sys::tsrm_get_ls_cache() as *mut u8;
+        let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
+        (*eg).exit_status = v as _;
+    }
 }
 
 /// `EG(exit_status)` without the macro: read through the executor globals

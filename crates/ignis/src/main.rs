@@ -49,8 +49,32 @@ fn main() -> ExitCode {
             break;
         }
     }
-    let Some(script) = args.first().map(PathBuf::from) else {
-        eprintln!("usage: ignis [--threads N] [--offload N] [--supervise] <script.php> [args...]");
+    // A5: php-cli's `-r <code>` and `--` (script on stdin). Tests that re-exec PHP_BINARY use
+    // both; the embed SAPI has no such flags, so `scripts/ignis-php` had to hand those invocations
+    // to the stock CLI. Like php-cli these run one script on this thread: no worker threads, no
+    // offload pool, no supervisor.
+    let inline: Option<(String, String)> = if args.len() >= 2 && args[0] == "-r" {
+        let code = args[1].clone();
+        args.drain(0..2);
+        Some((code, "Command line code".to_string()))
+    } else if args.first().is_some_and(|a| a == "--") {
+        args.remove(0);
+        let mut code = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut code) {
+            eprintln!("reading the script from stdin: {e}");
+            return ExitCode::from(2);
+        }
+        Some((code, "Standard input code".to_string()))
+    } else {
+        None
+    };
+
+    let Some(script) = inline
+        .as_ref()
+        .map(|(_, name)| PathBuf::from(name))
+        .or_else(|| args.first().map(PathBuf::from))
+    else {
+        eprintln!("usage: ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]");
         return ExitCode::from(2);
     };
     let threads = threads.max(1);
@@ -75,6 +99,20 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // A5: `-r` / stdin code is a single script on this thread, like php-cli.
+    if let Some((code, name)) = inline {
+        let status = match engine.eval(&code, &name) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{e:#}");
+                255
+            }
+        };
+        drop(engine);
+        rt.shutdown_background();
+        return ExitCode::from(status.clamp(0, 255) as u8);
+    }
 
     // E16: offload workers — synchronous PHP threads (own TSRM context, no reactor) running the
     // embedded worker loop; jobs arrive over channels, answers go back to the caller's reactor.
