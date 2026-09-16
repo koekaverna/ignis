@@ -306,3 +306,11 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   with the same status codes as the binary mode, `/_ignis/health` ok on 24 threads, `smoke: GREEN`,
   0 containers left. Image mode deliberately skips the E-legs that need a host-reachable port; it
   says so in its output. The agent added the `ldd` "not found" check for parity with `image.yml`.
+- 2026-09-16T20:25Z — **H-1 and M5-2/M5-3 validated.** H-1 (sonnet): the nine remaining benches and
+  three examples take `IGNIS_LISTEN` with content-based readiness; my quoted grep leaves only three
+  legitimate defaults (`serve()`'s signature, `e16_route.php`'s `CURL_URL` fallback, a comment);
+  `wrk-hello.sh` end to end on :8117 — 24,884 req/s. Two harness slips of mine on the way: an
+  unquoted `--include=*.sh` in zsh ("no matches found") and a `source <(sed …)` trick that left two
+  processes behind — killed by PID. M5-2/M5-3 (scribe): `docs/migrate.md` (25 V-n citations) and
+  `docs/operate.md` (11; every `IGNIS_*` in config.rs and every toml key present, defaults match);
+  the agent refused four claims it could not source and said which — the right failure mode.

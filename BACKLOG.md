@@ -202,7 +202,7 @@ ghcr.io/koekaverna/ignis:v0.0.2-rc.1 --version` prints `ignis 0.0.2-rc.1`.
 **Constraints.** Tag push is refused by the session git proxy (commit 8ffd758) — the owner pushes
 the tag; the agent prepares everything else.
 
-### M5-2 Migration guide from php-fpm / FrankenPHP / RoadRunner `agent` `in progress (batch 1)`
+### M5-2 Migration guide from php-fpm / FrankenPHP / RoadRunner `agent` `done (validated by main: 25 V-n citations, no number without a V-n paragraph)`
 **What.** `docs/migrate.md`, using `docs/pain-map.md` as its index: for each server, what changes
 (config → `ignis.toml`, pool sizing → threads × budget, `ignore_user_abort` → cancellation,
 `max_execution_time` → `Ignis\deadline`, opcache reset → thread respawn), what stays, what is not
@@ -210,7 +210,7 @@ supported yet (link the open BACKLOG items). Every claim links its V-n.
 **Acceptance.** Someone who did not write it can follow the php-fpm section against
 `examples/hello_server.php` in the image and reach a 200 on `/`. No number without a V-n.
 
-### M5-3 Operator guide `agent` `in progress (batch 1)`
+### M5-3 Operator guide `agent` `done (validated by main: every config key and IGNIS_* var documented, defaults match config.rs)`
 **What.** `docs/operate.md`: sizing (threads = cores; fibers = concurrency; memory = fibers × 15 kB +
 connections × 33 kB, both from V-37); the budget/queue/503 behaviour (ADR-0019); health vs stats vs
 metrics; the log floor and `RUST_LOG`; what a respawn looks like in the log; graceful reload once
@@ -236,7 +236,7 @@ exactly which library made it impossible and why.
 
 ## Product hygiene (small, `agent`)
 
-### H-1 Remaining hardcoded `127.0.0.1:8080` in benches `agent` `in progress (batch 1)`
+### H-1 Remaining hardcoded `127.0.0.1:8080` in benches `agent` `done (validated by main: quoted grep clean, wrk-hello over IGNIS_LISTEN 24,884 req/s)`
 `bench/{e8-symfony,rss-1m,soak-threads,e10-grpc,e10-compare,e12-inflight,e16-offload,ab-sleep,compare,wrk-hello}.sh`
 and `examples/{classic_server,grpc_server}.php`, `php/amphp/examples/amp-socket-client.php`: the
 same `ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"` + content-based readiness that the five smoke
