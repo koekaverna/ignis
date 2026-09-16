@@ -1283,3 +1283,52 @@ untimed path is untouched.
 | `cargo nextest run --workspace` | — | 10/10 |
 | `scripts/smoke.sh` | stopped at E6 | **GREEN** (E12 respawn 1, recovery 52 332 vs 54 231 rps) |
 | `bench/e15-phpt.sh` (local) | fibers 108/78, sockets 91/84, streams 133/125 | **identical** — no regression, all at or above the baseline raised today |
+
+## V-37 — B1 (ADR-0019): the fiber budget bounds fibers and sheds load; it does not bound RSS
+
+Date: 2026-09-16T16:0xZ. Box: this one, quiet. `./target/release/ignis --threads 1
+examples/hello_server.php`, `bench/b1-budget.sh`. RSS read from `/proc/<pid>/status`; the queue depth
+is read live from `/stats`, which is admitted regardless of the budget (`IGNIS_BUDGET_EXEMPT=/stats`)
+— without that, the stats endpoint queues behind the load it is meant to report.
+
+**(1) The budget serialises, nothing is lost.** `IGNIS_FIBER_BUDGET=2`, 10 concurrent
+`/sleep?ms=200`: **1028 ms** (ideal 1000) and **10 × 200**.
+
+**(2) Past the queue it sheds.** `IGNIS_FIBER_BUDGET=2 IGNIS_QUEUE_DEPTH=3`, 12 concurrent
+`/sleep?ms=300`: **5 × 200 and 7 × 503** — exactly the 2 admitted + 3 queued the configuration
+allows.
+
+**(3) What a held request costs.** Same load both arms (`wrk -t4 -c<N> -d20s` on `/sleep?ms=30000`),
+RSS sampled at 12 s, queue/fiber counts observed rather than assumed:
+
+| arm | conns | observed | ΔRSS kB | marginal per held request |
+|---|---|---|---|---|
+| no budget | 2000 | 2001 fibers | 93,456 | — |
+| no budget | 4000 | 4001 fibers | 188,920 | **47.7 kB** |
+| budget 4, depth 10⁶ | 2000 | 1996 queued | 66,448 | — |
+| budget 4, depth 10⁶ | 4000 | 3996 queued | 132,484 | **33.0 kB** |
+
+So the budget removes **14.7 kB** per held request — the fiber — and not the **~33 kB** the held
+*connection* costs (hyper buffers plus the kernel socket). At 4000 held requests that is 188,920 kB
+against 132,484 kB, **≈30 % less RSS for the same offered load**, with 4 fibers instead of 4001.
+
+**This does not meet the roadmap's "100k queued requests never exceed the configured RSS".** A fiber
+budget cannot: the dominant term is the connection. Bounding RSS needs a cap on concurrent
+connections at the listener, which is a separate change.
+
+Note against V-5's "34 kB per parked fiber": the *marginal* fiber cost measured here is 14.7 kB.
+V-5 measured 10k parked fibers including the 16 KiB VM stack under a different workload; the two are
+not the same quantity and this entry does not restate V-5.
+
+**(4) p99 of admitted requests, load inside the budget** (`wrk -t2 -c64 -d8s` on `/`, 3 paired reps):
+
+| rep | budget 0 | budget 512 |
+|---|---|---|
+| 1 | 59,019 rps, p99 **1.79 ms** | 58,775 rps, p99 **1.85 ms** |
+| 2 | 58,380 rps, p99 **1.82 ms** | 57,488 rps, p99 **1.89 ms** |
+| 3 | 57,718 rps, p99 **1.90 ms** | 56,979 rps, p99 **1.78 ms** |
+
+Ranges overlap completely; throughput is within ~1 %. Unchanged, as the kill criterion requires.
+
+**Regression net:** `cargo nextest run --workspace` 10/10; `scripts/smoke.sh` **GREEN** (E12 respawn
+1, recovery 51,614 vs 53,221 rps).

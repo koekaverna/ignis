@@ -78,6 +78,7 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             return Response::text("cpu $acc\n");
         })(),
         '/stats' => Response::json([
+            'budget'   => Ignis\Loop::budgetStats(), // B1 (ADR-0019)
             'resumes'  => Ignis\Loop::$resumes,
             'fibers'   => Ignis\Loop::$fibersCreated,
             'idle'     => Ignis\Loop::idleFibers(),

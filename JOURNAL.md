@@ -226,3 +226,20 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   those silent runs appeared to refute was the right one.** Fix: in the timed path `WouldBlock`
   returns to the wait with the remaining deadline. 0 failures in 6000 (was 2-3 per 1000), five clean
   `e6-fetch` runs, smoke GREEN, phpt unchanged at 108/78, 91/84, 133/125.
+- 2026-09-16T16:10Z — **B1 landed (ADR-0019, V-37) and half of its acceptance is refused rather than
+  fudged.** `IGNIS_FIBER_BUDGET` caps admitted request fibers; waiting requests are held as the raw
+  array in an O(1) FIFO, never as a Fiber; `IGNIS_QUEUE_DEPTH` sheds with 503 + `retry-after`; a
+  client that leaves while queued is dropped rather than admitted later. `IGNIS_BUDGET_EXEMPT` was
+  added when the measurement itself exposed the need — `/stats` queued behind the load it exists to
+  report, so a saturated server could not be scraped at all. Budget 2 over 10 × 200 ms serialises to
+  1028 ms with 10/10 answered; budget 2 + depth 3 over 12 concurrent gives exactly 5 × 200 + 7 × 503;
+  p99 1.79/1.82/1.90 ms without against 1.85/1.89/1.78 with, ranges overlapping.
+  **The RSS half of the roadmap's acceptance is not met, and a fiber budget cannot meet it.** Measured
+  marginal cost of a held request: 47.7 kB with a fiber, 33.0 kB queued — the budget removes the
+  14.7 kB fiber, not the ~33 kB the connection costs. 30 % less RSS for the same offered load, with 4
+  fibers instead of 4001, but not a bound. The follow-up is a cap on concurrent connections at the
+  listener, recorded in ROADMAP B1 rather than folded quietly into the ADR.
+  Method note: the first three attempts at this measurement were worthless because I set `wrk -c N`
+  and reported N as "N queued". It is not — the server only queues what it has read. Reading the
+  live queue depth from an exempt `/stats` is what made the numbers mean anything, and it changed
+  the marginal figure from an apparent 9 B to 33 kB.

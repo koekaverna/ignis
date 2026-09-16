@@ -122,6 +122,26 @@ final class Loop
     private static $requestHandler = null;
     public static int $resumes = 0;
     public static int $fibersCreated = 0;
+    /**
+     * B1 (ADR-0019) admission control. A request that cannot be admitted waits as *data* — the raw
+     * array the reactor delivered — never as a Fiber, because a parked Fiber costs ~34 KB of RSS
+     * (V-5) and that is the whole point of the budget. 0 = unlimited, which is the pre-B1
+     * behaviour and stays the default.
+     */
+    public static int $fiberBudget = 0;
+    public static int $queueDepth = 0;
+    public static int $inflightRequests = 0;
+    public static int $queuedPeak = 0;
+    public static int $rejected = 0;
+    public static int $admittedAfterQueue = 0;
+    private static bool $budgetInit = false;
+    /** @var list<string> path prefixes admitted regardless of the budget (IGNIS_BUDGET_EXEMPT). */
+    private static array $budgetExempt = [];
+    /** @var list<array{int, array}> FIFO of requests waiting for a slot; read through $queueHead. */
+    private static array $requestQueue = [];
+    private static int $queueHead = 0;
+    /** @var array<int, true> ids whose client went away while queued. */
+    private static array $queueCancelled = [];
     /** Nanoseconds spent in each phase (for VALIDATION.md; cheap: one hrtime per batch). */
     public static array $phaseNs = ['start' => 0, 'ready' => 0, 'poll' => 0, 'resume' => 0];
 
@@ -362,6 +382,40 @@ final class Loop
     private static int $gcTick = 0;
     private static bool $loopGc = false;
 
+    /** Reads the budget from the environment once; `IGNIS_FIBER_BUDGET=0` (default) means unlimited. */
+    private static function budgetInit(): void
+    {
+        self::$budgetInit = true;
+        $b = getenv('IGNIS_FIBER_BUDGET');
+        if ($b !== false && is_numeric($b)) {
+            self::$fiberBudget = max(0, (int) $b);
+        }
+        $q = getenv('IGNIS_QUEUE_DEPTH');
+        if ($q !== false && is_numeric($q)) {
+            self::$queueDepth = max(0, (int) $q);
+        }
+        // A saturated server is exactly when its metrics matter, so health and stats endpoints
+        // must not queue behind the load they are there to report.
+        $e = getenv('IGNIS_BUDGET_EXEMPT');
+        if ($e !== false && $e !== '') {
+            self::$budgetExempt = array_values(array_filter(array_map('trim', explode(',', $e))));
+        }
+    }
+
+    /** Counters for /stats and for VALIDATION: see ADR-0019. */
+    public static function budgetStats(): array
+    {
+        return [
+            'budget' => self::$fiberBudget,
+            'queue_depth' => self::$queueDepth,
+            'inflight' => self::$inflightRequests,
+            'queued' => \count(self::$requestQueue) - self::$queueHead,
+            'queued_peak' => self::$queuedPeak,
+            'queued_admitted' => self::$admittedAfterQueue,
+            'rejected' => self::$rejected,
+        ];
+    }
+
     private static function gcInit(): void
     {
         $env = getenv('IGNIS_LOOP_GC');
@@ -399,11 +453,70 @@ final class Loop
         self::run();
     }
 
+    /**
+     * B1 (ADR-0019): admit, queue, or shed. Queueing holds the request as data, so a queued
+     * request costs a few hundred bytes instead of a Fiber's ~34 KB (V-5).
+     */
     private static function dispatchRequest(int $id, array $raw): void
     {
+        if (!self::$budgetInit) {
+            self::budgetInit();
+        }
+        if (self::$fiberBudget > 0 && self::$inflightRequests >= self::$fiberBudget
+            && !self::isExempt($raw['uri'] ?? '')) {
+            $queued = \count(self::$requestQueue) - self::$queueHead;
+            if (self::$queueDepth > 0 && $queued >= self::$queueDepth) {
+                ++self::$rejected;
+                \ignis_respond($id, 503, ['retry-after' => '1'], "503 busy\n");
+                return;
+            }
+            self::$requestQueue[] = [$id, $raw];
+            if ($queued + 1 > self::$queuedPeak) {
+                self::$queuedPeak = $queued + 1;
+            }
+            return;
+        }
+        self::admitRequest($id, $raw);
+    }
+
+    private static function isExempt(string $uri): bool
+    {
+        foreach (self::$budgetExempt as $prefix) {
+            if (str_starts_with($uri, $prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Takes waiting requests while there is room. O(1) per request: the FIFO is read by index. */
+    private static function drainQueue(): void
+    {
+        while (self::$queueHead < \count(self::$requestQueue)
+            && (self::$fiberBudget <= 0 || self::$inflightRequests < self::$fiberBudget)) {
+            [$id, $raw] = self::$requestQueue[self::$queueHead];
+            self::$requestQueue[self::$queueHead] = null; // drop the body now, not at compaction
+            ++self::$queueHead;
+            if (isset(self::$queueCancelled[$id])) {
+                unset(self::$queueCancelled[$id]); // client gone while queued: nothing to answer
+                continue;
+            }
+            ++self::$admittedAfterQueue;
+            self::admitRequest($id, $raw);
+        }
+        if (self::$queueHead > 0 && self::$queueHead === \count(self::$requestQueue)) {
+            self::$requestQueue = [];
+            self::$queueHead = 0;
+        }
+    }
+
+    private static function admitRequest(int $id, array $raw): void
+    {
+        ++self::$inflightRequests;
         $handler = self::$requestHandler;
         $request = new Http\Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body'], $id);
         self::spawn(static function () use ($handler, $request, $id): void {
+            try {
             self::$requestFibers[$id] = \Fiber::getCurrent();
             Scope::set('ignis.request', $id);
             // E13: this fiber gets its own $_SERVER/$_GET/$_POST/$_COOKIE (ADR-0006).
@@ -428,6 +541,12 @@ final class Loop
             if ($response->status !== 0) { // 0 = detached: the handler answered through another channel (gRPC, E10)
                 \ignis_respond($id, $response->status, $response->headers, $response->body);
             }
+            } finally {
+                // The slot is released after the answer is on its way, and the next waiting
+                // request is admitted from here — the loop needs no extra wait point for it.
+                --self::$inflightRequests;
+                self::drainQueue();
+            }
         });
     }
 
@@ -435,6 +554,10 @@ final class Loop
     private static function cancelRequest(int $requestId, CancelledException $e, int $ageUs): void
     {
         $t0 = hrtime(true);
+        if (self::$queueHead < \count(self::$requestQueue) && !isset(self::$requestFibers[$requestId])) {
+            // Still only queued (B1): no fiber to throw into, just never admit it.
+            self::$queueCancelled[$requestId] = true;
+        }
         $targets = self::$children[$requestId] ?? [];
         if (isset(self::$requestFibers[$requestId])) {
             $targets[] = self::$requestFibers[$requestId];
