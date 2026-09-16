@@ -360,3 +360,10 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   VALIDATION with both columns and the caveat that every response is the dev-mode 404 welcome page,
   not V-16's prod 200. Batch 1 is now eight of eight. H-11 added from a phpantom finding on the
   gRPC example (pre-existing `int|float`).
+- 2026-09-16T22:15Z — **H-10 (main).** Since the `warn` floor every script ending in `exit()`
+  printed "php_execute_script returned false (fatal error or exit)". Both paths bail out, so `ok`
+  is false for either; the discriminator is `EG(exit_status)`: 255 means a fatal (php_error_cb),
+  anything else is `exit(N)`. Now `warn!("script ended with a fatal error", status)` vs
+  `debug!("script called exit()")`; `exit(255)` is the one case still read as a fatal, said in the
+  comment. E1 prints 0 WARN lines, `trigger_error(E_USER_ERROR)` prints one with status=255,
+  `exit(7)` returns 7, nextest 10/10, smoke GREEN (E12 respawn 1). Batch 3 (H-8, H-9) validated.

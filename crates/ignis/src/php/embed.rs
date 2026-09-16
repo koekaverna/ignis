@@ -215,10 +215,20 @@ fn run_file_on_current_thread(path: &Path) -> Result<i32> {
         fh.primary_script = true;
         let ok = sys::php_execute_script(&mut fh);
         sys::zend_destroy_file_handle(&mut fh);
+        let status = exit_status();
+        // Both `exit(N)` and a fatal error end the script through a bailout, so `ok` is false for
+        // either. A fatal sets `EG(exit_status)` to 255 (php_error_cb); an `exit(N)` sets N. Since
+        // the log floor is `warn` (H-10, 2026-09-16) a clean `exit()` must not read as a fatal —
+        // every bench script that ends with exit() was printing one. `exit(255)` is the one case
+        // this cannot tell apart and is logged as a fatal; nothing else conflates.
         if !ok {
-            tracing::warn!(?path, "php_execute_script returned false (fatal error or exit)");
+            if status == 255 {
+                tracing::warn!(?path, status, "script ended with a fatal error");
+            } else {
+                tracing::debug!(?path, status, "script called exit()");
+            }
         }
-        exit_status()
+        status
     };
     Ok(status)
 }

@@ -319,7 +319,7 @@ still leaves an empty header row in a results file that is committed history. Mo
 write to after the preflight passes. **Acceptance.** `ONLY=franken bash bench/compare.sh` on this
 box leaves `git status --short bench/results/compare.md` empty.
 
-### H-10 `exit()` is logged as a fatal `main` `open`
+### H-10 `exit()` is logged as a fatal `main` `done (exit() -> debug, fatal -> warn with status=255; exit(7) still 7; nextest, smoke GREEN; phpt below)`
 **What.** Since the log floor moved to `warn` (2026-09-16), every script that ends with an explicit
 `exit()` prints `WARN php_execute_script returned false (fatal error or exit)` — `bench/php/e1_sleep_10k.php`
 and `e2_all.php` do it on every run. A clean exit is not a warning. In `crates/ignis/src/php/embed.rs`
