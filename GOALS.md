@@ -21,7 +21,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E13 | State: superglobals + fiber-scoped container swapped on every fiber switch via zend_observer; leak detector | **CONFIRMED** (V-11): 0 mismatches, +100 ns/switch; leak detector is the `Ignis\Scope` dev check |
 | E14 | Connections: runtime-owned pool, lease per fiber, transaction pins the lease, session reset on return | **CONFIRMED** (V-21): 200 fibers over 20 connections in 1046 ms, transaction pins one backend, LeaseError without an op, reset verified; pdo_pgsql comparison pending |
 | E15 | Compat: php-src suites (Zend/tests/fibers, ext/standard/tests/streams, ext/sockets/tests) under ignis run-tests with every failure classified; Revolt DriverTest on IgnisDriver 100%; Swoole swoole_runtime hook tests through a shim (report missing hooks); FrankenPHP testdata as integration tests; Symfony + Doctrine suites in chaos mode with zero new failures vs stock PHP | PARTIAL (V-23): phpt main mode 100%/100%/94.9% of stock, Swoole shim 44/153 with the missing-hook ranking, FrankenPHP 29/33 applicable; Revolt DriverTest and chaos mode pending |
-| E16 | Offload: pool of synchronous PHP worker threads with their own TSRM context; `Ignis\offload(fn)` copies scalar/array args in and the result back while the fiber sleeps; config-driven auto-routing of curl_exec / PDO pgsql / SQLite3 / Redis with no code changes; 100 concurrent 200 ms pdo_pgsql queries limited by the pool size, never by the fiber thread; curl_exec with CURLOPT_WRITEFUNCTION works; copy overhead per call recorded | OPEN (added by the owner 2026-09-16T02:32:04Z; needs libphp rebuilt with pdo_pgsql, curl, sqlite3) |
+| E16 | Offload: pool of synchronous PHP worker threads with their own TSRM context; `Ignis\offload(fn)` copies scalar/array args in and the result back while the fiber sleeps; config-driven auto-routing of curl_exec / PDO pgsql / SQLite3 / Redis with no code changes; 100 concurrent 200 ms pdo_pgsql queries limited by the pool size, never by the fiber thread; curl_exec with CURLOPT_WRITEFUNCTION works; copy overhead per call recorded | **CONFIRMED** (V-24): pool bounded by its size (2604 ms / 8 workers, 291 ms / 100), auto-routed PDO pgsql + SQLite3 + curl with WRITEFUNCTION, copy 13–67 µs, routed call 17–45 µs |
 
 Note on E5: the machine has 4 vCPUs (`nproc`), so "8 threads ≥ 6.5×" cannot
 be measured as written. The proportional target (≥ 81% scaling efficiency)
@@ -35,7 +35,7 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15). ~~Cycle 10: E8~~ DONE (V-16).
 
-~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). ~~Cycle 14: E10~~ DONE (V-20). ~~Cycle 16: E14~~ DONE (V-21). Remaining OPEN: E15 (compat, in progress with porter) — each a multi-hour build; see STATUS.md ranking.
+~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). ~~Cycle 14: E10~~ DONE (V-20). ~~Cycle 16: E14~~ DONE (V-21). ~~Cycle 18: E16~~ DONE (V-24). Remaining OPEN: E15e (chaos mode); raised targets E2'/E13', E6' ssl, E12' — each a multi-hour build; see STATUS.md ranking.
 
 ## Ranking (after Cycle 0, kept for history)
 
