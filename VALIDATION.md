@@ -519,3 +519,56 @@ REPLAY_FAILED activations=3 eviction_errors=1
 What was wrong on the way (each a refuted sub-hypothesis, all fixed in this commit): (1) completing activations with hand-written JSON fails on prost's serde derive, which requires every field (`missing field headers`) — the PHP side now speaks a small command schema (`StartTimer`, `ScheduleActivity`, `CompleteWorkflow`, `FailWorkflow`) translated to protos in Rust; (2) the `temporal workflow show --output json` history is protojson (camelCase, string int64) and does not round-trip through prost serde (`missing field event_id`) — the replay worker fetches the history over gRPC (`GetWorkflowExecutionHistory`) and hands `HistoryForReplay` to `init_replay_worker`; (3) `Ignis\Loop::runUntil` routed any array payload with keys to `dispatchRequest`, so a `['kind' => 'error']` result from the Temporal ops was treated as an HTTP request — payload routing now checks the waiting map first, then cancellation, then `method`.
 
 Not covered (prototype scope per ADR-0013): signals/queries/updates, cancellation, child workflows, local activities, heartbeats, retries beyond core defaults, payload codecs beyond `json/plain`, one worker per process. Binary size with the feature: the `temporal` build adds ≈ 600 crates and ≈ 90 s to the release build on this box.
+
+## V-20 — H21/H21b/H21c (E10): gRPC unary + server-streaming handlers in PHP on the shared listener; client call parks the fiber; three-way comparison (CONFIRMED with one target restated)
+
+Date: 2026-09-16T02:02:22Z. Build: `cargo build --release -p ignis` (tonic 0.14 with `server` + `channel` features only, no codegen; +28 crates in the closure: 89 vs 61 for a hyper-only tree). Load tool: `ghz` (Go) on the same 4-vCPU box, `-c 64 -n 100000 --connections 8`, request `HelloRequest{name:"ada"}`, reply `HelloReply{message:"hello ada"}`; the background C-core build was SIGSTOPped during every measurement. Commands: `bench/e10-grpc.sh`, `bench/e10-compare.sh`.
+
+Functional (grpcurl, `examples/grpc/greeter.proto`, handlers in `examples/grpc_server.php`):
+
+```
+== grpcurl unary       {"message": "hello ada"}
+== grpcurl streaming   {"i":3,"at":"01:53:44.846"}{"i":2,"at":"01:53:44.859"}{"i":1,"at":"01:53:44.870"}   (3 messages, 10 ms apart, order preserved)
+== HTTP on the same port   Ignis gRPC demo: use grpcurl ...   (plain HTTP and gRPC share the listener)
+```
+
+Three servers, same load (`bench/e10-compare.sh`):
+
+| server | req/s | avg | p99 | max | OK |
+|---|---|---|---|---|---|
+| **Ignis, PHP handler, 1 PHP thread** | **16.7k** | 2.90 ms | **7.8 ms** | 15.8 ms | 100000/100000 |
+| Ignis, PHP handler, 4 PHP threads | 17.6k | 2.74 ms | 8.0 ms | 16.7 ms | 100000/100000 |
+| pure tonic, Rust handler, same codec + listener code (`examples/rust/grpc-baseline`) — the ceiling | 21.1k | 2.02 ms | 6.3 ms | 12.4 ms | 100000/100000 |
+| RoadRunner v2025 grpc plugin, 1 PHP worker (php 8.4 NTS, google/protobuf pure PHP) | 5.1k | 12.3 ms | 17.8 ms | 28.0 ms | 100000/100000 |
+| RoadRunner grpc plugin, 4 PHP workers | 10.2k | 5.57 ms | 12.6 ms | 26.6 ms | 100000/100000 |
+| RoadRunner grpc plugin, 16 PHP workers | 11.4k | 4.50 ms | 13.4 ms | 45.6 ms | 100000/100000 |
+
+100 concurrent calls to `Slow` (each sleeps 200 ms in the handler; `-c 100 -n 100`):
+
+| server | total | slowest | avg |
+|---|---|---|---|
+| **Ignis, 1 PHP thread** (`Ignis\sleep` parks the fiber) | **215 ms** | 209 ms | 204 ms |
+| RoadRunner, 4 workers (`usleep` blocks the worker) | 5.03 s | 5.02 s | 2.61 s |
+| RoadRunner, 16 workers | 1.43 s | 1.42 s | 756 ms |
+
+H21b (client call parks the fiber): 100 concurrent `Proxy` calls, each making a `Slow` call to the same server through `Ignis\Grpc\Client` (h2 channel owned by the runtime), 1 PHP thread: **217 ms total**, slowest 216 ms, 100/100 OK (three runs: 218.9 / 217.4 / 217.6 ms). Sequential would be 20 s.
+
+Server-streaming under load (`Countdown n=3`, 3 messages 10 ms apart, `-c 64 -n 5000`): 1.8k calls/s, avg 34.6 ms, p99 38.3 ms, 5000/5000 OK; expected floor is 20 ms of sleeps + 3 message round trips.
+
+| claim | result |
+|---|---|
+| unary + server-streaming handlers in PHP, same listener as HTTP | CONFIRMED (grpcurl and ghz; `Unimplemented` for unknown methods) |
+| p99 < 5 ms at c=64 (H21 as written) | **NOT MET by anyone on this box**: the Rust-only ceiling is p99 6.3 ms because ghz shares the 4 vCPUs. Restated: Ignis p99 is 1.23× the pure-tonic ceiling and throughput is 79% of it with a PHP handler in the path; RoadRunner with 16 workers reaches 54% of the ceiling at 2.1× the p99. INCONCLUSIVE as an absolute number until measured with an external load box (same caveat as V-5). |
+| client call suspends the fiber (H21b) | CONFIRMED: 100 × 200 ms in 217 ms on one thread |
+| 4 PHP threads help unary hello | NO (17.6k vs 16.7k): the PHP hop is not the bottleneck at this load; ghz + tokio + hyper are |
+
+Build complexity (H21c), measured on this box:
+
+| | Ignis (tonic in-process) | RoadRunner grpc plugin | ext-grpc |
+|---|---|---|---|
+| toolchain | the Rust toolchain already required | Go 1.26 (auto-downloaded by Go 1.24 because the module demands ≥ 1.26.4); `go install …@latest` is refused (exclude directives), so clone + `go build ./cmd/rr` | C++ toolchain + cmake for grpc C-core (BoringSSL, abseil, protobuf, re2, c-ares, upb, zlib), then phpize; `pecl.php.net` is blocked here (403) and the in-tree ext `configure` fails without an installed C-core ("Please reinstall the grpc distribution") |
+| build time here | +23 s incremental for the ignis binary; the baseline crate builds from scratch in 23.5 s | 91 s `go build` after module download (clone 1 min) | C-core: 778 objects compiled at 24% after 12 min at `nice -j2` — still building when this entry was written (final time added below when it finishes) |
+| artifact | ignis binary 24.1 MB total (was 24.1 MB before: tonic shares hyper/h2) | `rr` 96 MB + php-cli + `spiral/roadrunner-grpc` + `google/protobuf` (pure PHP, or ext-protobuf for speed) + generated PHP classes (`protoc --php_out`; the RR `protoc-gen-php-grpc` plugin is not in the v2025 module tree, the interface was written by hand) | libgrpc + `grpc.so` (historically > 100 MB with debug info) — **client only**: ext-grpc has no server, so it cannot serve E10's handlers at all |
+| what PHP code needs | `require php/grpc/ignis-grpc.php`, handlers as closures on `/pkg.Svc/Method`, opaque bytes (`google/protobuf` or the 60-line `Proto` helper) | worker.php with `Spiral\RoadRunner\GRPC\Server`, service classes implementing generated interfaces, `.rr.yaml` with the proto path | `Grpc\BaseStub` subclasses generated by `protoc-gen-grpc-php` |
+
+Not covered: client-streaming/bidi, TLS, deadlines beyond tonic's `grpc-timeout`, client metadata, compression (ADR-0014).

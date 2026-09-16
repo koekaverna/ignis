@@ -15,7 +15,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E7 | Revolt-compatible driver over the Ignis reactor runs AMPHP examples unchanged | **CONFIRMED** (V-13): 7/8 examples byte-identical, 1 timing race in the example itself |
 | E8 | symfony/runtime adapter boots symfony/skeleton in worker mode; RequestStack fiber-scoped | **CONFIRMED** (V-16): 0/100 RequestStack mismatches, sessions on |
 | E9 | Temporal: link temporal sdk-core (Rust) in-process; workflow on Fibers with deterministic replay; one workflow with two activities and a timer passes a replay test. Research first: how the Python SDK bridges core ↔ asyncio | **CONFIRMED** (V-18, V-19; research 12, ADR-0013) — prototype scope: no signals/queries/cancel |
-| E10 | gRPC: tonic server + client on the shared hyper/h2 stack; unary and server-streaming handlers in PHP; client call suspends the fiber. Compare against RoadRunner grpc plugin and ext-grpc on latency and build complexity | OPEN |
+| E10 | gRPC: tonic server + client on the shared hyper/h2 stack; unary and server-streaming handlers in PHP; client call suspends the fiber. Compare against RoadRunner grpc plugin and ext-grpc on latency and build complexity | **CONFIRMED** (V-20): unary + server-streaming in PHP on the shared listener, client call parks the fiber (100 × 200 ms in 217 ms); 16.7k req/s vs RR 5.1k–11.4k on the same box; the absolute p99 < 5 ms is unmeasurable here (ceiling 6.3 ms) |
 | E11 | Cancellation: client disconnect cancels the request fiber and its futures within 10 ms; one wall-clock deadline per request inherited by children | **CONFIRMED** (V-14): 0.78 ms worst case, 504 at 102 ms for a 100 ms deadline |
 | E12 | Isolation: fatal / 30 s CPU loop affects one thread; supervisor restarts it without an opcache reset; pools survive | **CONFIRMED** for threads (V-17); pools do not exist yet (E14) |
 | E13 | State: superglobals + fiber-scoped container swapped on every fiber switch via zend_observer; leak detector | **CONFIRMED** (V-11): 0 mismatches, +100 ns/switch; leak detector is the `Ignis\Scope` dev check |
@@ -34,7 +34,7 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15). ~~Cycle 10: E8~~ DONE (V-16).
 
-~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). Remaining OPEN: E10 (gRPC), E14 (connection pool) — each a multi-hour build; see STATUS.md ranking.
+~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). ~~Cycle 14: E10~~ DONE (V-20). Remaining OPEN: E15 (compat), E14 (connection pool) — each a multi-hour build; see STATUS.md ranking.
 
 ## Ranking (after Cycle 0, kept for history)
 

@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T01:42Z, Cycle 13 done)
+# STATUS — Ignis (updated 2026-09-16T02:02:51Z, Cycle 14 done)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket. Every number below links to VALIDATION.md.
 
@@ -28,6 +28,7 @@
 | **E12** fatal in one worker thread; CPU loop in one thread; supervisor respawn | fatal killed 1 of 4 workers, hello uninterrupted at 134k req/s, respawn within 50 ms, no opcache reset; spin stalled 1 thread, others 90k req/s p99 2.7 ms; recovery 96% | V-17 |
 | **E9 step 1** temporal-sdk-core (git) in a Rust binary against a locally built dev server | first activation polled and completed; run COMPLETED with the probe's payload | V-18 |
 | **E9** PHP workflow (2 activities + 500 ms timer) as a suspended fiber inside `ignis --features temporal`; deterministic replay | live run **COMPLETED in 1224 ms**, 5 activations, fiber kept alive between tasks; replay of the 22-event history **OK**; replay of the workflow without the timer **FAILS** with core's TMPRL1100 (negative control) | V-19 |
+| **E10** gRPC unary + server-streaming handlers in PHP on the same listener as HTTP (tonic framing, opaque-bytes codec); runtime-owned client parks the fiber | **16.7k req/s, p99 7.8 ms** on 1 PHP thread vs pure-tonic ceiling 21.1k / 6.3 ms vs RoadRunner grpc plugin 5.1k–11.4k / 12.6–17.8 ms (same box, same ghz load); 100 concurrent 200 ms calls: **215 ms** vs RR 5.03 s (4 workers); 100 Proxy calls each awaiting a 200 ms upstream: 217 ms | V-20 |
 
 ## REFUTED / INCONCLUSIVE and why
 
@@ -36,6 +37,8 @@
 - **E6 via the async scheduler ABI (owner's "prototype E6 on (b) first")**: REFUTED by inspection (V-7). PR #22561 is consulted only by Zend core (fibers, GC, execute API, objects); no stream, socket or sleep path calls `ZEND_ASYNC_SUSPEND`. E6 is stream-hook work on both backends (ADR-0003).
 - **/cpu p99 at 4 threads**: FrankenPHP 15.6 ms vs Ignis 17.5 ms while Ignis has +28% throughput (V-9): round-robin dispatch feeds busy threads. Least-inflight dispatch is the fix (E5').
 - **E6 for PDO sqlite via hooks**: REFUTED (V-12). libsqlite3 reads the database file itself inside the calling thread; there is no stream layer to intercept. Needs a blocking-call offload or the native pgsql path (E14).
+- **E10 absolute p99 < 5 ms at c=64**: INCONCLUSIVE on this box — the Rust-only tonic server measures p99 6.3 ms under the same ghz load because the load generator shares the 4 vCPUs (V-20). Ignis is at 1.23× the ceiling; needs an external load box like E1'.
+- **ext-grpc as a comparison server**: not applicable — ext-grpc is a client-only extension; its build (grpc C-core from git, `pecl.php.net` blocked) is reported as build complexity only (V-20).
 - **Full Rust scheduler provider for backend (b)**: deferred, not refuted. The reference provider's coroutine entry relies on `zend_first_try` (setjmp); a Rust provider needs a C shim for that frame. The idle-hook prototype validated the architectural claim (reactor at the idle point) without it.
 
 ## What the async scheduler ABI (php-src PR #22561 / true-async fork) changes
@@ -55,6 +58,7 @@ scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (-
 cargo build --release -p ignis && cargo nextest run     # binary + 8 unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
 scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7 (if amphp vendor present), E11, E12
 # E9: cargo build --release -p ignis --features temporal && bench/e9-temporal.sh   # needs /opt/gobin/temporal (built from temporalio/cli)
+# E10: bench/e10-grpc.sh (grpcurl + ghz from $GOPATH/bin); bench/e10-compare.sh  # Ignis vs pure tonic (examples/rust/grpc-baseline) vs RoadRunner (/home/user/cmp/rr)
 ./target/release/ignis --threads 4 examples/hello_server.php &  bench/wrk-hello.sh   # HTTP hello on :8080
 bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP worker vs php-fpm+nginx → bench/results/compare.md (URL_PATH=/cpu, IGNIS_THREADS_LIST="1 4")
 # backend (b): scripts/build-php-async.sh; PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis
@@ -86,14 +90,14 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## Blocked downloads (network allowlist)
 
-`www.php.net`, `ppa.launchpadcontent.net` (ondrej PPA), `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works). Mirrors used: git clone for php-src, `index.crates.io` for crates, Ubuntu archive for tools.
+`www.php.net`, `pecl.php.net` (403: no ext-grpc tarball; the C-core is built from the grpc/grpc git clone instead), `ppa.launchpadcontent.net` (ondrej PPA), `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works). Mirrors used: git clone for php-src, `index.crates.io` for crates, Ubuntu archive for tools.
 
 ## Still open
 
-E10 (tonic gRPC, Cycle 14 in progress), E15 (compat suites: php-src fibers/streams/sockets under ignis, Revolt DriverTest, Swoole runtime-hook shim, FrankenPHP testdata, Symfony/Doctrine chaos mode — added by the owner at 01:55Z, next after E10), E14 (runtime-owned connection pool). E9 is done in prototype scope (no signals/queries/cancel, `json/plain` payloads only — V-19). E10/E14 not started: each is a multi-hour build with a new dependency tree (tonic, tokio-postgres) and E14 needs a PostgreSQL on the box; the reactor's `Op::Custom` seam (added for Temporal) is the integration point for both.
+E15 (compat suites: php-src fibers/streams/sockets under ignis, Revolt DriverTest, Swoole runtime-hook shim, FrankenPHP testdata, Symfony/Doctrine chaos mode — added by the owner at 01:55Z, next after E10), E14 (runtime-owned connection pool). E9 is done in prototype scope (no signals/queries/cancel, `json/plain` payloads only — V-19); E10 is done for unary + server-streaming (no client-streaming/bidi, no TLS — V-20). E14 not started: needs tokio-postgres and a PostgreSQL on the box; the reactor's `Op::Custom` seam is the integration point.
 
 ## Ranked recommendation for the next 3 cycles
 
 1. **E14 runtime-owned pgsql pool** via tokio-postgres: `Op::PgQuery` + a `PDO`-shaped PHP client; lease per fiber, transaction pins the lease, `DISCARD ALL` on return. Also the honest answer to the sqlite half of E6. Needs a PostgreSQL on the box (apt has it).
-2. **E10 tonic gRPC** on the shared hyper/h2 stack: unary first, then server-streaming (the first fiber that yields several responses through `ignis_respond`-style chunks); compare with RoadRunner's grpc plugin and ext-grpc.
+2. **E15 compat suites** (owner addendum): php-src fibers/streams/sockets tests under an `ignis run-tests` wrapper with every failure classified, Revolt DriverTest on IgnisDriver, Swoole runtime-hook shim report, FrankenPHP testdata as integration tests, Symfony/Doctrine chaos mode. Ordered by information per hour: DriverTest (the harness exists) → php-src suites → FrankenPHP testdata → Swoole shim → chaos mode.
 3. **E13' lazy superglobal swap + loop-scheduled GC** (E2' is not met with the observer on, V-11 addendum), then E6' `ssl://`, E12' (500 for requests on a dying thread), E9' (signals/queries/cancellation on the Temporal runtime).
