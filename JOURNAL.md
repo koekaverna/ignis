@@ -409,3 +409,14 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   kill criterion. Acceptance (5)'s shim specified with `pthread_mutex_timedlock` detection. The pg
   block (M4-1/M4-11/M4-12) passed smoke and phpt and is committed. E18-B (the five benches, control
   arms) is with a bencher agent; E18-I (implementation, mine) is next.
+- 2026-09-17T01:30Z — **E18-I stage 1 built and measured (V-45).** `csrc/park.c` exports eleven
+  blocking symbols from the binary; `php/park.rs` gates on a thread-local set by its own
+  fiber-switch observer, resolves the caller's library once per call site with `dladdr`, probes
+  readiness first and parks on the existing `Op::Watch`/`Op::Sleep`; every forward is a raw
+  `syscall`. Feature `universal-park`, off by default, built into `target-park/`. `curl_exec` × 100
+  on one thread: 279–337 ms (control 20,337); `pdo_pgsql` × 100: 296–333 ms (control 20,558); every
+  WRITEFUNCTION in its own fiber. The first `curl_exec` hung: my `recv` parked a non-blocking socket
+  that curl had only probed — the rule is now "a data call on a non-blocking fd forwards; the
+  library's own `poll` is what parks" (H31 at the syscall layer). E1/E2 unchanged on the park build.
+  Left open: E18-I1 (the agent's pgsql bench exits silently under park), stage 2. The phpt "0 passed"
+  was a relative `IGNIS_BIN` — re-running with an absolute path.

@@ -223,6 +223,8 @@ pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi:
         super::sleep::install();
         super::accept::install();
         super::sockets::install();
+        #[cfg(feature = "universal-park")]
+        super::park::install(); // E18 (ADR-0020)
         super::route::install();
         super::embed::fix_php_binary(_module_number);
     }

@@ -173,7 +173,7 @@ fiber identity), `bench/php/e18_pgsql.php` (offload off), `bench/php/e18_dns.php
 `bench/e18-overhead.sh` (two builds, 10M zero-length `read`s, < 20 ns delta), `bench/e18-deadlock.sh`
 (the R2 shim under `park` deadlocks with a timeout, under `block` passes).
 
-### E18-B The five benches, control arms measured today `agent` `in progress (batch 5)`
+### E18-B The five benches, control arms measured today `agent` `done (validated by main: control curl 20,337 / pgsql 20,558 ms re-run within 1 %; V-45)`
 **What.** H32–H35's falsifiers can exist before the feature: `bench/php/e18_curl.php`,
 `bench/php/e18_pgsql.php`, `bench/php/e18_dns.php`, `bench/e18-overhead.sh` (two-build shape,
 `--feature universal-park` on/off; until the feature exists both arms are the same binary and the
@@ -185,7 +185,40 @@ and prints `e18: curl_100x200ms wall_ms=<≈20000> …`, `e18: pgsql_100x200ms w
 `e18: overhead_ns delta=<≈0>`; WRITEFUNCTION fiber identity is recorded per transfer (today: all
 in the main fiber or each in its own — report which, that is a fact about offload-off blocking).
 
-### E18-I Implementation `main` `open` — after E18-A
+### E18-I1 `bench/php/e18_pgsql.php` exits 0 and prints nothing under the park build `main` `open`
+**What.** Under `target-park` with `IGNIS_PARK=libpq` the agent's bench runs its 100 connections
+(the trace shows 100 forwarded `connect`s and 398 `poll` wake-ups), then exits 0 with **zero
+bytes on stdout and stderr**; the default build prints `e18: pgsql_100x200ms …`. Not a `write`
+problem: a fiber writing to stdout/stderr under the same build prints in every configuration
+(`fiber_echo.php`). Difference from `scratchpad/park_pg.php`, which prints 296–333 ms: the agent's
+script wraps the whole run in an outer `Ignis\async` and prints from inside it. **Acceptance.**
+The cause named, the script printing under park, and the number recorded in V-45.
+
+### E18-C Retire the PHP-level wrappers universal park makes redundant `main` `open` — owner question 2026-09-17
+**What.** Each wrapper below exists to make one C call park. Once the syscall layer parks, the
+wrapper is a second mechanism for the same call. Ordered by what each deletion requires:
+1. **Now (when `universal-park` is the default):** the offload auto-routing entries for `curl_*`
+   and `PDO pgsql` (ADR-0016's router list, `IGNIS_OFFLOAD_FUNCTIONS/CLASSES` defaults). V-45 shows
+   both park with no hook and no worker thread. The pool itself stays for what cannot park —
+   `SQLite3`/`PDO sqlite` (disk `pread`/`fsync`), any library on `block`, and `Ignis\offload()`.
+2. **After a per-symbol policy** (`IGNIS_PARK=libphp:nanosleep,libphp:recv`, not just per library):
+   `sleep.rs` (the PHP `sleep()`/`usleep()` hook, E15c) and `sockets.rs`'s nine `ext/sockets` hooks
+   (A4) plus `accept.rs` — libphp's own `nanosleep`/`recv`/`send`/`accept`/`connect` call sites
+   park instead. Precondition: A4's `can_block()` rule moves into `would_block()` — a `recv` on a
+   listening or unconnected blocking socket must forward, never park (the six-test hang of A4).
+3. **After stage 2 interposes `select`:** `hooked_select` in `stream.rs`.
+4. **Kept, as the owner said:** the php_stream transport factory (ADR-0007/0017: `tcp://`,
+   `ssl://`, `unix://`, rustls in the reactor). It is also the largest candidate: with universal
+   park, `ext/openssl` would do TLS in-process with OpenSSL's `read`/`write` parked (policy `park`
+   per research 27), ~1,000 lines of rustls plumbing would go, and the A6/B7 bug class (TLS
+   read-ahead invisible to `stream_select`) disappears by construction because PHP's own
+   `has_buffered_data` handling for its native TLS streams would apply. Not a decision: a
+   measurement first — E6/E6'/E6'' through the hook vs through universal park + ext/openssl,
+   side by side (H-n), then the owner decides.
+5. **Not wrappers, stay:** `superglobals.rs`, `route.rs`, `embed.rs`, the Revolt driver's `ignis_watch`.
+**Acceptance.** For each deletion: the suites and benches that validated the wrapper (V-12/V-22/V-25/V-26/V-29 for the hook family, V-24 for routing) give the same numbers through universal park, with the hook-off control now being `IGNIS_NO_UNIVERSAL_PARK=1`.
+
+### E18-I Implementation `main` `stage 1 built (V-45): read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep; H32 curl 279–337 ms, H33 pgsql 296–333 ms at N=100 (controls 20 s); feature off by default; stage 2 (getaddrinfo/select/accept/vectored/__poll_chk, ECANCELED, per-symbol policy) open`
 C shim per exported symbol (captures `__builtin_return_address(0)`, calls into Rust) built by
 `cc` in `crates/ignis/build.rs`; Rust side in `crates/ignis/src/park/`; feature-gated
 (`universal-park`) so the overhead bench has its control build; `IGNIS_PARK_POLICY=libcurl=park,libpq=park`
@@ -236,7 +269,7 @@ construction.
 promtool in a container); every counter in `/_ignis/stats` has a metric; the endpoint answers
 under `wrk -c 200` load within 10 ms.
 
-### M4-5 Graceful reload on `SIGHUP` `main` `open`
+### M4-5 Graceful reload on `SIGHUP` `main` `open` — note (E18-B, 2026-09-16): under 100 keep-alive connections `hello_server` outlived `kill` + `wait`; hyper's graceful shutdown waits on idle keep-alive connections, so `SIGTERM` needs a bounded drain, not just a signal handler
 **What.** Drain: stop accepting on the old workers, let in-flight requests finish (bounded by a
 `drain_timeout`), respawn each PHP thread one at a time (ADR-0012 has the mechanism), never reset
 opcache. `SIGTERM`: drain then exit.

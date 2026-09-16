@@ -1570,3 +1570,63 @@ available back to max: PASS (2 == 2)   search_path default: PASS   temp table go
 
 `pg::open` dedupes by DSN (`BY_DSN`); a second opener with a different `max` is warned and gets the
 first one's. The V-43 probe with `--threads 3`: **12 × `pool_id=1`** where it was 4 × 1, 4 × 2, 4 × 3.
+
+## V-45 — E18 stage 1: `curl_exec` and `pdo_pgsql` park with no PHP hook and no offload (H32, H33 CONFIRMED with the measured slope)
+
+Date: 2026-09-17T00:5xZ. Box: this one, quiet. Build: `CARGO_TARGET_DIR=target-park cargo build
+--release -p ignis --features universal-park`; the default build in `target/` is the control and
+serves as the hello_server in every curl run. Policy `IGNIS_PARK=libcurl,libpq`,
+`IGNIS_NO_OFFLOAD_ROUTE=1` (so nothing goes to offload workers), hook-off control
+`IGNIS_NO_UNIVERSAL_PARK=1`.
+
+**H32 — `curl_exec`, N fibers × `GET /sleep?ms=200`, one PHP thread** (`scratchpad/park_curl.php`,
+then the project bench `bench/php/e18_curl.php` via `bench/e18.sh`):
+
+| N | park on | control (no universal park) | WRITEFUNCTION fiber |
+|---|---|---|---|
+| 1 | 205 ms | — | same |
+| 20 | 237 ms | **4,070 ms** | same ×20 |
+| 100, my probe, 3 reps | **313 / 326 / 308 ms** | (20 × 200 ms serialise: 4,070 at N=20) | same ×100 |
+| 100, `bench/e18.sh` | **279 ms** | **20,337 ms** (agent's run: 20,490) | `writefn_fibers=100 same_fiber=yes` |
+
+**H33 — `pdo_pgsql`, N fresh connections × `SELECT pg_sleep(0.2)`** (`scratchpad/park_pg.php`):
+
+| N | park on | control |
+|---|---|---|
+| 20 | **214 ms** | **4,110 ms** |
+| 100, 3 reps | **296 / 314 / 333 ms** | `bench/e18.sh` control: **20,558 ms** (agent's: 20,551) |
+
+**The slope, and where it is.** 100 concurrent 200 ms waits take ~300 ms, not 200. It is not
+the server: the same 100-fiber curl probe against a **4-thread** hello_server gives 337 / 316 ms
+and against the 1-thread server 326 / 308 ms. It is not the parking either: ~200 reactor round
+trips at 100 fibers cost well under a millisecond (V-33: 0.58 µs at 128 in flight). It is the
+libraries' own CPU work serialised on one core — 100 TCP connects plus HTTP parsing (curl), 100
+SCRAM handshakes (libpq) — about 1 ms per operation. For scale, the native stream hook's E6 path
+measured 206–292 ms per request at 50 concurrent (V-36): the same band.
+
+**What the first attempt taught (recorded because it is the design rule):** the first `curl_exec`
+under park hung. Trace: `connect` on curl's *non-blocking* socket forwarded (correct), `poll`
+parked and woke (correct), then a `recv` parked on the keep-alive socket after the body had
+already arrived — for data the server would never send. curl had asked "is there data now?"
+expecting `EAGAIN`; I had turned it into a wait. Rule now in `would_block()`: a data call on a
+non-blocking fd always forwards — the library blocks in its own `poll`, and *that* parks. H31
+at the syscall layer.
+
+Incidental: the H34 stub-not-wired dns leg (50 libpq connects to a port that hangs on this box)
+took 50,067 ms in the control and **1,051 ms** under park — 50 `connect` timeouts ran concurrently
+because the connect wait parked. Not an H34 result (ok=0 either way), but the connect path works.
+
+Also measured: the `pgsql` leg of `bench/e18.sh` under park — see the addendum below once
+diagnosed. `nextest` on the park build: 10/10. phpt and smoke on the park build: below.
+
+### V-45 addendum — the park build's own gates
+
+`cargo nextest run --features universal-park`: 10/10. E1 on the park build (gate on, every syscall
+pays the ~8 ns check): **1,175.9 ms** for 10k × 1000 ms (threshold 1,200; default build today
+1,144–1,159); E2 **201.03 ms**, warm per-fiber **3.60 µs** (default 3.48–3.67). phpt: the first run
+read 0 passed in every ignis mode — a harness slip, not the build: `IGNIS_BIN` was given as a
+relative path and `scripts/ignis-php` runs from the php-src tree (`timeout: failed to execute
+process`). Re-run with an absolute path: recorded below when it lands.
+
+Open from this stage: E18-I1 (`bench/php/e18_pgsql.php` exits 0 silently under park; a fiber
+writing to stdout works, so the cause is elsewhere).

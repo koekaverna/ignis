@@ -44,7 +44,13 @@ rustls-pemfile = "2"
 # E14 (ADR-0015): runtime-owned PostgreSQL pool; JSON boundary for params/rows.
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 
+[build-dependencies]
+cc = "1"
+
 [dev-dependencies]
 
 [features]
+# E18 (ADR-0020): interpose the blocking libc calls behind a fiber gate. Off by default until
+# H32–H36 are green; the overhead bench (H35) compares a build with it against one without.
+universal-park = []
 temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-wkt-types"]
