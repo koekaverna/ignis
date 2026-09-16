@@ -1630,3 +1630,5 @@ process`). Re-run with an absolute path: recorded below when it lands.
 
 Open from this stage: E18-I1 (`bench/php/e18_pgsql.php` exits 0 silently under park; a fiber
 writing to stdout works, so the cause is elsewhere).
+phpt on the park build, absolute `IGNIS_BIN`, gate on, `IGNIS_PARK=libcurl,libpq`: **identical to
+the default build** — fibers 108/78, sockets 91/84, streams 133/125. Stage 1 is gated.
