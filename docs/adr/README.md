@@ -1,0 +1,46 @@
+# ADR index
+
+Every architectural decision, rejection and deferral, in one place (owner ADR sweep, 2026-09-17).
+Status vocabulary: accepted | proposed | deferred (with trigger) | rejected | superseded-by. Only
+the main agent sets "accepted". Numbers in an ADR cite a V-n or say "unmeasured".
+
+| # | title | status | decision in one line |
+|---|---|---|---|
+| [0001](0001-embedding-ffi-and-scheduler-placement.md) | Embedding via raw bindgen, reactor in Rust, scheduler in PHP userland | accepted (V-1) | bindgen over the embed headers; the reactor is the only bridge; the scheduler is `php/ignis.php` |
+| [0002](0002-http-boundary-and-fiber-pool.md) | Value-based HTTP request boundary and a userland fiber pool | accepted (V-4) + addendum: the network path never waits for PHP | requests cross as plain data; parked fibers are reused; hyper never runs on a PHP thread |
+| [0003](0003-two-backend-reactor-trait.md) | Reactor/scheduler behind a trait with two backends | accepted (V-7) | mainline PHP is the production backend; the true-async fork stays a second target |
+| [0004](0004-worker-threads.md) | N PHP worker OS threads, one reactor each | accepted (V-9) | threads = cores, each with its own engine context and reactor |
+| [0005](0005-memory-measurement.md) | RSS is the E3 metric, measured from inside the process | accepted (V-10) | RSS from `/proc/self/status`, PHP heap from `memory_get_usage()` |
+| [0006](0006-fiber-scoped-superglobals.md) | Superglobals swapped per fiber by a switch observer | accepted (V-11) + addendum: fiber-scoped services model | scope is bound to dispatch, not the Fiber object; children inherit by reference; the static-slot list is the extension point |
+| [0007](0007-transport-hook.md) | `tcp://` transport replaced at MINIT; stream ops park from C | accepted (V-12) | unmodified `file_get_contents`/`fsockopen` park; hook-off control for every claim |
+| [0008](0008-revolt-driver.md) | Revolt driver over `ignis_poll` | accepted (V-13) | AMPHP runs unchanged; fd readiness via `ignis_watch` |
+| [0009](0009-cancellation.md) | Disconnect is a cancel event; one deadline per request | accepted (V-14, V-30) + addendum: the contract and its gaps | cancellation is an exception in PHP and (stage 2) `ECANCELED` in C; `spawn()` detachment and immediate surfacing of unawaited failures are recorded gaps |
+| [0010](0010-least-inflight-dispatch.md) | Least-inflight dispatch | accepted (V-15) | one target per request, chosen by pending count; stalled threads skipped |
+| [0011](0011-symfony-runtime.md) | Symfony via a `symfony/runtime` class | accepted (V-16, V-40) | `ignis/runtime` composer package, `extra.runtime.class`, entry = `public/index.php` |
+| [0012](0012-supervisor.md) | Thread death is local; a supervisor respawns; a watchdog reports stalls | accepted (V-17) | a fatal ends one thread, respawned without an opcache reset |
+| [0013](0013-temporal.md) | Temporal sdk-core in-process, workflows as fibers | accepted for the prototype (V-18, V-19) | deterministic replay passes; signals/queries/cancel are E9' |
+| [0014](0014-grpc.md) | gRPC on the shared hyper/h2 stack, opaque-bytes codec | accepted (V-20) | unary + server-streaming in PHP; the client parks the fiber |
+| [0015](0015-pgsql-pool.md) | Runtime-owned PostgreSQL pool with per-fiber leases | accepted (V-21) + addenda (V-42/43/44; pool rules) | one pool per DSN per process; leases know their age and thread; transaction-aware nested acquire is the next rule |
+| [0016](0016-offload.md) | Offload pool on synchronous worker threads | accepted (V-24) + addendum: the boundary contract | scalars/arrays cross, objects/resources do not; handles pinned to a worker; callbacks on the caller |
+| [0017](0017-ssl-transport.md) | `ssl://`/`tls://` on the stream hook via rustls | accepted (V-25) | TLS in the reactor; STARTTLS as an upgrade op; A6 read-ahead is B7 |
+| [0018](0018-ext-sockets-and-missing-transports.md) | `ext/sockets` parking and `unix://` | accepted, kill criterion 2 replaced (V-29, V-33) | park then delegate; readiness is not "would succeed" (`can_block`) |
+| [0019](0019-fiber-budget.md) | Fiber budget: admission with a queue and a 503 past it | accepted (V-37) | waiting requests are data, not fibers; the RSS bound is the connection cap (ADR-0025) |
+| [0020](0020-universal-park.md) | Universal park: interpose the blocking libc calls behind a fiber gate | accepted for the mechanism, stage 1 built (V-45); stage 2 elements recorded | default `block`, allow-list `park`; detector-first rollout; kill criterion: an OpenSSL/libcurl failure with a lock in the trace |
+| [0021](0021-io-coverage-layers.md) | I/O coverage is layered, not per-function | accepted | Revolt → stream hooks → offload → universal park, with what each cannot cover |
+| [0022](0022-observability-contract.md) | Observability contract | accepted (per line built/unbuilt) | warn floor, runtime-answered health, hold-time on every lease, spans per park, loop lag, `ignis dump` |
+| [0023](0023-validation-rules.md) | Validation rules | accepted | suites gated in CI; benches local and quiet; soak = no trend past 5M; agents' numbers re-run by main; chaos mode standard |
+| [0024](0024-non-goals.md) | What the runtime does not promise | accepted | no durability across crashes, not a web server, one app per process, no NTS, no multi-tenant isolation, no sub-ms timers |
+| [0025](0025-memory-model-under-zts.md) | Memory model under ZTS | accepted | `memory_limit` is per thread; budget + headroom shedding; the connection cap is the RSS bound |
+| [0026](0026-timer-contract.md) | Timer contract | accepted | tokio's 1 ms wheel; `sleep(0)` inline; not for sub-millisecond scheduling |
+| [0027](0027-build-and-distribution.md) | Build and distribution | accepted / deferred | own PHP ZTS build; the image ships; glibc static (no musl) once M5-5 shows it feasible; arm64 on demand |
+| [0028](0028-laravel-compatibility-model.md) | Laravel compatibility model | accepted (implementation open) | classic mode with `budget.fibers = 1` now; fiber-scoped Container later; the budget-2 control must fail |
+| [0029](0029-vendor-state-policy.md) | Vendor state policy | accepted as policy (implementation open) | find (scanner, chaos, leak detector) → classify → isolate ladder; `ignis audit` and a compat allowlist |
+| [0030](0030-preemption-of-cpu-bound-fibers.md) | Preemption of CPU-bound fibers | proposed | watchdog escalation to an opcode-boundary suspend, opt-in per route, never default |
+| [0031](0031-persistent-inbound-connections.md) | Persistent inbound connections (WS/SSE) | proposed | fiber per connection, backpressure in Rust, respawn drops connections — documented |
+| [0032](0032-inbound-tls-and-http3.md) | Inbound TLS and HTTP/3 | deferred | rustls termination first, h3 via quinn after; triggers: staging TLS, mobile clients not behind a CDN |
+| [0033](0033-per-thread-reactor-for-in-request-io.md) | Per-thread reactor for in-request I/O | deferred | one queue crossing each way is the budget; trigger: > 5 % of request time in ready/wakeup |
+| [0034](0034-gc-and-destructors.md) | GC and destructors | proposed | loop-scheduled GC; forbid-or-dedicate for `Fiber::suspend` in destructors, with the proving test |
+| [0035](0035-security-posture.md) | Security posture | proposed | unprivileged by default (built); limits, slowloris timeouts, per-IP caps, io_uring off, signed releases (unbuilt) |
+| [0036](0036-naming.md) | Naming | proposed (owner's decision) | `ignis` is taken on crates.io; alternatives recorded; rename cost grows after the first public push |
+
+Research notes that ADRs rest on live in `docs/research/`; the numbers in `VALIDATION.md`.
