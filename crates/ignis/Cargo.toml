@@ -22,7 +22,9 @@ temporalio-common = { git = "https://github.com/temporalio/sdk-core", optional =
 url = { version = "2", optional = true }
 serde_json = "1"
 futures = { version = "0.3", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"] }
+# M1: ignis.toml — the product config; env vars stay as overrides.
+toml = "0.8"
 base64 = "0.22"
 prost-wkt-types = { version = "0.7", optional = true }
 
@@ -45,4 +47,4 @@ tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 [dev-dependencies]
 
 [features]
-temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:serde", "dep:prost-wkt-types"]
+temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-wkt-types"]

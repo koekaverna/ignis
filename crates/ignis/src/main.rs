@@ -3,6 +3,7 @@
 //! Cycle 0 binary: `ignis <script.php>` runs one script on the main thread
 //! with a tokio runtime on the side owning all timers/I/O.
 mod backend;
+mod config;
 mod grpc;
 mod http;
 mod offload;
@@ -23,6 +24,25 @@ pub static RESTARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
+    // M1: `ignis serve` and `ignis --version` are handled first, because `serve` bridges
+    // ignis.toml into the environment and that has to happen before the log filter reads RUST_LOG
+    // and before any thread exists (config.rs explains the precedence).
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().is_some_and(|a| a == "--version" || a == "-V") {
+        println!("ignis {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    let raw = if raw.first().is_some_and(|a| a == "serve") {
+        match config::serve_to_legacy_args(raw[1..].to_vec()) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("ignis serve: {e:#}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        raw
+    };
     // Without RUST_LOG, EnvFilter's default directive is `error`, which hid the watchdog's
     // "php threads busy for > 1 s" and the supervisor's "worker script ended; respawning" — a
     // worker could die and respawn with the operator seeing nothing (found while chasing H31,
@@ -39,7 +59,7 @@ fn main() -> ExitCode {
         .init();
 
     // `ignis [--threads N] <script.php>`; env IGNIS_THREADS is the fallback.
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = raw;
     let mut threads: usize = std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut supervise = false;
     let mut offload: usize = std::env::var("IGNIS_OFFLOAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -84,7 +104,7 @@ fn main() -> ExitCode {
         .map(|(_, name)| PathBuf::from(name))
         .or_else(|| args.first().map(PathBuf::from))
     else {
-        eprintln!("usage: ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]");
+        eprintln!("usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version");
         return ExitCode::from(2);
     };
     let threads = threads.max(1);

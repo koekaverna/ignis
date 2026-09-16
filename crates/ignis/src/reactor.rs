@@ -646,7 +646,7 @@ impl Reactor {
         self.last_active_us.store(self.created.elapsed().as_micros() as u64, Ordering::Relaxed);
     }
 
-    /// Time since the PHP thread last entered `poll` (ADR-0012 watchdog).
+    /// Time since the PHP thread last entered `poll`, or last left it with work (ADR-0012 watchdog).
     pub fn idle_in_php(&self) -> Duration {
         let now = self.created.elapsed().as_micros() as u64;
         Duration::from_micros(now.saturating_sub(self.last_active_us.load(Ordering::Relaxed)))
@@ -710,6 +710,11 @@ impl Reactor {
                 out.push(c);
             }
             self.inflight.fetch_sub(out.len() as u64, Ordering::Relaxed);
+            // The "time in PHP" clock starts when the thread LEAVES the reactor with work, not when
+            // it entered. Touching only at entry made a thread that had slept 3 s in recv_timeout
+            // count as stalled for its whole first request — /stats read stalled=1 on an idle
+            // server while /_ignis/health, with no request pending, read 0 (M1, V-38).
+            self.touch();
         }
         out
     }

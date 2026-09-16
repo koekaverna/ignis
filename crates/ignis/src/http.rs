@@ -129,7 +129,29 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
     Ok(local)
 }
 
+/// M1: `/_ignis/health`, answered by the runtime and never by PHP. 200 while at least one PHP
+/// thread is registered and not every one of them is stalled; 503 otherwise — so a load balancer
+/// stops sending to a process whose workers are all wedged, which `/` from PHP could never report.
+fn health() -> Response<tonic::body::Body> {
+    let (stalled, total) = stalled_threads(std::time::Duration::from_secs(1));
+    let restarts = crate::RESTARTS.load(std::sync::atomic::Ordering::Relaxed);
+    let ok = total > 0 && stalled < total;
+    let body = format!(
+        "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts}}}\n",
+        if ok { "ok" } else { "unavailable" }
+    );
+    Response::builder()
+        .status(if ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE })
+        .header("content-type", "application/json")
+        .header("cache-control", "no-store")
+        .body(crate::grpc::plain_body(Bytes::from(body)))
+        .unwrap()
+}
+
 async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Response<tonic::body::Body>, hyper::Error> {
+    if req.uri().path() == "/_ignis/health" {
+        return Ok(health());
+    }
     // E10 (ADR-0014): gRPC shares the listener; tonic frames it, PHP serves it.
     if crate::grpc::is_grpc(&req) {
         return Ok(crate::grpc::serve(reactor, req).await);

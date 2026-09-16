@@ -80,3 +80,16 @@ recommendation in every case ("применяй ко всем рекоменда
   (`bench/php/e6_underload.php`), root cause not found; it is accept-path/hyper work. It sits
   under B1's acceptance numbers, which are measured with the same storm shape, so: fix before B1,
   or accept that B1's numbers carry a 0.1–0.3 % unanswered floor and say so in its V-n.
+
+## Mission changed by the owner: R&D → product (2026-09-16)
+
+"Мне надо чтобы ты начал делать и идти в сторону готового продукта; тот роадмап, который есть,
+абсолютно не отражает то, что должно быть в продукте." BRIEF.md stays immutable and still describes
+the night it commissioned; from this entry on, the mission is a **product** — an application server
+a PHP team can install and run in front of a Symfony or Laravel app — and ROADMAP.md is rewritten as
+user-facing milestones (M1 Run, M2 Install, M3 Real apps unchanged, M4 Operate, M5 Ship), each
+accepted by a user action rather than a benchmark. The R&D backlog is kept beneath it because its
+numbers are what the product stands on. Rules that do not change: numbers or it didn't happen; every
+hook claim against its control; a subagent's number enters VALIDATION only after main re-ran it.
+First act under the new mission: M1 shipped the same day (config.rs, `serve`, `/_ignis/health`,
+README, ignis.toml.example).

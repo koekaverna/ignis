@@ -1,0 +1,35 @@
+# ignis.toml — copy to ignis.toml next to your app, or pass `ignis serve --config path`.
+# Precedence, highest first: CLI flag > IGNIS_* environment variable > this file > default.
+# Every key is optional; an unknown key is an error, not a silent default.
+
+# PHP entry script every worker thread runs. For Symfony this is php/symfony/worker.php; for a
+# bare app it is any script that calls Ignis\serve(). Also accepted as `ignis serve app.php`.
+entry = "examples/hello_server.php"
+
+# host:port to listen on. Default 127.0.0.1:8080 — bind 0.0.0.0 yourself when you mean it.
+listen = "127.0.0.1:8080"
+
+# PHP worker threads. Default: the machine's available parallelism.
+# threads = 4
+
+# Synchronous offload workers for curl_*, PDO and SQLite3 (E16). Each is a full PHP thread; 0 off.
+# offload = 4
+
+# Respawn a worker whose script ends (fatal error, exit). Default true.
+# supervise = true
+
+# Extra php.ini — the embed SAPI has no -c/-d.
+# php_ini = "/etc/ignis/php.ini"
+
+# Log filter, RUST_LOG syntax. Default "warn": a worker respawn or a stalled thread is never silent.
+# log = "warn"
+
+# Path prefixes admitted regardless of the budget, so a saturated server can still be probed.
+# exempt = ["/_ignis/", "/metrics"]
+
+[budget]
+# Request fibers admitted at once, per thread. Past it requests wait as data (a few hundred bytes
+# each), never as a fiber (~15 kB). 0 = unlimited. Default 1024.
+fibers = 1024
+# Waiting requests before the answer is 503 + retry-after. 0 = unbounded. Default 4096.
+queue = 4096

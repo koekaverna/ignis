@@ -1,14 +1,38 @@
-# Ignis — roadmap after night 1
+# Ignis — product roadmap
 
-Written 2026-09-16T05:15Z at the owner's request ("stop the loop, build a roadmap"). Every number here is from VALIDATION.md; every open item names the entry it would extend. Ordering inside a phase is the recommended order; phases can overlap.
+Rewritten 2026-09-16 at the owner's direction: the previous roadmap listed hypotheses and pain-map
+items — the R&D night's shape — and "absolutely did not reflect what should be in the product". The
+mission is now a product. Every milestone below is something a **user does**, and its acceptance is
+that action succeeding, not a benchmark. The R&D backlog that fed it is kept underneath, unchanged,
+because its numbers are what the product stands on.
 
-## Where night 1 ends
+## The product
 
-- **38 hypothesis rows (H0–H28), none OPEN**: 36 CONFIRMED, 2 REFUTED by design (H9a: the true-async fork does not suspend unmodified blocking calls; H14b: sqlite cannot be made async through stream hooks — hence E16 offload), 1 CONFIRMED-with-caveat (H21/E10: gRPC works, the absolute p99 target is inconclusive on this box: 7.8 ms vs tonic's 6.3 ms).
-- **E1–E16 all have a V-n**; E15 and E2' closed tonight (V-26 addendum, V-27, V-28 addendum). Brief-level targets still not met in absolute terms: none. Raised targets still open: E3' (10M requests at 4 threads with streams/state/offload on — the RSS claim V-10 predates E6/E13/E14/E16), E7', E8', E9', E10', E11'.
-- **Compat**: phpt 108/108 fibers, 80/80 sockets, 132/138 streams in main mode; 78 / 75 / 120 in fiber mode (12 fiber-only stream failures: 4 harness, 8 ours — listed in the V-26 addendum); Revolt DriverTest = StreamSelectDriver; Swoole shim 44/153; FrankenPHP testdata 29/4/33; Symfony + Doctrine 10 849 tests per mode with 0 new failures under chaos (V-27).
-- **CI**: nextest + miri, smoke, E9, and the four E15 gates run on every push to `night-1` against `bench/results/e15-baseline.txt`.
-- **Pain map**: 27 of 31 items ADDRESSED; NOT STARTED: per-endpoint budget + circuit breaker (PHP-FPM 2), in-process Table (RoadRunner 4), static glibc artifact (RoadRunner 7), allocator-level leak detector (RoadRunner 2, dev side).
+An application server for PHP: point it at a Symfony or Laravel app and get fiber concurrency with
+unmodified code, in place of php-fpm, FrankenPHP or RoadRunner. The runtime is measured and hardened
+(STATUS.md); what was missing on this date was everything around it — there was no README, no config
+file, no `serve` command, no install path, no health endpoint, and the defaults were "unlimited".
+
+## Milestones
+
+| # | a user can… | done when | absorbs |
+|---|---|---|---|
+| **M1 Run** | `ignis serve` with an `ignis.toml`, sane defaults, and a health endpoint the runtime answers itself | **DONE 2026-09-16 (V-38)** — `ignis serve [--config] [entry.php]`, `ignis --version`, `ignis.toml` with `deny_unknown_fields`, precedence CLI > env > file > default, defaults threads=cores / supervise / budget 1024 / queue 4096 / `/_ignis/` exempt, `/_ignis/health` 200/503 from the registry. The Symfony leg of the acceptance ("serve a skeleton with no env vars") could not run on this box — no composer vendor tree — and is carried into M3. | Phase D "config file / CLI"; ADR-0019 defaults; the log-floor fix |
+| **M2 Install** | get a binary or an image and be serving in under two minutes without building PHP | a fresh Ubuntu box serves `examples/hello_server.php` from a downloaded artifact; `ldd` shows no dependency on a PHP install that is not in the artifact | B6 (static artifact, `php-image.yml`) |
+| **M3 Real apps unchanged** | run Symfony and Laravel skeletons through `ignis serve` with documented recipes, and read a compat table that says what works unchanged, what routes to offload, what does not | both skeletons answer their own smoke through `ignis serve`; the table in README lists every hook with its off switch and its V-n | E8', Laravel via `symfony/runtime`, research 24 (libpq path) |
+| **M4 Operate** | see what the server is doing and survive a bad dependency: `/_ignis/metrics`, graceful reload, hold-time on leases, a bulkhead per dependency, a cap on connections | a dependency at 100 % failure is visible in metrics within 1 s and leaves other routes at ≥ 95 % throughput; `SIGHUP` drains and respawns without dropping a request; RSS stays under a configured ceiling while 100k clients hold connections | B2, B8, Phase D metrics + reload, hold-time tracking |
+| **M5 Ship** | download a versioned release with a changelog, and follow a migration guide from php-fpm / FrankenPHP / RoadRunner | CI builds and tags releases; `ignis --version` matches the tag; the migration guide is followed end to end by someone who did not write it | Phase D docs, nightly perf job |
+
+Order: M1 → M2 → M3 → M4 → M5. M2 before M3 because a recipe nobody can install is not a recipe.
+
+**Deferred from the product, kept as R&D**: B3 in-process Table, B4 native MySQL/Redis (the offload
+router already covers them), B5 allocator-level leak detector, B7 TLS read-ahead in `stream_select`
+(narrow: three conditions at once), Phase C protocol depth (Temporal, gRPC bidi). Each returns to the
+product roadmap the day a user needs it, with that user's case as the acceptance.
+
+---
+
+# R&D backlog (the night-1 roadmap, unchanged below this line)
 
 ## Phase A — harden what exists (1–2 weeks, main + porter)
 

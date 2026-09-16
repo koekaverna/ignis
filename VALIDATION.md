@@ -1332,3 +1332,44 @@ Ranges overlap completely; throughput is within ~1 %. Unchanged, as the kill cri
 
 **Regression net:** `cargo nextest run --workspace` 10/10; `scripts/smoke.sh` **GREEN** (E12 respawn
 1, recovery 51,614 vs 53,221 rps).
+
+## V-38 — M1 "Run": `ignis serve`, `ignis.toml`, `/_ignis/health` (product milestone, CONFIRMED)
+
+Date: 2026-09-16T17:5xZ. Box: this one. First milestone under the product mission (DECISIONS,
+same date). Acceptance is a user action, not a benchmark: serve an app with a config file and no
+environment variables, probe health, and have precedence and errors behave.
+
+```
+$ ignis --version
+ignis 0.0.1
+$ cat ignis.toml
+entry = "examples/hello_server.php"
+listen = "127.0.0.1:8096"
+threads = 2
+[budget]
+fibers = 7
+queue = 9
+$ ignis serve --config ignis.toml &
+$ curl -w ' [%{http_code}]' http://127.0.0.1:8096/_ignis/health
+{"status":"ok","threads":2,"stalled":0,"restarts":0} [200]
+$ curl http://127.0.0.1:8096/stats | grep -o '"budget":{[^}]*}'
+"budget":{"budget":7,"queue_depth":9,"inflight":1,"queued":0,"queued_peak":0,"queued_admitted":0,"rejected":0}
+```
+
+| check | result |
+|---|---|
+| file values reach the PHP scheduler | budget 7 / queue 9 / threads 2 read back from `/stats` |
+| environment beats the file | `IGNIS_FIBER_BUDGET=3 ignis serve --config …` → `/stats` reports budget **3** |
+| unknown key is loud | `threds = 2` → `TOML parse error at line 2, column 1`, exit **2** |
+| missing entry is loud | `ignis serve` with no file → one-line message naming both ways to give it, exit 2 |
+| health is answered by the runtime, not PHP | `/_ignis/health` is served in `http.rs` before dispatch; exempt from the budget by construction |
+| defaults without a file | threads = available parallelism, supervise on, budget 1024, queue 4096, exempt `/_ignis/`, listen `127.0.0.1:8080` |
+
+**Defect found by the milestone**: `/stats` read `stalled: 1` on an idle 2-thread server, three
+samples in a row, while `/_ignis/health` read 0 at the same instants. `Reactor::touch()` ran only
+on `poll` entry, so a thread that had slept 3 s in `recv_timeout` counted as "3 s in PHP" the
+moment its first request arrived. Fixed: `poll` also touches when it leaves with work. After the
+fix `/stats` and `/_ignis/health` agree at 0.
+
+**Not run here**: the Symfony leg (serve a `symfony/skeleton` with no env vars) — this box has no
+composer vendor tree. Carried into M3, where the recipe gets built and verified together.

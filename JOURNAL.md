@@ -257,3 +257,19 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   exports `RUST_LOG=error`) rather than by reverting the visibility; suites back to 108/78, 91/84,
   133/125 and smoke GREEN. Hold-time tracking and per-dependency counters stay unbuilt — they belong
   to B2.
+- 2026-09-16T17:55Z — **Mission changed by the owner: R&D → product.** "Тот роадмап … абсолютно не
+  отражает то, что должно быть в продукте." Defined the product from the brief's mission (an
+  application server a PHP team puts in front of Symfony/Laravel in place of php-fpm/FrankenPHP/
+  RoadRunner), rewrote ROADMAP.md as five user-facing milestones — M1 Run, M2 Install, M3 Real apps
+  unchanged, M4 Operate, M5 Ship — with the R&D backlog kept beneath, and recorded the decision.
+  What the audit found: no README at all, ~15 `IGNIS_*` env vars and no config file, no `serve`,
+  no health endpoint, every default "unlimited".
+- 2026-09-16T17:55Z — **M1 shipped the same day (V-38).** `crates/ignis/src/config.rs`: `ignis.toml`
+  with `deny_unknown_fields`, bridged into the environment before any thread exists so the PHP
+  scheduler needed no change; precedence CLI > env > file > default falls out of "set only what the
+  environment lacks". `ignis serve [--config] [entry.php]` rewrites itself into the legacy argv, so
+  `main` past that point is untouched. `/_ignis/health` answered in `http.rs` from the registry:
+  200 while a worker is alive and not stalled, 503 otherwise — something PHP could never report
+  about itself. `ignis --version`. README.md and ignis.toml.example written. Found and fixed a
+  watchdog false positive on the way: the stall clock started at `poll` entry, so a thread that had
+  been *waiting* looked *stuck* on its first request.
