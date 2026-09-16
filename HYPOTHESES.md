@@ -95,7 +95,7 @@ idle. But it only pays when the completion lands inside the spin window: a seria
 improves 1.27–1.34×, while `GET /sleep?ms=1` gets *worse* (3.68→3.84 ms) because a millisecond-scale
 wait pays the spin and then sleeps anyway. Shipped off by default as a tuning knob, not a default.
 
-## H31 (a request is accepted but never answered, under inbound load) — OPEN
+## H31 (a request is accepted but never answered, under inbound load) — CONFIRMED as mis-stated, root-caused and FIXED (V-36)
 
 **Statement.** Under concurrent inbound load the server occasionally accepts a connection and
 never produces a readable response, so a hooked `file_get_contents` against it returns `false`
@@ -116,6 +116,14 @@ connection *was* opened and the status line could not be read. The server logs n
 accepted and produce no response, and separate "hyper never saw a request" from "PHP never got
 it" from "the response was dropped". `bench/php/e6_underload.php` is the reproducer.
 
-**Why it matters before Phase B.** B1's acceptance ("100k queued requests never exceed the
+**Why it mattered before Phase B.** B1's acceptance ("100k queued requests never exceed the
 configured RSS; p99 of admitted requests unchanged") is measured with exactly this storm shape, so
-a 0.1–0.3 % unanswered rate would sit inside those numbers and be read as queueing behaviour.
+a 0.1–0.3 % unanswered rate would have sat inside those numbers and been read as queueing.
+
+**Result (2026-09-16, V-36): the statement above was wrong in its central claim.** The request was
+never unanswered — the server handled every one of them (counted: 1550 of 1550) and `curl` under the
+identical load saw 1500/1500. The loss was on *our* client: with a read timeout set, `Op::TryRead`
+can answer `WouldBlock` because the connection actor has not been polled yet even though the fd is
+readable, and `op_read` returned 0, which PHP's `get_line` reads as "no line". A retry in the same
+fiber got `HTTP/1.0 200 OK` immediately. Fixed by returning to the wait instead of giving up:
+0 failures in 6000 against 2–3 per 1000, five clean `e6-fetch` runs, smoke GREEN, phpt unchanged.

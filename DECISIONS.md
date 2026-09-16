@@ -56,7 +56,10 @@ recommendation in every case ("применяй ко всем рекоменда
   between adjacent checkpoints is ±10–12 %. The re-run was required because the evidence for changing
   the criterion was the bencher's measurement, which rule C15 does not admit — changing a criterion on
   inadmissible evidence is the exact substitution that rule exists to prevent. See V-35.
-- **(d) H31 — fix before B1.** `smoke.sh` runs E6 in CI and E6 fails roughly one run in three locally,
+- **(d) H31 — fixed 2026-09-16 (V-36), before B1 as decided.** Root cause was not the accept path
+  the hypothesis pointed at: a timed read abandoned a response that was already arriving. Fix
+  landed, reproducer kept as `bench/php/e6_underload.php`. Original reasoning for doing it first
+  held up — `smoke.sh` runs E6 in CI and E6 fails roughly one run in three locally,
   so the build will start flapping on its own; and B1's acceptance is measured with the same storm
   shape, so the 0.1–0.3 % unanswered floor would sit inside its numbers and read as queueing.
 

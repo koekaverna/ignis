@@ -329,57 +329,75 @@ unsafe extern "C" fn op_read(stream: *mut sys::php_stream, buf: *mut c_char, cou
             // reactor hop, paid solely when a timeout is set; the untimed path below is unchanged.
             // Known gap (roadmap A6): on a TLS stream readiness of the raw fd is not the same as
             // plaintext being available, because rustls buffers records the fd no longer shows.
-            if let Some(us) = (*s).read_timeout_us
-                && (*s).blocking
-                && (*s).fd >= 0
-            {
-                let r = reactor();
-                let watch = r.submit(Op::Watch { fd: (*s).fd, write: false });
-                let timer = r.submit(Op::Sleep { us });
-                let ids = [watch, timer];
-                let woke = await_any(&ids);
-                for id in &ids {
-                    if woke.as_ref().map(|w| w.0) != Some(*id) {
-                        r.submit(Op::CancelWatch { target: *id });
+            let timed = if (*s).blocking && (*s).fd >= 0 { (*s).read_timeout_us } else { None };
+            let deadline = timed.map(|us| std::time::Instant::now() + std::time::Duration::from_micros(us));
+            loop {
+                if let Some(dl) = deadline {
+                    let left = dl.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        (*s).timed_out = true;
+                        return 0;
+                    }
+                    let r = reactor();
+                    let watch = r.submit(Op::Watch { fd: (*s).fd, write: false });
+                    let timer = r.submit(Op::Sleep { us: left.as_micros() as u64 });
+                    let ids = [watch, timer];
+                    let woke = await_any(&ids);
+                    for id in &ids {
+                        if woke.as_ref().map(|w| w.0) != Some(*id) {
+                            r.submit(Op::CancelWatch { target: *id });
+                        }
+                    }
+                    let Some((woke_id, _)) = woke else {
+                        return -1; // unwound while parked
+                    };
+                    if woke_id == timer {
+                        // Stock xp_socket reports a timeout as "no bytes this call", with the flag
+                        // visible through stream_get_meta_data(); it is not EOF and not an error.
+                        (*s).timed_out = true;
+                        return 0;
                     }
                 }
-                let Some((woke_id, _)) = woke else {
-                    return -1; // unwound while parked
+                let id = if (*s).blocking && (*s).read_timeout_us.is_none() {
+                    reactor().submit(Op::Read { conn: (*s).conn, max })
+                } else {
+                    reactor().submit(Op::TryRead { conn: (*s).conn, max })
                 };
-                if woke_id == timer {
-                    // Stock xp_socket reports a timeout as "no bytes this call", with the flag
-                    // visible through stream_get_meta_data(); it is not EOF and not an error.
-                    (*s).timed_out = true;
-                    return 0;
-                }
-            }
-            let id = if (*s).blocking && (*s).read_timeout_us.is_none() {
-                reactor().submit(Op::Read { conn: (*s).conn, max })
-            } else {
-                reactor().submit(Op::TryRead { conn: (*s).conn, max })
-            };
-            match await_op(id) {
-                // Non-blocking stream, nothing there: 0 bytes and no EOF, like recv() → EAGAIN.
-                Some(Outcome::WouldBlock) => return 0,
-                Some(Outcome::Data(d)) => {
-                    if d.is_empty() {
+                match await_op(id) {
+                    Some(Outcome::WouldBlock) => {
+                        // H31 (V-36): readiness of the dup'd fd is not the same as the connection
+                        // actor holding the bytes — the kernel can have them while the actor has
+                        // not been polled yet. On a *timed blocking* read the only correct move is
+                        // to go back to the wait until the deadline; returning 0 makes PHP's
+                        // get_line report "no line" and a blocking caller abandons a response that
+                        // is already on its way. That was ~0.1-0.3 % of requests under load.
+                        if deadline.is_some() {
+                            continue;
+                        }
+                        // Non-blocking stream, nothing there: 0 bytes and no EOF, like recv() → EAGAIN.
+                        return 0;
+                    }
+                    Some(Outcome::Data(d)) => {
+                        if d.is_empty() {
+                            (*s).eof = true;
+                        } else {
+                            (*s).pending = d.to_vec();
+                            (*s).pos = 0;
+                        }
+                    }
+                    Some(Outcome::Error(e)) => {
+                        tracing::debug!(error = %e, "ignis tcp read failed");
                         (*s).eof = true;
-                    } else {
-                        (*s).pending = d.to_vec();
-                        (*s).pos = 0;
+                        (*stream).set_eof(1);
+                        return -1;
+                    }
+                    _ => {
+                        (*s).eof = true;
+                        (*stream).set_eof(1);
+                        return -1;
                     }
                 }
-                Some(Outcome::Error(e)) => {
-                    tracing::debug!(error = %e, "ignis tcp read failed");
-                    (*s).eof = true;
-                    (*stream).set_eof(1);
-                    return -1;
-                }
-                _ => {
-                    (*s).eof = true;
-                    (*stream).set_eof(1);
-                    return -1;
-                }
+                break;
             }
         }
         let avail = (*s).pending.len() - (*s).pos;

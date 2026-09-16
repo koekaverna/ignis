@@ -1237,3 +1237,49 @@ band. Different driver: this one has no PostgreSQL leg and weights the routes di
 runs agree on the thing the criterion now asks about — the growth is front-loaded and stops
 trending — and disagree on magnitude, which is why the criterion is about the trend and not about a
 pair of endpoints.
+
+## V-36 — H31 root-caused and fixed: a timed read abandoned a response that was already on its way
+
+Date: 2026-09-16T15:1xZ. Box: this one, quiet. Two `ignis` processes, server `--threads 1`.
+
+### The defect
+
+On a stream with `stream_set_timeout()` the read path (A1) waits for **readiness of the dup'd fd**
+(`Op::Watch`) against the timer, then takes the data with a non-blocking `Op::TryRead` on the
+connection actor. Readiness of the fd is not the same as the actor holding the bytes: the kernel can
+have them while the actor has not been polled yet. `TryRead` then answers `WouldBlock`, `op_read`
+returned **0**, and PHP's `php_stream_get_line` reads 0 bytes as "no line" — so a *blocking* caller
+abandons a response that is already arriving. `fgets()` returns `false` with `eof:false` and
+`timed_out:false`, which is what made it look like the server had dropped the request.
+
+PHP's `http` fopen wrapper always sets a read timeout, so every `file_get_contents('http://…')`
+takes this path. `curl` is unaffected — it is not our transport.
+
+### How it was localised
+
+| test | result |
+|---|---|
+| server counts every request that reaches PHP, client counts responses | server **1550**, client **1499 of 1500** — the request *did* reach PHP, the response was lost after it |
+| same load shape with `curl` as the client | **1500 / 1500 = 200**, 0 failures → not the server |
+| hand-rolled HTTP over the hooked transport, retry on failure | `first=false`, then `retries=["GOT:HTTP/1.0 200 OK"]`, `unread_bytes` 0 → 102 — **the bytes were there; the first read gave up** |
+| probe on every no-data exit of `op_read`, `RUST_LOG=warn` | 3 × `TryRead WouldBlock on a BLOCKING stream` against exactly **3** failures — 1:1 |
+
+Method note, because it cost three wrong conclusions: the first probe runs printed nothing and I
+read that as "this path never fires". `EnvFilter::from_default_env()` with `RUST_LOG` unset passes
+only `ERROR`, so every `warn!` was being discarded. The hypothesis those silent runs "refuted" was
+the correct one.
+
+### The fix
+
+In the timed path `WouldBlock` now returns to the wait with the remaining deadline instead of
+returning 0; `timed_out` is set and 0 returned only when the deadline is actually reached. The
+untimed path is untouched.
+
+| measurement | before | after |
+|---|---|---|
+| hand-rolled client, 150 concurrent under load | 2–3 failures per ~900–1500 | **0 / 6000** |
+| `file_get_contents` (`bench/php/e6_underload.php`), same shape | 1–2 per 750–1500 | **0 / 6000** |
+| `bench/e6-fetch.sh`, 5 consecutive runs | `ok=49` in ~1 run of 3 | **50/50 five times**, 315–345 ms |
+| `cargo nextest run --workspace` | — | 10/10 |
+| `scripts/smoke.sh` | stopped at E6 | **GREEN** (E12 respawn 1, recovery 52 332 vs 54 231 rps) |
+| `bench/e15-phpt.sh` (local) | fibers 108/78, sockets 91/84, streams 133/125 | **identical** — no regression, all at or above the baseline raised today |

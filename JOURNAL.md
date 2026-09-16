@@ -214,3 +214,15 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   +50 %, 62–70 MB against 87–110): different route weights and no PG leg. They agree on what the
   criterion now asks — front-loaded growth that stops trending — and that is the point of restating
   it as a trend rather than a pair of endpoints.
+- 2026-09-16T15:20Z — **H31 root-caused and fixed (V-36), and my own diagnosis of it was wrong twice.**
+  It is not the accept path and not the server: the server counted all 1550 requests and `curl` under
+  the same load saw 1500/1500. With a read timeout set — which PHP's `http` wrapper always sets —
+  `Op::TryRead` can answer `WouldBlock` because the connection actor has not been polled yet although
+  the fd is readable; `op_read` returned 0, and `php_stream_get_line` reads 0 bytes as "no line", so a
+  blocking caller abandoned a response already on the wire. A retry in the same fiber got
+  `HTTP/1.0 200 OK` at once with `unread_bytes` 0 → 102. **Method failure worth recording: three
+  "this path never fires" conclusions came from probe runs where every `warn!` was being discarded,
+  because `EnvFilter::from_default_env()` passes only `ERROR` when `RUST_LOG` is unset. The hypothesis
+  those silent runs appeared to refute was the right one.** Fix: in the timed path `WouldBlock`
+  returns to the wait with the remaining deadline. 0 failures in 6000 (was 2-3 per 1000), five clean
+  `e6-fetch` runs, smoke GREEN, phpt unchanged at 108/78, 91/84, 133/125.
