@@ -261,7 +261,7 @@ them; the gate never completed. Decide in `ci.yml`: keep cancel-in-progress but 
 Write the reason in the workflow file. **Acceptance.** Two pushes 2 minutes apart on a branch
 produce one completed run of the full gate.
 
-### H-5 `scripts/smoke.sh` runs against the image `agent` `in progress (batch 1)`
+### H-5 `scripts/smoke.sh` runs against the image `agent` `done (validated by main: --image ignis:local GREEN, same 7 routes as binary mode, 0 containers left)`
 A `--image ghcr.io/koekaverna/ignis:TAG` mode that runs the same route checks over `docker exec`
 + `/dev/tcp` (as `image.yml` does), so the image is smoke-tested with the *same* assertions as the
 binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.php route table and

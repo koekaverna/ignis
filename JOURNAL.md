@@ -300,3 +300,9 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   `github.ref != 'refs/heads/main'` — pushes to main queue instead of killing the run; I trimmed the
   agent's "e15 ~45–60 min" to the ~10 min actually observed. Five agents still running; push held
   until CI on `fb8d4d2` completes.
+- 2026-09-16T20:05Z — **H-5 validated**: `scripts/smoke.sh --image <tag>` (sonnet) — a 55-line
+  insertion, zero lines of the binary path touched; two containers probed over `docker exec` +
+  `/dev/tcp` because port publishing is broken here; my re-run printed the same seven app.php routes
+  with the same status codes as the binary mode, `/_ignis/health` ok on 24 threads, `smoke: GREEN`,
+  0 containers left. Image mode deliberately skips the E-legs that need a host-reachable port; it
+  says so in its output. The agent added the `ldd` "not found" check for parity with `image.yml`.

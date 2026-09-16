@@ -5,6 +5,61 @@
 # release build and the unit tests get 900 s because a cold LTO build alone exceeds 120 s).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# --image <tag>: smoke the built image instead of the local binary. Port publishing is broken on
+# this docker daemon (image.yml), so every probe is `docker exec <c> bash -c 'exec 3<>/dev/tcp/...'`
+# instead of curl against a published port. Two containers: one with CMD overridden to serve
+# examples/app.php (the route table below), one left at the image's default CMD (hello_server) to
+# check /_ignis/health the way image.yml does. Everything below this block (build/tests/benches)
+# needs target/release/ignis and bench/*.sh hitting a local port directly — none of that reaches a
+# container only exposed via docker exec, so image mode skips it; see the summary line it prints.
+if [ "${1:-}" = "--image" ]; then
+  IMAGE="${2:?usage: scripts/smoke.sh --image <tag>}"
+  APP_C="ignis-smoke-app-$$"
+  HEALTH_C="ignis-smoke-health-$$"
+  trap 'docker rm -f "$APP_C" "$HEALTH_C" >/dev/null 2>&1 || true' EXIT
+
+  # docker exec + /dev/tcp probe (image.yml's technique). Prints "body [code]" the same shape as
+  # the binary path's `curl -s -w " [%{http_code}]" | tr -d "\n" | cut -c1-90`.
+  probe() {
+    local c="$1" path="$2" raw code body
+    raw=$(timeout 5 docker exec -e P="$path" "$c" bash -c \
+      'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET %s HTTP/1.0\r\n\r\n" "$P" >&3; cat <&3' \
+      2>/dev/null || true)
+    raw="${raw//$'\r'/}"
+    code=$(printf '%s\n' "$raw" | head -1 | cut -d' ' -f2)
+    body=$(printf '%s\n' "$raw" | sed '1,/^$/d')
+    printf '%s [%s]' "$body" "${code:-000}" | tr -d '\n' | cut -c1-90
+  }
+
+  echo "== image ($IMAGE): app.php route table"
+  docker run -d --name "$APP_C" "$IMAGE" serve /opt/ignis/examples/app.php >/dev/null
+  up=0; for _ in $(seq 1 50); do
+    out=$(probe "$APP_C" / 2>/dev/null || true)
+    [[ "$out" == *" [200]"* ]] && { up=1; break; }
+    sleep 0.1
+  done
+  [ "$up" = 1 ] || { echo "app.php never answered in $IMAGE (docker logs $APP_C):"; docker logs "$APP_C" || true; exit 1; }
+  for r in / "/dashboard?user=7" /users "/upstream" "/whoami?x=1" /deadline "/sleep?ms=5"; do
+    printf "%-20s -> %s\n" "$r" "$(probe "$APP_C" "$r")"
+  done
+
+  echo "== image ($IMAGE): /_ignis/health (default CMD, hello_server)"
+  docker run -d --name "$HEALTH_C" "$IMAGE" >/dev/null
+  hok=0; for _ in $(seq 1 50); do
+    hout=$(probe "$HEALTH_C" /_ignis/health 2>/dev/null || true)
+    [[ "$hout" == *'"status":"ok"'* ]] && { hok=1; break; }
+    sleep 0.1
+  done
+  printf "%-20s -> %s\n" "/_ignis/health" "$hout"
+  [ "$hok" = 1 ] || { echo "/_ignis/health never answered ok in $IMAGE (docker logs $HEALTH_C):"; docker logs "$HEALTH_C" || true; exit 1; }
+  docker exec "$HEALTH_C" ldd /usr/local/bin/ignis 2>/dev/null | grep -q "not found" && { echo "image links against something it doesn't carry"; exit 1; }
+
+  echo "== image mode skips: build, unit tests, hello.php, E1/E2/E5/E6/E7/E11/E12/E13/E14 (need target/release/ignis and bench/*.sh talking to a local port; a container here is reachable only via docker exec)"
+  echo "smoke: GREEN"
+  exit 0
+fi
+
 export PHP_CONFIG="${PHP_CONFIG:-/opt/php85-zts/bin/php-config}"
 [ -x "$PHP_CONFIG" ] || { echo "PHP not built; run scripts/build-php.sh"; exit 1; }
 T="timeout 120"
