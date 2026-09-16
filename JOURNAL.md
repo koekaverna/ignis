@@ -66,3 +66,4 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T00:19:13Z C9 REASSESS — soak rule added (DECISIONS); Cycle 10 = E8 Symfony (skeleton installing from source in background).
 - 2026-09-16T00:21:17Z C10 START — question: does symfony/skeleton boot once in worker mode behind a symfony/runtime adapter over Ignis\serve, with a fiber-scoped RequestStack (E8)?
 - 2026-09-16T00:25:52Z C10 VALIDATE — H18/E8 CONFIRMED (V-16): skeleton boots once under Ignis\Symfony\IgnisRuntime, 0/100 RequestStack mismatches across suspensions, 7.8k rps hello through the kernel; sessions disabled until ext-session rebuild.
+- 2026-09-16T00:26:30Z C10 REASSESS — E8' (sessions, multi-cookie, 4 threads); remaining open: E9, E10, E12, E14. Cycle 11 = E12 isolation + supervisor.

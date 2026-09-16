@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T04:00Z, end of Cycle 8)
+# STATUS — Ignis (updated 2026-09-16T05:40Z, end of Cycle 10)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket. Every number below links to VALIDATION.md.
 
@@ -23,6 +23,8 @@
 | **E6 (tcp)** unmodified `file_get_contents('http://…')` suspends the fiber | 3 × 200 ms fetches in **203 ms on one thread** (server calling itself); 100/100 concurrent; hook-disabled control deadlocks | V-12 |
 | **E7** Revolt driver: Revolt + amphp/amp + amphp/socket examples unchanged | 7/8 byte-identical (1 timing race in the example), timer benchmarks ≤ 1× of StreamSelectDriver | V-13 |
 | **E11** client disconnect cancels request fiber + children; `Ignis\deadline()` | **0.78 ms** worst-case cancel latency, `finally` runs, no phantom work; 504 at 102 ms for a 100 ms deadline | V-14 |
+| **E5'** least-inflight dispatch, `/cpu` at 4 threads | p99 **12.4–12.8 ms** (FrankenPHP@4: 15.6 ms) at 9.1–9.3k req/s; two multi-thread bugs found and fixed (bind race, forged refcount flag on immutable arrays) | V-15 |
+| **E8** symfony/skeleton in worker mode via a `symfony/runtime` class, fiber-scoped RequestStack | 0/100 mismatches across suspensions; **7.8k req/s** through the full kernel on 1 thread; sessions disabled pending ext-session rebuild | V-16 |
 
 ## REFUTED / INCONCLUSIVE and why
 
@@ -82,8 +84,12 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 `www.php.net`, `ppa.launchpadcontent.net` (ondrej PPA), `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works). Mirrors used: git clone for php-src, `index.crates.io` for crates, Ubuntu archive for tools.
 
+## Still open
+
+E9 (Temporal sdk-core), E10 (tonic gRPC), E12 (isolation/supervisor — Cycle 11 in progress), E14 (runtime-owned connection pool). Not started tonight: E9/E10/E14 are each a multi-hour build with new dependency trees (temporal sdk-core, tonic, tokio-postgres); the reactor's `Op`/`Outcome` seam and the C-park mechanism (ADR-0007) are the integration points for all three.
+
 ## Ranked recommendation for the next 3 cycles
 
-1. **E8 Symfony**: `symfony/runtime` adapter over `Ignis\serve`, RequestStack decorated with `Ignis\Scope` so interleaved requests never share it; `$_SERVER` per fiber already exists (V-11). Composer works here with `--prefer-source` (V-13).
-2. **E5' least-inflight dispatch + E6' `ssl://`** (rustls on the tokio side; the transport hook already owns the connection).
-3. **E12 isolation**: a fatal in one thread must only kill that thread; supervisor restarts it without an opcache reset (threads already independent, V-9). Then E14 (runtime-owned pgsql pool via tokio-postgres) and E10 (tonic on the shared hyper stack).
+1. **E12 isolation + supervisor** (in progress): fatal in one thread → that thread only; respawn without opcache reset; per-thread watchdog for CPU loops. Then the E8' items (sessions on, multi-cookie headers, 4-thread Symfony numbers).
+2. **E14 runtime-owned pgsql pool** via tokio-postgres: `Op::PgQuery` + a `PDO`-shaped PHP client; lease per fiber, transaction pins the lease, `DISCARD ALL` on return. Also the honest answer to the sqlite half of E6.
+3. **E6' `ssl://` + E10 tonic**: both ride the shared hyper/rustls stack; E10's server-streaming handler is the first use of a fiber that yields multiple responses.
