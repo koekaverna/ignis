@@ -73,3 +73,4 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T01:03:55Z C11 — scripts/smoke.sh GREEN end to end (build, 9 unit tests, app.php routes incl. E6 self-call and E11 deadline, E1/E2, E5 threads, E13, E6, E7, E11, E12). E2' not met with observer on (V-11 addendum).
 - 2026-09-16T01:07:03Z C12 START — question (E9, research-first per the brief): how does the Python SDK bridge temporal sdk-core to asyncio, and what is the smallest in-process Ignis equivalent on Fibers?
 - 2026-09-16T01:07:03Z C12 RESEARCH/DECIDE/HYPOTHESIZE — research 12 (sdk-python bridge = poll/complete bytes over pyo3 futures; determinism is userland), ADR-0013 (proposed), H20/H20b. Building sdk-core (git) probe + temporal CLI in background.
+- 2026-09-16T01:13:56Z C12 IMPLEMENT/VALIDATE — H20 CONFIRMED (V-18): sdk-core (git) worker in a Rust binary completed a CLI-started workflow on the locally built dev server. Probe source kept at examples/rust/temporal-probe.

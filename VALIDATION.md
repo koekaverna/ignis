@@ -469,3 +469,26 @@ Date: 2026-09-16T06:4xZ, idle box (load 0.14), `N=10000 ./target/release/ignis b
 | observer off | 17.9 µs | 4.5 µs |
 
 The warm delta grew from ≈ +2 µs/job (V-11) to +3.5–7 µs/job, and the cold figure now varies 3×. The profile (`perf record`, observer on) shows `zend_fiber_object_gc` at 2.9%: PHP's cycle collector runs when its root buffer fills, and each run walks every pooled fiber; when that happens inside the timed window the per-fiber figure jumps. The observer's saved zvals add refcount traffic that feeds the root buffer. Consequence: E2' (< 5 µs warm) is **not met with the observer on** — it holds only with the observer off. The planned fix is E13' (lazy swap: no bookkeeping for fibers that never touch superglobals) plus scheduling `gc_collect_cycles()` from the loop's idle point instead of inside a request (RoadRunner pain-map item 2, "GC scheduled by the runtime off the hot path").
+
+## V-18 — H20 (E9, step 1): temporal-sdk-core in a Rust binary completes a workflow against a local dev server (CONFIRMED)
+
+Date: 2026-09-16T08:0xZ. Setup: `temporalio/sdk-core` git (workspace crates `temporalio-sdk-core`, `-client`, `-protos`, `-common`; edition 2024; `protoc` from apt) linked into `examples/rust/temporal-probe` (346 MB debug binary, ~600 crates, first build ≈ 12 min on 4 vCPU). Dev server: `temporal server start-dev` from `temporalio/cli` built in-tree with Go (`go install @latest` is refused because of replace directives) — "temporal version 0.0.0-DEV (Server 1.32.0, UI 2.54.1)", ready in 600 ms, in-memory persistence. Command: `bench/e9-probe.sh`.
+
+```
+dev server up
+  Namespace   default        TaskQueue   ignis            (temporal workflow start --type IgnisProbeWorkflow --workflow-id ignis-probe-1)
+worker up; waiting for an activation on task queue 'ignis'
+activation run_id=01a0a7c6-3ac3-72d9-acbe-30cb6287749f jobs=1
+completed run_id=01a0a7c6-3ac3-72d9-acbe-30cb6287749f
+temporal workflow describe:   Status COMPLETED   Result {"data":"ImRvbmUgYnkgaWduaXMgcHJvYmUi"}   (= "done by ignis probe")
+```
+
+| check | result |
+|---|---|
+| sdk-core builds here | yes (git dependency; the crates.io `temporal-sdk-core 0.1.0-alpha.1` is a 2021 crate with a different API — do not use) |
+| worker polls the first activation of a CLI-started workflow | 1 job (initialize workflow) received |
+| completion with `CompleteWorkflowExecution` accepted | run shows COMPLETED with the payload |
+
+API notes for the Ignis integration (ADR-0013): `ConnectionOptions::new(url).client_name(..).client_version(..).identity(..).build()` → `Connection::connect(opts)`; `WorkerConfig::builder().namespace().task_queue().task_types(WorkerTaskTypes::workflow_only()).versioning_strategy(WorkerVersioningStrategy::None { build_id }).build()?`; `init_worker(&CoreRuntime, cfg, connection)`; `poll_workflow_activation()` / `complete_workflow_activation(WorkflowActivationCompletion::from_cmds(run_id, vec![workflow_command::Variant::…]))` are inherent async methods on `Worker`. This is exactly sdk-python's bridge surface (research 12), so `Op::TemporalPoll`/`Op::TemporalComplete` map 1:1.
+
+H20b (PHP workflow on fibers + replay) is the next step; not attempted in this cycle.
