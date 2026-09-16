@@ -1,5 +1,8 @@
 # minimum pass counts for scripts/ci-gate.sh — raised 2026-09-16 from two CI runs of 3112a96 (run 35086872504 + its E15 phpt rerun).
 # Values are the MINIMUM across those two samples: fiber streams read 125 then 124, so the gate sits at 124.
+# revolt.pass: the gate reported "no baseline yet" until the bench was made to print
+# IGNIS_PASSED; 80 is two agreeing CI samples (81 tests, 1 known timing race). A second
+# race would trip it — lower with evidence, do not widen it blind.
 # swoole.pass 42 -> 55 is from one sample only (the A4 ext/sockets hooks moved it); lower it with evidence if it flaps.
 phpt.main.Zend_tests_fibers 108
 phpt.main.ext_sockets_tests 89
@@ -7,5 +10,6 @@ phpt.main.ext_standard_tests_streams 133
 phpt.fiber.Zend_tests_fibers 78
 phpt.fiber.ext_sockets_tests 83
 phpt.fiber.ext_standard_tests_streams 124
+revolt.pass 80
 swoole.pass 55
 frankenphp.pass 29
