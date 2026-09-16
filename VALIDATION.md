@@ -737,3 +737,38 @@ hook off: 3 concurrent https fetches (200 ms each) in 614 ms; bodies: ["hello ov
 Three defects fixed on the way: `Outcome::Ready` was not routed to a C-parked fiber (the STARTTLS fiber was left suspended and the script ended silently — `Future::await()` from `{main}` now throws when the loop stops with the future unsettled instead of returning null); TLS records were buffered until the next read (`flush()` after every write now); a self-signed leaf is `CaUsedAsEndEntity` for webpki, so the bench builds a CA + leaf.
 
 Not covered (ADR-0017): client certificates, `sslv3`/`tlsv1.0`/`1.1`, TLS downgrade, `peer_certificate` capture, server-side TLS on the Ignis listener.
+
+## V-26 — Cycle 20: accept and select inside fibers (E6''), E12' fail-fast, and the E13' regression the CI gate caught (CONFIRMED)
+
+Date: 2026-09-16T04:09:34Z. Binary: a side build of the same commit (`CARGO_TARGET_DIR=target-c20`) because the E15e porter was still using `target/release/ignis`; the main binary is rebuilt from the same sources at the next check-in and `scripts/smoke.sh` re-run then.
+
+**E6'' — server sockets inside fibers** (`bench/php/e6_accept.php`: one fiber runs an accept loop for 3 clients with a 100 ms `Ignis\sleep` per client; 3 client fibers connect, `stream_select()` for the reply, `fgets`; all on one PHP thread):
+
+```
+accept in a fiber: 3 clients served in 305 ms (3 x 100 ms sequential sleeps in the one server fiber)
+  server: tcp_socket peer=ok got=hello 0 / hello 2 / hello 1
+  client: select=1 local=ok reply='echo: hello 0'   (x3)
+```
+
+| mechanism | before | after |
+|---|---|---|
+| `stream_socket_accept()` in a fiber | blocks the thread (stock accept); with clients on the same thread the earlier test needed the accept in `{main}` | the handler is swapped at MINIT: inside a fiber it parks on the listener's readiness (`Op::Watch`), then runs the original (returns at once) and adopts the accepted socket into the reactor (`Op::Adopt`: dup'd fd → tokio `TcpStream` → connection actor), so reads/writes on it park too |
+| `stream_select()` in a fiber | blocks the thread; every client's 3 s select timed out (9315 ms for the test) because the server fiber could not run meanwhile | parks on every fd's readiness plus the timeout (new `await_any`: one fiber parked on several op ids, the first completion wins, the rest are cancelled), then runs the original with a zero timeout to fill the ready sets: `select=1`, 305 ms total |
+| `stream_socket_get_name()` on hooked streams | false (NOTIMPL) | local/peer "ip:port" captured at connect/adopt time |
+| `stream_get_meta_data()['stream_type']` | `ignis_tcp` | `tcp_socket` (5 phpt tests check the stock label) |
+| `socket_import_stream()` / select fd | no fd (cast FAILURE) | a dup of the socket (owned by the PHP stream, closed with it); the first version wrote a pointer into the int-sized cast slot and smashed the stack — the cast protocol writes a `php_socket_t` |
+
+Under `IGNIS_CHAOS=1` the same test passes (310 ms). Not covered: the `stream_socket_accept()` timeout argument only applies once the listener is readable (the park itself has no timeout yet); UDP/unix transports; `socket_*` (ext/sockets) calls remain blocking.
+
+**E12' — in-flight requests on a dying thread** (`bench/e12-inflight.sh`, `--supervise --threads 1`):
+
+```
+/fatal -> 500 after 0.000767s
+in-flight /sleep?ms=3000 -> 500 after 0.303214s     (sent 0.3 s before the fatal; a hang would be >= 3 s)
+after respawn: / -> 200 after 0.000749s
+wall: 823 ms
+```
+
+`http::unregister()` now drains the dying reactor's responders and gRPC streams (`Reactor::fail_pending`), so hyper answers 500 at once and the supervisor's respawn serves the next request.
+
+**E13' regression caught by CI** (`scripts/ci-gate.sh`, FrankenPHP baseline 29 → 27 on the first lazy-swap commit): a user `Fiber` started inside a request saw the base world's empty `$_GET` (`fiber-basic.php`, `fiber-no-cgo.php`: "Fiber " instead of "Fiber 1"), because the lazy swap restored the base world on every switch to a fiber without a slot. Fix: the observer tracks the *owner* of the installed view; a switch to a slot-less fiber leaves the view alone (children inherit their parent's request view, pool fibers inherit the base world), only a switch to `{main}` restores the base world, and a dying owner releases the view. After the fix: FrankenPHP 29 / 4 / 33 (the four known runtime gaps), `e13_isolation` 0 mismatches / no main leak, 200 concurrent HTTP 0 mismatches — with and without `IGNIS_CHAOS=1`. The quiet-box E2' figure after E13' is still owed.
