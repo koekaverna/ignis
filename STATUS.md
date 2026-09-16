@@ -101,6 +101,8 @@ crates.io: **taken** (`ignis` 0.1.0, unrelated); Packagist: free; GitHub: three 
 
 ## Still open
 
+The loop was stopped by the owner at 2026-09-16T05:12:43Z; the plan from here is **ROADMAP.md** (phases A–D, each item with the V-n it extends and a done-when number).
+
  E3' (10M requests, 4 threads, streams + state enabled); fiber-budget pool cap with request queueing (V-5 memory note); per-endpoint budget + circuit breaker (pain map PHP-FPM 2); in-process Table (RoadRunner 4); MySQL/Redis drivers; allocator-level leak detector; E9' (signals/queries/cancellation), E10' (client-streaming/bidi, TLS on the listener), E8' (multi-value `Set-Cookie`), E7' (AMPHP on hooked transports, signals); the 12 fiber-only phpt stream failures classified as ours in the V-26 addendum (unix-socket names, error texts, `timed_out` meta, select usec validation, `fclose(STDIN)`).
 
 ## Ranked recommendation for the next 3 cycles
