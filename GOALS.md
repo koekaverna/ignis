@@ -14,7 +14,7 @@ Ranked. Targets are floors; when met they get raised here with a reason.
 | E6 | php_stream hook: unmodified `file_get_contents('http://…')` and PDO suspend the fiber | **CONFIRMED for tcp streams** (V-12: 3 × 200 ms fetches in 203 ms on one thread, hook-disabled control stalls). **REFUTED for PDO sqlite via hooks** (no stream layer). Raised: E6' = `ssl://` (TLS on tokio) + PDO pgsql over the hooked tcp transport (pgsql's libpq uses its own sockets, so that needs the native driver, E14) |
 | E7 | Revolt-compatible driver over the Ignis reactor runs AMPHP examples unchanged | OPEN |
 | E8 | symfony/runtime adapter boots symfony/skeleton in worker mode; RequestStack fiber-scoped | OPEN |
-| E9 | Temporal: link temporal sdk-core (Rust) in-process; workflow on Fibers with deterministic replay; one workflow with two activities and a timer passes a replay test. Research first: how the Python SDK bridges core ↔ asyncio | OPEN |
+| E9 | Temporal: link temporal sdk-core (Rust) in-process; workflow on Fibers with deterministic replay; one workflow with two activities and a timer passes a replay test. Research first: how the Python SDK bridges core ↔ asyncio | **CONFIRMED** (V-18, V-19; research 12, ADR-0013) — prototype scope: no signals/queries/cancel |
 | E10 | gRPC: tonic server + client on the shared hyper/h2 stack; unary and server-streaming handlers in PHP; client call suspends the fiber. Compare against RoadRunner grpc plugin and ext-grpc on latency and build complexity | OPEN |
 
 Note on E5: the machine has 4 vCPUs (`nproc`), so "8 threads ≥ 6.5×" cannot
@@ -29,7 +29,7 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15). ~~Cycle 10: E8~~ DONE (V-16).
 
-~~Cycle 11: E12~~ DONE (V-17). Remaining OPEN: E9 (Temporal), E10 (gRPC), E14 (connection pool) — each a multi-hour build; see STATUS.md ranking.
+~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). Remaining OPEN: E10 (gRPC), E14 (connection pool) — each a multi-hour build; see STATUS.md ranking.
 
 ## Ranking (after Cycle 0, kept for history)
 

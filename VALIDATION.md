@@ -472,7 +472,7 @@ The warm delta grew from ≈ +2 µs/job (V-11) to +3.5–7 µs/job, and the cold
 
 ## V-18 — H20 (E9, step 1): temporal-sdk-core in a Rust binary completes a workflow against a local dev server (CONFIRMED)
 
-Date: 2026-09-16T08:0xZ. Setup: `temporalio/sdk-core` git (workspace crates `temporalio-sdk-core`, `-client`, `-protos`, `-common`; edition 2024; `protoc` from apt) linked into `examples/rust/temporal-probe` (346 MB debug binary, ~600 crates, first build ≈ 12 min on 4 vCPU). Dev server: `temporal server start-dev` from `temporalio/cli` built in-tree with Go (`go install @latest` is refused because of replace directives) — "temporal version 0.0.0-DEV (Server 1.32.0, UI 2.54.1)", ready in 600 ms, in-memory persistence. Command: `bench/e9-probe.sh`.
+Date: 2026-09-16T01:13Z. Setup: `temporalio/sdk-core` git (workspace crates `temporalio-sdk-core`, `-client`, `-protos`, `-common`; edition 2024; `protoc` from apt) linked into `examples/rust/temporal-probe` (346 MB debug binary, ~600 crates, first build ≈ 12 min on 4 vCPU). Dev server: `temporal server start-dev` from `temporalio/cli` built in-tree with Go (`go install @latest` is refused because of replace directives) — "temporal version 0.0.0-DEV (Server 1.32.0, UI 2.54.1)", ready in 600 ms, in-memory persistence. Command: `bench/e9-probe.sh`.
 
 ```
 dev server up
@@ -492,3 +492,30 @@ temporal workflow describe:   Status COMPLETED   Result {"data":"ImRvbmUgYnkgaWd
 API notes for the Ignis integration (ADR-0013): `ConnectionOptions::new(url).client_name(..).client_version(..).identity(..).build()` → `Connection::connect(opts)`; `WorkerConfig::builder().namespace().task_queue().task_types(WorkerTaskTypes::workflow_only()).versioning_strategy(WorkerVersioningStrategy::None { build_id }).build()?`; `init_worker(&CoreRuntime, cfg, connection)`; `poll_workflow_activation()` / `complete_workflow_activation(WorkflowActivationCompletion::from_cmds(run_id, vec![workflow_command::Variant::…]))` are inherent async methods on `Worker`. This is exactly sdk-python's bridge surface (research 12), so `Op::TemporalPoll`/`Op::TemporalComplete` map 1:1.
 
 H20b (PHP workflow on fibers + replay) is the next step; not attempted in this cycle.
+
+## V-19 — H20b (E9, step 2): a PHP workflow on fibers completes on the dev server and passes replay; a mutated workflow fails replay (CONFIRMED)
+
+Date: 2026-09-16T01:37Z. Build: `cargo build --release -p ignis --features temporal` (sdk-core git crates linked into the ignis binary; `Op::Custom` carries the poll/complete futures; JSON boundary via `serde_serialize` on the protos plus Ignis's own PHP command schema translated in Rust). Workflow: `php/temporal/demo.php` — `greet` activity → 500 ms timer → `shout` activity; the workflow function runs as a PHP Fiber, `Context::activity()/timer()` record a command and `Fiber::suspend()`; activities run as ordinary Ignis fibers (one calls `Ignis\sleep(50)`). Command: `bench/e9-temporal.sh`.
+
+```
+== live run: 1224 ms from start to COMPLETED (includes 500 ms timer, two activities, CLI polling at 100 ms)
+  Status          COMPLETED      ResultEncoding json/plain      ("HELLO ADA!")
+history events: 22
+== replay (history fetched by Rust over gRPC) — must pass
+REPLAY_OK activations=5 eviction_errors=0
+== replay with the timer removed (DEMO_MUTATE=1) — must fail
+  evicted: reason=3 ... [TMPRL1100] Nondeterminism error: Activity machine does not handle this event: HistoryEvent(id: 11, TimerStarted) ... force_cause: NonDeterministicError
+REPLAY_FAILED activations=3 eviction_errors=1
+== live worker: 5 activations, 1 evictions   (the one eviction is reason=10 "Workflow completed")
+```
+
+| check | result |
+|---|---|
+| live workflow with two activities and a timer completes | COMPLETED in 1224 ms wall clock (500 ms of it is the timer; the rest is 4 workflow tasks + 2 activity tasks round-tripping through the dev server and 100 ms CLI polling) |
+| the workflow fiber stays suspended between activations (sticky cache) | 5 activations, 0 replays during the live run: `InitializeWorkflow → ResolveActivity → FireTimer → ResolveActivity → RemoveFromCache(Workflow completed)` — with `max_cached_workflows = 0` (first attempt) core evicted after every task and the fiber was rebuilt by replay each time (14 activations for the same run) |
+| replay of the recorded history (22 events, fetched over gRPC by `ignis_temporal_replay`) | REPLAY_OK, 5 activations, all `replaying=true` until the final eviction, 0 nondeterminism |
+| negative control: same history, workflow code without the timer | REPLAY_FAILED at activation 3 with core's `NonDeterministicError` (TMPRL1100) — the replay test detects a changed workflow, so a passing replay means something |
+
+What was wrong on the way (each a refuted sub-hypothesis, all fixed in this commit): (1) completing activations with hand-written JSON fails on prost's serde derive, which requires every field (`missing field headers`) — the PHP side now speaks a small command schema (`StartTimer`, `ScheduleActivity`, `CompleteWorkflow`, `FailWorkflow`) translated to protos in Rust; (2) the `temporal workflow show --output json` history is protojson (camelCase, string int64) and does not round-trip through prost serde (`missing field event_id`) — the replay worker fetches the history over gRPC (`GetWorkflowExecutionHistory`) and hands `HistoryForReplay` to `init_replay_worker`; (3) `Ignis\Loop::runUntil` routed any array payload with keys to `dispatchRequest`, so a `['kind' => 'error']` result from the Temporal ops was treated as an HTTP request — payload routing now checks the waiting map first, then cancellation, then `method`.
+
+Not covered (prototype scope per ADR-0013): signals/queries/updates, cancellation, child workflows, local activities, heartbeats, retries beyond core defaults, payload codecs beyond `json/plain`, one worker per process. Binary size with the feature: the `temporal` build adds ≈ 600 crates and ≈ 90 s to the release build on this box.

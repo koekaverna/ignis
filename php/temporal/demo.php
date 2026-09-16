@@ -6,7 +6,8 @@ return [
     'workflows' => [
         'Demo' => static function (Ignis\Temporal\Context $ctx, string $name): string {
             $greeting = $ctx->activity('greet', [$name]);
-            $ctx->timer(500);
+            // DEMO_MUTATE=1 drops the timer: the negative replay test must then fail with a nondeterminism eviction.
+            if (!getenv('DEMO_MUTATE')) { $ctx->timer(500); }
             return $ctx->activity('shout', [$greeting]);
         },
     ],

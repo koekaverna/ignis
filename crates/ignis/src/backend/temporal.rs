@@ -13,9 +13,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use ignis_sys as sys;
 use temporalio_client::{Connection, ConnectionOptions};
 use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_protos::coresdk::activity_result::{ActivityExecutionResult, Success, activity_execution_result};
+use temporalio_protos::coresdk::workflow_commands::{CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity, StartTimer, workflow_command};
 use temporalio_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use temporalio_protos::coresdk::ActivityTaskCompletion;
-use temporalio_protos::temporal::api::history::v1::History;
+use temporalio_protos::temporal::api::common::v1::{Payload, WorkflowExecution};
+use temporalio_protos::temporal::api::failure::v1::Failure;
+use temporalio_protos::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryRequest;
 use temporalio_sdk_core::replay::{HistoryForReplay, ReplayWorkerInput};
 use temporalio_sdk_core::{CoreRuntime, Worker, WorkerConfig, WorkerVersioningStrategy, init_replay_worker, init_worker};
 
@@ -26,6 +30,96 @@ use crate::reactor::{Op, Outcome};
 static RUNTIME: OnceLock<CoreRuntime> = OnceLock::new();
 static WORKERS: Mutex<Option<HashMap<u64, Arc<Worker>>>> = Mutex::new(None);
 static NEXT: Mutex<u64> = Mutex::new(1);
+
+/// The command schema PHP emits (ADR-0013): small, defaulted, independent of prost's
+/// serde field requirements. Payloads are `{"metadata": {..}, "data": base64}` like the wire.
+#[derive(serde::Deserialize)]
+struct PhpPayload {
+    #[serde(default)]
+    metadata: HashMap<String, String>,
+    #[serde(default)]
+    data: String,
+}
+
+impl PhpPayload {
+    fn into_proto(self) -> anyhow::Result<Payload> {
+        use base64::Engine;
+        let e = base64::engine::general_purpose::STANDARD;
+        let metadata = self.metadata.into_iter().map(|(k, v)| Ok((k, e.decode(v)?))).collect::<anyhow::Result<_>>()?;
+        Ok(Payload { metadata, data: e.decode(self.data)?, ..Default::default() })
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "cmd")]
+enum PhpCommand {
+    StartTimer { seq: u32, ms: u64 },
+    ScheduleActivity { seq: u32, activity_type: String, task_queue: String, #[serde(default)] args: Vec<PhpPayload>, #[serde(default = "thirty")] start_to_close_sec: u64 },
+    CompleteWorkflow { result: Option<PhpPayload> },
+    FailWorkflow { message: String },
+}
+
+fn thirty() -> u64 {
+    30
+}
+
+#[derive(serde::Deserialize)]
+struct PhpCompletion {
+    run_id: String,
+    #[serde(default)]
+    commands: Vec<PhpCommand>,
+}
+
+#[derive(serde::Deserialize)]
+struct PhpActivityCompletion {
+    task_token: Vec<u8>,
+    result: Option<PhpPayload>,
+    #[serde(default)]
+    failure: Option<String>,
+}
+
+fn dur(secs: u64, ms: u64) -> prost_wkt_types::Duration {
+    prost_wkt_types::Duration { seconds: secs as i64 + (ms / 1000) as i64, nanos: ((ms % 1000) * 1_000_000) as i32 }
+}
+
+fn translate_completion(json: &str) -> anyhow::Result<WorkflowActivationCompletion> {
+    let c: PhpCompletion = serde_json::from_str(json)?;
+    let mut cmds = Vec::new();
+    for cmd in c.commands {
+        cmds.push(match cmd {
+            PhpCommand::StartTimer { seq, ms } => workflow_command::Variant::StartTimer(StartTimer { seq, start_to_fire_timeout: Some(dur(0, ms)) }),
+            PhpCommand::ScheduleActivity { seq, activity_type, task_queue, args, start_to_close_sec } => {
+                workflow_command::Variant::ScheduleActivity(ScheduleActivity {
+                    seq,
+                    activity_id: seq.to_string(),
+                    activity_type,
+                    task_queue,
+                    arguments: args.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
+                    start_to_close_timeout: Some(dur(start_to_close_sec, 0)),
+                    ..Default::default()
+                })
+            }
+            PhpCommand::CompleteWorkflow { result } => {
+                workflow_command::Variant::CompleteWorkflowExecution(CompleteWorkflowExecution { result: result.map(PhpPayload::into_proto).transpose()? })
+            }
+            PhpCommand::FailWorkflow { message } => {
+                workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution { failure: Some(Failure { message, ..Default::default() }) })
+            }
+        });
+    }
+    Ok(WorkflowActivationCompletion::from_cmds(c.run_id, cmds))
+}
+
+fn translate_activity_completion(json: &str) -> anyhow::Result<ActivityTaskCompletion> {
+    let c: PhpActivityCompletion = serde_json::from_str(json)?;
+    let status = match (c.failure, c.result) {
+        (Some(message), _) => activity_execution_result::Status::Failed(temporalio_protos::coresdk::activity_result::Failure {
+            failure: Some(Failure { message, ..Default::default() }), ..Default::default()
+        }),
+        (None, result) => activity_execution_result::Status::Completed(Success { result: result.map(PhpPayload::into_proto).transpose()? }),
+    };
+    Ok(ActivityTaskCompletion { task_token: c.task_token, result: Some(ActivityExecutionResult { status: Some(status) }) })
+}
 
 fn core() -> &'static CoreRuntime {
     RUNTIME.get_or_init(|| CoreRuntime::new_assume_tokio(Default::default()).expect("temporal core runtime"))
@@ -48,6 +142,11 @@ fn config(namespace: &str, task_queue: &str) -> anyhow::Result<WorkerConfig> {
         .namespace(namespace)
         .task_queue(task_queue)
         .task_types(WorkerTaskTypes::all())
+        // Sticky cache: the PHP fiber for a run stays suspended between activations instead of being
+        // rebuilt by full replay on every workflow task (max_outstanding >= 2 is required by core).
+        .max_cached_workflows(1000usize)
+        .max_outstanding_workflow_tasks(16usize)
+        .max_outstanding_activities(64usize)
         .versioning_strategy(WorkerVersioningStrategy::None { build_id: "ignis".to_string() })
         .build()
         .map_err(|e| anyhow::anyhow!(e))
@@ -91,7 +190,9 @@ pub unsafe extern "C" fn zif_connect(ex: *mut sys::zend_execute_data, rv: *mut s
     }
 }
 
-/// `ignis_temporal_replay(string $historyJson, string $workflowId, string $taskQueue): int` → `{"worker": id}` for a replay worker.
+/// `ignis_temporal_replay(string $url, string $workflowId, string $taskQueue): int` → `{"worker": id}`:
+/// fetches the run's history from the server over gRPC (protobuf, no JSON round trip) and
+/// builds a replay worker over it (`init_replay_worker`).
 pub unsafe extern "C" fn zif_replay(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     unsafe {
         let (mut a, mut al, mut b, mut bl, mut c, mut cl): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
@@ -99,16 +200,31 @@ pub unsafe extern "C" fn zif_replay(ex: *mut sys::zend_execute_data, rv: *mut sy
         if sys::zend_parse_parameters(zval::num_args(ex), c"sss".as_ptr(), &mut a, &mut al, &mut b, &mut bl, &mut c, &mut cl) != sys::SUCCESS {
             return;
         }
-        let (hist, wid, tq) = (arg_str(a, al), arg_str(b, bl), arg_str(c, cl));
+        let (url, wid, tq) = (arg_str(a, al), arg_str(b, bl), arg_str(c, cl));
         submit(rv, async move {
-            let run = || {
-                let history: History = serde_json::from_str(&hist)?;
+            let run = || async {
+                let opts = ConnectionOptions::new(url::Url::parse(&url)?)
+                    .client_name("ignis".to_string())
+                    .client_version(env!("CARGO_PKG_VERSION").to_string())
+                    .identity("ignis".to_string())
+                    .build();
+                let conn = Connection::connect(opts).await?;
+                let mut svc = conn.workflow_service();
+                let resp = svc
+                    .get_workflow_execution_history(tonic::Request::new(GetWorkflowExecutionHistoryRequest {
+                        namespace: "default".into(),
+                        execution: Some(WorkflowExecution { workflow_id: wid.clone(), run_id: String::new() }),
+                        ..Default::default()
+                    }))
+                    .await?
+                    .into_inner();
+                let history = resp.history.ok_or_else(|| anyhow::anyhow!("no history returned"))?;
                 let _ = core();
                 let input = ReplayWorkerInput::new(config("default", &tq)?, futures::stream::iter(vec![HistoryForReplay::new(history, wid)]));
                 let w = init_replay_worker(input)?;
                 anyhow::Ok(register(w))
             };
-            match run() {
+            match run().await {
                 Ok(id) => Outcome::Json(format!("{{\"worker\":{id}}}")),
                 Err(e) => Outcome::Failed(format!("temporal replay: {e:#}")),
             }
@@ -155,7 +271,7 @@ pub unsafe extern "C" fn zif_complete_activation(ex: *mut sys::zend_execute_data
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
-            let comp: WorkflowActivationCompletion = match serde_json::from_str(&json) {
+            let comp: WorkflowActivationCompletion = match translate_completion(&json) {
                 Ok(c) => c,
                 Err(e) => return Outcome::Failed(format!("completion json: {e}")),
             };
@@ -187,7 +303,7 @@ pub unsafe extern "C" fn zif_complete_activity(ex: *mut sys::zend_execute_data, 
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
-            let comp: ActivityTaskCompletion = match serde_json::from_str(&json) {
+            let comp: ActivityTaskCompletion = match translate_activity_completion(&json) {
                 Ok(c) => c,
                 Err(e) => return Outcome::Failed(format!("activity completion json: {e}")),
             };

@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T08:50Z, Cycle 13 in progress)
+# STATUS — Ignis (updated 2026-09-16T01:42Z, Cycle 13 done)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket. Every number below links to VALIDATION.md.
 
@@ -27,6 +27,7 @@
 | **E8** symfony/skeleton in worker mode via a `symfony/runtime` class, fiber-scoped RequestStack, sessions on | 0/100 mismatches across suspensions; **7.2k req/s (1 thread) / 25.2k req/s (4 threads)** through the full kernel | V-16 |
 | **E12** fatal in one worker thread; CPU loop in one thread; supervisor respawn | fatal killed 1 of 4 workers, hello uninterrupted at 134k req/s, respawn within 50 ms, no opcache reset; spin stalled 1 thread, others 90k req/s p99 2.7 ms; recovery 96% | V-17 |
 | **E9 step 1** temporal-sdk-core (git) in a Rust binary against a locally built dev server | first activation polled and completed; run COMPLETED with the probe's payload | V-18 |
+| **E9** PHP workflow (2 activities + 500 ms timer) as a suspended fiber inside `ignis --features temporal`; deterministic replay | live run **COMPLETED in 1224 ms**, 5 activations, fiber kept alive between tasks; replay of the 22-event history **OK**; replay of the workflow without the timer **FAILS** with core's TMPRL1100 (negative control) | V-19 |
 
 ## REFUTED / INCONCLUSIVE and why
 
@@ -53,6 +54,7 @@ Zend allocates and frees a fresh mmap'd C stack per fiber; on a multi-threaded p
 scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (--disable-zend-signals) → /opt/php85-zts (idempotent, ~6 min)
 cargo build --release -p ignis && cargo nextest run     # binary + 8 unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
 scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7 (if amphp vendor present), E11, E12
+# E9: cargo build --release -p ignis --features temporal && bench/e9-temporal.sh   # needs /opt/gobin/temporal (built from temporalio/cli)
 ./target/release/ignis --threads 4 examples/hello_server.php &  bench/wrk-hello.sh   # HTTP hello on :8080
 bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP worker vs php-fpm+nginx → bench/results/compare.md (URL_PATH=/cpu, IGNIS_THREADS_LIST="1 4")
 # backend (b): scripts/build-php-async.sh; PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis
@@ -88,10 +90,10 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## Still open
 
-E9 step 2 (workflows on fibers + replay: runtime written, `--features temporal` build in progress, see H20b), E10 (tonic gRPC), E14 (runtime-owned connection pool). E10/E14 not started: each is a multi-hour build with a new dependency tree (tonic, tokio-postgres) and E14 needs a PostgreSQL on the box; the reactor's `Op::Custom` seam (added for Temporal) is the integration point for both.
+E10 (tonic gRPC), E14 (runtime-owned connection pool). E9 is done in prototype scope (no signals/queries/cancel, `json/plain` payloads only — V-19). E10/E14 not started: each is a multi-hour build with a new dependency tree (tonic, tokio-postgres) and E14 needs a PostgreSQL on the box; the reactor's `Op::Custom` seam (added for Temporal) is the integration point for both.
 
 ## Ranked recommendation for the next 3 cycles
 
 1. **E14 runtime-owned pgsql pool** via tokio-postgres: `Op::PgQuery` + a `PDO`-shaped PHP client; lease per fiber, transaction pins the lease, `DISCARD ALL` on return. Also the honest answer to the sqlite half of E6. Needs a PostgreSQL on the box (apt has it).
 2. **E10 tonic gRPC** on the shared hyper/h2 stack: unary first, then server-streaming (the first fiber that yields several responses through `ignis_respond`-style chunks); compare with RoadRunner's grpc plugin and ext-grpc.
-3. **E9 Temporal sdk-core**: research-first as the brief says (how sdk-python bridges core ↔ asyncio: the same "poll the core from the loop, complete activations from fibers" shape as ADR-0007); needs a Temporal dev server. Then E6' `ssl://`, E12' (500 for requests on a dying thread), E13' (lazy swap).
+3. **E13' lazy superglobal swap + loop-scheduled GC** (E2' is not met with the observer on, V-11 addendum), then E6' `ssl://`, E12' (500 for requests on a dying thread), E9' (signals/queries/cancellation on the Temporal runtime).

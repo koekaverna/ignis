@@ -56,17 +56,15 @@ final class Context
     public function activity(string $type, array $args = [], int $startToCloseSec = 30): mixed
     {
         $seq = ++$this->run->seq;
-        $this->run->commands[] = ['variant' => ['ScheduleActivity' => [
-            'seq' => $seq, 'activity_id' => (string) $seq, 'activity_type' => $type, 'task_queue' => $this->taskQueue,
-            'arguments' => array_map(Payloads::encode(...), $args), 'start_to_close_timeout' => $startToCloseSec . 's',
-        ]]];
+        $this->run->commands[] = ['cmd' => 'ScheduleActivity', 'seq' => $seq, 'activity_type' => $type, 'task_queue' => $this->taskQueue,
+            'args' => array_map(Payloads::encode(...), $args), 'start_to_close_sec' => $startToCloseSec];
         return $this->await($seq);
     }
 
     public function timer(int $ms): void
     {
         $seq = ++$this->run->seq;
-        $this->run->commands[] = ['variant' => ['StartTimer' => ['seq' => $seq, 'start_to_fire_timeout' => sprintf('%d.%09ds', intdiv($ms, 1000), ($ms % 1000) * 1_000_000)]]];
+        $this->run->commands[] = ['cmd' => 'StartTimer', 'seq' => $seq, 'ms' => $ms];
         $this->await($seq);
     }
 
@@ -80,6 +78,7 @@ final class Context
 final class Worker
 {
     public static int $activations = 0;
+    public static int $evictionErrors = 0;
     public static int $activityTasks = 0;
     /** @var array<string,WorkflowRun> */
     private array $runs = [];
@@ -107,9 +106,10 @@ final class Worker
         return (int) json_decode(self::call(\ignis_temporal_connect($url, $namespace, $taskQueue)), true)['worker'];
     }
 
-    public static function replayWorker(string $historyJson, string $workflowId, string $taskQueue): int
+    /** Replay worker over the run's history fetched from $url by Rust (protobuf, no JSON history). */
+    public static function replayWorker(string $url, string $workflowId, string $taskQueue): int
     {
-        return (int) json_decode(self::call(\ignis_temporal_replay($historyJson, $workflowId, $taskQueue)), true)['worker'];
+        return (int) json_decode(self::call(\ignis_temporal_replay($url, $workflowId, $taskQueue)), true)['worker'];
     }
 
     /** Runs the workflow-task loop and (unless replaying) the activity loop until the worker shuts down. */
@@ -133,8 +133,15 @@ final class Worker
                 return;
             }
             ++self::$activations;
-            $completion = $this->handleActivation($act);
-            self::call(\ignis_temporal_complete($this->worker, json_encode($completion, JSON_THROW_ON_ERROR)));
+            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['run_id'], implode(',', array_map(static fn ($j) => array_key_first($j['variant'] ?? ['?' => 0]), $act['jobs'])), var_export($act['is_replaying'] ?? null, true)));
+            try {
+                $completion = $this->handleActivation($act);
+                self::call(\ignis_temporal_complete($this->worker, json_encode($completion, JSON_THROW_ON_ERROR)));
+                fwrite(STDERR, sprintf("  completed with %d command(s)\n", count($completion['commands'])));
+            } catch (\Throwable $e) {
+                fwrite(STDERR, "  activation handling failed: {$e->getMessage()}\n");
+                throw $e;
+            }
         }
     }
 
@@ -174,6 +181,11 @@ final class Worker
                 case 'RemoveFromCache':
                     unset($this->runs[$runId]);
                     $evicted = true;
+                    $reason = (string) ($data['reason'] ?? 'Unspecified');
+                    fwrite(STDERR, sprintf("  evicted: reason=%s %s\n", $reason, $data['message'] ?? ''));
+                    if (in_array($reason, ['Nondeterminism', 'LangFail', 'Fatal'], true) || (int) ($data['reason'] ?? 0) === 3) {
+                        self::$evictionErrors++;
+                    }
                     break;
                 default:
                     // Query/signal/update/cancel are out of scope for the prototype; ignore.
@@ -181,16 +193,16 @@ final class Worker
             }
         }
         if ($evicted || $run === null) {
-            return ['run_id' => $runId, 'status' => ['Successful' => ['commands' => []]]];
+            return ['run_id' => $runId, 'commands' => []];
         }
         $commands = $run->commands;
         $run->commands = [];
         if ($run->done) {
             $commands[] = $run->error === null
-                ? ['variant' => ['CompleteWorkflowExecution' => ['result' => Payloads::encode($run->result)]]]
-                : ['variant' => ['FailWorkflowExecution' => ['failure' => ['message' => $run->error->getMessage()]]]];
+                ? ['cmd' => 'CompleteWorkflow', 'result' => Payloads::encode($run->result)]
+                : ['cmd' => 'FailWorkflow', 'message' => $run->error->getMessage()];
         }
-        return ['run_id' => $runId, 'status' => ['Successful' => ['commands' => $commands]]];
+        return ['run_id' => $runId, 'commands' => $commands];
     }
 
     private function resume(?WorkflowRun $run, int $seq, mixed $value): void
@@ -213,6 +225,7 @@ final class Worker
                 return;
             }
             ++self::$activityTasks;
+            fwrite(STDERR, sprintf("activity task #%d type=%s\n", self::$activityTasks, $task['variant']['Start']['activity_type'] ?? '?'));
             $token = $task['task_token'];
             \Ignis\async(function () use ($task, $token): void {
                 $start = $task['variant']['Start'] ?? null;
@@ -225,11 +238,11 @@ final class Worker
                         throw new \RuntimeException("unknown activity {$start['activity_type']}");
                     }
                     $result = $fn(...array_map(Payloads::decode(...), $start['input'] ?? []));
-                    $status = ['Completed' => ['result' => Payloads::encode($result)]];
+                    $done = ['task_token' => $token, 'result' => Payloads::encode($result)];
                 } catch (\Throwable $e) {
-                    $status = ['Failed' => ['failure' => ['message' => $e->getMessage()]]];
+                    $done = ['task_token' => $token, 'result' => null, 'failure' => $e->getMessage()];
                 }
-                self::call(\ignis_temporal_complete_activity($this->worker, json_encode(['task_token' => $token, 'result' => ['status' => $status]], JSON_THROW_ON_ERROR)));
+                self::call(\ignis_temporal_complete_activity($this->worker, json_encode($done, JSON_THROW_ON_ERROR)));
             });
         }
     }

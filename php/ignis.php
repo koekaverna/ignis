@@ -238,10 +238,12 @@ final class Loop
                     break;
                 }
                 foreach ($events as $id => $payload) {
-                    if (\is_array($payload)) {
+                    // Array payloads: a fiber waiting on this op id wins (Custom ops return
+                    // JSON strings or ['kind' => 'error']); otherwise a cancel or a new request.
+                    if (\is_array($payload) && !isset(self::$waiting[$id])) {
                         if (($payload['kind'] ?? null) === 'cancel') {
                             self::cancelRequest($id, new CancelledException('client disconnected'), (int) $payload['age_us']);
-                        } else {
+                        } elseif (isset($payload['method'])) {
                             self::dispatchRequest($id, $payload);
                         }
                         continue;

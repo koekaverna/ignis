@@ -1,6 +1,6 @@
 # ADR-0013 — Temporal: sdk-core on the shared tokio runtime; workflows are fibers with a PHP-side deterministic queue
 
-Status: proposed (Cycle 12, 2026-09-16) — accepted for the prototype scope only.
+Status: accepted for the prototype scope (Cycle 13, 2026-09-16; V-18, V-19). Sticky cache on (`max_cached_workflows = 1000`) so a workflow fiber survives between activations; the JSON boundary uses Ignis's own command schema translated in Rust, not raw proto JSON (see V-19).
 
 Decision: link `temporal-sdk-core` (git) into the ignis binary behind a `temporal` cargo feature; expose
 `Op::TemporalPoll`/`Op::TemporalComplete` (bytes in, bytes out) exactly like sdk-python's bridge; a PHP
