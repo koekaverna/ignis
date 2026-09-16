@@ -1,8 +1,8 @@
 # Cutting a release
 
 What the owner runs to ship a tagged release, what it produces, and how to check it. See
-[VALIDATION.md V-39](../VALIDATION.md) for the runtime image acceptance and
-[ROADMAP.md](../ROADMAP.md) M5 for status. `.github/workflows/release.yml` does the work;
+[VALIDATION.md V-39](https://github.com/koekaverna/ignis/blob/main/VALIDATION.md) for the runtime image acceptance and
+[ROADMAP.md](https://github.com/koekaverna/ignis/blob/main/ROADMAP.md) M5 for status. `.github/workflows/release.yml` does the work;
 `scripts/release.sh` only bumps the version and commits — the session git proxy refuses tag
 pushes (commit 8ffd758), so tagging and pushing the tag are manual, by the owner, outside this
 session.

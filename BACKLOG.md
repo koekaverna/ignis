@@ -260,7 +260,7 @@ holds RSS at the 2000-connection level (±5 %) and the extra 2000 connections wa
 backlog or are refused, never served-then-dropped; p99 of accepted requests unchanged.
 **Constraints.** `main` (`http.rs`, `config.rs`).
 
-### M4-4 `/_ignis/metrics` (Prometheus) `main` `open` — after M3-7
+### M4-4 `/_ignis/metrics` (Prometheus) `main` `done (V-55): 22 metrics, promtool clean, 1.9-5.5 ms under wrk -c200; per-reactor publication from each PHP loop`
 **What.** The `/_ignis/stats` fields as Prometheus text format: gauges for threads/stalled/in-flight/
 queued/idle fibers/oldest lease age, counters for requests/restarts/rejected/cancelled/offload jobs,
 a histogram of request duration if cheap (per-thread, merged). Answered by Rust, exempt by
@@ -269,7 +269,7 @@ construction.
 promtool in a container); every counter in `/_ignis/stats` has a metric; the endpoint answers
 under `wrk -c 200` load within 10 ms.
 
-### M4-5 Graceful reload on `SIGHUP` `main` `open` — note (E18-B, 2026-09-16): under 100 keep-alive connections `hello_server` outlived `kill` + `wait`; hyper's graceful shutdown waits on idle keep-alive connections, so `SIGTERM` needs a bounded drain, not just a signal handler
+### M4-5 Graceful reload on `SIGHUP` `main` `SIGTERM/SIGINT drain DONE (V-56): two-phase — health says draining while still accepting for IGNIS_DRAIN_DELAY_MS, then the listener closes and in-flight requests get IGNIS_DRAIN_TIMEOUT_MS. SIGHUP reload-without-restart still open.` `main` `open` — note (E18-B, 2026-09-16): under 100 keep-alive connections `hello_server` outlived `kill` + `wait`; hyper's graceful shutdown waits on idle keep-alive connections, so `SIGTERM` needs a bounded drain, not just a signal handler
 **What.** Drain: stop accepting on the old workers, let in-flight requests finish (bounded by a
 `drain_timeout`), respawn each PHP thread one at a time (ADR-0012 has the mechanism), never reset
 opcache. `SIGTERM`: drain then exit.

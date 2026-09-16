@@ -3,7 +3,7 @@
 For a team replacing php-fpm, FrankenPHP or RoadRunner with `ignis serve` in front of an existing
 Symfony or Laravel app. [docs/pain-map.md](pain-map.md) is the index this guide follows — each row
 below is one pain-map item, "what you had → what it becomes". Every number links a `V-n` in
-[VALIDATION.md](../VALIDATION.md); see [docs/operate.md](operate.md) for sizing and the full config
+[VALIDATION.md](https://github.com/koekaverna/ignis/blob/main/VALIDATION.md); see [docs/operate.md](operate.md) for sizing and the full config
 reference.
 
 **Try it first**, no app of your own required:
@@ -13,10 +13,10 @@ docker run -p 8080:8080 ghcr.io/koekaverna/ignis
 curl http://127.0.0.1:8080/
 ```
 
-returns `200 Hello, World!` — that's [examples/hello_server.php](../examples/hello_server.php),
+returns `200 Hello, World!` — that's [examples/hello_server.php](https://github.com/koekaverna/ignis/blob/main/examples/hello_server.php),
 the image's built-in entry (V-39: image builds and serves cold-start from nothing but itself).
 Point `entry` in `ignis.toml` at your app's front controller to serve it instead (see
-[README.md § Install](../README.md#install) and § Symfony for the worked recipe, V-40).
+[README.md § Install](https://github.com/koekaverna/ignis/blob/main/README.md#install) and § Symfony for the worked recipe, V-40).
 
 ## From php-fpm
 
@@ -26,7 +26,7 @@ Point `entry` in `ignis.toml` at your app's front controller to serve it instead
 | `ignore_user_abort` (opt-in, and even then PHP itself doesn't know until it hits `connection_aborted()`) | automatic: a client disconnect cancels the request fiber and every child it spawned, unwinding through `finally` | V-14: 0.78 ms worst-case cancel latency (poll wake-up dominates it), 20/20 `finally` blocks ran |
 | `max_execution_time` (counts **CPU** time, not wall-clock, and fires as an uncatchable fatal) | `Ignis\deadline($ms)` — one wall-clock deadline per request, inherited by children, throws a catchable `DeadlineExceededException` | V-14: `deadline(100)` around a 1000 ms handler → 504 in 102.1–102.3 ms |
 | opcache reset when `pm.max_requests` recycles a worker, or on a fatal | worker thread respawn with opcache SHM **untouched** — no recompilation | V-17: a fatal ended one of 4 worker threads; respawn completed inside the 50 ms supervisor tick, recovery to 95.7% of baseline throughput |
-| worker pool sized by RAM per process (30–80 MB/worker rule of thumb) | `memory ≈ fibers × 14.7 kB + held connections × 33 kB` — see [operate.md § Sizing](operate.md#sizing) | V-37 (marginal, measured on one box) |
+| worker pool sized by RAM per process (30–80 MB/worker rule of thumb) | `memory ≈ fibers × 14.7 kB + held connections × 33 kB` — see [operate.md § Sizing](operate.md) | V-37 (marginal, measured on one box) |
 | nginx (or Apache) fronting php-fpm over a FastCGI socket | `ignis serve` listens on `listen`/`IGNIS_LISTEN` directly (hyper, h1/h2) | V-38 |
 | one OS process per in-flight request | N OS threads, each running many requests on pooled Fibers; a warm fiber pool costs no PHP-heap growth over millions of requests | V-5 (122k–130k req/s hello-world, 1 thread); V-10 (RSS flat, in one case *falling* 2.5%, over 1.5M requests; PHP heap byte-identical across samples) |
 

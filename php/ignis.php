@@ -124,7 +124,8 @@ final class Loop
     public static int $fibersCreated = 0;
     /**
      * B1 (ADR-0019) admission control. A request that cannot be admitted waits as *data* — the raw
-     * array the reactor delivered — never as a Fiber, because a parked Fiber costs ~34 KB of RSS
+     * array the reactor delivered — never as a Fiber: V-37 measured 47.7 kB per held request with a
+     * fiber against 33.0 kB queued as data, i.e. the fiber itself is ~14.7 kB of RSS
      * (V-5) and that is the whole point of the budget. 0 = unlimited, which is the pre-B1
      * behaviour and stays the default.
      */
@@ -480,7 +481,7 @@ final class Loop
 
     /**
      * B1 (ADR-0019): admit, queue, or shed. Queueing holds the request as data, so a queued
-     * request costs a few hundred bytes instead of a Fiber's ~34 KB (V-5).
+     * request costs a few hundred bytes instead of the fiber's ~14.7 kB of marginal RSS (V-37).
      */
     /**
      * Hands a request to the loop's caller instead of to a fiber. Set by `Ignis\Classic\listen()`

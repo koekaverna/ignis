@@ -123,6 +123,36 @@ fn main() -> ExitCode {
         .build()
         .expect("tokio runtime");
     php::module::install_runtime(rt.handle().clone());
+    // M4-5: SIGTERM (a container stop, a systemd restart) drains instead of dropping. The listener
+    // closes first and `/_ignis/health` answers "draining", so a load balancer takes this instance
+    // out of rotation; then in-flight requests are given IGNIS_DRAIN_TIMEOUT_MS to finish. SIGINT
+    // does the same, so Ctrl-C in a terminal behaves like a stop rather than a kill.
+    rt.spawn(async {
+        let mut term = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "SIGTERM handler not installed; shutdown will not drain");
+                return;
+            }
+        };
+        let mut int = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let sig = tokio::select! {
+            _ = term.recv() => "SIGTERM",
+            _ = int.recv() => "SIGINT",
+        };
+        let (took, pending) = http::drain().await;
+        if pending == 0 {
+            tracing::info!(signal = sig, took_ms = took.as_millis() as u64, "drained; exiting");
+        } else {
+            tracing::warn!(signal = sig, took_ms = took.as_millis() as u64, pending, "drain timed out; exiting with requests still in flight");
+        }
+        // The PHP threads own their engines and cannot be unwound from here (ADR-0012); once no
+        // request is in flight, leaving is the honest end of the process.
+        std::process::exit(0);
+    });
     php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
 
     // Main thread = PHP thread 0 (php_embed_init runs here).

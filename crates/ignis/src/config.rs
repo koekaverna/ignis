@@ -39,7 +39,10 @@ pub struct Config {
 #[derive(Deserialize, Default, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Budget {
-    /// Default 1024 per thread (a held fiber is ~15 kB, V-37). 0 = unlimited.
+    /// Default 1024 per thread. V-37 measured the marginal cost of a held request: 47.7 kB with a
+    /// fiber, 33.0 kB queued as data — so the budget saves **14.7 kB per held request** (the fiber
+    /// itself); the remaining 33 kB is the connection, which only ADR-0025's connection cap bounds.
+    /// 0 = unlimited.
     pub fibers: Option<usize>,
     /// Default 4096; past it the answer is 503 + `retry-after`. 0 = unbounded.
     pub queue: Option<usize>,

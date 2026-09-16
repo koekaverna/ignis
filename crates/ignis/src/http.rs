@@ -1,7 +1,7 @@
 //! hyper 1.x front door. Runs entirely on tokio; hands each request to the
 //! reactor as plain data and awaits the PHP answer on a oneshot.
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -85,6 +85,55 @@ pub fn stalled_threads(limit: std::time::Duration) -> (usize, usize) {
     }
 }
 
+/// Set once when a shutdown signal arrives; the accept loop stops and `drain()` waits out the
+/// requests already in flight (M4-5).
+static SHUTDOWN: tokio::sync::Notify = tokio::sync::Notify::const_new();
+/// Phase 1: health answers "draining" while the listener still accepts.
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+/// Phase 2: the listener stops. Separate from `SHUTTING_DOWN` on purpose — one flag made the
+/// grace window useless, because the accept loop saw the drain the instant health did.
+static LISTENER_STOP: AtomicBool = AtomicBool::new(false);
+
+async fn shutdown_signalled() {
+    if LISTENER_STOP.load(Ordering::Relaxed) {
+        return;
+    }
+    SHUTDOWN.notified().await;
+}
+
+/// True once a drain has started: `/_ignis/health` answers 503 from here on, so a load balancer
+/// takes this instance out of rotation before the socket actually closes.
+pub fn is_draining() -> bool {
+    SHUTTING_DOWN.load(Ordering::Relaxed)
+}
+
+/// Starts the drain: stop accepting, then wait until no request is in flight, bounded by
+/// `IGNIS_DRAIN_TIMEOUT_MS` (default 10 s). Returns how long it took and what was still pending.
+pub async fn drain() -> (std::time::Duration, usize) {
+    // Two phases, because a load balancer needs to be told before the socket goes away:
+    // 1. health answers "draining" (503) while the listener is STILL accepting, for
+    //    `IGNIS_DRAIN_DELAY_MS` — set it to a little more than the balancer's check interval and a
+    //    rolling deploy loses nothing. Default 0: a single instance has nobody to tell.
+    // 2. the listener closes and in-flight requests are given `IGNIS_DRAIN_TIMEOUT_MS`.
+    SHUTTING_DOWN.store(true, Ordering::Relaxed);
+    let delay = env_ms("IGNIS_DRAIN_DELAY_MS", 0);
+    if !delay.is_zero() {
+        tracing::info!(ms = delay.as_millis() as u64, "draining: health reports unavailable, still accepting");
+        tokio::time::sleep(delay).await;
+    }
+    LISTENER_STOP.store(true, Ordering::Relaxed);
+    SHUTDOWN.notify_waiters();
+    let limit = env_ms("IGNIS_DRAIN_TIMEOUT_MS", 10_000);
+    let started = std::time::Instant::now();
+    loop {
+        let pending = totals().pending;
+        if pending == 0 || started.elapsed() >= limit {
+            return (started.elapsed(), pending);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
 /// Everything `/_ignis/metrics` sums over the registered threads, in one pass under one lock.
 pub fn totals() -> crate::metrics::Totals {
     let mut t = crate::metrics::Totals::default();
@@ -138,7 +187,17 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
     let idle_timeout = env_ms("IGNIS_IDLE_TIMEOUT_MS", 60_000);
     rt.spawn(async move {
         loop {
-            let (stream, _peer) = match listener.accept().await {
+            // M4-5: on SIGTERM the listener stops first, so a load balancer sees the port close
+            // while in-flight requests are still being answered on the connections already open.
+            let accepted = tokio::select! {
+                biased;
+                _ = shutdown_signalled() => {
+                    tracing::info!("draining: listener closed, finishing in-flight requests");
+                    return;
+                }
+                r = listener.accept() => r,
+            };
+            let (stream, _peer) = match accepted {
                 Ok(x) => x,
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");
@@ -213,10 +272,16 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
 fn health() -> Response<tonic::body::Body> {
     let (stalled, total) = stalled_threads(std::time::Duration::from_secs(1));
     let restarts = crate::RESTARTS.load(std::sync::atomic::Ordering::Relaxed);
-    let ok = total > 0 && stalled < total;
+    let ok = total > 0 && stalled < total && !is_draining();
     let body = format!(
         "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts}}}\n",
-        if ok { "ok" } else { "unavailable" }
+        if ok {
+            "ok"
+        } else if is_draining() {
+            "draining"
+        } else {
+            "unavailable"
+        }
     );
     Response::builder()
         .status(if ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE })

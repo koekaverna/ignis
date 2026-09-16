@@ -2181,3 +2181,64 @@ procedure plus "what is still unproven" — everything that needs a real tag pus
 **Still missing for production, named:** graceful reload/drain (M4-5) — a redeploy today is a hard
 restart, so in-flight requests are lost; and the HTTP front door has no body-size cap, header
 timeout, idle timeout or connection cap.
+
+## V-56 — the front door gets limits, and `SIGTERM` drains instead of dropping (CONFIRMED)
+
+Date: 2026-09-16T20:31:50Z. The two things missing before this could be exposed to real traffic: nothing
+bounded what a client could ask for, and a redeploy cut in-flight requests.
+
+### Limits (agent-written, re-run by main)
+
+| limit | env var | default | measured |
+|---|---|---|---|
+| request body | `IGNIS_MAX_BODY_BYTES` | 8 MiB | over the cap → **413**, refused at the first frame that would exceed it, never buffered past it |
+| header read | `IGNIS_HEADER_TIMEOUT_MS` | 10 s | a client dribbling headers is **closed** |
+| idle keep-alive | `IGNIS_IDLE_TIMEOUT_MS` | 60 s | an idle connection is **closed** |
+| concurrent connections | `IGNIS_MAX_CONNECTIONS` | 8192 | cap 8 under `wrk -t2 -c64 -d5s`: **76,969 non-2xx** (the raw 503 + `Connection: close`), server **alive** and a single request still **200** afterwards |
+
+`bench/limits.sh` → `body cap: got 413 / header timeout: closed as expected / idle timeout: closed
+as expected / limits_probe bad=0`. Throughput with the limits in place, same shape, default cap:
+**52,747 req/s**, 0 non-2xx.
+
+The first cap test was wrong and is recorded as such: 40 sequential and 30 concurrent `curl`s all
+returned 200 against a cap of 8, because a hello request finishes in microseconds and fewer than 8
+connections were ever live at once. A cap is only exercised by *held* connections — hence `wrk`.
+
+### Drain (M4-5)
+
+Two phases, because a load balancer has to be told before the socket disappears:
+
+1. `SIGTERM`/`SIGINT` → `/_ignis/health` answers **`503 {"status":"draining"}`** while the listener
+   **keeps accepting**, for `IGNIS_DRAIN_DELAY_MS` (default 0; set it above the balancer's check
+   interval for a gapless rolling deploy).
+2. The listener closes; in-flight requests get `IGNIS_DRAIN_TIMEOUT_MS` (default 10 s); the process
+   exits 0 and logs how long it took and what was still pending.
+
+| check (`scratchpad/slow_server.php`, a 1.5 s route) | result |
+|---|---|
+| 5 requests in flight when `SIGTERM` arrives | **all 200**, at 1.501–1.502 s |
+| new connection after the listener closed | refused |
+| `/_ignis/health` during the grace window | **`{"status":"draining"}` 503** |
+| a **new** request during the grace window | **200** |
+| the same after the window | refused |
+| process exit | by itself, `drained; exiting signal="SIGTERM" took_ms=1040` |
+
+**A defect in my own first version, found by measuring rather than reading:** one flag served both
+phases, so the accept loop saw the drain the instant health did and the grace window collapsed to
+nothing (`NEW request in grace: 000`, listener closed after 236 ms of a configured 800). Split into
+`SHUTTING_DOWN` (health) and `LISTENER_STOP` (accept loop); re-measured above.
+
+### Gates
+
+`cargo nextest` 9/9; `bench/limits.sh` clean; `bench/app-check.sh` **7/7** against the owner's
+Symfony app (RSS delta 20 kB over 200 requests); `scripts/smoke.sh` exit 0; phpt counts **and**
+per-test sets all ≥ baseline (12/12 checks), gate exit 0.
+
+### Documentation site
+
+`mkdocs.yml` + `.github/workflows/docs.yml` (GitHub Pages) and `docs/site/**` — concept,
+architecture, the three mechanisms, non-goals, install/quickstart/Symfony/legacy, compatibility,
+a comparison that says "not measured" wherever no V-n exists, and a reference covering 9 `ignis.toml`
+keys, 21 environment variables, 27 public PHP functions and every CLI flag and exit code.
+`mkdocs build --strict` passes; the 10 warnings the first build produced were links to repo-root
+files that would have been **broken in the published site**, now absolute GitHub URLs.

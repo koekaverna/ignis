@@ -2,8 +2,8 @@
 
 Start-to-finish recipe for running a Symfony app on the Ignis runtime image in production. For
 sizing, `/_ignis/health`, logging and the full `ignis.toml`/`IGNIS_*` reference, see
-[operate.md](operate.md); for the bare-image quickstart see [README.md#install](../README.md#install).
-Every claim below links to a `V-n` in [VALIDATION.md](../VALIDATION.md); nothing here is guessed.
+[operate.md](operate.md); for the bare-image quickstart see [README.md#install](https://github.com/koekaverna/ignis/blob/main/README.md#install).
+Every claim below links to a `V-n` in [VALIDATION.md](https://github.com/koekaverna/ignis/blob/main/VALIDATION.md); nothing here is guessed.
 
 PHP version: **8.5.10 ZTS**, embedded in the `ignis` binary — the app needs no PHP of its own at
 runtime (`docker/Dockerfile`). The app itself needs **no code changes**: an untouched
@@ -146,10 +146,20 @@ docker compose -f docker/compose.prod.yaml pull
 docker compose -f docker/compose.prod.yaml up -d
 ```
 
-**There is no graceful reload yet** (`operate.md`: "Not yet — BACKLOG M4-5"): this recreates the
-container, so in-flight requests on the old one are cut, not drained. If that matters for your
-traffic, run two instances behind a load balancer and roll them one at a time, or accept the brief
-gap — there is no third option today.
+**`SIGTERM` drains** (V-56), which is what `docker compose up -d` sends to the old container, so
+in-flight requests are finished rather than cut. Two knobs:
+
+- `IGNIS_DRAIN_DELAY_MS` (default `0`) — how long `/_ignis/health` answers `503 {"status":"draining"}`
+  **while the listener is still accepting**. Set it a little above your load balancer's health-check
+  interval and a rolling deploy loses nothing: the balancer takes the instance out of rotation,
+  requests it already sent are still served, and only then does the socket close.
+- `IGNIS_DRAIN_TIMEOUT_MS` (default `10000`) — how long in-flight requests get to finish after the
+  listener closes. Past it the process exits anyway and logs how many were still pending.
+
+Measured (V-56): five 1.5 s requests in flight when `SIGTERM` arrived all returned 200; a new
+request during the grace window returned 200; after it, connections were refused; the process
+exited by itself. With a single instance there is still a gap between the socket closing and the
+new container binding — run two behind a balancer if that matters.
 
 ## 9. Roll back
 
@@ -160,8 +170,8 @@ docker inspect --format '{{.Config.Image}}' app
 ```
 
 That gives you the exact `ghcr.io/koekaverna/ignis:<sha>` to go back to. To roll back, set that sha
-as the `image:` in `docker/compose.prod.yaml` (or pass it to `docker run`) and repeat step 6 — same
-"no graceful reload" caveat as step 8.
+as the `image:` in `docker/compose.prod.yaml` (or pass it to `docker run`) and repeat step 6; the
+old container drains on `SIGTERM` as in step 8.
 
 ## What to do when it does not start
 

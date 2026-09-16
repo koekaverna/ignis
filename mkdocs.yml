@@ -1,0 +1,66 @@
+site_name: Ignis
+site_description: An application server for PHP — fiber concurrency for unmodified synchronous code.
+repo_url: https://github.com/koekaverna/ignis
+repo_name: koekaverna/ignis
+docs_dir: docs
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.top
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: site/index.md
+  - Concept:
+      - Why Ignis: site/concept/why.md
+      - Architecture: site/concept/architecture.md
+      - The three mechanisms: site/concept/mechanisms.md
+      - What it is not: site/concept/non-goals.md
+  - Getting started:
+      - Install: site/getting-started/install.md
+      - Quickstart: site/getting-started/quickstart.md
+      - Symfony: site/getting-started/symfony.md
+      - Legacy apps: site/getting-started/legacy.md
+  - Reference:
+      - Configuration: site/reference/configuration.md
+      - PHP API: site/reference/php-api.md
+      - CLI: site/reference/cli.md
+  - Operations: operate.md
+  - Compatibility: site/compatibility.md
+  - Comparison: site/comparison.md
+  - ADRs: adr/README.md

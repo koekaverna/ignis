@@ -1,0 +1,1524 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 25 — Laravel on Ignis: Octane server contract vs. symfony/runtime-style vs. classic mode - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-25-laravel-on-ignis-octane-server-contract-vs-symfonyruntime-style-vs-classic-mode" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 25 — Laravel on Ignis: Octane server contract vs. symfony/runtime-style vs. classic mode
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../site/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../site/concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../site/getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../site/reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../site/compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../site/comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../site/comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#sources-read-from-source-commit-pinned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sources (read from source, commit-pinned)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-octane-requires-of-a-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Octane requires of a server
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What Octane requires of a server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-two-interfaces-a-driver-implements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The two interfaces a driver implements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-request-loop-shape-read-from-all-three-shipped-worker-scripts-not-from-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The request loop shape — read from all three shipped worker scripts, not from docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-workerhandle-does-between-requests-srcworkerphp63-120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Worker::handle() does between requests (src/Worker.php:63-120)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#octanestart-server-is-a-closed-dispatch-not-a-plugin-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        octane:start --server=... is a closed dispatch, not a plugin point
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-ignis-already-gives-read-from-docsadr0006-md-validationmd-phpsymfony" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Ignis already gives (read from docs/adr/0006-*.md, VALIDATION.md, php/symfony/)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-decisive-finding-containerinstance-is-process-global-and-octanes-own-concurrency-model-never-has-two-requests-in-it-at-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The decisive finding: Container::$instance is process-global, and Octane's own concurrency model never has two requests in it at once
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#three-options-each-with-a-kill-criterion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three options, each with a kill criterion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laraveloctane-versions-verified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Laravel/Octane versions verified
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#claims-not-independently-verified-from-source-flagged-not-asserted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claims not independently verified from source (flagged, not asserted)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-25-laravel-on-ignis-octane-server-contract-vs-symfonyruntime-style-vs-classic-mode">Research 25 — Laravel on Ignis: Octane server contract vs. symfony/runtime-style vs. classic mode<a class="headerlink" href="#research-25-laravel-on-ignis-octane-server-contract-vs-symfonyruntime-style-vs-classic-mode" title="Permanent link">&para;</a></h1>
+<p>BACKLOG M3-4 (research only, no code). Answers what a new Octane server must implement, what Ignis
+already gives it (ADR-0006/V-11, the Symfony adapter), and recommends one of three routes with a
+kill criterion for each.</p>
+<h2 id="sources-read-from-source-commit-pinned">Sources (read from source, commit-pinned)<a class="headerlink" href="#sources-read-from-source-commit-pinned" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>laravel/octane</code>, cloned to <code>/tmp/cmp/octane</code>, checked out at tag <strong>v2.19.1</strong>, commit
+  <strong><code>68a2516a0318baba0de0e4648f61e335c5e69dca</code></strong> (2026-08-23). <code>composer.json</code> at that commit:
+  <code>"php": "^8.1.0"</code>, <code>"laravel/framework": "^10.10.1|^11.0|^12.0|^13.0"</code>. All line numbers below are
+  against this commit unless stated otherwise.</li>
+<li><code>illuminate/container</code> (the read-only split of <code>laravel/framework</code>'s container), fetched at tag
+  <strong>v12.0.0</strong> via <code>raw.githubusercontent.com/illuminate/container/v12.0.0/Container.php</code> — one file,
+  read in full for the <code>$instance</code>/<code>setInstance</code>/<code>getInstance</code> question below. This is the one
+  non-Octane framework file read for this note; everything else about Laravel's runtime behaviour is
+  taken from what Octane's own source assumes about it, not from <code>laravel/framework</code> itself — flagged
+  "not verified" where it matters.</li>
+<li>In-repo: <code>docs/adr/0006-fiber-scoped-superglobals.md</code>, <code>VALIDATION.md</code> V-11 (and its addendum),
+  V-16 (and its addendum), V-40, <code>php/symfony/src/IgnisWorkerRunner.php</code>,
+  <code>php/symfony/src/IgnisRuntime.php</code>, <code>php/classic.php</code>, <code>docs/pain-map.md</code> item 1.</li>
+</ul>
+<h2 id="what-octane-requires-of-a-server">What Octane requires of a server<a class="headerlink" href="#what-octane-requires-of-a-server" title="Permanent link">&para;</a></h2>
+<h3 id="the-two-interfaces-a-driver-implements">The two interfaces a driver implements<a class="headerlink" href="#the-two-interfaces-a-driver-implements" title="Permanent link">&para;</a></h3>
+<p><code>src/Contracts/Worker.php:8-32</code> — <code>Laravel\Octane\Contracts\Worker</code>:
+<div class="highlight"><pre><span></span><code>boot(): void
+handle(Request $request, RequestContext $context): void
+handleTask($data)
+terminate(): void
+</code></pre></div>
+Octane ships one concrete implementation, <code>Laravel\Octane\Worker</code> (<code>src/Worker.php</code>), used by all
+three shipped backends — a new server does <strong>not</strong> normally implement <code>Worker</code> itself, it implements:</p>
+<p><code>src/Contracts/Client.php:11-27</code> — <code>Laravel\Octane\Contracts\Client</code>:
+<div class="highlight"><pre><span></span><code>marshalRequest(RequestContext $context): array   // [Illuminate\Http\Request, RequestContext]
+respond(RequestContext $context, OctaneResponse $response): void
+error(Throwable $e, Application $app, Request $request, RequestContext $context): void
+</code></pre></div>
+Optional contracts a <code>Client</code> may also implement: <code>ServesStaticFiles</code>
+(<code>src/Contracts/ServesStaticFiles.php</code>, checked at <code>src/Worker.php:65-70</code>), <code>StoppableClient</code>
+(<code>src/Contracts/StoppableClient.php</code>, implemented by <code>RoadRunnerClient</code>), <code>ServerProcessInspector</code>.
+<code>RequestContext</code> (<code>src/RequestContext.php:7-46</code>) is a bare <code>ArrayAccess</code> bag — whatever the client's
+<code>marshalRequest</code> needs (<code>$context-&gt;swooleRequest</code>, <code>$context-&gt;psr7Request</code>, nothing at all for
+FrankenPHP) — the server defines its own shape.</p>
+<h3 id="the-request-loop-shape-read-from-all-three-shipped-worker-scripts-not-from-docs">The request loop shape — read from all three shipped worker scripts, not from docs<a class="headerlink" href="#the-request-loop-shape-read-from-all-three-shipped-worker-scripts-not-from-docs" title="Permanent link">&para;</a></h3>
+<p><code>bin/frankenphp-worker.php:73-76</code>:
+<div class="highlight"><pre><span></span><code><span class="x">[$request, $context] = $frankenPhpClient-&gt;marshalRequest(new RequestContext());</span>
+<span class="x">$worker-&gt;handle($request, $context);</span>
+</code></pre></div>
+run inside <code>while ($requestCount &lt; $maxRequests &amp;&amp; @frankenphp_handle_request($handleRequest)) { … }</code>
+(<code>bin/frankenphp-worker.php:88</code>) — <code>frankenphp_handle_request()</code> is a blocking call that hands back
+control once per HTTP request, invoking the closure synchronously.</p>
+<p><code>bin/roadrunner-worker:44-56</code>:
+<div class="highlight"><pre><span></span><code><span class="x">while ($psr7Request = $psr7Client-&gt;waitRequest()) {</span>
+<span class="x">    …</span>
+<span class="x">    [$request, $context] = $roadRunnerClient-&gt;marshalRequest(new RequestContext([&#39;psr7Request&#39; =&gt; $psr7Request]));</span>
+<span class="x">    $worker-&gt;handle($request, $context);</span>
+<span class="x">}</span>
+</code></pre></div>
+<code>PSR7Worker::waitRequest()</code> blocks for the next request.</p>
+<p>Swoole does not use a hand-rolled loop; the HTTP server's own <code>onRequest</code> callback plays the same
+role (<code>bin/createSwooleServer.php</code>, not read line-by-line here, but <code>SwooleClient::marshalRequest</code>
+(<code>src/Swoole/SwooleClient.php:37-46</code>) is the same <code>[Request, RequestContext]</code> shape).</p>
+<p><strong>All three loops call <code>$worker-&gt;handle()</code> once, wait for it to return, then read the next request.</strong>
+This is not incidental — see "the decisive finding" below.</p>
+<h3 id="what-workerhandle-does-between-requests-srcworkerphp63-120">What <code>Worker::handle()</code> does between requests (<code>src/Worker.php:63-120</code>)<a class="headerlink" href="#what-workerhandle-does-between-requests-srcworkerphp63-120" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>CurrentApplication::set($sandbox = clone $this-&gt;app)</code> (line 75) — clone the long-lived <code>$app</code>
+   into a per-request <code>$sandbox</code>.</li>
+<li><code>$gateway = new ApplicationGateway($this-&gt;app, $sandbox)</code>; <code>$gateway-&gt;handle($request)</code>
+   (lines 77, 84) dispatches <code>RequestReceived</code>, then <code>$sandbox-&gt;make(Kernel::class)-&gt;handle($request)</code>
+   (<code>src/ApplicationGateway.php:26-39</code>).</li>
+<li><code>$this-&gt;client-&gt;respond(...)</code> sends the response (line 95-98).</li>
+<li><code>$gateway-&gt;terminate($request, $response)</code> → <code>Kernel::terminate()</code> + <code>RequestTerminated</code> event +
+   <code>Route::flushController()</code> (<code>src/ApplicationGateway.php:44-55</code>).</li>
+<li><code>finally</code>: <code>$sandbox-&gt;flush()</code>, forget the Blade/PHP view-engine-resolver entries on the <strong>root</strong>
+   <code>$this-&gt;app</code> (lines 108-111), <code>unset()</code> the locals, <code>CurrentApplication::set($this-&gt;app)</code> restores
+   the root container as "current" for the next iteration (line 118).</li>
+</ol>
+<p><code>CurrentApplication::set()</code> (<code>src/CurrentApplication.php:14-23</code>) is the mechanism:
+<div class="highlight"><pre><span></span><code><span class="x">$app-&gt;instance(&#39;app&#39;, $app);</span>
+<span class="x">$app-&gt;instance(Container::class, $app);</span>
+<span class="x">Container::setInstance($app);</span>
+<span class="x">Facade::clearResolvedInstances();</span>
+<span class="x">Facade::setFacadeApplication($app);</span>
+</code></pre></div></p>
+<p>Lifecycle events and the listeners that reset state — <code>config/octane.php:66-119</code> — <code>RequestReceived</code>
+runs <code>Octane::prepareApplicationForNextRequest()</code> (8 listeners: locale, queued cookies, session,
+auth, request scheme, <code>GiveNewRequestInstanceToApplication</code>/<code>…ToPaginator</code>) plus
+<code>Octane::prepareApplicationForNextOperation()</code> (<code>src/Concerns/ProvidesDefaultConfigurationOptions.php:27-64</code>)
+— <strong>28 <code>GiveNewApplicationInstanceTo*</code>/<code>Flush*</code> listener classes</strong>, one per Laravel manager singleton
+that captured a reference to the previous sandbox: <code>DatabaseManager</code>, <code>SessionManager</code>,
+<code>CacheManager</code>, <code>LogManager</code>, <code>QueueManager</code>, <code>MailManager</code>, <code>Router</code>, <code>ViewFactory</code>, <code>URL</code> generator,
+the authorization <code>Gate</code>, <code>BroadcastManager</code>, <code>FilesystemManager</code>, <code>ValidationFactory</code>,
+<code>PipelineHub</code>, plus <code>FlushDatabaseQueryLog</code>, <code>FlushArrayCache</code>, <code>FlushStrCache</code>,
+<code>FlushTranslatorCache</code>, <code>FlushMonologState</code>, <code>FlushVite</code>, and first-party package hooks for Inertia,
+Livewire, Scout, Socialite. <code>OperationTerminated</code> additionally runs <code>FlushOnce</code>
+(<code>src/Listeners/FlushOnce.php:14-16</code>, calls <code>Illuminate\Support\Once::flush()</code>) and
+<code>FlushTemporaryContainerInstances</code> (<code>src/Listeners/FlushTemporaryContainerInstances.php</code>, calls
+<code>$event-&gt;app-&gt;resetScope()</code>/<code>forgetScopedInstances()</code> and <code>forgetInstance()</code> on every
+<code>config('octane.flush')</code> binding).</p>
+<h3 id="octanestart-server-is-a-closed-dispatch-not-a-plugin-point"><code>octane:start --server=...</code> is a closed dispatch, not a plugin point<a class="headerlink" href="#octanestart-server-is-a-closed-dispatch-not-a-plugin-point" title="Permanent link">&para;</a></h3>
+<p><code>src/Commands/StartCommand.php:49-55</code>:
+<div class="highlight"><pre><span></span><code><span class="x">$server = $this-&gt;option(&#39;server&#39;) ?: config(&#39;octane.server&#39;);</span>
+<span class="x">return match ($server) {</span>
+<span class="x">    &#39;swoole&#39; =&gt; $this-&gt;startSwooleServer(),</span>
+<span class="x">    &#39;roadrunner&#39; =&gt; $this-&gt;startRoadRunnerServer(),</span>
+<span class="x">    &#39;frankenphp&#39; =&gt; $this-&gt;startFrankenPhpServer(),</span>
+<span class="x">    default =&gt; $this-&gt;invalidServer($server),</span>
+<span class="x">};</span>
+</code></pre></div>
+There is no config-driven registry mapping a server name to a <code>Client</code>/command class — it is a
+hard-coded <code>match</code>. <strong>A fourth server cannot make <code>octane:start --server=ignis</code> work without patching
+this file.</strong> A driver can only add its own Artisan command (e.g. <code>octane:ignis</code>, the same shape as
+<code>octane:swoole</code>/<code>octane:roadrunner</code>) and document that entry point; it cannot honestly claim
+"<code>octane:start --server=ignis</code>" as BACKLOG's phrasing assumes. This is a verified constraint, not a
+guess — I read the whole <code>match</code> and grepped for a server registry and found none.</p>
+<h2 id="what-ignis-already-gives-read-from-docsadr0006-md-validationmd-phpsymfony">What Ignis already gives (read from <code>docs/adr/0006-*.md</code>, <code>VALIDATION.md</code>, <code>php/symfony/</code>)<a class="headerlink" href="#what-ignis-already-gives-read-from-docsadr0006-md-validationmd-phpsymfony" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>ADR-0006</strong> (accepted, V-11): the four superglobals (<code>$_SERVER</code>/<code>$_GET</code>/<code>$_POST</code>/<code>$_COOKIE</code>) are
+  swapped per fiber by a <code>zend_observer</code> fiber-switch hook, at +100 ns/switch (V-11), ≤ 0.7 µs after
+  the E13' lazy-swap fix (V-11 addendum). <code>Ignis\Scope</code> is a userland <code>WeakMap</code> keyed by
+  <code>Fiber::getCurrent()</code> for app-level per-request state.</li>
+<li><strong>V-16</strong>: <code>symfony/skeleton</code> in worker mode with the container's <code>request_stack</code> service overridden
+  to <code>Ignis\Symfony\FiberRequestStack</code> — 100 concurrent <code>/whoami</code> requests, 0 mismatches, because
+  Symfony's own DI container lets you <em>substitute</em> the one stateful service (<code>RequestStack</code>) with a
+  fiber-aware one. Symfony's container itself has no equivalent of <code>Container::$instance</code>.</li>
+<li><strong><code>php/symfony/src/IgnisWorkerRunner.php:24-27</code></strong>: boots the kernel once, and per request just
+  reads <code>$_SERVER</code>/<code>$_GET</code>/<code>$_POST</code>/<code>$_COOKIE</code> (already fiber-scoped) into
+  <code>Request::createFromGlobals()</code>, plus a hand-built <code>Request</code> for non-form bodies. This is
+  structurally identical to <code>FrankenPhpClient::marshalRequest()</code> (<code>src/FrankenPhp/FrankenPhpClient.php:19-25</code>),
+  which is just <code>Request::capture()</code> — FrankenPHP populates real superglobals per worker call the
+  same way Ignis's observer does per fiber. <strong>This part of the problem is already solved and proven</strong>
+  (V-16, V-40) for the request side.</li>
+<li><strong><code>php/classic.php</code></strong>: <code>Ignis\Classic\serve()</code> boots nothing itself — <code>Runner::$run</code> does a plain
+  <code>include $file</code> per request inside <code>Ignis\serve()</code>'s fiber, with a documented assumption
+  (<code>php/classic.php:9-17</code>): "a classic script must not suspend (no <code>Ignis\sleep</code>/async I/O inside the
+  include)" because the header table and output buffers are per-OS-thread, not per-fiber. Classic
+  mode is therefore <strong>strictly one script running to completion per fiber-turn on its thread</strong> — no
+  two classic requests are ever mid-execution at once on the same thread.</li>
+</ul>
+<h2 id="the-decisive-finding-containerinstance-is-process-global-and-octanes-own-concurrency-model-never-has-two-requests-in-it-at-once">The decisive finding: <code>Container::$instance</code> is process-global, and Octane's own concurrency model never has two requests in it at once<a class="headerlink" href="#the-decisive-finding-containerinstance-is-process-global-and-octanes-own-concurrency-model-never-has-two-requests-in-it-at-once" title="Permanent link">&para;</a></h2>
+<p><code>illuminate/container</code> v12.0.0, <code>Container.php:30</code>: <code>protected static $instance;</code> — a class-static
+property, one per PHP engine (per Ignis OS thread, under ZTS, not per fiber: ZTS gives each thread
+its own copy of class statics, but a thread's fibers share it, which is exactly why ADR-0006 needed
+an observer hook for superglobals — those are also thread-shared until swapped). <code>setInstance()</code>
+(<code>Container.php:1624-1627</code>) writes <code>static::$instance = $container</code> unconditionally, and <code>Worker::handle()</code>
+calls it once per request via <code>CurrentApplication::set()</code> (<code>src/CurrentApplication.php:19</code>).
+<code>Facade::clearResolvedInstances()</code>/<code>setFacadeApplication()</code> in the same method touch Facade's own
+static cache. The ~28 <code>GiveNewApplicationInstanceTo*</code> listeners exist <em>because</em> Laravel's manager
+singletons (<code>DatabaseManager</code>, <code>SessionManager</code>, <code>Router</code>, <code>ViewFactory</code>, the auth <code>Gate</code>, …) hold a
+captured reference to the sandbox from the <em>previous</em> request and have to be manually re-pointed —
+this is Laravel's container model working exactly as designed: one mutable, process-wide object
+graph, reset by discipline between requests, not isolated by scope.</p>
+<p>Octane never has to make this concurrency-safe, because <strong>it never runs two requests through
+<code>Worker::handle()</code> at once on the same engine</strong>, verified directly in the loops that drive it:
+- FrankenPHP: <code>frankenphp_handle_request($handleRequest)</code> is called, blocks, returns, and only then
+  is it called again (<code>bin/frankenphp-worker.php:88</code>).
+- RoadRunner: <code>while ($psr7Request = $psr7Client-&gt;waitRequest())</code> — <code>waitRequest()</code> blocks for the
+  next request; <code>$worker-&gt;handle()</code> runs to completion first (<code>bin/roadrunner-worker:44-56</code>).
+- Swoole: <code>defaultServerOptions()</code> sets <strong><code>'enable_coroutine' =&gt; false</code></strong> explicitly
+  (<code>src/Commands/StartSwooleCommand.php:126</code>) — Octane deliberately disables Swoole's own per-request
+  coroutine concurrency. Concurrency across all three backends comes from <strong>multiple OS
+  worker processes</strong> (<code>worker_num</code> / RoadRunner workers / FrankenPHP threads), never from
+  interleaving two requests on one engine.</p>
+<p>Ignis's entire value proposition (<code>CLAUDE.md</code>, ADR-0006, V-11) is the opposite: many fibers,
+concurrent I/O, one engine per OS thread. Running Octane's <code>Worker::handle()</code> — unmodified — as the
+body of two interleaved <code>Ignis\serve()</code> fibers on one thread would let the second fiber's
+<code>CurrentApplication::set()</code> clobber the container, facades, and every one of those ~28 manager
+singletons the first fiber is still relying on mid-request, the moment the first fiber suspends
+(<code>Ignis\sleep</code>, an awaited pg query, an outbound HTTP call). This is exactly the class of bug
+ADR-0006 fixed for <code>$_SERVER</code>/<code>$_GET</code>/<code>$_POST</code>/<code>$_COOKIE</code>, and exactly the class <code>docs/pain-map.md</code>
+item 1 already flags as open: "userland statics remain the app's problem (leak detector NOT
+STARTED)". Laravel's container is such a static, and it is not optional plumbing — <code>app()</code>,
+<code>resolve()</code>, every Facade, and Octane's own reset listeners all go through it.</p>
+<h2 id="three-options-each-with-a-kill-criterion">Three options, each with a kill criterion<a class="headerlink" href="#three-options-each-with-a-kill-criterion" title="Permanent link">&para;</a></h2>
+<p><strong>(a) An Octane server/client for Ignis</strong> (<code>Ignis\Octane\IgnisClient implements Client</code>, a
+<code>bin/ignis-worker.php</code> shaped like <code>bin/frankenphp-worker.php</code>, an <code>octane:ignis</code> Artisan command).
+Structurally the closest fit — <code>IgnisClient::marshalRequest()</code> would be <code>FrankenPhpClient</code>'s
+<code>Request::capture()</code> line verbatim, since ADR-0006 already gives per-fiber superglobals — and it
+gets all ~28 state-reset listeners for free. But it is only <em>safe</em> the moment two fibers can be
+mid-<code>handle()</code> at once, which is the reason to want Ignis over Octane's existing backends at all. Not
+buildable today without first fiber-scoping <code>Container::$instance</code> (and <code>Facade</code>'s static caches) the
+way ADR-0006 scoped the four superglobals — an engineering item at least as large as ADR-0006 itself,
+unverified for feasibility, and untested for every manager singleton Octane's listener list names.
+<strong>Kill criterion:</strong> a V-11/V-16-style concurrency test — N interleaved fiber requests each reading
+<code>app()</code>, <code>Auth::user()</code>/a per-request-bound value, <code>DB::connection()</code>, and a bound service resolved
+mid-request while another fiber suspends and resumes — must show <strong>0 mismatches</strong>, the same bar V-11
+(superglobals) and V-16 (<code>RequestStack</code>) already cleared. If that test cannot be made to pass without
+serializing <code>handle()</code> calls per thread (i.e., without giving up concurrent fibers, which defeats the
+point), kill this option; ship (c) instead.</p>
+<p><strong>(b) A symfony/runtime-style runner</strong> (boot <code>bootstrap/app.php</code> once, call
+<code>Illuminate\Contracts\Http\Kernel::handle()</code> per fiber, hand-reset what Octane resets). This
+inherits the identical <code>Container::$instance</code> problem as (a) — nothing about it is Octane-specific,
+it is intrinsic to Laravel's container — but discards Octane's ~28 already-written, already-tested
+reset listeners and the sandbox-clone/<code>ApplicationGateway</code> machinery, requiring them to be
+reimplemented by hand with no source to copy from (Octane's classes are the only public reference
+implementation of "reset Laravel's manager singletons between requests" this research found).
+<strong>Kill criterion:</strong> compare listener/class count needed against (a) — it is strictly more code for
+the same unresolved concurrency problem, so it is dominated by (a) before any test is run; kill it
+immediately, do not build a prototype.</p>
+<p><strong>(c) <code>php/classic.php</code> per request, no worker mode.</strong> <code>bootstrap/app.php</code> and <code>vendor/autoload.php</code>
+are <code>include</code>d fresh inside the classic fiber every request, so <code>Container::$instance</code> is set by
+Laravel's own bootstrap to a brand-new object each time — there is no cross-request sharing to
+protect, because classic mode's own contract ("a classic script must not suspend") already forbids
+the interleaving that would make it dangerous. This needs <strong>zero new Ignis or adapter code</strong> — the
+same <code>php/classic.php</code> that already serves plain document roots. Cost: full framework boot every
+request (autoload + service providers), the same price <code>php-fpm</code> already pays today, no Octane-style
+warm-container win, and any blocking call (PDO, sync HTTP) blocks the whole OS thread for that
+request's duration (V-12 already found PDO cannot be hooked). <strong>Kill criterion:</strong> benchmark a
+<code>laravel/laravel</code> skeleton's <code>/</code> welcome route through <code>php/classic.php</code> (same methodology as V-40)
+against <code>php-fpm</code> (V-6's floor, 9.9k req/s for a routeless hello) at 1 and N threads; if it is not at
+least competitive with that floor, classic mode is not even a safe "no worse than today" fallback and
+Laravel should wait rather than ship a slow default.</p>
+<h2 id="recommendation">Recommendation<a class="headerlink" href="#recommendation" title="Permanent link">&para;</a></h2>
+<p>Ship <strong>(c) now</strong> for M3-5: it requires no new code, is safe by construction (not by discipline), and
+matches "M3 — Real apps unchanged." Treat <strong>(a)</strong> as the correct end state but <strong>not buildable yet</strong>:
+it needs a precursor ADR that fiber-scopes <code>Illuminate\Container\Container::$instance</code> and
+<code>Facade</code>'s static caches, on the same model as ADR-0006, validated by the concurrency test in (a)'s
+kill criterion before any Octane <code>Worker::handle()</code> call is allowed inside an Ignis fiber that can be
+interleaved. <strong>Drop (b) outright</strong> — it is strictly dominated by (a), same unsolved problem, more
+code, no reference implementation to build from. This means BACKLOG M3-5 as currently scoped ("the
+V-16 RequestStack test, for Laravel's container", implying concurrent interleaving) cannot be met
+safely by any option available today; M3-5 should either be re-scoped to (c)'s serialized-by-
+construction semantics (in which case the interleaving test is trivially true and proves nothing new)
+or explicitly re-blocked on the precursor container-scoping ADR.</p>
+<h2 id="laraveloctane-versions-verified">Laravel/Octane versions verified<a class="headerlink" href="#laraveloctane-versions-verified" title="Permanent link">&para;</a></h2>
+<p><code>laravel/octane</code> v2.19.1 (commit <code>68a2516a0318baba0de0e4648f61e335c5e69dca</code>), requiring
+<code>laravel/framework</code> <code>^10.10.1|^11.0|^12.0|^13.0</code>. <code>illuminate/container</code> v12.0.0 read directly for
+the <code>Container::$instance</code> claim. No other <code>laravel/framework</code> component was read from source in
+this research.</p>
+<h2 id="claims-not-independently-verified-from-source-flagged-not-asserted">Claims not independently verified from source (flagged, not asserted)<a class="headerlink" href="#claims-not-independently-verified-from-source-flagged-not-asserted" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The exact behaviour of <code>frankenphp_handle_request()</code> (its C implementation) beyond what its usage
+  in <code>bin/frankenphp-worker.php</code> shows (a blocking call, one request per invocation) — not read; only
+  the PHP-side call site was read.</li>
+<li><code>Spiral\RoadRunner\Http\PSR7Worker::waitRequest()</code>'s internal blocking behaviour — not read;
+  inferred from the <code>while ($psr7Request = $psr7Client-&gt;waitRequest())</code> loop shape only.</li>
+<li>Swoole's coroutine scheduler semantics beyond the one <code>enable_coroutine =&gt; false</code> config line read
+  in <code>StartSwooleCommand.php:126</code> — not read from the Swoole extension source.</li>
+<li>Any behaviour of <code>laravel/framework</code> outside <code>illuminate/container</code>'s <code>Container.php</code> (e.g. whether
+  any Laravel manager other than the ~28 named by Octane's listener list also holds a stale sandbox
+  reference) — not read; taken only from what Octane's own listener list documents it resets.</li>
+<li>(Resolved while drafting this note, no longer open) Whether Octane has any undocumented
+  server-registration extension point: <code>src/OctaneServiceProvider.php</code> was read in full —
+  <code>registerCommands()</code> (lines ~186-200) registers exactly <code>StartCommand</code>,
+  <code>StartRoadRunnerCommand</code>, <code>StartSwooleCommand</code>, <code>StartFrankenPhpCommand</code>, <code>ReloadCommand</code>,
+  <code>StatusCommand</code>, <code>StopCommand</code>. No config-driven or container-bound registry of servers exists
+  anywhere in the provider. This confirms the <code>StartCommand::handle()</code> <code>match</code> finding above with no
+  remaining doubt.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

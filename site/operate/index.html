@@ -1,0 +1,1563 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+        <link rel="prev" href="../site/reference/cli/">
+      
+      
+        <link rel="next" href="../site/compatibility/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Operations - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#operating-ignis" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Operations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../site/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../site/concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../site/getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../site/reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../site/compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../site/comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#start-and-stop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start and stop
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-watch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to watch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#symptom-cause-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Symptom → cause → action
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../site/comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#start-and-stop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start and stop
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-watch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to watch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#symptom-cause-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Symptom → cause → action
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="operating-ignis">Operating Ignis<a class="headerlink" href="#operating-ignis" title="Permanent link">&para;</a></h1>
+<p>For a team running <code>ignis serve</code> in production: how it starts, what to watch, what to do when
+something is wrong, and where the edges of the runtime are. See
+<a href="https://github.com/koekaverna/ignis/blob/main/ignis.toml.example">ignis.toml.example</a> for the config file and <a href="https://github.com/koekaverna/ignis/blob/main/README.md">README.md</a> for
+install/run. Numbers here link to <a href="https://github.com/koekaverna/ignis/blob/main/VALIDATION.md">VALIDATION.md</a> (<code>V-n</code>); none are guessed —
+where nothing has been measured or wired up yet, this file says "not yet exposed" instead.</p>
+<h2 id="start-and-stop">Start and stop<a class="headerlink" href="#start-and-stop" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>$ ignis serve --config ignis.toml           # entry script + flags come from the file
+$ ignis serve app.php                       # entry script as a positional arg, defaults for the rest
+$ ignis [--threads N] [--offload M] [--supervise] script.php [args...]   # the pre-config form
+$ ignis --version
+</code></pre></div>
+<p><code>serve</code> bridges <code>ignis.toml</code> into the environment (file value, then product default, each only
+where the environment is silent) before rewriting itself into the second form above, so
+<code>IGNIS_THREADS=8 ignis serve</code> beats the file (V-38). Precedence overall: CLI flag &gt; environment
+variable &gt; <code>ignis.toml</code> key &gt; built-in default; an unknown key in the file is a parse error, not a
+silently ignored one.</p>
+<p><strong>What a clean start looks like.</strong> At the default log floor (<code>warn</code>), a clean start prints
+<strong>nothing</strong> — V-39 measured this directly ("log at the default warn floor: empty"). The three
+lines an operator might expect to see — <code>universal park installed</code>, the boot self-check's
+<code>park self-check ok</code>, and <code>listening</code> — are all logged at <code>info</code>, so they only appear with
+<code>RUST_LOG=info</code> or <code>log = "info"</code> in the file. There is no separate "started successfully" line at
+<code>warn</code>; silence after boot <strong>is</strong> the success signal, and <code>/_ignis/health</code> returning <code>200</code> (below)
+is the positive confirmation to script against, not a log line.</p>
+<p><strong>What a refusal looks like.</strong> The boot self-check (ADR-0037 §4(a)) runs once, after PHP's MINIT
+and before any worker thread exists: for every third-party library the park policy names and that
+is actually loaded, it makes that library's own code call an interposed symbol and checks the call
+reached the runtime. If it did not, the process <strong>refuses to start: exit code 2</strong>, with a message
+printed to stderr unconditionally (not gated by log level) naming the library, e.g.:</p>
+<div class="highlight"><pre><span></span><code>ignis: universal park is enabled and the policy names [&quot;libpq&quot;], but a call made by its own code
+did not reach the interposed symbols — the library is loaded and its blocking calls would silently
+block the thread. Check that the binary exports them (`nm -D`) and that no LD_PRELOAD shadows
+them; IGNIS_SKIP_PARK_SELFCHECK=1 starts anyway, IGNIS_PARK= disables the policy.
+</code></pre></div>
+<p>This is not a warning to triage later — it is the difference between "this policy will park
+correctly" and "this policy will silently block a worker thread the first time it's used", proven
+at boot instead of discovered in an incident (V-52: the same class of blind spot that let research
+28 read a <code>getaddrinfo</code> probe that hit 0 times as success when it should have read as "not tested
+yet"). Two escape hatches, both loud: <code>IGNIS_SKIP_PARK_SELFCHECK=1</code> starts anyway and logs a <code>warn</code>
+line; <code>IGNIS_PARK=</code> (empty) removes the policy so there is nothing to probe. Other loud-refusal
+exits at <code>2</code>: a misspelled <code>ignis.toml</code> key, a missing <code>entry</code>, or an entry script that does not
+exist (V-38).</p>
+<p><strong>Other invalid-argument and misconfiguration errors</strong> — no entry script given, an entry file that
+does not exist — print a one-line usage/error message to stderr and exit <code>2</code> (V-38); these are
+caught before any thread is created.</p>
+<h2 id="what-to-watch">What to watch<a class="headerlink" href="#what-to-watch" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>signal</th>
+<th>threshold that means trouble</th>
+<th>where visible today</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>threads stalled</td>
+<td>any thread that has not called <code>ignis_poll</code> for <strong>&gt; 1 s</strong> is counted <code>stalled</code> (the watchdog, ADR-0012); <code>/_ignis/health</code> flips from <code>200</code> to <code>503</code> when no thread is both alive and unstalled (V-38)</td>
+<td><code>/_ignis/health</code> (<code>stalled</code> field, answered by the runtime, exempt from the budget by construction); log <code>WARN php threads busy for &gt; 1 s without polling</code> (V-17)</td>
+</tr>
+<tr>
+<td>worker restarts</td>
+<td>any nonzero and climbing <code>restarts</code>; a slot that hits <strong>10 restarts/minute</strong> (ADR-0012's own cap) stops being respawned, so capacity for that slot is gone until the process restarts</td>
+<td><code>/_ignis/health</code> (<code>restarts</code> field, cumulative); log <code>WARN worker script ended; respawning … status=NNN</code> for a fatal, <code>DEBUG script called exit()</code> for a clean exit (V-17, H-10)</td>
+</tr>
+<tr>
+<td>requests queued and rejected</td>
+<td>a <code>503</code> with header <code>retry-after: 1</code> is the budget shedding load by design (ADR-0019), not a crash; watch <code>rejected</code> trending up against sustained legitimate traffic, not a single spike</td>
+<td><strong>not yet exposed by the runtime.</strong> An application can expose its own <code>/stats</code> route calling <code>Ignis\Loop</code>'s counters (V-38 shows the shape: <code>budget</code>, <code>queue_depth</code>, <code>inflight</code>, <code>queued</code>, <code>queued_peak</code>, <code>queued_admitted</code>, <code>rejected</code>) — this is application code, not a runtime endpoint</td>
+</tr>
+<tr>
+<td>park failures</td>
+<td><strong>any nonzero value</strong> means a fiber thread blocked where the policy said it should have parked (V-52) — this is always worth paging on, not a threshold to tune</td>
+<td>log only: <code>WARN universal park: policy says park but the call could not park — it blocked the thread</code> (<code>what=&lt;symbol&gt;</code>). The counter itself (<code>PARK_FAILED</code>) is <strong>not yet exposed</strong> through <code>/_ignis/health</code> or any PHP-callable stats function — only the log line is visible today</td>
+</tr>
+<tr>
+<td>PostgreSQL lease age</td>
+<td>a lease older than <code>IGNIS_PG_LEASE_WARN_MS</code> (default 5000 ms) is a held connection (V-42/V-43/V-44)</td>
+<td>log: <code>WARN pg lease held longer than IGNIS_PG_LEASE_WARN_MS lease=N held_ms=N</code> at release (V-44); live gauge via calling <code>ignis_pg_stats($pool_id)</code> from PHP (<code>oldest_lease_ms</code>, <code>leases_over_warn</code>) — an application must expose this itself (e.g. its own <code>/stats</code> route); <strong>not yet exposed</strong> as a runtime endpoint</td>
+</tr>
+<tr>
+<td>RSS</td>
+<td><code>memory_limit</code> is per thread (ADR-0025) — an OOM in one fiber ends that thread's script and every other fiber on it; size against the marginal-cost formula in <code>ignis.toml.example</code>'s comments and V-37 (<strong>~14.7 kB per admitted fiber, ~33 kB per held connection whether admitted or queued</strong>)</td>
+<td><strong>not yet exposed</strong> as a runtime metric — read the process's own RSS externally (<code>ps</code>, cgroup accounting, a node exporter). A Prometheus renderer exists in the source (<code>ignis_pg_lease_age_seconds_max</code>, <code>ignis_threads_stalled</code>, <code>ignis_park_failed_total</code> and others are already defined) but it is not wired to any HTTP route yet — no V-n validates it reachable, and BACKLOG M4-4/ADR-0022 record <code>/_ignis/metrics</code> as unbuilt. Do not query for it; it will 404</td>
+</tr>
+</tbody>
+</table>
+<p><code>/_ignis/health</code> itself: answered by the Rust runtime before dispatch, never by PHP, so it keeps
+answering while every PHP thread is wedged (ADR-0022). Example:</p>
+<div class="highlight"><pre><span></span><code>$ curl -w &#39; [%{http_code}]&#39; http://127.0.0.1:8096/_ignis/health
+{&quot;status&quot;:&quot;ok&quot;,&quot;threads&quot;:2,&quot;stalled&quot;:0,&quot;restarts&quot;:0} [200]
+</code></pre></div>
+<h2 id="symptom-cause-action">Symptom → cause → action<a class="headerlink" href="#symptom-cause-action" title="Permanent link">&para;</a></h2>
+<p><strong>A thread is wedged in a blocking call that never returns.</strong> Symptom: <code>stalled</code> in
+<code>/_ignis/health</code> stays at 1+ and does not clear; the watchdog's <code>WARN</code> line repeats. Cause: this is
+what universal park cannot cover — a blocking call on a <strong>regular file</strong> (epoll refuses regular
+files, so <code>would_block</code> forwards it and the OS thread genuinely waits: <code>file_get_contents()</code> on
+disk, the opcache file cache, <code>ext/session</code>'s <code>flock(LOCK_EX)</code> on the session file — ADR-0024,
+research 30 group (d)), or a library whose policy row is deliberately <code>block</code> because it holds a
+lock across the call (ADR-0020; H36/V-51 proved the alternative — <code>park</code> — deadlocks such a
+library). Action: this thread is not crashed, so the supervisor does not help; identify the call
+with <code>IGNIS_PARK_TRACE=1</code> on a reproduction (one stderr line per park decision — expensive, use
+off of production traffic), then either move the call to an offload worker, avoid the blocking
+resource, or accept the stall as a known limit of that code path. If it traces to session-file
+locking specifically, see the next row.</p>
+<p><strong>A session-file lock stalls a thread.</strong> Symptom: same as above (a thread that will not clear
+<code>stalled</code>), specifically under a file-based session handler with concurrent requests that share a
+session id. Cause: <code>ext/session/mod_files.c</code>'s <code>flock(LOCK_EX)</code> on the session file is a regular-file
+block (see above) — with one PHP thread per core and the "two tabs, same session" pattern this is a
+real, reproducible stall (BACKLOG R-SESS; ADR-0024's added 2026-09-17 non-goal). Action: no runtime
+fix exists yet. Route session storage away from the default file handler (a custom handler backed
+by the PostgreSQL pool, or another store) or avoid concurrent requests against one session id under
+load.</p>
+<p><strong>The request queue is filling up.</strong> Symptom: rising <code>queued</code>/<code>rejected</code> on an application's own
+<code>/stats</code> route (not yet a runtime endpoint — see the watch table); clients see <code>503</code> with
+<code>retry-after: 1</code>. Cause: offered concurrency exceeds <code>threads × budget.fibers</code> plus
+<code>budget.queue</code> (ADR-0019) — either a legitimate burst, or fibers being held open longer than
+expected by a slow downstream (check the PostgreSQL lease age and park-failure rows first). Action:
+if the load is legitimate and sustained, raise <code>budget.fibers</code>/<code>budget.queue</code> per the sizing
+formula (V-37) and recheck RSS headroom; if a downstream is the real cause, fix that — raising the
+budget only defers the same problem to a bigger queue.</p>
+<p><strong>A fatal ends a worker.</strong> Symptom: log <code>WARN worker script ended; respawning (opcache SHM
+untouched) slot=N status=255</code>; <code>/_ignis/health</code>'s <code>restarts</code> increments. Cause: an uncaught error,
+exception, or bailout in a request fiber (ADR-0012). Action: the supervisor respawns the thread
+automatically, inside its ~50 ms tick, with opcache SHM untouched — no recompilation, and
+throughput on the rest of the process is unaffected while the respawn happens (V-17: 95.7% of
+baseline recovery, other threads kept serving at 90,108 req/s / p99 2.67 ms). Nothing to do for
+availability by itself, <strong>but the request that was in flight on that thread is lost</strong> — it receives
+no response (ADR-0024 §1: no durability across crashes) — so the client-side fix is an idempotency
+key or retry, and the operator-side fix is finding and patching whatever fataled. Watch for the
+10-restarts-per-minute-per-slot cap: past it, that slot stops respawning and stays down until the
+process itself restarts.</p>
+<p><strong>An unguarded top-level function kills a classic worker.</strong> Symptom: in classic mode, a second (or
+later) request to the same worker fails with an uncatchable <code>Fatal error: Cannot redeclare function
+…</code>, and that worker's script ends (the supervisor respawns it — see above, and the request that hit
+the redeclare is lost). Cause: classic mode has two shapes, and this is specific to the newer one.
+<code>Ignis\Classic\serve()</code> (fiber-based) never lets entry-script top-level state reach request code at
+all: a top-level <code>$x = ...</code> never becomes <code>$GLOBALS['x']</code>, and <code>global $x</code> inside a function reads
+<code>NULL</code> — surprising, but harmless, because nothing accumulates. The classic <strong>worker loop</strong>
+(<code>Ignis\Classic\listen()</code>/<code>accept()</code>/<code>respond()</code>, <code>examples/classic_worker.php</code>) fixes that half —
+entry-script globals behave exactly like stock <code>php -S</code> (V-54) — by including the entry script at
+the true top level of one long-lived PHP execution, which is also why the <em>other</em> half breaks: a
+top-level <code>function foo() {}</code> or <code>class Foo {}</code> from request 1 is still in the function/class table
+on request 2, and PHP's redeclare fatal cannot be caught by any handler. Action: guard every
+top-level declaration in a classic entry script with <code>function_exists()</code>/<code>class_exists()</code>, or
+<code>require_once</code> it — the same discipline RoadRunner's and FrankenPHP's worker modes require of any
+script that is included more than once in a process. There is no runtime fix; see V-54 for why a
+fix would cost the worker model's own bootstrap saving.</p>
+<h2 id="known-limits">Known limits<a class="headerlink" href="#known-limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No durability across crashes.</strong> In-flight requests live in memory only. A worker that dies
+  answers its own in-flight requests with nothing (client sees a dropped connection) and the
+  supervisor respawns the thread (V-17); a process that dies loses everything the process was
+  holding. Use idempotency keys with upstreams; use a queue for replay/audit/fan-out, not as a
+  substitute for "don't hold a worker" (ADR-0024 §1).</li>
+<li><strong>One application per process.</strong> The PHP kernel boots once per thread (V-16); there is no
+  per-route or per-tenant isolation inside one <code>ignis serve</code> — run separate processes for separate
+  applications (ADR-0024 §3).</li>
+<li><strong>Blocking calls on regular files are never made asynchronous.</strong> <code>file_get_contents()</code> on disk,
+  the opcache file cache, and <code>ext/session</code>'s file-lock handler all stall the OS thread they run
+  on, not a fiber — epoll cannot watch a regular file, so there is no way to park these calls
+  (ADR-0024, added 2026-09-17; see the session-lock row above for the sharpest case, BACKLOG
+  R-SESS).</li>
+<li><strong>Classic mode has two shapes with different rules, and neither is free of a gap</strong> (V-53, V-54):
+  <code>serve()</code> loses entry-script globals but never corrupts state across requests; the worker loop
+  keeps entry-script globals but fatals on an unguarded top-level function/class redeclaration on
+  the second request. Pick the shape that matches the application, and guard top-level
+  declarations either way.</li>
+<li><strong><code>memory_limit</code> is per thread, not per fiber or per request.</strong> One fiber's OOM ends the whole
+  thread's script, taking every other in-flight fiber on that thread with it (ADR-0025); there is
+  no per-fiber memory accounting.</li>
+<li><strong>Linux-only, by construction.</strong> Universal park depends on <code>epoll</code>, raw <code>syscall</code> numbers and
+  <code>dladdr</code> semantics that are Linux-specific (ADR-0037's build/distribution table); there is no
+  other-OS target.</li>
+<li><strong>Graceful reload is not built.</strong> <code>SIGHUP</code> drain-and-respawn and <code>SIGTERM</code> drain-then-exit are
+  designed (they would reuse ADR-0012's existing per-thread respawn mechanism) but not implemented
+  — a config change needs a process restart today, which drops in-flight connections (BACKLOG
+  M4-5).</li>
+</ul>
+<h2 id="configuration-reference">Configuration reference<a class="headerlink" href="#configuration-reference" title="Permanent link">&para;</a></h2>
+<p>Every key in <code>ignis.toml</code> and every <code>IGNIS_*</code> / <code>RUST_LOG</code> environment variable
+<code>crates/ignis/src/config.rs</code> reads, with its default. Precedence, highest first: CLI flag &gt;
+environment variable &gt; file &gt; default (<code>deny_unknown_fields</code>: a misspelled key is a parse error,
+not a silently ignored one).</p>
+<table>
+<thead>
+<tr>
+<th>toml key</th>
+<th>env var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entry</code></td>
+<td>— (positional arg to <code>ignis serve</code>)</td>
+<td>none, required</td>
+<td>PHP entry script every worker thread runs</td>
+</tr>
+<tr>
+<td><code>listen</code></td>
+<td><code>IGNIS_LISTEN</code></td>
+<td><code>127.0.0.1:8080</code></td>
+<td>listener address</td>
+</tr>
+<tr>
+<td><code>threads</code></td>
+<td><code>IGNIS_THREADS</code></td>
+<td>available parallelism (cores)</td>
+<td>PHP worker threads</td>
+</tr>
+<tr>
+<td><code>offload</code></td>
+<td><code>IGNIS_OFFLOAD</code></td>
+<td><code>0</code></td>
+<td>synchronous offload workers for <code>curl_*</code> / <code>PDO</code> / <code>SQLite3</code></td>
+</tr>
+<tr>
+<td><code>supervise</code></td>
+<td>— (bridged to the <code>--supervise</code> CLI flag, no env var)</td>
+<td><code>true</code></td>
+<td>respawn a worker whose script ends</td>
+</tr>
+<tr>
+<td><code>php_ini</code></td>
+<td><code>IGNIS_PHP_INI</code></td>
+<td>none</td>
+<td>extra php.ini (the embed SAPI has no <code>-c</code>/<code>-d</code>)</td>
+</tr>
+<tr>
+<td><code>log</code></td>
+<td><code>RUST_LOG</code></td>
+<td><code>warn</code></td>
+<td>log filter (<code>tracing_subscriber::EnvFilter</code> syntax)</td>
+</tr>
+<tr>
+<td><code>budget.fibers</code></td>
+<td><code>IGNIS_FIBER_BUDGET</code></td>
+<td><code>1024</code></td>
+<td>request fibers admitted per thread; <code>0</code> = unlimited</td>
+</tr>
+<tr>
+<td><code>budget.queue</code></td>
+<td><code>IGNIS_QUEUE_DEPTH</code></td>
+<td><code>4096</code></td>
+<td>requests allowed to wait before <code>503</code>; <code>0</code> = unbounded</td>
+</tr>
+<tr>
+<td><code>exempt</code></td>
+<td><code>IGNIS_BUDGET_EXEMPT</code></td>
+<td><code>["/_ignis/"]</code></td>
+<td>path prefixes admitted regardless of the budget</td>
+</tr>
+</tbody>
+</table>
+<p>Three more env vars are read directly, not through <code>ignis.toml</code> (no file key exists for them):
+<code>IGNIS_PARK</code> (the park policy table, <code>lib</code> or <code>lib:symbol</code> rows, ADR-0020/ADR-0037), <code>IGNIS_SKIP_PARK_SELFCHECK</code>
+(bypass the boot self-check above), <code>IGNIS_PARK_TRACE</code> (one stderr line per park decision — a
+diagnostic tool, not for production traffic), and <code>IGNIS_PG_LEASE_WARN_MS</code> (default <code>5000</code>, the
+threshold in the watch table above).</p>
+<p><code>ignis --version</code> and <code>ignis serve [--config PATH] [entry.php]</code> are the CLI surface (V-38).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -2,8 +2,8 @@
 
 For a team running `ignis serve` in production: how it starts, what to watch, what to do when
 something is wrong, and where the edges of the runtime are. See
-[ignis.toml.example](../ignis.toml.example) for the config file and [README.md](../README.md) for
-install/run. Numbers here link to [VALIDATION.md](../VALIDATION.md) (`V-n`); none are guessed —
+[ignis.toml.example](https://github.com/koekaverna/ignis/blob/main/ignis.toml.example) for the config file and [README.md](https://github.com/koekaverna/ignis/blob/main/README.md) for
+install/run. Numbers here link to [VALIDATION.md](https://github.com/koekaverna/ignis/blob/main/VALIDATION.md) (`V-n`); none are guessed —
 where nothing has been measured or wired up yet, this file says "not yet exposed" instead.
 
 ## Start and stop
@@ -162,10 +162,12 @@ fix would cost the worker model's own bootstrap saving.
 - **Linux-only, by construction.** Universal park depends on `epoll`, raw `syscall` numbers and
   `dladdr` semantics that are Linux-specific (ADR-0037's build/distribution table); there is no
   other-OS target.
-- **Graceful reload is not built.** `SIGHUP` drain-and-respawn and `SIGTERM` drain-then-exit are
-  designed (they would reuse ADR-0012's existing per-thread respawn mechanism) but not implemented
-  — a config change needs a process restart today, which drops in-flight connections (BACKLOG
-  M4-5).
+- **`SIGTERM` and `SIGINT` drain; `SIGHUP` reload is not built.** On either signal the runtime
+  reports `503 {"status":"draining"}` from `/_ignis/health` for `IGNIS_DRAIN_DELAY_MS` (default 0)
+  while still accepting, then closes the listener and gives in-flight requests
+  `IGNIS_DRAIN_TIMEOUT_MS` (default 10 s) to finish before exiting 0 — measured in V-56. What is
+  still missing is reload *without* a restart: a config change needs a new process, so a rolling
+  deploy behind a balancer is the way to change configuration without a gap (BACKLOG M4-5).
 
 ## Configuration reference
 

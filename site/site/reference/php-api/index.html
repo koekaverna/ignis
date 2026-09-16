@@ -1,0 +1,2027 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+        <link rel="prev" href="../configuration/">
+      
+      
+        <link rel="next" href="../cli/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>PHP API - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#php-api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              PHP API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignis-the-scheduler-phpignisphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis — the scheduler (php/ignis.php)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="namespace Ignis — the scheduler (php/ignis.php)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#top-level-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top-level functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ignisloop-public-methodsproperties-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Loop (public methods/properties only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ignisfuture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Future
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ignisscope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exceptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#namespace-ignishttp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Http
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignisclassic-phpclassicphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Classic (php/classic.php)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignispg-phppgignis-pgphp-e14adr-0015" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Pg (php/pg/ignis-pg.php, E14/ADR-0015)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignisoffload-phpoffloadignis-offloadphp-e16adr-0016" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Offload (php/offload/ignis-offload.php, E16/ADR-0016)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ignisrevoltignisdriver-phpamphpsrcignisdriverphp-adr-0008e7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Revolt\IgnisDriver (php/amphp/src/IgnisDriver.php, ADR-0008/E7)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignissymfony-phpsymfonysrc-adr-0011" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Symfony (php/symfony/src/*, ADR-0011)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#internal-ignis_-functions-cratesignissrcphpmodulers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internal ignis_* functions (crates/ignis/src/php/module.rs)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Internal ignis_* functions (crates/ignis/src/php/module.rs)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#consistency-with-phpstubsignisphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consistency with php/stubs/ignis.php
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignis-the-scheduler-phpignisphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis — the scheduler (php/ignis.php)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="namespace Ignis — the scheduler (php/ignis.php)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#top-level-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top-level functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ignisloop-public-methodsproperties-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Loop (public methods/properties only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ignisfuture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Future
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ignisscope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exceptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#namespace-ignishttp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Http
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignisclassic-phpclassicphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Classic (php/classic.php)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignispg-phppgignis-pgphp-e14adr-0015" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Pg (php/pg/ignis-pg.php, E14/ADR-0015)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignisoffload-phpoffloadignis-offloadphp-e16adr-0016" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Offload (php/offload/ignis-offload.php, E16/ADR-0016)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ignisrevoltignisdriver-phpamphpsrcignisdriverphp-adr-0008e7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignis\Revolt\IgnisDriver (php/amphp/src/IgnisDriver.php, ADR-0008/E7)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace-ignissymfony-phpsymfonysrc-adr-0011" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        namespace Ignis\Symfony (php/symfony/src/*, ADR-0011)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#internal-ignis_-functions-cratesignissrcphpmodulers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internal ignis_* functions (crates/ignis/src/php/module.rs)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Internal ignis_* functions (crates/ignis/src/php/module.rs)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#consistency-with-phpstubsignisphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consistency with php/stubs/ignis.php
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="php-api-reference">PHP API reference<a class="headerlink" href="#php-api-reference" title="Permanent link">&para;</a></h1>
+<p>Every public function, class and method a script or framework integration is meant to call.
+Sources: <code>php/ignis.php</code> (the userland scheduler — <code>Ignis\Loop</code>, <code>Future</code>, <code>async()</code>, <code>all()</code>,
+<code>sleep()</code>, <code>deadline()</code>, <code>Scope</code>, <code>serve()</code>, <code>Ignis\Http\Request</code>/<code>Response</code>), <code>php/classic.php</code>
+(<code>Ignis\Classic</code>), <code>php/pg/ignis-pg.php</code> (<code>Ignis\Pg</code>), <code>php/offload/ignis-offload.php</code>
+(<code>Ignis\Offload</code>, <code>Ignis\offload()</code>), <code>php/amphp/src/IgnisDriver.php</code> (<code>Ignis\Revolt\IgnisDriver</code>),
+<code>php/symfony/src/*</code> (<code>Ignis\Symfony</code>), and the internal <code>ignis_*</code> function table registered from
+<code>crates/ignis/src/php/module.rs</code>. Also cross-checked against <code>php/stubs/ignis.php</code>, the
+IDE/static-analysis stub file.</p>
+<h2 id="namespace-ignis-the-scheduler-phpignisphp"><code>namespace Ignis</code> — the scheduler (<code>php/ignis.php</code>)<a class="headerlink" href="#namespace-ignis-the-scheduler-phpignisphp" title="Permanent link">&para;</a></h2>
+<h3 id="top-level-functions">Top-level functions<a class="headerlink" href="#top-level-functions" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Signature</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sleep(int $ms): void</code></td>
+<td>Non-blocking sleep — suspends the current fiber; tokio owns the timer. Equivalent to <code>Loop::awaitOp(ignis_submit_sleep($ms))</code>.</td>
+</tr>
+<tr>
+<td><code>async(callable $fn, mixed ...$args): Future</code></td>
+<td>Runs <code>$fn(...$args)</code> concurrently in a (pooled) fiber; returns a <code>Future</code> you <code>await()</code>. Alias for <code>Loop::spawn()</code>.</td>
+</tr>
+<tr>
+<td><code>all(iterable&lt;Future&gt; $futures): array</code></td>
+<td>Awaits every future, returning their values in the same order/keys as given. Each <code>await()</code> can throw — a rejected future's exception propagates from here.</td>
+</tr>
+<tr>
+<td><code>deadline(int $ms): void</code></td>
+<td>Sets a wall-clock deadline for the <strong>current request</strong>: after <code>$ms</code>, the request's fiber and every fiber it spawned via <code>async()</code> receive a <code>DeadlineExceededException</code> at their suspension point. Must be called from inside a request (throws <code>LogicException</code> otherwise — there is no "current request" outside one).</td>
+</tr>
+<tr>
+<td><code>serve(callable(Http\Request):Http\Response $handler, string $addr = '127.0.0.1:8080'): void</code></td>
+<td>Worker mode: listens on <code>$addr</code>, runs <code>$handler</code> in a pooled fiber per request, forever. Wraps <code>Loop::serve()</code>.</td>
+</tr>
+<tr>
+<td><code>offload(string $fn, mixed ...$args): mixed</code></td>
+<td>See <code>Ignis\Offload</code> below — runs <code>$fn(...$args)</code> on a synchronous offload worker thread; the current fiber parks. Declared in <code>php/offload/ignis-offload.php</code>, not <code>php/ignis.php</code>.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="x">Ignis\serve(function (Ignis\Http\Request $req): Ignis\Http\Response {</span>
+<span class="x">    Ignis\deadline(2000); // 504 if the handler doesn&#39;t finish in 2s</span>
+<span class="x">    [$a, $b] = Ignis\all([</span>
+<span class="x">        Ignis\async(fn () =&gt; file_get_contents(&#39;https://example.com/a&#39;)),</span>
+<span class="x">        Ignis\async(fn () =&gt; file_get_contents(&#39;https://example.com/b&#39;)),</span>
+<span class="x">    ]);</span>
+<span class="x">    return Ignis\Http\Response::json([&#39;a&#39; =&gt; $a, &#39;b&#39; =&gt; $b]);</span>
+<span class="x">}, getenv(&#39;IGNIS_LISTEN&#39;) ?: &#39;127.0.0.1:8080&#39;);</span>
+</code></pre></div>
+<h3 id="ignisloop-public-methodsproperties-only"><code>Ignis\Loop</code> (public methods/properties only)<a class="headerlink" href="#ignisloop-public-methodsproperties-only" title="Permanent link">&para;</a></h3>
+<p>The scheduler class behind every function above; shaped so it can become a Revolt driver
+(<code>activate</code>/<code>dispatch</code>/<code>deactivate</code>/<code>now</code> — see <code>IgnisDriver</code> below). Most applications never call
+<code>Loop</code> directly and use the top-level functions instead; integrations (<code>Ignis\Pg</code>, <code>Ignis\Offload</code>)
+call <code>Loop::awaitOp()</code> and <code>Loop::spawn()</code> directly.</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>static awaitOp(int $id): mixed</code></td>
+<td>Suspends the current fiber (or, outside a fiber, drives the loop with a throwaway one) until reactor op <code>$id</code> completes; returns its payload. The primitive every <code>Op::submit()</code>-returning <code>ignis_*</code> call is awaited through.</td>
+</tr>
+<tr>
+<td><code>static spawn(callable $fn, mixed ...$args): Future</code></td>
+<td>Same as <code>async()</code>; reuses a parked pool fiber when one is available (<code>ADR-0019</code> — this reuse is "the single biggest win of the project", per <code>ignis.php</code>'s file comment) or creates a new one. Automatically attributes the child fiber to the current request for cancellation (ADR-0009/E11).</td>
+</tr>
+<tr>
+<td><code>static idleFibers(): int</code></td>
+<td>Count of pool fibers currently parked and ready for reuse.</td>
+</tr>
+<tr>
+<td><code>static run(): void</code></td>
+<td>Runs the loop until nothing is waiting on anything and no server is listening.</td>
+</tr>
+<tr>
+<td><code>static runUntil(callable():bool $stop): void</code></td>
+<td>Runs the loop until <code>$stop()</code> returns <code>true</code>. Throws <code>LogicException</code> if the loop is already running (no re-entrant <code>run</code>/<code>runUntil</code>).</td>
+</tr>
+<tr>
+<td><code>static serve(callable(Http\Request):Http\Response $handler, string $addr): void</code></td>
+<td>Calls <code>ignis_serve($addr)</code>, installs <code>$handler</code>, then <code>run()</code>s forever. What <code>Ignis\serve()</code> wraps.</td>
+</tr>
+<tr>
+<td><code>static deadline(int $ms): void</code></td>
+<td>What <code>Ignis\deadline()</code> wraps.</td>
+</tr>
+<tr>
+<td><code>static budgetStats(): array</code></td>
+<td><code>['budget', 'queue_depth', 'inflight', 'queued', 'queued_peak', 'queued_admitted', 'rejected']</code> — the ADR-0019 admission-control counters, e.g. for a <code>/stats</code> endpoint.</td>
+</tr>
+<tr>
+<td><code>static int $fiberBudget</code>, <code>static int $queueDepth</code></td>
+<td>Read-only in practice (set from <code>IGNIS_FIBER_BUDGET</code>/<code>IGNIS_QUEUE_DEPTH</code> on first use); <code>0</code> means unlimited/unbounded.</td>
+</tr>
+<tr>
+<td><code>static $rawRequestHandler</code></td>
+<td><code>?callable(int $id, array $raw): void</code>. Set by <code>Ignis\Classic\listen()</code> to receive raw dispatched requests on the loop's own stack instead of a spawned fiber — see the "classic worker loop" note under <code>Ignis\Classic</code> below. Not something an application sets directly unless it is itself implementing an alternative request-dispatch mode.</td>
+</tr>
+</tbody>
+</table>
+<p><code>Loop::markReady()</code>, <code>Loop::$unobserved</code>, <code>Loop::$offloadCallbackHandler</code>, <code>Loop::$children</code>,
+<code>Loop::$deadlines</code>, <code>Loop::$parkedOn</code>, <code>Loop::$cancelled</code> etc. are marked <code>@internal</code> or are wiring
+for other parts of the runtime (<code>Ignis\Offload\Client</code> sets <code>$offloadCallbackHandler</code>) — not part of
+the application-facing surface, so not detailed here.</p>
+<h3 id="ignisfuture"><code>Ignis\Future</code><a class="headerlink" href="#ignisfuture" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>isDone(): bool</code></td>
+<td>Whether the future has settled (resolved or rejected).</td>
+</tr>
+<tr>
+<td><code>resolve(mixed $value): void</code></td>
+<td>Settles with a value. Throws <code>LogicException</code> if already settled.</td>
+</tr>
+<tr>
+<td><code>reject(\Throwable $e): void</code></td>
+<td>Settles with an exception.</td>
+</tr>
+<tr>
+<td><code>await(): mixed</code></td>
+<td>Suspends the current fiber until settled; returns the value or rethrows the exception. Outside a fiber, drives the loop itself. A rejected future nobody ever <code>await()</code>s is reported when the loop stops (an "unobserved rejection"), rather than silently discarded.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ignisscope"><code>Ignis\Scope</code><a class="headerlink" href="#ignisscope" title="Permanent link">&para;</a></h3>
+<p>Fiber-scoped storage (ADR-0006): a value set inside one fiber is invisible to every other fiber and
+is dropped when that fiber is garbage-collected (backed by a <code>WeakMap</code>). Outside any fiber (in
+<code>{main}</code>), it's a plain static array.</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>static set(string $key, mixed $value): void</code></td>
+<td>Stores <code>$value</code> under <code>$key</code>, scoped to the current fiber (or <code>{main}</code>).</td>
+</tr>
+<tr>
+<td><code>static get(string $key, mixed $default = null): mixed</code></td>
+<td>Reads it back; <code>$default</code> if unset.</td>
+</tr>
+</tbody>
+</table>
+<p>Used internally for <code>ignis.request</code> (the current request id, for cancellation/deadline routing) and
+by <code>Ignis\Pg</code> (one lease per fiber per pool) and Symfony's <code>FiberRequestStack</code>.</p>
+<h3 id="exceptions">Exceptions<a class="headerlink" href="#exceptions" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Thrown when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ignis\CancelledException</code></td>
+<td>The client disconnected while the request (or a fiber it spawned) was in flight; the handler sees this at its suspension point. <code>Ignis\Loop</code>'s request dispatcher turns an unhandled one into a <code>499</code> response.</td>
+</tr>
+<tr>
+<td><code>Ignis\DeadlineExceededException extends CancelledException</code></td>
+<td><code>Ignis\deadline()</code>'s timer fired first. Turned into a <code>504</code> response if unhandled.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="namespace-ignishttp"><code>namespace Ignis\Http</code><a class="headerlink" href="#namespace-ignishttp" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Class / member</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Request::__construct(string $method, string $uri, array $headers, string $body, int $id = 0)</code></td>
+<td><code>$headers</code> keys are already lower-cased by the runtime. <code>$id</code> is the reactor request id (<code>0</code> outside a served request); gRPC handlers and <code>finish_request()</code>-style flows answer through it directly.</td>
+</tr>
+<tr>
+<td><code>Request::path(): string</code></td>
+<td><code>$uri</code> with the query string (if any) stripped.</td>
+</tr>
+<tr>
+<td><code>Request::query(string $name): ?string</code></td>
+<td>One query-string parameter, parsed lazily and cached on first call.</td>
+</tr>
+<tr>
+<td><code>Request::header(string $name): ?string</code></td>
+<td>Case-insensitive header lookup.</td>
+</tr>
+<tr>
+<td><code>Request::superglobals(): array{0:array,1:array,2:array,3:array}</code></td>
+<td><code>[$_SERVER, $_GET, $_POST, $_COOKIE]</code> built CGI-style from this request; what the runtime feeds to <code>ignis_set_superglobals()</code> per fiber (ADR-0006). <code>$_POST</code> is only populated for <code>application/x-www-form-urlencoded</code> bodies.</td>
+</tr>
+<tr>
+<td><code>Response::__construct(string $body = '', int $status = 200, array $headers = [])</code></td>
+<td>Plain value object; all three properties are <code>public readonly</code>.</td>
+</tr>
+<tr>
+<td><code>Response::text(string $body, int $status = 200): self</code></td>
+<td><code>text/plain; charset=utf-8</code>.</td>
+</tr>
+<tr>
+<td><code>Response::json(mixed $data, int $status = 200): self</code></td>
+<td><code>application/json</code>, <code>JSON_THROW_ON_ERROR</code>.</td>
+</tr>
+<tr>
+<td><code>Response::detached(): self</code></td>
+<td>Status <code>0</code> — tells the loop the handler already answered through another channel (a gRPC stream, E10) and to send nothing itself.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="namespace-ignisclassic-phpclassicphp"><code>namespace Ignis\Classic</code> (<code>php/classic.php</code>)<a class="headerlink" href="#namespace-ignisclassic-phpclassicphp" title="Permanent link">&para;</a></h2>
+<p>Serves a document root of ordinary PHP scripts, one <code>include</code> per request — the FrankenPHP/RoadRunner-style worker mode, for legacy procedural apps that expect real top-level globals.</p>
+<table>
+<thead>
+<tr>
+<th>Signature</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>serve(string $docroot, string $addr, ?string $index = 'index.php', array $server = [], ?callable $run = null): void</code></td>
+<td>Front-controller-style classic mode: every request is dispatched to a spawned fiber like <code>Ignis\serve()</code>, running <code>$run</code> (default a plain <code>include $file</code>) per request. Use this for a framework front controller (Symfony, Laravel) that doesn't rely on real top-level globals.</td>
+</tr>
+<tr>
+<td><code>listen(string $docroot, string $addr, ?string $index = 'index.php', array $server = []): void</code> + <code>accept(): ?string</code> + <code>respond(): void</code></td>
+<td>The <strong>top-level worker loop</strong> shape — the only one where an entry script's own top-level variables become real globals (<code>$GLOBALS</code> and <code>global $x</code> both work; every alternative tried, including a function/closure/fiber, left <code>$GLOBALS</code> empty — V-53). One request at a time per thread, by construction: nothing else runs while the included script does. Required for legacy procedural apps that keep state in globals (WordPress's <code>$wpdb</code>, Drupal, etc.).</td>
+</tr>
+<tr>
+<td><code>finish(): never</code></td>
+<td>The classic-mode replacement for <code>exit()</code>: ends the current script's <code>include</code> via a caught internal exception; the runner sends the response and moves on. Calling real <code>exit()</code> instead escapes the fiber and ends the resident worker script entirely — always use <code>finish()</code>.</td>
+</tr>
+<tr>
+<td><code>finish_request(): bool</code></td>
+<td>Sends the response immediately and lets the script keep running after that (<code>fastcgi_finish_request()</code> analogue); any output after this point is dropped. Returns <code>false</code> if called outside a request or after the response was already sent.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="x">require &#39;.../php/ignis.php&#39;;</span>
+<span class="x">require &#39;.../php/classic.php&#39;;</span>
+<span class="x">Ignis\Classic\listen(&#39;/var/www/html/public&#39;, &#39;0.0.0.0:8080&#39;);</span>
+<span class="x">while ($script = Ignis\Classic\accept()) {</span>
+<span class="x">    include $script;              // top level of the main script: real globals</span>
+<span class="x">    Ignis\Classic\respond();</span>
+<span class="x">}</span>
+</code></pre></div>
+<p><strong>A top-level function or class an entry script declares unguarded fatals on the second request</strong>
+(V-54/V-53) — the worker process is resident, so a bare <code>function foo() {}</code> at the top level of a
+script re-<code>include</code>d on request 2 is a redeclaration error. Guard with <code>function_exists()</code> or use
+<code>require_once</code>, exactly the rule every other PHP worker runtime (RoadRunner, FrankenPHP worker
+mode) already imposes.</p>
+<p>Also declared (global namespace, only if not already defined — e.g. under <code>Ignis\Classic</code>):
+<code>getallheaders()</code>, <code>apache_request_headers()</code>, <code>apache_response_headers()</code> polyfills built from
+<code>$_SERVER</code>'s <code>HTTP_*</code> entries and the sent header list.</p>
+<h2 id="namespace-ignispg-phppgignis-pgphp-e14adr-0015"><code>namespace Ignis\Pg</code> (<code>php/pg/ignis-pg.php</code>, E14/ADR-0015)<a class="headerlink" href="#namespace-ignispg-phppgignis-pgphp-e14adr-0015" title="Permanent link">&para;</a></h2>
+<p>Connections belong to the runtime (a process-wide pool); PHP code holds <em>leases</em>.</p>
+<table>
+<thead>
+<tr>
+<th>Class / member</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Pool::__construct(string $dsn, int $max = 10)</code></td>
+<td>Opens a pool (<code>ignis_pg_open</code>, no I/O yet) shared by every thread/fiber in the process.</td>
+</tr>
+<tr>
+<td><code>Pool::acquire(): Lease</code></td>
+<td>Leases a connection for the current fiber. A <strong>second</strong> <code>acquire()</code> from a pool already leased in the same fiber throws <code>LeaseError</code> — never waits (one lease per fiber per pool, tracked via <code>Ignis\Scope</code>).</td>
+</tr>
+<tr>
+<td><code>Pool::query(string $sql, array $params = []): array</code></td>
+<td>Acquire → query → release in one call; returns the row list.</td>
+</tr>
+<tr>
+<td><code>Pool::exec(string $sql, array $params = []): int</code></td>
+<td>Acquire → exec → release; returns the affected-row count.</td>
+</tr>
+<tr>
+<td><code>Pool::transaction(callable(Lease):mixed $fn): mixed</code></td>
+<td>Runs <code>$fn($lease)</code> inside <code>BEGIN</code>/<code>COMMIT</code> on one leased connection; any <code>\Throwable</code> triggers <code>ROLLBACK</code> and rethrows.</td>
+</tr>
+<tr>
+<td><code>Pool::stats(): ?array</code></td>
+<td><code>['idle', 'created', 'available', 'oldest_lease_ms', 'leases_over_warn']</code> (the last two per <code>IGNIS_PG_LEASE_WARN_MS</code>, see <code>configuration.md</code>); <code>null</code> if the pool id is unknown to the runtime.</td>
+</tr>
+<tr>
+<td><code>Lease::query(string $sql, array $params = []): array</code></td>
+<td>Rows only.</td>
+</tr>
+<tr>
+<td><code>Lease::exec(string $sql, array $params = []): int</code></td>
+<td>Affected-row count only.</td>
+</tr>
+<tr>
+<td><code>Lease::backendPid(): int</code></td>
+<td><code>SELECT pg_backend_pid()</code> convenience.</td>
+</tr>
+<tr>
+<td><code>Lease::release(bool $reset = true): void</code></td>
+<td>Returns the connection to the pool; <code>$reset</code> runs <code>ROLLBACK; DISCARD ALL</code> server-side first. Safe to call more than once (a no-op after the first).</td>
+</tr>
+<tr>
+<td><code>Lease::__destruct()</code></td>
+<td>Fire-and-forget release if the script never called <code>release()</code> explicitly — nobody awaits this completion.</td>
+</tr>
+</tbody>
+</table>
+<p><code>LeaseError extends \LogicException</code> (double-acquire, or using a released lease);
+<code>QueryError extends \RuntimeException</code> (the query itself failed server-side).</p>
+<div class="highlight"><pre><span></span><code><span class="x">$pool = new Ignis\Pg\Pool(&#39;postgres://user:pass@localhost/db&#39;, max: 10);</span>
+<span class="x">$rows = $pool-&gt;query(&#39;SELECT id, name FROM users WHERE id = $1&#39;, [42]);</span>
+<span class="x">$pool-&gt;transaction(function (Ignis\Pg\Lease $l) {</span>
+<span class="x">    $l-&gt;exec(&#39;UPDATE accounts SET balance = balance - 100 WHERE id = $1&#39;, [1]);</span>
+<span class="x">    $l-&gt;exec(&#39;UPDATE accounts SET balance = balance + 100 WHERE id = $1&#39;, [2]);</span>
+<span class="x">});</span>
+</code></pre></div>
+<h2 id="namespace-ignisoffload-phpoffloadignis-offloadphp-e16adr-0016"><code>namespace Ignis\Offload</code> (<code>php/offload/ignis-offload.php</code>, E16/ADR-0016)<a class="headerlink" href="#namespace-ignisoffload-phpoffloadignis-offloadphp-e16adr-0016" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Signature</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ignis\offload(string $fn, mixed ...$args): mixed</code></td>
+<td>The entry point: runs the named function (or <code>"Class::method"</code>) on a synchronous offload worker thread. Arguments are <code>serialize()</code>d in, the result is <code>serialize()</code>d back; the calling fiber parks meanwhile. A <code>\Closure</code> anywhere in <code>$args</code> becomes a callback the worker can invoke back on the calling thread (itself allowed to <code>await</code>, since it runs in its own spawned fiber). Throws <code>RuntimeException</code> if no offload pool exists (<code>ignis</code> wasn't started with <code>--offload N</code>).</td>
+</tr>
+<tr>
+<td><code>Offload\Client::stats(): array</code></td>
+<td><code>['workers', 'busy', 'done', 'queued', 'this']</code> (<code>ignis_offload_stats()</code> passthrough; <code>this</code> is the calling thread's own worker index, or <code>-1</code>).</td>
+</tr>
+<tr>
+<td><code>Offload\Router::enable(): void</code></td>
+<td>Turns on E16 <strong>auto-routing</strong>: configured internal functions/classes (<code>IGNIS_OFFLOAD_FUNCTIONS</code>/<code>IGNIS_OFFLOAD_CLASSES</code>, see <code>configuration.md</code>) are transparently redirected to the offload pool when called inside a fiber. Called automatically at file-load time whenever <code>ignis_route_enable</code> exists and at least one offload worker is running — an application does not normally call this itself.</td>
+</tr>
+<tr>
+<td><code>Offload\Handle</code></td>
+<td>What a routed call returns for a class with no generated proxy (e.g. a <code>final</code> class like <code>CurlHandle</code>): <code>__call()</code> forwards every method to the worker; released automatically on destruction.</td>
+</tr>
+<tr>
+<td><code>Offload\RemoteException extends \RuntimeException</code></td>
+<td>Thrown when the offloaded call failed on the worker side; carries <code>$remoteClass</code>, the message/code, and <code>$remoteTrace</code>.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="x">// ignis --offload 4 app.php</span>
+<span class="x">$result = Ignis\offload(&#39;some_slow_c_extension_call&#39;, $arg1, $arg2);</span>
+</code></pre></div>
+<p>With auto-routing on (the default whenever <code>--offload N &gt; 0</code>), ordinary code is unaffected —
+<code>curl_exec()</code>/<code>new PDO(...)</code> calls made <em>inside a fiber</em> run on an offload worker without any
+source change; the same calls made outside a fiber (worker thread 0, or an offload worker itself)
+run exactly as stock PHP.</p>
+<h2 id="ignisrevoltignisdriver-phpamphpsrcignisdriverphp-adr-0008e7"><code>Ignis\Revolt\IgnisDriver</code> (<code>php/amphp/src/IgnisDriver.php</code>, ADR-0008/E7)<a class="headerlink" href="#ignisrevoltignisdriver-phpamphpsrcignisdriverphp-adr-0008e7" title="Permanent link">&para;</a></h2>
+<p>A <code>Revolt\EventLoop\Internal\AbstractDriver</code> implementation over the Ignis reactor — lets
+<code>amphp</code>/Revolt-based code (and anything built on it) run unmodified on Ignis. Select it with the
+<code>REVOLT_DRIVER</code> environment variable:</p>
+<div class="highlight"><pre><span></span><code>REVOLT_DRIVER=Ignis\Revolt\IgnisDriver
+</code></pre></div>
+<p>No application code calls this class directly; Revolt's <code>EventLoop</code> picks it up by class name.
+Constructing it when <code>ignis_poll</code> doesn't exist (i.e. not actually running under the <code>ignis</code>
+binary) throws <code>Revolt\EventLoop\UnsupportedFeatureException</code>. Signal callbacks
+(<code>SignalCallback</code>) are not supported yet and also throw <code>UnsupportedFeatureException</code> if a caller
+registers one.</p>
+<h2 id="namespace-ignissymfony-phpsymfonysrc-adr-0011"><code>namespace Ignis\Symfony</code> (<code>php/symfony/src/*</code>, ADR-0011)<a class="headerlink" href="#namespace-ignissymfony-phpsymfonysrc-adr-0011" title="Permanent link">&para;</a></h2>
+<p>The <code>symfony/runtime</code> adapter for worker mode. Select it via the standard Symfony Runtime
+mechanism:</p>
+<div class="highlight"><pre><span></span><code>APP_RUNTIME=Ignis\Symfony\IgnisRuntime
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IgnisRuntime extends SymfonyRuntime</code></td>
+<td><code>getRunner($application)</code>: if <code>$application</code> is an <code>HttpKernelInterface</code> and <code>ignis_serve</code> exists, returns an <code>IgnisWorkerRunner</code> listening on <code>$this-&gt;options['ignis_listen']</code> (a runtime option, e.g. from <code>composer.json</code>'s <code>extra.runtime</code>) or <code>getenv('IGNIS_LISTEN')</code>, falling back to <code>127.0.0.1:8080</code>. Otherwise defers to the parent (stock <code>SymfonyRuntime</code>) runner — so selecting this runtime is harmless for non-HTTP-kernel apps (console commands, etc.).</td>
+</tr>
+<tr>
+<td><code>IgnisWorkerRunner implements RunnerInterface</code></td>
+<td>Boots the kernel once, then <code>Ignis\serve()</code>s: every HTTP request gets its own fiber, is adapted into a Symfony <code>Request</code> via <code>Request::createFromGlobals()</code> (superglobals are already this fiber's own, per ADR-0006) and the response's headers/content are copied back into an <code>Ignis\Http\Response</code>. Calls <code>$kernel-&gt;terminate()</code> when the kernel is <code>TerminableInterface</code>. Not constructed directly by application code — <code>IgnisRuntime::getRunner()</code> builds it.</td>
+</tr>
+<tr>
+<td><code>FiberRequestStack extends RequestStack</code></td>
+<td>One Symfony request stack <strong>per fiber</strong>, backed by <code>Ignis\Scope</code>, so concurrently interleaved requests never see each other's <code>Request</code> via <code>RequestStack::getCurrentRequest()</code>. Wired in as a service by the Symfony integration; not something application code instantiates by hand.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="internal-ignis_-functions-cratesignissrcphpmodulers">Internal <code>ignis_*</code> functions (<code>crates/ignis/src/php/module.rs</code>)<a class="headerlink" href="#internal-ignis_-functions-cratesignissrcphpmodulers" title="Permanent link">&para;</a></h2>
+<p>These are the raw primitives the runtime registers from Rust. <strong>They are internal — use the
+<code>Ignis\*</code> wrappers above.</strong> Calling them directly bypasses the scheduler's bookkeeping (fiber
+attribution, admission control, cancellation routing) and is not a supported integration point,
+except for the two noted below.</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Wrapped by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ignis_submit_sleep(int $ms): int</code></td>
+<td><code>Ignis\sleep()</code></td>
+</tr>
+<tr>
+<td><code>ignis_poll(int $timeout_ms): array</code></td>
+<td><code>Ignis\Loop::run()</code>/<code>runUntil()</code> (the runtime's single wait point)</td>
+</tr>
+<tr>
+<td><code>ignis_inflight(): int</code></td>
+<td>— (used for least-inflight request dispatch across threads, ADR-0010)</td>
+</tr>
+<tr>
+<td><code>ignis_stats(): array</code></td>
+<td>— (<code>['threads', 'stalled', 'restarts']</code>, ADR-0012)</td>
+</tr>
+<tr>
+<td><code>ignis_serve(string $addr): bool</code></td>
+<td><code>Ignis\serve()</code> / <code>Ignis\Loop::serve()</code></td>
+</tr>
+<tr>
+<td><code>ignis_respond(int $id, int $status, array $headers, string $body): bool</code></td>
+<td><code>Ignis\Loop</code>'s request dispatch</td>
+</tr>
+<tr>
+<td><code>ignis_set_superglobals(array, array, array, array): void</code></td>
+<td><code>Ignis\Loop</code>'s request dispatch (ADR-0006)</td>
+</tr>
+<tr>
+<td><code>ignis_cancel_parked_any(\Fiber, \Throwable): bool</code></td>
+<td><code>Ignis\Loop::throwInto()</code> (ADR-0009 cancellation)</td>
+</tr>
+<tr>
+<td><code>ignis_grpc_send</code>/<code>_end</code>/<code>_call</code>/<code>_recv</code></td>
+<td><code>php/grpc/ignis-grpc.php</code> (E10; not one of the four files this reference documents in full)</td>
+</tr>
+<tr>
+<td><code>ignis_pg_open</code>/<code>_acquire</code>/<code>_query</code>/<code>_release</code>/<code>_stats</code></td>
+<td><code>Ignis\Pg\Pool</code>/<code>Lease</code> above</td>
+</tr>
+<tr>
+<td><code>ignis_offload_submit</code>/<code>_next</code>/<code>_done</code>/<code>_callback</code>/<code>_cb_result</code>/<code>_stats</code></td>
+<td><code>Ignis\Offload\Client</code>/<code>offload()</code> above</td>
+</tr>
+<tr>
+<td><code>ignis_route_enable</code>/<code>_route_pass</code></td>
+<td><code>Ignis\Offload\Router</code> above</td>
+</tr>
+<tr>
+<td><code>ignis_temporal_*</code> (7 functions, <code>feature = "temporal"</code> builds only)</td>
+<td><code>php/temporal/ignis-temporal.php</code> (not covered by this reference)</td>
+</tr>
+<tr>
+<td><code>ignis_park_on</code>/<code>ignis_op_result</code> (<code>cfg(php_async_abi)</code> builds only — the true-async backend, ADR-0003)</td>
+<td><code>backend/async_core.rs</code>'s PHP-side counterpart</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Two exceptions a custom event-loop integration legitimately calls directly</strong> (as <code>IgnisDriver</code>
+does): <code>ignis_watch(resource $stream, int $mode): int</code> (one-shot readiness watch, mode <code>1</code> =
+readable / <code>2</code> = writable, ADR-0008) and <code>ignis_cancel(int $op): int</code> (cancels a pending
+<code>ignis_watch</code>). Every other application should go through <code>Ignis\sleep()</code>/<code>async()</code>/<code>Ignis\Pg</code>/etc.</p>
+<h3 id="consistency-with-phpstubsignisphp">Consistency with <code>php/stubs/ignis.php</code><a class="headerlink" href="#consistency-with-phpstubsignisphp" title="Permanent link">&para;</a></h3>
+<p><code>php/stubs/ignis.php</code> (IDE/static-analysis stubs, guarded with <code>function_exists()</code> and throwing if
+somehow reached under the real binary) declares every function above, <strong>plus</strong> the 7
+<code>ignis_temporal_*</code> functions and <code>ignis_park_on</code>/<code>ignis_op_result</code> unconditionally — i.e. it is a
+superset of any single build's function table, since those two groups only exist in the
+<code>feature = "temporal"</code> and <code>cfg(php_async_abi)</code> builds of <code>module.rs::FUNCTIONS</code> respectively. That
+is intentional (a stub file has to cover every build an IDE might target) and not a discrepancy.
+No function present in the default build's <code>FUNCTIONS</code> table is missing from the stub file, and
+vice versa.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
