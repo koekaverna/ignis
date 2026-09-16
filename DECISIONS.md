@@ -149,3 +149,13 @@ the probe for what changed (seconds); per deletion = only the creating suite; pe
 E15 set, chaos, soak, smoke and the perf set (E1/E2/E4/E5, on/off when a mechanism changed) on a
 quiet box, one at a time. The gate that protects `main` is unchanged — CI runs everything on every
 push.
+
+## 2026-09-16T18:57Z — the park registry is not a transport: `php/stream.rs` → `php/wait.rs`
+
+Deleting the factory would have taken `await_op`/`await_any`/`resume_parked`/
+`ignis_cancel_parked_any` with it — the code that suspends a fiber inside an internal call and
+resumes it from `ignis_poll`. That is the mechanism universal park, `ignis_watch` and every Custom
+op already depend on; it lived in `stream.rs` only because ADR-0007 wrote it there first. Moved
+verbatim to `php/wait.rs` (151 lines) and the callers rewired. `Outcome::Connected/Data/WouldBlock/
+Written/Closed` went with the actor; the one arm `module.rs` still needs is `Outcome::Error`, which
+now routes to a parked fiber and otherwise logs with the message attached.

@@ -9,7 +9,8 @@ ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
 BIN=./target/release/ignis; EX=php/amphp/vendor/revolt/event-loop/examples; AEX=php/amphp/examples
 # The ini lives in this repo; it used to be an absolute path to another machine, so on any
 # other checkout the ini silently did not apply.
-export IGNIS_PHP_INI="$PWD/php/amphp/ignis.ini" IGNIS_NO_STREAM_HOOK=1
+mkdir -p /tmp/e7-revolt; sed "s#^auto_prepend_file=.*#auto_prepend_file=$PWD/php/amphp/prepend.php#" php/amphp/ignis.ini > /tmp/e7-revolt/ignis.ini
+export IGNIS_PHP_INI=/tmp/e7-revolt/ignis.ini
 run() { # driver script [stdin-file]
   local d="$1" s="$2"; shift 2
   if [ $# -gt 0 ]; then REVOLT_DRIVER="$d" timeout 30 $BIN "$s" < "$1" 2>&1; else REVOLT_DRIVER="$d" timeout 30 $BIN "$s" 2>&1 </dev/null; fi

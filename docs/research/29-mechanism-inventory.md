@@ -80,3 +80,11 @@ context, park).
 Final recount after cycle 2 (V-48 addendum): Rust 5,753 lines, 157 `unsafe {`, 126 `unsafe fn` —
 net −573 / −30 / −28 against the table above; the dead adoption path (`adopt_fd`, `has_buffered`,
 `Op::Adopt`, `set_double`, 64 lines) went with the hooks that fed it.
+
+## Addendum — cycle 3 (2026-09-16, V-49): row 1 and row 1b deleted
+
+`php/stream.rs` (705 / 16 / 17) and the reactor's connection actor + rustls arms (812 → 450 lines,
+the estimate of ~250 was low: **−362 measured**) are gone; 151 lines of it were not transport at
+all and became `php/wait.rs`. Tree: Rust **4,890**, `unsafe {` **145**, `unsafe fn` **116** — net
+**−1,436 / −42 / −38** against the head of this document. Mechanisms a wait can take: **3**
+(park, offload, context). The table above is now history, not inventory.

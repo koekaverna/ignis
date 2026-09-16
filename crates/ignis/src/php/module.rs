@@ -154,22 +154,22 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
         zval::set_new_array(rv);
         for c in done {
             match c.outcome {
-                // Completions for fibers parked inside a stream op (ADR-0007) are
-                // consumed here: the fiber is resumed and runs until its next
-                // suspension before we continue. Everything else goes to userland.
-                Outcome::Connected { .. } | Outcome::Data(_) | Outcome::WouldBlock | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
-                    if !super::stream::resume_parked(c.id, c.outcome) {
-                        tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
+                // An error for a fiber parked C-side (universal park, ADR-0020) is consumed here:
+                // the fiber is resumed and runs until its next suspension before we continue.
+                Outcome::Error(ref msg) => {
+                    let msg = msg.clone();
+                    if !super::wait::resume_parked(c.id, c.outcome) {
+                        tracing::debug!(id = c.id, %msg, "error completion with no parked fiber");
                     }
                 }
                 // A fiber parked inside the sleep()/usleep() hook (E15c) is resumed here, like stream ops.
-                Outcome::Slept { late_us: _ } if super::stream::is_parked(c.id) => {
-                    super::stream::resume_parked(c.id, c.outcome);
+                Outcome::Slept { late_us: _ } if super::wait::is_parked(c.id) => {
+                    super::wait::resume_parked(c.id, c.outcome);
                 }
                 Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
                 // A fiber parked inside a C hook on a readiness/upgrade op (STARTTLS, ADR-0017) resumes here.
-                Outcome::Ready if super::stream::is_parked(c.id) => {
-                    super::stream::resume_parked(c.id, c.outcome);
+                Outcome::Ready if super::wait::is_parked(c.id) => {
+                    super::wait::resume_parked(c.id, c.outcome);
                 }
                 Outcome::Ready => sys::add_index_long(rv, c.id, 1),
                 Outcome::Json(json) => sys::add_index_stringl(rv, c.id, json.as_ptr() as *const c_char, json.len()),
@@ -698,7 +698,7 @@ const fn fe_end() -> sys::zend_function_entry {
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
 static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
+    fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
@@ -738,7 +738,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
     fe(c"ignis_temporal_complete_activity", crate::backend::temporal::zif_complete_activity, ARGINFO_T2.0.as_ptr(), 2),
     fe(c"ignis_temporal_shutdown", crate::backend::temporal::zif_shutdown, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
+    fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
@@ -769,7 +769,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
 #[cfg(php_async_abi)]
 static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 30]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
+    fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),

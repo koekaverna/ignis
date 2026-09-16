@@ -101,10 +101,23 @@ Rollback: the feature flag stays until step 4; deleted code is recoverable at ta
 
 ## 7. Decision criteria and status
 
-**Proposed.** Accepted only when: §1's totals are measured for the deletions actually made (not
-the estimates); §4's re-measurements show no regression beyond the V-28 noise band (±1 % on E1;
-the band for E4/E5 to be stated from three quiet runs each); and the libphp audit exists with a
-verdict per symbol.
+**Proposed**, with all three acceptance conditions now met — the status moves to *accepted* only
+after the owner has seen this section, per CLAUDE.md (only the main agent sets "accepted", and this
+ADR's own §7 is the gate):
+1. §1's totals **measured for the deletions actually made**: −1,436 Rust lines, −42 `unsafe {`,
+   −38 `unsafe fn` (V-46, V-48, V-49), against the estimate of −960/−40 — the estimate was low
+   because the adds (stage 2, policy, SO_*TIMEO) came to less than the projected ~750 lines.
+2. §4's re-measurements: E1/E2/E5 park on vs off indistinguishable, E4 three alternating quiet runs
+   overlapping completely (V-46 addenda 1–2); the box's own drift from V-6 measured separately and
+   shown not to be park (V-46 addendum 3, BACKLOG H-12).
+3. The libphp audit exists with a verdict per symbol for every group whose rows entered the seed
+   (research 30 groups (a), (b), (c); groups (d)/(e) cover what stays `block`).
+
+**Still unmeasured, and named as such:** acceptance 5 of the owner's E18 spec (H36 — a library
+holding a mutex across a blocking call must deadlock under `park` and pass under `block`). The
+shim and its harness are written (`bench/e18/locklib.c`, `bench/php/e18_deadlock.php`,
+`bench/e18-deadlock.sh`); the internal functions that let PHP call the shim are not, so no number
+exists. Until it does, every `park` row rests on the source audit (research 27, 30) alone.
 
 **Kill criterion.** Any E15 suite dropping below its baseline after a deletion that cannot be
 fixed inside park within one cycle → that hook returns, and this ADR records it in an **"outside
@@ -128,3 +141,12 @@ exceptions.
   `SO_SNDTIMEO` moved into park (`park_io`); **§6 step 3: `sockets.rs` and `accept.rs` deleted**
   (−641 lines, −32 `unsafe {`), every creating test green in both phases. Deviation: two hooks in
   one cycle (DECISIONS). Mechanisms: 4 — stream factory, offload, context, park. Next: step 4.
+- **Cycle 3 (2026-09-17, V-49)** — **§6 step 4: the stream transport factory and the rustls path
+  deleted** (`php/stream.rs` 705 lines, `reactor.rs` 812 → 450; `rustls`/`tokio-rustls`/
+  `webpki-roots`/`rustls-pemfile` out of the build). The park registry moved to `php/wait.rs` —
+  it was never a transport. PHP's `ext/openssl` does TLS and parks; **A6/B7 closes by
+  disappearance** (`stream_select` answers from OpenSSL's own buffer in 22.9 µs). Every creating
+  test green in both phases, plus chaos and smoke; a CI red on the previous commit
+  (`socket_export_stream-1.phpt`) turned out to be the factory's and is fixed by its removal.
+  **Mechanisms: 3 — park, offload, context. The target model of §2 is reached.** Net since cycle 1:
+  −1,436 Rust lines, −42 `unsafe {` blocks; binary 48.7 → 37.2 MB.

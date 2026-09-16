@@ -15,5 +15,5 @@ fi
 PIDS=(); for p in 8441 8442 8443; do PORT=$p DELAY_MS=200 CERT="$D/cert.pem" /opt/php85-zts/bin/php bench/php/e6_ssl_server.php 2>/dev/null & PIDS+=($!); done
 sleep 1
 echo "== hook on";  CAFILE="$D/ca.pem" timeout 60 ./target/release/ignis bench/php/e6_ssl.php; echo "client exit=$?"
-echo "== hook off (control)"; CAFILE="$D/ca.pem" IGNIS_NO_STREAM_HOOK=1 timeout 60 ./target/release/ignis bench/php/e6_ssl.php 2>&1 | head -1
+echo "== nothing parks (control: IGNIS_PARK= )"; CAFILE="$D/ca.pem" IGNIS_PARK= timeout 60 ./target/release/ignis bench/php/e6_ssl.php 2>&1 | head -1
 kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null || true

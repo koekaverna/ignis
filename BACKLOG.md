@@ -194,7 +194,7 @@ problem: a fiber writing to stdout/stderr under the same build prints in every c
 script wraps the whole run in an outer `Ignis\async` and prints from inside it. **Acceptance.**
 The cause named, the script printing under park, and the number recorded in V-45.
 
-### E18-C Retire the PHP-level wrappers universal park makes redundant `main` `in progress: sleep.rs (V-46), sockets.rs + accept.rs (V-48) gone; stream.rs (tcp/ssl/unix factory, rustls path) is ADR-0037 §6 step 4` — owner question 2026-09-17
+### E18-C Retire the PHP-level wrappers universal park makes redundant `main` `done (V-46, V-48, V-49): sleep.rs, sockets.rs, accept.rs, stream.rs + the rustls path in reactor.rs all deleted; three mechanisms left (park, offload, context). Remaining wrappers are adapters, which carry no mechanism by design` — owner question 2026-09-17
 **What.** Each wrapper below exists to make one C call park. Once the syscall layer parks, the
 wrapper is a second mechanism for the same call. Ordered by what each deletion requires:
 1. **Now (when `universal-park` is the default):** the offload auto-routing entries for `curl_*`
@@ -452,6 +452,8 @@ functions — pass `php/ignis.php` (and pg/offload files) too, or every `Ignis\*
 boundary so the example passes PHPStan level 6 with `php/stubs/ignis.php` loaded (H-7).
 **Acceptance.** `phpstan analyse -l 6 examples/grpc_server.php --autoload-file php/stubs/ignis.php`
 reports 0 errors (phpstan via the builder image's composer, `composer global require phpstan/phpstan`).
+
+### H36 The lock hazard has no number: the shim exists, the way to call it does not `main` `open` — ADR-0020 acceptance 5 and ADR-0037 §5 both cite "H36's shim proves containment", and research 30's acceptance gates libphp rows on it, but nothing ever ran (found 2026-09-17 by the doc reconciliation). Written now: `bench/e18/locklib.c` (mutex → blocking `read` → unlock, compiles, imports `read@GLIBC` so it binds to our interposer), `bench/php/e18_deadlock.php`, `bench/e18-deadlock.sh`. Missing: this build has no `ext/ffi` and PHP cannot hand out a raw fd, so three tiny internal functions are needed (`ignis_locklib_call`, `ignis_locklib_pipe`, `ignis_locklib_write`), registered at MINIT only when `IGNIS_LOCKLIB` names the .so — `zend_register_functions`, not the static table. Then: park row → fiber B must find the mutex held (result −2); no row → both return 1.
 
 ### H-12 E4 hello throughput is 58k req/s on this box today, V-6 measured 128k `main` `open — measured (V-46 addendum 3): V-6's own commit gives 61.5–63.1k on this box, so 128k → 62k is the box; the code-side drop 2026-09-15 → HEAD is ≈ 4–5 % (58.3–60.0k) and still worth one bisect in a quiet slot` — V-46 addendum 2: park on and off both ~58k, p99 1.8 ms, quiet box, same wrk shape as V-6 (`-t2 -c64 -d10s`, 1 PHP thread). Either the box changed (WSL2 kernel 6.18 now; V-6's kernel not recorded) or something landed between 2026-09-15 and cycle 1 (budget admission, health route, superglobals lazy swap, log floor). Bisect with `git bisect run` over `bench/wrk-hello.sh` before any perf claim cites V-6 again.
 

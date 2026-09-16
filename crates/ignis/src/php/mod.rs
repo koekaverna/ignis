@@ -2,7 +2,7 @@ pub mod park;
 pub mod embed;
 pub mod module;
 pub mod route;
-pub mod stream;
+pub mod wait;
 pub mod superglobals;
 pub mod zval;
 

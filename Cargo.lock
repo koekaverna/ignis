@@ -1018,8 +1018,6 @@ dependencies = [
  "libc",
  "mimalloc",
  "prost-wkt-types",
- "rustls",
- "rustls-pemfile",
  "serde",
  "serde_json",
  "temporalio-client",
@@ -1028,13 +1026,11 @@ dependencies = [
  "temporalio-sdk-core",
  "tokio",
  "tokio-postgres",
- "tokio-rustls",
  "toml 0.8.23",
  "tonic",
  "tracing",
  "tracing-subscriber",
  "url",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2073,15 +2069,6 @@ dependencies = [
  "rustls-pki-types",
  "schannel",
  "security-framework",
-]
-
-[[package]]
-name = "rustls-pemfile"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
-dependencies = [
- "rustls-pki-types",
 ]
 
 [[package]]
@@ -3330,15 +3317,6 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]

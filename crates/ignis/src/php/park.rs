@@ -36,7 +36,7 @@ use std::sync::OnceLock;
 
 use ignis_sys as sys;
 
-use super::stream::{await_any, await_op};
+use super::wait::{await_any, await_op};
 use crate::reactor::{Op, Outcome};
 
 thread_local! {

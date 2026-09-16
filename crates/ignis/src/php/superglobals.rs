@@ -219,7 +219,6 @@ unsafe extern "C" fn on_destroy(ctx: *mut sys::zend_fiber_context) {
 pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi::c_int) -> sys::zend_result {
     // SAFETY: MINIT on the main thread (ADR-0007 transport hook).
     unsafe {
-        super::stream::install();
         #[cfg(feature = "universal-park")]
         super::park::install(); // E18 (ADR-0020)
         super::route::install();

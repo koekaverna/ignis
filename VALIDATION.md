@@ -1831,3 +1831,54 @@ way: smoke's default was `:8080`, which another project holds on the owner's box
 stranger, so the morning's "green" smoke had printed that project's `NotFoundHttpException` for
 `/sleep?ms=5` as if it were ours, and the E13 HTTP leg (content-based) was the one that failed
 honestly. The default is now `:8183`; every bench and example reads `IGNIS_LISTEN`.
+
+## V-49 — ADR-0037 §6 step 4: the stream transport factory and the rustls path are deleted; PHP's own TLS parks (CONFIRMED)
+
+Date: 2026-09-16T18:57:02Z. The last of the four point mechanisms. `php/stream.rs` (705 lines: `tcp://`/`ssl://`/
+`tls://`/`unix://` factories, `op_read/write/connect/cast/set_option`, timeouts, META_DATA_API) is
+gone; its **park registry** — the part that is not a transport, `(op id → suspended fiber)` +
+`await_op`/`await_any`/`resume_parked`/`ignis_cancel_parked_any` — moved verbatim to
+`php/wait.rs` (151 lines), which is what universal park and `ignis_watch` have been using all
+along. In `reactor.rs`: `Op::Connect/ConnectUnix/Upgrade/Read/TryRead/Write/Close`, `ConnCmd`, the
+connection actor, `adopt`, `forward`, `socket_meta`/`unix_meta`, `tls_config`/`tls_wrap` and the
+two certificate verifiers (`NoVerify`, `NoNameCheck`) are deleted — 812 → **450 lines**.
+`rustls`, `tokio-rustls`, `webpki-roots`, `rustls-pemfile` are out of `crates/ignis/Cargo.toml`;
+`cargo tree -i rustls` no longer resolves (the lockfile still lists them as tonic's *optional*
+feature and h2's dev-dependency, neither built).
+
+Two phases, as in cycle 2. **Phase 1** — factory compiled but off (`IGNIS_NO_STREAM_HOOK=1
+IGNIS_NO_SSL_HOOK=1 IGNIS_NO_UNIX_HOOK=1`), seed policy. **Phase 2** — files deleted, seed only.
+
+| gate (the test that created the factory) | phase 1 | phase 2 |
+|---|---|---|
+| E6 `bench/e6-fetch.sh` N=50 (V-12: unmodified `file_get_contents`, 3 × 200 ms) | n=50 ok=50, 317 ms | **n=50 ok=50, 349 ms** (per request 207–275 ms) |
+| E6 ssl `bench/e6-ssl.sh` (V-25: `ssl://` + STARTTLS) | 3 concurrent https × 200 ms in **207 ms**, bodies correct | same, client exit 0 |
+| `a4_unix.php` (V-31 `unix://`) | 202.6 ms, ok=10 | 201.6 ms, ok=10 |
+| `e15_fixes_server.php` (V-26) | ping/pong | ping/pong |
+| **A6 / B7** `a6_tls_select.php` — TLS read-ahead visible to `stream_select` (research 23, open since cycle 22) | — | **PASS, select answered in 22.9 µs** (64 KB body; with the rustls factory: PASS in 78–86 µs via `has_buffered`) |
+| select probe, 3 × `stream_select` 200 ms | 202 ms | 202 ms |
+| `e18_timeo.php` (SO_RCVTIMEO) | 202 ms, 3 × EAGAIN | 202 ms, 3 × EAGAIN |
+| phpt main/fiber: fibers, streams, sockets | 108/78, 133/124, 91/84 | **108/78, 133/124, 91/84** — all ≥ baseline |
+| Revolt DriverTest (gate 80) | 80/81 | **80/81** |
+| Swoole shim `--all` (gate 54) | — | **55/153** (+1 over the baseline) |
+| chaos (V-27) | — | **exit 0, no new failures vs stock** |
+| `scripts/smoke.sh` | — | **exit 0** |
+| `cargo nextest` | — | 9/9 (the actor's own test, `tcp_connect_write_read_close`, went with the actor) |
+
+**B7/A6 closes by disappearance**, as ADR-0037 §4 predicted: PHP's `ext/openssl` holds its own
+plaintext buffer, so `stream_select` sees it without the runtime knowing anything about TLS.
+
+**A CI red explained and fixed by the deletion.** Run 35134937803 on `17a2ceb` failed
+`phpt.fiber.ext_sockets_tests=82 < 83`: `socket_export_stream-1.phpt` returned `string(0) ""`
+instead of `"test message"`. Reproduced locally 20/20 in fiber mode, and bisected to the factory,
+not to park: with `IGNIS_NO_STREAM_HOOK=1` it passed, with every `IGNIS_PARK` row and with
+`IGNIS_NO_UNIVERSAL_PARK=1` it still failed. `socket_export_stream()` wrapped the socket in the
+hooked transport, which read through the reactor's actor and lost the peer's bytes after
+`socket_close()`. After step 4 it passes — fiber sockets 83 → **84**.
+
+**Deleted, measured:** `php/stream.rs` 705 lines / 16 `unsafe {` / 17 `unsafe fn`, minus the 151
+lines that moved to `wait.rs`; `reactor.rs` −362 lines. Tree: Rust **4,890** lines, **145**
+`unsafe {`, **116** `unsafe fn`. Against the state before ADR-0037 cycle 1 (6,326 / 187 / 154):
+**−1,436 Rust lines, −42 `unsafe {` blocks, −38 `unsafe fn`**. Release binary **37,180,624 bytes**
+(48.7 MB before the cycles — the TLS stack and the actor are gone). Mechanisms a wait can take:
+**3** — park, offload, context. ADR-0037's target model is reached.
