@@ -127,3 +127,32 @@ can answer `WouldBlock` because the connection actor has not been polled yet eve
 readable, and `op_read` returned 0, which PHP's `get_line` reads as "no line". A retry in the same
 fiber got `HTTP/1.0 200 OK` immediately. Fixed by returning to the wait instead of giving up:
 0 failures in 6000 against 2–3 per 1000, five clean `e6-fetch` runs, smoke GREEN, phpt unchanged.
+
+## H32–H36 (E18 universal park, ADR-0020) — OPEN, one per owner acceptance
+
+**H32 (acceptance 1).** With libcurl on policy `park` and no offload routing, 100 fibers each doing
+`curl_exec` against a local `/sleep?ms=200` on ONE PHP thread finish in ≈ 200 ms wall, and each
+`CURLOPT_WRITEFUNCTION` runs in the fiber that started the transfer. Test: `bench/php/e18_curl.php`
+(`IGNIS_NO_OFFLOAD_ROUTE=1`), control `IGNIS_NO_UNIVERSAL_PARK=1` (expected ≈ 20 s). Time box: one
+cycle after E18-I lands.
+
+**H33 (acceptance 2).** Same for `pdo_pgsql`: 100 × `SELECT pg_sleep(0.2)` on one thread ≈ 200 ms
+with offload disabled. Test: `bench/php/e18_pgsql.php`; control ≈ 20 s.
+
+**H34 (acceptance 3).** `getaddrinfo` parks via the runtime resolver where the library calls it on
+the calling thread (libpq, libphp — research 26); libcurl's threaded resolver parks through `poll`
+instead. Test: `bench/php/e18_dns.php` — 50 concurrent libpq connects through a local stub
+resolver that answers after 200 ms ≈ 200 ms; control ≈ 10 s.
+
+**H35 (acceptance 4).** The non-fiber path costs < 20 ns per syscall. Test: `bench/e18-overhead.sh`
+— two builds (feature `universal-park` on/off), 10 M zero-length `read` on a non-PHP thread, 3 reps
+each, delta reported. Research 28 measured ≈ 8.3 ns in a scratch binary.
+
+**H36 (acceptance 5).** The lock hazard is real and the policy contains it: a library that takes a
+pthread mutex, calls `read` on a pipe and unlocks (research 27's `locklib.c`) **deadlocks** under
+`park` when two fibers on one thread use it (test times out; the mutex owner in the trace is the
+same thread) and **passes** under `block`. Test: `bench/e18-deadlock.sh`. A `park` run that does not
+deadlock refutes the hazard model and is itself a finding.
+
+**Kill criterion (owner):** any OpenSSL or libcurl test failing under `park` with a lock in the
+trace — the E15 suites and `bench/e6-ssl.sh` run with `IGNIS_PARK=libcurl,libcrypto,libssl`.

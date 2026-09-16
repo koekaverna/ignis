@@ -1,0 +1,107 @@
+# ADR-0020 — Universal park: the binary interposes the blocking libc calls behind a fiber gate
+
+Status: **DRAFT until research 27 (locks) lands** — the policy table's `block` rows and acceptance
+(5)'s test library come from it. Owner's expectation E18 (BRIEF.md, 2026-09-16, "ADR first").
+Affects pain-map items: Swoole 5 (incomplete hooks — this is the general answer), PHP-FPM 1
+(in-process C I/O that never touches php_stream: libcurl, libpq), RoadRunner 1 (state discipline:
+handles stay on the fiber's thread). Depends on ADR-0007 (the stream factory stays), ADR-0009
+(cancellation of a parked fiber), ADR-0016 (offload stays as the fallback for what cannot park).
+Research: 26 (symbols), 27 (locks), 28 (interposition feasibility).
+
+## Context
+
+Today a blocking call inside a C library — `curl_exec`, a `pdo_pgsql` query, `getaddrinfo` from
+libpq — blocks the PHP thread. ADR-0016 routes those calls to synchronous offload workers, which
+costs a thread per concurrent call and copies arguments across (V-24: 13–67 µs per call, bounded by
+the pool size). The stream hook (ADR-0007) cannot reach them: they never touch php_stream.
+
+Research 28 established the mechanism: a symbol exported from the executable with
+`-Wl,--export-dynamic-symbol=NAME` is first in the process's lookup scope, so a call to `poll`
+made *inside* libcurl reached our function (8 hits in `curl_easy_perform`), Rust std keeps working
+with `read` interposed when the forward path is a direct `syscall`, and a thread-local gate in
+front of a syscall costs ~8 ns (acceptance (4) allows 20). Research 26 gives the real list of
+blocking symbols the linked libraries import (31, from `nm`, including `__poll_chk`) and their
+request-path call sites.
+
+## Decision
+
+1. **Symbols.** The `ignis` binary exports, each as a 3-line C shim built by `cc` in `build.rs`
+   (the shim captures `__builtin_return_address(0)` — stable Rust cannot — and tail-calls the Rust
+   handler): `read write readv writev pread pwrite recv send recvfrom sendto recvmsg sendmsg
+   connect accept accept4 poll __poll_chk select nanosleep usleep sleep getaddrinfo freeaddrinfo
+   getnameinfo`. Not interposed, with the reason: `fsync/fdatasync/flock/fcntl` (disk and locks —
+   parking on a regular file is meaningless, epoll refuses them), `sendfile` (libssl's KTLS path
+   only), `sigwait/waitpid` (process control), `gethostbyname` (libcrypto server-side/legacy paths
+   only, research 26).
+2. **Gate.** A thread-local `PARK: Cell<u8>` — `0` off, `1` fiber active, `2` inside our own
+   handler (reentrancy). The scheduler sets `1` when it resumes a request fiber on a PHP thread and
+   clears it on suspend/return; tokio threads, offload workers and curl's resolver helper thread
+   never set it. The non-fiber path is: load TLS, compare, forward — the ~8 ns of research 28.
+   `2` makes every nested libc call from inside a handler (our own `poll` in `zif_ignis_watch`, the
+   channel's futex, `dladdr`) fall straight through.
+3. **Policy.** On the park path only, the return address is resolved once per call site with
+   `dladdr` and cached (address → library → policy). Policy is per library: `park` or `block`.
+   **Default `block`** — delegating is always semantically correct, parking wrongly is a hang
+   (ADR-0018). `park` is an allow-list set from `ignis.toml` `[park] libraries = ["libcurl",
+   "libpq"]` / `IGNIS_PARK=libcurl,libpq`, seeded by research 27's verdicts. libphp itself is
+   `block`: its stream I/O is ADR-0007's, and double handling would park inside the stream hook.
+4. **How a call parks.** `read/recv*/write/send*` on a socket: submit `Op::Watch(fd, dir)`,
+   suspend the fiber (the A4 "park then delegate" rule at the syscall layer — H31 taught that
+   readiness is only the kernel's; the real call follows on the same fd and returns at once).
+   `poll`/`select`: one `Op::Watch` per fd, `await_any`, then the real call with timeout 0 to fill
+   the result the library expects. `connect`: flip `O_NONBLOCK` on, real `connect` (`EINPROGRESS`),
+   park on writable, restore the flags, return `SO_ERROR` — the library never sees the flag.
+   `nanosleep/usleep/sleep`: `Op::Sleep`. `getaddrinfo`: a resolver `Op` (tokio `lookup_host`) with
+   glibc-compatible `addrinfo` allocation and `freeaddrinfo` interposed to free what we allocated
+   (a list glibc did not build must not reach glibc's free path). A non-socket fd (regular file,
+   `EPERM` from epoll) falls through to the real call.
+5. **Stays as it is.** The stream factory (ADR-0007). Offload (ADR-0016) remains the path for a
+   library on `block` and for `SQLite3` (disk I/O). Feature `universal-park` so the overhead bench
+   has its control build; `IGNIS_NO_UNIVERSAL_PARK=1` is the hook-off control at run time.
+
+## Resolver, per library (research 26)
+
+- libcurl 8.18.0 (this build): threaded resolver. `getaddrinfo` runs on a helper pthread; the PHP
+  thread blocks in `poll` on a socketpair — the `poll` interposer parks it. The interposed
+  `getaddrinfo` sees `PARK == 0` on the helper thread and forwards. Acceptance (3) for curl is
+  therefore met through `poll`, and the cost is curl's own throwaway thread per lookup.
+- libpq: `pg_getaddrinfo_all` → synchronous `getaddrinfo` on the caller's thread
+  (`src/common/ip.c:65`) — this is where the runtime resolver parks the fiber.
+- libphp (`gethostbyname`, `ext/sockets`, `ext/standard`): same as libpq once libphp's lookups are
+  on a `park` policy for that symbol; default stays `block` until measured.
+
+## Kill criterion (owner's, verbatim)
+
+Any OpenSSL or libcurl test failing under "park" with a lock in the trace.
+
+Operationally: the E15 suites and `bench/e6-ssl.sh` run with `IGNIS_PARK=libcurl,libcrypto,libssl`;
+a failure whose backtrace shows a `pthread_mutex_lock` owned by the same thread reverses the
+`park` verdict for that library (it moves to `block`) — and if that library is libcurl or OpenSSL,
+reverses this ADR's claim that universal park covers TLS at all.
+
+## Hypotheses (HYPOTHESES.md H32–H36, one per acceptance)
+
+| H | acceptance | bench | expected |
+|---|---|---|---|
+| H32 | (1) `curl_exec` parks, no PHP hook, no offload | `bench/php/e18_curl.php`: 100 fibers × `curl_exec` to `/sleep?ms=200`, `CURLOPT_WRITEFUNCTION` records `spl_object_id(Fiber::getCurrent())` | wall ≈ 200 ms on one thread (offload off, `IGNIS_NO_OFFLOAD_ROUTE=1`); every write callback ran in its own fiber; control `IGNIS_NO_UNIVERSAL_PARK=1` → ≈ 20 s |
+| H33 | (2) pdo_pgsql parks, offload disabled | `bench/php/e18_pgsql.php`: 100 × `SELECT pg_sleep(0.2)` over pdo_pgsql | ≈ 200 ms; control ≈ 20 s |
+| H34 | (3) `getaddrinfo` parks via the runtime resolver | `bench/php/e18_dns.php`: 50 concurrent libpq connects to a hostname the runtime resolver answers slowly (a local resolver stub with 200 ms delay) | ≈ 200 ms; control ≈ 10 s |
+| H35 | (4) non-fiber overhead < 20 ns/syscall | `bench/e18-overhead.sh`: two builds (feature on/off), 10 M zero-length `read` on a non-PHP thread, 3 reps | delta < 20 ns (research 28 measured ~8) |
+| H36 | (5) the hazard is real and the policy contains it | `bench/e18-deadlock.sh` with research 27's `locklib.c` (mutex → `read` on a pipe → unlock) under `park` and under `block` | `park`: two fibers on one thread deadlock (test times out, `gdb` shows the mutex owner is the same thread); `block`: passes |
+
+## Consequences
+
+- `curl_*`, `pdo_pgsql`, `pgsql` and anything else on a `park` library become non-blocking with no
+  code change and no offload thread; the offload pool shrinks to disk I/O and `block` libraries.
+- Every syscall in the process pays the gate (~8 ns). E1/E2/E4 are re-measured with the feature on
+  and recorded beside the feature-off numbers before the feature becomes the default.
+- A library that holds a lock across a blocking call is a hang under `park`; the default is
+  `block` and the allow-list is evidence-based (research 27), which is why (5) is an acceptance
+  and not a warning in the docs.
+- The C shims are the one new `unsafe` surface; each states why the return-address capture and
+  the forward are sound. `guard-ffi.sh` covers `crates/ignis/src/park/**` and the shim.
+
+## Not decided here
+
+Whether `park` becomes the default for libcurl and libpq in `ignis.toml.example` — after H32–H36
+and the kill-criterion run are green, as a separate decision with the E15 numbers beside it.

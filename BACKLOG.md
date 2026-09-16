@@ -163,7 +163,7 @@ running `curl_easy_perform` on a local URL: the interposer must be hit from insi
 does Rust std keep working with `read`/`write` interposed; does `--export-dynamic-symbol` work
 with the linker cargo uses here. Deliverable `docs/research/28-e18-interposition.md`.
 
-### E18-A ADR-0020 `main` `open` — after R1–R3
+### E18-A ADR-0020 `main` `draft written (docs/adr/0020-universal-park.md) — policy table and acceptance (5)'s test library wait for R2`
 Symbol list, gate, policy table with defaults, reentrancy guard (our own reactor calls `poll`;
 nested calls must fall through), `connect` via temporary `O_NONBLOCK` + park-on-writable + flag
 restore, `getaddrinfo` via a resolver `Op` with glibc-compatible `addrinfo` allocation (and
@@ -172,6 +172,18 @@ H32–H36 with their benches: `bench/php/e18_curl.php` (100 × 200 ms `curl_exec
 fiber identity), `bench/php/e18_pgsql.php` (offload off), `bench/php/e18_dns.php`,
 `bench/e18-overhead.sh` (two builds, 10M zero-length `read`s, < 20 ns delta), `bench/e18-deadlock.sh`
 (the R2 shim under `park` deadlocks with a timeout, under `block` passes).
+
+### E18-B The five benches, control arms measured today `agent` `in progress (batch 5)`
+**What.** H32–H35's falsifiers can exist before the feature: `bench/php/e18_curl.php`,
+`bench/php/e18_pgsql.php`, `bench/php/e18_dns.php`, `bench/e18-overhead.sh` (two-build shape,
+`--feature universal-park` on/off; until the feature exists both arms are the same binary and the
+delta must read ≈ 0), and their driver `bench/e18.sh` that prints one line per hypothesis in the
+`nightly:` style. The control arms (everything blocks today) are the baselines: run them and report
+the numbers — the orchestrator re-runs before V-n. `bench/e18-deadlock.sh` waits for R2's shim.
+**Acceptance.** All scripts pass `bash -n` / `php -l`; `bench/e18.sh` runs end to end on this box
+and prints `e18: curl_100x200ms wall_ms=<≈20000> …`, `e18: pgsql_100x200ms wall_ms=<≈20000> …`,
+`e18: overhead_ns delta=<≈0>`; WRITEFUNCTION fiber identity is recorded per transfer (today: all
+in the main fiber or each in its own — report which, that is a fact about offload-off blocking).
 
 ### E18-I Implementation `main` `open` — after E18-A
 C shim per exported symbol (captures `__builtin_return_address(0)`, calls into Rust) built by
