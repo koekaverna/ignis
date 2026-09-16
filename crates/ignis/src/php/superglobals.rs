@@ -34,6 +34,39 @@ thread_local! {
     /// `ignis_set_superglobals`). Saved when leaving that world for an isolated fiber, restored on
     /// the way back. Switches between two unisolated fibers cost nothing.
     static BASE: std::cell::RefCell<Option<[sys::zval; 4]>> = const { std::cell::RefCell::new(None) };
+    /// Whose view the symbol table currently holds: null = the base world, else the isolated
+    /// fiber context that installed its entries. Children started from an isolated fiber inherit
+    /// its view without becoming owners (they have no slot).
+    static VIEW: Cell<*mut sys::zend_fiber_context> = const { Cell::new(std::ptr::null_mut()) };
+}
+
+unsafe fn eg_ptr() -> *mut sys::zend_executor_globals {
+    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
+}
+
+/// Save the currently installed view where it belongs (the owner's slot, or BASE).
+unsafe fn save_current_view() {
+    unsafe {
+        let owner = VIEW.with(|v| v.get());
+        let snap = snapshot();
+        if owner.is_null() {
+            BASE.with(|b| {
+                let mut b = b.borrow_mut();
+                if let Some(old) = b.as_mut() {
+                    release(old);
+                }
+                *b = Some(snap);
+            });
+        } else {
+            let slot = slot_of(owner);
+            if (*slot).is_null() {
+                *slot = Box::into_raw(Box::new(snap));
+            } else {
+                release(&mut **slot);
+                **slot = snap;
+            }
+        }
+    }
 }
 
 /// Mark the running fiber as isolated: it gets its own slot (E13'). Called by `ignis_set_superglobals`.
@@ -45,19 +78,14 @@ unsafe fn isolate_current() {
         if fiber.is_null() {
             return; // {main}: the base world itself
         }
-        let slot = slot_of(&raw mut (*fiber).context);
+        let ctx = &raw mut (*fiber).context;
+        let slot = slot_of(ctx);
         if (*slot).is_null() {
-            // This fiber ran in the base world until now: what the symbol table holds at this
-            // moment IS the base world — remember it before the request's values go in.
-            let snap = snapshot();
-            BASE.with(|b| {
-                let mut b = b.borrow_mut();
-                if let Some(old) = b.as_mut() {
-                    release(old);
-                }
-                *b = Some(snap);
-            });
+            // Whatever is installed right now belongs to the current view's owner (the base world,
+            // or an isolated ancestor): save it there, then this fiber takes over as owner.
+            save_current_view();
             *slot = Box::into_raw(Box::new(undef4()));
+            VIEW.with(|v| v.set(ctx));
         }
     }
 }
@@ -138,37 +166,32 @@ unsafe extern "C" fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys:
     // contexts' reserved slots and freed in on_destroy.
     unsafe {
         SWITCHES.with(|c| c.set(c.get() + 1));
-        let from_slot = slot_of(from);
+        let _ = from;
         let to_slot = slot_of(to);
-        let from_isolated = !(*from_slot).is_null();
         let to_isolated = !(*to_slot).is_null();
-        if !from_isolated && !to_isolated {
-            return; // both share the base world: nothing to swap (E13' lazy swap)
-        }
-        if from_isolated {
-            let snap = snapshot();
-            release(&mut **from_slot);
-            **from_slot = snap;
-        } else {
-            // Leaving the base world for an isolated fiber: remember the base as it is now.
-            let snap = snapshot();
-            BASE.with(|b| {
-                let mut b = b.borrow_mut();
-                if let Some(old) = b.as_mut() {
-                    release(old);
-                }
-                *b = Some(snap);
-            });
-        }
+        let to_main = to == (*eg_ptr()).main_fiber_context;
+        let owner = VIEW.with(|v| v.get());
         if to_isolated {
+            if owner == to {
+                return; // its view is already installed (a child returned to it)
+            }
+            save_current_view();
             install(&**to_slot);
-        } else {
+            VIEW.with(|v| v.set(to));
+        } else if to_main {
+            if owner.is_null() {
+                return; // base world → base world
+            }
+            save_current_view();
             BASE.with(|b| {
                 if let Some(base) = b.borrow().as_ref() {
                     install(base);
                 }
             });
+            VIEW.with(|v| v.set(std::ptr::null_mut()));
         }
+        // else: a fiber without a slot (pool fiber, or a child of an isolated fiber): it inherits
+        // whatever view is installed — nothing to swap (E13' lazy swap).
     }
 }
 
@@ -182,6 +205,12 @@ unsafe extern "C" fn on_destroy(ctx: *mut sys::zend_fiber_context) {
             release(&mut b);
             *slot = std::ptr::null_mut();
         }
+        // A dying owner: the installed view has no owner any more; the next switch to main restores BASE.
+        VIEW.with(|v| {
+            if v.get() == ctx {
+                v.set(std::ptr::null_mut());
+            }
+        });
     }
 }
 
