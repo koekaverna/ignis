@@ -165,7 +165,68 @@ unsafe fn would_block(fd: c_int) -> bool {
         return false;
     }
     let kind = st.st_mode & libc::S_IFMT;
-    kind == libc::S_IFSOCK || kind == libc::S_IFIFO
+    if kind == libc::S_IFIFO {
+        return true;
+    }
+    if kind != libc::S_IFSOCK {
+        return false;
+    }
+    // A4's rule (ADR-0018, V-29), which the `ext/sockets` hooks used to own and which moves here
+    // with them (ADR-0037 §6 step 3): readiness is NOT "the call would succeed". A data call on a
+    // LISTENING socket fails with ENOTCONN at once, and `poll` on it only ever reports a pending
+    // connection — parking is a hang, not a wait (php-src socket_read_params). Same for an
+    // unconnected stream socket. A datagram socket needs no peer, only a local address: an
+    // unbound one never becomes readable either.
+    //
+    // The direction is not known here, and it does not need to be: `accept` has its own handler
+    // and never asks this question.
+    unsafe {
+        if getsockopt_int(fd, libc::SO_ACCEPTCONN) == Some(1) {
+            return false; // listening: a data call errors out now
+        }
+        if is_connected(fd) {
+            return true;
+        }
+        match getsockopt_int(fd, libc::SO_TYPE) {
+            Some(t) if t == libc::SOCK_DGRAM => is_bound(fd), // recvfrom on a bound UDP socket waits legitimately
+            _ => false,                                       // unconnected stream: ENOTCONN now
+        }
+    }
+}
+
+unsafe fn getsockopt_int(fd: c_int, opt: c_int) -> Option<c_int> {
+    let mut v: c_int = 0;
+    let mut l = std::mem::size_of::<c_int>() as libc::socklen_t;
+    // SAFETY: getsockopt only writes `l` bytes into `v`, which is a live local of that size.
+    let rc = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut v as *mut c_int as *mut c_void, &mut l) };
+    if rc == 0 { Some(v) } else { None }
+}
+
+/// Has a peer (`getpeername` succeeds) — i.e. the socket is connected.
+unsafe fn is_connected(fd: c_int) -> bool {
+    let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut l = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    // SAFETY: getpeername writes at most `l` bytes into `ss`, a live local of that size.
+    unsafe { libc::getpeername(fd, &raw mut ss as *mut libc::sockaddr, &mut l) == 0 }
+}
+
+/// Has a local address that can actually receive: a non-zero port for IP, a non-empty path for
+/// AF_UNIX. An unbound socket never becomes readable, so waiting on one is a hang.
+unsafe fn is_bound(fd: c_int) -> bool {
+    // SAFETY: as `is_connected`; the family tag decides which member of the union is read.
+    unsafe {
+        let mut ss: libc::sockaddr_storage = std::mem::zeroed();
+        let mut l = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        if libc::getsockname(fd, &raw mut ss as *mut libc::sockaddr, &mut l) != 0 {
+            return false;
+        }
+        match ss.ss_family as i32 {
+            libc::AF_INET => (*(&raw const ss as *const libc::sockaddr_in)).sin_port != 0,
+            libc::AF_INET6 => (*(&raw const ss as *const libc::sockaddr_in6)).sin6_port != 0,
+            libc::AF_UNIX => (*(&raw const ss as *const libc::sockaddr_un)).sun_path[0] != 0,
+            _ => false,
+        }
+    }
 }
 
 /// Zero-timeout readiness probe, raw syscall.

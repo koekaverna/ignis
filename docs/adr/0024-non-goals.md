@@ -29,6 +29,13 @@ measurement or by the architecture.
    not per request or per tenant.
 6. **No sub-millisecond scheduling.** Timers ride tokio's 1 ms wheel (ADR-0026).
 
+**Added 2026-09-17 (research 30 group (d)):** blocking calls on *regular files* are not made
+asynchronous by anything in this runtime — epoll refuses regular files, so universal park forwards
+them and the OS thread waits. That covers `file_get_contents()` on disk, the opcache file cache,
+and `ext/session`'s `flock` on the session file (BACKLOG R-SESS: a session-lock collision stalls a
+thread, not a fiber). Anything needing that would be a fourth mechanism (io_uring, or offload for
+file I/O) and gets its own ADR.
+
 ## Options considered
 
 Promising durability through a write-ahead request log (rejected: it reinvents a queue in the

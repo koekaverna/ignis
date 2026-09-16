@@ -3,7 +3,7 @@ main	Zend/tests/fibers	110	108	0	2	0	0	13
 fiber	Zend/tests/fibers	110	78	30	2	0	0	13
 stock	ext/standard/tests/streams	160	139	0	21	0	0	6
 main	ext/standard/tests/streams	160	133	6	21	0	0	22
-fiber	ext/standard/tests/streams	160	124	15	21	0	0	37
+fiber	ext/standard/tests/streams	160	125	14	21	0	0	22
 stock	ext/sockets/tests	118	91	1	26	0	0	4
 main	ext/sockets/tests	118	91	1	26	0	0	15
-fiber	ext/sockets/tests	118	84	8	26	0	0	45
+fiber	ext/sockets/tests	118	85	7	26	0	0	15

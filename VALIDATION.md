@@ -1882,3 +1882,56 @@ lines that moved to `wait.rs`; `reactor.rs` −362 lines. Tree: Rust **4,890** l
 **−1,436 Rust lines, −42 `unsafe {` blocks, −38 `unsafe fn`**. Release binary **37,180,624 bytes**
 (48.7 MB before the cycles — the TLS stack and the actor are gone). Mechanisms a wait can take:
 **3** — park, offload, context. ADR-0037's target model is reached.
+
+## V-50 — a regression the count gate hid: `can_block` never moved into `would_block` (CONFIRMED, fixed)
+
+Date: 2026-09-16T19:04:00Z. Found by the porter agent's classification of the remaining phpt failures
+(docs/research/33-phpt-remaining-failures.md), re-run by main.
+
+**The defect.** ADR-0037 §6 step 3 says, in its own words, that A4's `can_block` rule (a listening
+or unconnected socket forwards) moves into `would_block` *before* the `ext/sockets` hooks go. It
+did not. `php-src ext/sockets/tests/socket_read_params.phpt` — `socket_read()` on a socket from
+`socket_create_listen(0)` — must print a warning at once (the kernel answers `ENOTCONN`); under
+universal park it parked on `POLLIN` for a connection that never comes and the test timed out.
+
+| commit | fiber-mode status of `socket_read_params.phpt` |
+|---|---|
+| `6780e1b` (hooks present) | PASSED |
+| `17a2ceb` (cycle 2: `sockets.rs`/`accept.rs` deleted) | **FAILED** — `** ERROR: process timed out **` |
+| `55bb5b4` (cycle 3) | FAILED |
+| this fix | **PASSED** (re-run by main, run-tests, fiber mode) |
+
+**Why the gate did not catch it.** `scripts/ci-gate.sh` compares pass *counts*. In the same run
+`socket_export_stream-1.phpt` recovered (V-49), so fiber sockets read 83 → 84 while one test broke
+and another healed. A swap of equal size is invisible to a total. Fixed in the same commit:
+`check_set()` compares the fresh per-test `.tsv` against the one committed in HEAD and fails on any
+test that PASSED there and does not now, ignoring tests absent from either side (the CI box skips
+more — research 21). It warns instead of failing when `$CI` is set, until a set from the CI box is
+committed; the counts stay a hard gate there.
+
+**The fix.** `would_block()` in `crates/ignis/src/php/park.rs` now carries the rule the hooks owned
+(`getsockopt_int`, `is_connected`, `is_bound`, copied from the deleted `sockets.rs`): a listening
+socket (`SO_ACCEPTCONN == 1`) never parks — a data call on it errors now; a connected socket parks;
+an unconnected one parks only if it is a `SOCK_DGRAM` with a local address (`recvfrom` on a bound
+UDP socket waits legitimately), otherwise the `ENOTCONN` reaches the caller unparked. `accept` asks
+none of this — it has its own handler and parks on a listener by definition.
+
+**After, full suite** (`bench/e15-phpt.sh` + gate, this box):
+
+| suite | stock | main | fiber | baseline (main/fiber) |
+|---|---:|---:|---:|---|
+| Zend/tests/fibers | 108 | 108 | 78 | 108 / 78 |
+| ext/standard/tests/streams | 139 | 133 | **125** | 133 / 124 |
+| ext/sockets/tests | 91 | 91 | **85** | 89 / 83 |
+
+Gate exit 0 on both checks, counts and sets. `cargo nextest` 9/9. Fiber sockets 85 is the highest
+this suite has been; the baseline file is left alone (ADR-0023 §1: raise only from two CI samples).
+
+**Two rules the audit turned into code comments rather than prose** (research 30 groups (d)/(e),
+agent, spot-checked by main): `fcntl` must never join the interposed symbols — the one lock-held
+blocking call in libphp is `fcntl(F_SETLKW)` inside opcache's `zend_shared_alloc_lock()`, taken
+with the TSRM mutex held on every cache-miss compile, and parking there deadlocks the thread
+(warning now sits in `crates/ignis/build.rs` next to the symbol list); and a blocking call on a
+*regular file* is nobody's mechanism — epoll refuses regular files, so `ext/session`'s
+`flock(LOCK_EX)` on the session file stalls the whole OS thread, not one fiber (ADR-0024 non-goal,
+BACKLOG R-SESS).

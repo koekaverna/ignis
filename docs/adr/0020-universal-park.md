@@ -28,7 +28,8 @@ request-path call sites.
 1. **Symbols.** The `ignis` binary exports, each as a 3-line C shim built by `cc` in `build.rs`
    (the shim captures `__builtin_return_address(0)` — stable Rust cannot — and tail-calls the Rust
    handler): `read write readv writev pread pwrite recv send recvfrom sendto recvmsg sendmsg
-   connect accept accept4 poll __poll_chk select nanosleep usleep sleep getaddrinfo freeaddrinfo
+   connect accept accept4 poll __poll_chk select nanosleep usleep sleep getaddrinfo
+   (`freeaddrinfo` dropped from the list — research 31: nothing fabricates a chain)
    getnameinfo`. Not interposed, with the reason: `fsync/fdatasync/flock/fcntl` (disk and locks —
    parking on a regular file is meaningless, epoll refuses them), `sendfile` (libssl's KTLS path
    only), `sigwait/waitpid` (process control), `gethostbyname` (libcrypto server-side/legacy paths
@@ -51,9 +52,11 @@ request-path call sites.
    `poll`/`select`: one `Op::Watch` per fd, `await_any`, then the real call with timeout 0 to fill
    the result the library expects. `connect`: flip `O_NONBLOCK` on, real `connect` (`EINPROGRESS`),
    park on writable, restore the flags, return `SO_ERROR` — the library never sees the flag.
-   `nanosleep/usleep/sleep`: `Op::Sleep`. `getaddrinfo`: a resolver `Op` (tokio `lookup_host`) with
-   glibc-compatible `addrinfo` allocation and `freeaddrinfo` interposed to free what we allocated
-   (a list glibc did not build must not reach glibc's free path). A non-socket fd (regular file,
+   `nanosleep/usleep/sleep`: `Op::Sleep`. `getaddrinfo`: **corrected 2026-09-17 (research 31)** — it
+   has no fd, so it cannot park at all. The interposer forwards the *real* `getaddrinfo` to
+   `tokio::task::spawn_blocking` behind an `Op::Custom` and suspends the fiber on that; nothing
+   fabricates an `addrinfo` chain, so `freeaddrinfo` needs no interposition and the ownership
+   hazard this ADR originally described never arises.
    `EPERM` from epoll) falls through to the real call.
 5. **Stays as it is.** The stream factory (ADR-0007). Offload (ADR-0016) remains the path for a
    library on `block` and for `SQLite3` (disk I/O). Feature `universal-park` so the overhead bench
@@ -138,7 +141,7 @@ elements below are not. Status per element:
 | Address-interval map from `dl_iterate_phdr` | **unbuilt** — today `dladdr` once per call site, cached by return address; the interval map is the cheaper lookup for the first hit and needed before the policy can be per *symbol* within a library (BACKLOG E18-C item 2) |
 | **Detector-first rollout**: block + measure + report before any park | **unbuilt, and it is the rollout order** — `IGNIS_PARK_TRACE=1` prints decisions (V-45); a report mode that counts would-park call sites per library while forwarding everything is the detector, and it runs against the E15 suites and a real application before any library goes on `park` |
 | pthread_mutex accounting: never park while holding a lock; switch to the lock holder instead of blocking | **unbuilt** — interposing `pthread_mutex_lock/unlock` with a per-thread depth counter; parking at depth > 0 is refused (forward, i.e. block). "Switch to the holder" needs the holder to be a fiber on the same thread and is the H36 hazard turned into a scheduling rule. Research 27's verdicts stand until this exists |
-| `getaddrinfo` replaced whole (runtime resolver, glibc-compatible `addrinfo`, `freeaddrinfo` interposed) | **unbuilt** — stage 2; per library: curl parks through `poll` already, libpq/libphp need this |
+| `getaddrinfo` forwarded to a blocking pool behind `Op::Custom` (research 31 replaced "runtime resolver + fabricated `addrinfo` + interposed `freeaddrinfo`": no fd means no park, and forwarding the real call removes the ownership hazard) | **unbuilt** — stage 2; per library: curl parks through `poll` already, libpq/libphp need this |
 | Cancellation surfaces as `ECANCELED` | **unbuilt** — stage 2; today a cancelled parked call falls back to blocking (V-45); ADR-0009 addendum item 2 |
 | Regular files need io_uring or offload | **recorded** — a regular fd forwards (epoll refuses it); file I/O stays layer 3 (ADR-0021) until io_uring is measured; io_uring is off unless enabled (ADR-0035) |
 | Kill criteria "as discussed" | **recorded verbatim** above, plus H36's hazard test |

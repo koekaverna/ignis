@@ -46,20 +46,20 @@ $fs[] = Ignis\async(static function () use ($ms): void {
     [$a, $b] = $pair;
     socket_set_option($a, SOL_SOCKET, SO_RCVTIMEO, ['sec' => intdiv($ms, 1000), 'usec' => ($ms % 1000) * 1000]);
     $r = socket_recv($a, $buf, 16, 0);
-    $elapsed = intdiv(hrtime(true) - $t0, 1_000_000);
+    $elapsed = intdiv((int) hrtime(true) - $t0, 1_000_000);
     printf("e18_selfcheck: case=blocks(recv, off policy) result=%s elapsed_ms=%d\n", var_export($r, true), $elapsed);
 });
 
 $fs[] = Ignis\async(static function () use ($ms): void {
     $t0 = hrtime(true);
     usleep($ms * 1000);
-    $elapsed = intdiv(hrtime(true) - $t0, 1_000_000);
+    $elapsed = intdiv((int) hrtime(true) - $t0, 1_000_000);
     printf("e18_selfcheck: case=parks(usleep, on policy) elapsed_ms=%d\n", $elapsed);
 });
 
 $t0 = hrtime(true);
 Ignis\all($fs);
-$total = intdiv(hrtime(true) - $t0, 1_000_000);
+$total = intdiv((int) hrtime(true) - $t0, 1_000_000);
 printf(
     "e18_selfcheck: total_wall_ms=%d (serialized ~= %d if 'blocks' really blocked the thread; ~= %d if both ran concurrently)\n",
     $total,

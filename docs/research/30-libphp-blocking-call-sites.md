@@ -1,7 +1,13 @@
 # 30 — libphp's blocking call sites: a symbol-level audit (placeholder; ADR-0037 §5)
 
-Status: **groups (a), (b), (c) done; (d)/(e) not started**. This document exists so the gate in
-ADR-0037 §6 step 2 has a name.
+Status: **groups (a), (b), (c), (d), (e) done.** This document exists so the gate in ADR-0037 §6
+step 2 has a name. One `block` verdict found in (d)/(e): `fcntl(F_SETLKW)` at
+`ext/opcache/zend_shared_alloc.c:510` (`zend_shared_alloc_lock()`), reached with the TSRM mutex
+`zts_lock` held (`:499`) — and reachable **per-request**, on any opcache cache-miss compile
+(`persistent_compile_file` → `cache_script_in_shared_memory`, `ZendAccelerator.c:1995`/`:2185`),
+not just at RINIT the way group (b)'s `usleep` was. Everything else in (d)/(e) with an fd is a
+regular file and forwards regardless of interposition (`would_block()`'s `S_IFREG` exclusion);
+everything without an fd (DNS) is offload's, not park's, same as groups (a)/(c) already found.
 
 ## Group (b) — `sleep` / `usleep` / `nanosleep` in libphp (audited 2026-09-17, php-8.5.10)
 
@@ -80,6 +86,100 @@ no lock is held at the moment of any of these calls — no `mutex`/`_lock` hit a
 | `write`/`read` (pipe) | `plain_wrapper.c:385` (`write`), `:457`/`:463` (`read`) | `php_stdiop_write`, `php_stdiop_read` | `fwrite`/`fread` on any `php_stream_stdio_ops` stream — plain files **and** `proc_open()`/`popen()` pipes | none | fd's real blocking mode; no PHP-side poll/timeout wrapper on Linux (the `PeekNamedPipe`/`usleep(10)` loop just above, `:439`-`:448`, is `#ifdef PHP_WIN32` only) | none | park for a pipe fd (`S_IFIFO` — `would_block()`'s `fstat` check already admits it, `park.rs:166`); **forward** for a plain file fd (`S_IFREG` — the same check already excludes it) — `read`/`write` already interposed, no gap |
 | `usleep` | `plain_wrapper.c:446` | — | — | — | — | — | already in group (b): Windows-only, not compiled on Linux |
 | `select` | `ext/standard/streamsfuncs.c:826` (`php_select` macro `:32` = `select`) | `PHP_FUNCTION(stream_select)` | `stream_select()` | none | N/A (multi-fd `fd_set`) | yes — `tv_p` from `$seconds`/`$microseconds`, passed straight into `select()` | park — needs `select` interposed (same gap as group (a)); **and** cannot be a bare syscall wrap — see semantic gaps below (`stream_array_emulate_read_fd_set`) |
+
+## Group (d) — opcache, session, script loading, plain-file I/O (audited 2026-09-16, php-8.5.10)
+
+`ext/opcache/{ZendAccelerator.c,zend_shared_alloc.c,zend_file_cache.c,zend_accelerator_module.c}`,
+`ext/session/mod_files.c` (the default `files` save handler — `mod_mm.c` is compiled but dead, see
+below; `mod_user.c`/`mod_user_class.c`/`session.c` have no call site in the symbol list, they
+delegate to userland), `Zend/zend_stream.c`, `Zend/zend_virtual_cwd.c`, and the plain-file paths of
+`ext/standard/file.c` and `main/rfc1867.c`/`main/main.c`. All compiled in on this build (`opcache`,
+`session` are both in ADR-0027 §4's list; `Zend/`, `main/` are core).
+
+### opcache
+
+| symbol | file:line (php-8.5.10) | enclosing function | reached from | lock held on the path | fd kind | verdict |
+|---|---|---|---|---|---|---|
+| `fcntl(F_SETLKW)` | `zend_shared_alloc.c:510` | `zend_shared_alloc_lock()` | every `zend_shared_alloc_lock()` call site: `ZendAccelerator.c:821,1248,1292,1404,1586` (`cache_script_in_shared_memory` ← `persistent_compile_file`, `:1995`/`:2185` — **the per-request opcache-cache-miss compile path, runs inside a fiber**, not RINIT-only), `:2601,2713` (RINIT restart check, group (b)'s `usleep` neighbour), `:2864,2946,3291,3306,3320,5068`; `zend_accelerator_module.c:930` (`opcache_reset()`); `zend_file_cache.c:2031` (file-cache-hit promoted into SHM) | **yes — `zts_lock`**, a `tsrm_mutex_lock` taken at `zend_shared_alloc.c:499` immediately before the `fcntl` loop, released only after `ZCG(locked)=1` is set past the call | regular file — `lock_file`, an `O_TMPFILE` fd opened at `zend_shared_alloc.c:104` | **block** — reached with `zts_lock` held (a process-wide, non-fiber-aware TSRM mutex): parking here would suspend the fiber with `zts_lock` still held, stalling every other fiber on the same OS thread that needs it too (e.g. a nested SHM-lock attempt); the fd being a regular file would forward anyway, but the lock is the harder reason and fires whether or not the fd rule does |
+| `fcntl(F_SETLK)`/`fcntl(F_GETLK)` | `ZendAccelerator.c:288,309,326,358,384,406,890,923` | `accel_restart_enter/leave/is_active`, `accel_activate_add`, `accel_deactivate_sub`, `accel_unlock_all` (the restart/locker bookkeeping the task asked about) | opcache RINIT/RSHUTDOWN, restart scheduling | n/a | regular file (`lock_file`) | **not applicable** — `F_SETLK`/`F_GETLK` are the non-blocking lock variants: they return at once (`EAGAIN`/`EACCES` on contention, or the query result) and never invoke a wait, so no park/block question applies regardless of fd or lock state. Only `F_SETLKW` (above) blocks. |
+| `usleep` | `ZendAccelerator.c:863,874` | `kill_all_lockers()` | already in group (b) | opcache SHM lock, RINIT-only | n/a | see group (b) — unchanged, listed here only so the restart/locker story is complete in one place |
+| `writev`/`write` | `zend_file_cache.c:1104` (`writev`), `:1121,1127,1133` (`write`, no-`HAVE_SYS_UIO_H` fallback — dead on Linux, `writev` is the live path) | `zend_file_cache_script_write()` ← `zend_file_cache_script_store()` (`:1141`) ← `cache_script_in_shared_memory()` (`ZendAccelerator.c:1657`) / `store_script_in_file_cache()` — opcache's file-cache write, per cache-miss compile | the same cache-miss compile path as the SHM-lock row above, when `opcache.file_cache` is set | **the file's own `flock(LOCK_EX)`**, taken at `zend_file_cache.c:1178` (`zend_file_cache_flock` → `flock(2)`, `HAVE_FLOCK` is defined on Linux/glibc) and released at `:1229`/`close()` at `:1232` — **not** the opcache SHM lock (`zend_shared_alloc_lock` is not held anywhere inside this function; verified by reading the body) | regular file (opened via `zend_file_cache_open` = `open()`, `O_CREAT\|O_EXCL\|O_RDWR`) | **forwarded-anyway** — `would_block()`'s `S_IFREG` exclusion fires regardless of the flock; the lock is real but moot to the verdict since park was never on the table for this fd |
+| `read` | `zend_file_cache.c:1931,1997` | `zend_file_cache_script_load_ex()` ← `zend_file_cache_script_load()` ← `persistent_compile_file()` (cache-hit path, file cache instead of/before SHM) | every request that resolves a script from the file cache | `flock(LOCK_SH)` at `:1925`, released at `:1967`/`:1980`/`:1999`/`:2008` depending on the early-return taken | regular file | forwarded-anyway — same `S_IFREG` reason |
+| `flock` | `zend_file_cache.c:1178` (`LOCK_EX`), `:1925` (`LOCK_SH`), and the `LOCK_UN` sites at `:1229,1933,1945,1955,1967,1980,1999,2008` | `zend_file_cache_flock()` (`#elif defined(HAVE_FLOCK) # define zend_file_cache_flock flock`, `:98`) | file-cache store/load, both directions | n/a (this call *is* the lock) | regular file (the `.bin` cache file itself, not `lock_file`) | forwarded-anyway — `flock()`'s own target fd is `S_IFREG` too, so `would_block()` excludes it exactly like the read/write calls it brackets |
+
+### session (`ext/session/mod_files.c`, the `files` save handler)
+
+| symbol | file:line (php-8.5.10) | enclosing function | reached from | lock held on the path | fd kind | verdict |
+|---|---|---|---|---|---|---|
+| `flock` (`LOCK_EX`) | `mod_files.c:210` | `ps_files_open()` ← `ps_files_write()`/`ps_files_read()` | `session_start()` and every session read/write while the session is open | none on the path *to* this call | regular file — the session data file | **forwarded-anyway** (`S_IFREG`) — but flag distinctly: this is PHP's well-known cross-request session serialization point. Two requests for the same session ID contend on this exact `flock()`, and the second one blocks for however long the first holds the session open — which, under Ignis, is the whole PHP OS thread stalling (not just the fiber), because a regular file can never park. `getaddrinfo`'s "no fd" case gets offload as an escape hatch; this one has an fd, so by the letter of the two rules it stays `forwarded-anyway`, but operationally it is the least excusable forward in this audit — worth its own line in ADR-0037 if session concurrency ever becomes a measured pain point. |
+| `pwrite` | `mod_files.c:245` | `ps_files_write()` | `session_write_close()`/session shutdown | the `flock(LOCK_EX)` from `:210`, held for the life of the open fd | regular file | forwarded-anyway (`S_IFREG`) |
+| `pread` | `mod_files.c:492` | `ps_files_read()` | `session_start()`'s initial read | same `flock(LOCK_EX)` from `:210` (session reads take the same exclusive lock as writes — `ps_files_open()` doesn't distinguish) | regular file | forwarded-anyway (`S_IFREG`) |
+| `write`/`read` | `mod_files.c:264`/`:512` | same functions, `#else` fallback | — | — | — | **not compiled**: `HAVE_PWRITE`/`HAVE_PREAD` are defined on this Linux/glibc build (`build/php.m4`'s `AC_CACHE_CHECK([whether pwrite works] …)`, a real feature test, not a version guess), so the raw `write`/`read` branches are dead code |
+| — | `ext/session/mod_mm.c` | (whole file) | — | — | — | **not active**: the entire file is `#ifdef HAVE_LIBMM` (`mod_mm.c:19`); `HAVE_LIBMM` needs `--with-mm`, which (a) is not in ADR-0027 §4's configure line and (b) `config.m4` refuses it combined with `--enable-zts`, which this build always uses — dead regardless |
+
+### Zend/ script loading and compilation
+
+| symbol | file:line (php-8.5.10) | enclosing function | reached from | lock held | fd kind | verdict |
+|---|---|---|---|---|---|---|
+| — (`fread`) | `Zend/zend_stream.c:27` (`zend_stream_stdio_reader`) | `zend_stream_open()`/`zend_stream_fixup()`'s raw-`FILE*` fallback | would be `include`/`require`/the main script, **if** no `stream_open_function` were installed | — | — | **unreachable on this build**: `main/main.c:2242` unconditionally sets `zuf.stream_open_function = php_stream_open_for_zend` during `php_module_startup()`, so `zend_stream_open()`'s first line (`if (zend_stream_open_function) return zend_stream_open_function(handle);`, `zend_stream.c:87`) always takes that branch instead. The real read path for the top-level script *and* every `include`/`require` is `main/main.c:1685` (`php_stream_open_for_zend_ex`) → `php_stream_open_wrapper()` → `main/streams/plain_wrapper.c`'s stream ops — **already audited in group (c)** (`plain_wrapper.c:457`/`:463`, `php_stdiop_read`, verdict `forward` for `S_IFREG`). No new call site here; this row exists to record that the naive reading of `zend_stream.c` is a dead end. |
+| `open` | `Zend/zend_virtual_cwd.c:1463` (`O_CREAT` variant), `:1469` (plain) | `virtual_open()` (the `VCWD_OPEN` macro) | `include_path` search, realpath-cache population, `tempnam()`, any cwd-relative file open | none | regular file/dir | forwarded-anyway (`S_IFREG`) — and note `open` isn't even in `park.rs`'s stage-1 or stage-2 interposition scope today (its own doc comment lists only `read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep` for stage 1 and `getaddrinfo/select/accept*/vectored/__poll_chk` for stage 2), so this forwards unconditionally regardless of fd kind; only a FIFO opened without `O_NONBLOCK` would make `open()` itself capable of blocking on data, and `virtual_open()`'s normal callers never hit one |
+
+### plain-file I/O (`ext/standard`, `main/rfc1867.c`, `main/main.c`)
+
+| symbol | file:line (php-8.5.10) | enclosing function | reached from | lock held | fd kind | verdict |
+|---|---|---|---|---|---|---|
+| `flock` | `main/streams/plain_wrapper.c:783` | `php_stdiop_set_option()` (`PHP_STREAM_OPTION_LOCKING`) ← `main/streams/streams.c`'s `php_stream_lock()` ← `ext/standard/file.c:203` (`PHP_FUNCTION(flock)`) | userland `flock()` on any local-file stream | none | regular file (the wrapped local file, the common case) | forwarded-anyway (`S_IFREG`) — this is the userland `flock()` function's own call site, distinct from opcache's/session's internal locking above |
+| `write` | `main/rfc1867.c:1043,1045` | `rfc1867_post_handler()` | any multipart file upload — writes the uploaded body to the temp upload file | none | regular file (`php_open_temporary_fd`-created tmp file) | forwarded-anyway (`S_IFREG`) — a real per-request hot-path write, worth naming even though the verdict is unremarkable |
+| `write` | `main/main.c:972,975` | `php_log_err_with_severity()` (`main.c:923`) | any warning/error while `error_log` ini points to a plain file (not syslog, not the SAPI logger) | none on Linux — the `php_flock(fd, LOCK_EX)` wrap around this write is `#ifdef PHP_WIN32` only (`:968`-`:970`) | regular file | forwarded-anyway (`S_IFREG`) |
+| `close` | `ext/standard/file.c:697` (`tempnam()`), `main/php_open_temporary_file.c:375` | — | temp-file creation cleanup | — | regular file | no verdict needed — `close()` doesn't wait on data the way the other symbols do; listed only because the grep matched it |
+
+## Group (e) — the rest, and what stays `block` (audited 2026-09-16, php-8.5.10)
+
+Everything else the symbol-list grep turned up across the compiled tree (`~/php-src` at
+`php-8.5.10`, ADR-0027 §4's `--disable-all` + `mbstring, sockets, pdo, pdo_sqlite, sqlite3,
+fibers, zlib, filter, ctype, tokenizer, session, iconv, pdo_pgsql, pgsql, curl, openssl, opcache`),
+including places the task explicitly asked about that turned out to have nothing.
+
+| area | finding |
+|---|---|
+| `TSRM/TSRM.c` | **zero call sites** for any symbol in the list. `tsrm_startup`/`tsrm_shutdown`/`tsrm_mutex_alloc` use `pthread_mutex_init`/`pthread_mutex_lock`/`pthread_key_create`, none of which are audited symbols. Nothing to report. |
+| `ext/pcntl` | **not compiled.** Absent from ADR-0027 §4's extension list (`mbstring, sockets, pdo, pdo_sqlite, sqlite3, fibers, zlib, filter, ctype, tokenizer, session, iconv, pdo_pgsql, pgsql, curl, openssl, opcache`) — confirmed by grep against that list, nothing more to check. |
+| `ext/standard/dns.c` — `dns_get_record()`/`checkdnsrr()`/`getmxrr()` | `dns.c:429,961,1102` all call `php_dns_search(...)` (`ext/standard/php_dns.h` macro → `res_nsearch`/`res_search`/`dns_search`). That function, and the `connect`/`send`/`recv`/`poll` it does internally, lives in **`libresolv.so`**, not compiled into `libphp.so` — out of this audit's scope by the same "only code compiled into this build" rule that kept research 27's libcurl/libpq audit separate from this one. `gethostbyname()`/`gethostbynamel()`/`gethostbyaddr()` (`dns.c:219,245,171`) were already resolved to group (c)'s `network.c:1352`/`dns.c:184,191` rows — no new call site there. If the park table is ever extended past libphp, libresolv needs its own research-27-shaped entry, not a row here. |
+| `ext/mbstring`, `ext/pdo`, `ext/pdo_sqlite`, `ext/sqlite3`, `ext/zlib`, `ext/filter`, `ext/ctype`, `ext/tokenizer`, `ext/iconv` | swept with the full symbol list across every `.c` in each extension: **zero hits**. |
+| `Zend/zend_fibers.c` | zero hits — the fiber context switch is `ucontext`/assembly, not a call to anything in the symbol list. |
+| `Zend/zend_call_stack.c:725,733,737,771` | `open`/`close`/`pread` inside `zend_call_stack_get_solaris_proc_maps()` — the whole function is `#ifdef HAVE_LIBPROC_H` (Solaris `libproc`), **not compiled** on this Linux/glibc build. |
+| `Zend/zend_gdb.c:114,118,143` | `open`/`read`/`close` inside `zend_gdb_present()` — compiled (`#if defined(__linux__)` is true here), but grepping the entire tree for callers of `zend_gdb_present`/`zend_gdb_register_code` finds **none** — dead code, unreachable at runtime. |
+| `main/fastcgi.c` | Added via `PHP_ADD_SOURCES_X([main], [fastcgi.c], …, [PHP_FASTCGI_OBJS], [no])` (`configure.ac:1684`-`1689`) — a separate object group linked only into `sapi/cgi` and `sapi/fpm`. `scripts/build-php.sh` passes `--disable-cgi` and builds no fpm SAPI, so `PHP_FASTCGI_OBJS` is compiled (per the object rule in the Makefile) but never linked into `libphp.so`/the embed SAPI Ignis actually runs. |
+| `main/main.c:2600,2667` | `open(".", 0)`/`close(old_cwd_fd)` bracketing `php_execute_script()` — cwd save/restore, a directory fd, no data transferred; not meaningfully blocking. |
+| `main/fopen_wrappers.c:830` | `close(fdtest)` — trivial, part of an `open_basedir` probe. |
+
+Nothing in group (e) needed a `park`/`block` verdict beyond what's already in group (d)'s table:
+every real call site here either isn't compiled, has no caller, forwards for the same `S_IFREG`
+reason as group (d), or (DNS) lives in a library outside libphp's scope.
+
+## libphp symbols that stay `block`, with the reason
+
+One row, because one real `block` verdict exists across the entire audit (groups (a)-(e)):
+
+| symbol | file:line | reason |
+|---|---|---|
+| `fcntl(F_SETLKW)` | `ext/opcache/zend_shared_alloc.c:510` (`zend_shared_alloc_lock()`) | Reached with `zts_lock` (a TSRM mutex, `tsrm_mutex_lock` at `:499`) already held. Parking a fiber here would suspend it with a process-wide, non-fiber-aware mutex still locked, stalling every other fiber on the OS thread that also needs `zts_lock` — a real deadlock/stall risk, not a theoretical one, since this fires on every opcache cache-miss compile (`persistent_compile_file` → `cache_script_in_shared_memory`, reachable inside a request fiber, not just RINIT). |
+
+Everything else that stays off `park` does so for one of two structural reasons, not a lock:
+
+- **No fd to park on at all** (offload's territory, not park's): `getaddrinfo` (`sockets.c:2829`,
+  `network.c:192`), `gethostbyname_r` (`network.c:1352`), `getnameinfo` (`dns.c:184,191`) — all
+  already in groups (a)/(c). `dns_get_record`'s `res_nsearch`/`res_search` path belongs here too in
+  spirit, but its syscalls are in `libresolv.so`, outside libphp — noted in group (e), not re-listed
+  as a libphp symbol.
+- **Regular file, so `would_block()`'s `S_IFREG` check refuses it regardless of policy**
+  (forwarded-anyway, group (d)'s largest bucket): opcache file-cache `read`/`writev`/`write`/`flock`
+  (`zend_file_cache.c`), session file `pread`/`pwrite`/`flock` (`mod_files.c`), userland `flock()`
+  (`plain_wrapper.c:783`), script/`include`/`require` reads (`plain_wrapper.c:457`/`:463`, group
+  (c)), `main/rfc1867.c`'s upload write, `main/main.c`'s `error_log` write, `Zend/zend_virtual_cwd.c`'s
+  `virtual_open()`. None of these need a `block` verdict — they were never park candidates, lock or
+  no lock — but they're listed here because the task asked for every symbol that stays off `park`,
+  not just the lock-caused ones.
 
 ## Symbols still to interpose
 
