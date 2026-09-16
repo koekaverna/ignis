@@ -20,7 +20,7 @@ temporalio-client = { git = "https://github.com/temporalio/sdk-core", optional =
 temporalio-protos = { git = "https://github.com/temporalio/sdk-core", optional = true, features = ["serde_serialize"] }
 temporalio-common = { git = "https://github.com/temporalio/sdk-core", optional = true }
 url = { version = "2", optional = true }
-serde_json = { version = "1", optional = true }
+serde_json = "1"
 futures = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 base64 = { version = "0.22", optional = true }
@@ -34,8 +34,10 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "h
 # E10 (ADR-0014): gRPC framing + client channel; no codegen, no prost.
 tonic = { version = "0.14", default-features = false, features = ["server", "channel"] }
 futures-core = "0.3"
+# E14 (ADR-0015): runtime-owned PostgreSQL pool; JSON boundary for params/rows.
+tokio-postgres = "0.7"
 
 [dev-dependencies]
 
 [features]
-temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:serde_json", "dep:futures", "dep:serde", "dep:base64", "dep:prost-wkt-types"]
+temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:serde", "dep:base64", "dep:prost-wkt-types"]
