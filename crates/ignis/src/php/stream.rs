@@ -90,6 +90,36 @@ pub unsafe fn resume_parked(id: u64, outcome: Outcome) -> bool {
     }
 }
 
+/// `ignis_cancel_parked_any(Fiber $fiber, Throwable $e): bool` — if `$fiber` is
+/// parked in a stream op, resume it by throwing `$e` at the suspension point
+/// (ADR-0009). Returns false if it is not parked here.
+pub unsafe extern "C" fn zif_ignis_cancel_parked_any(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: VM frame on the PHP thread. `zend_fiber` embeds `zend_object std`
+    // as its first member, so the object pointer is the zend_fiber pointer.
+    // The exception zval is VM-owned; zend_fiber_resume_exception copies it.
+    unsafe {
+        let mut zfiber: *mut sys::zval = ptr::null_mut();
+        let mut exc: *mut sys::zval = ptr::null_mut();
+        if sys::zend_parse_parameters(super::zval::num_args(ex), c"oo".as_ptr(), &mut zfiber, &mut exc) != sys::SUCCESS {
+            return;
+        }
+        let fiber = (*zfiber).value.obj as *mut sys::zend_fiber;
+        let found = PARKED.with(|p| {
+            let mut p = p.borrow_mut();
+            let key = p.iter().find(|(_, f)| **f == fiber).map(|(k, _)| *k);
+            key.map(|k| p.remove(&k))
+        });
+        if found.is_none() {
+            super::zval::set_bool(rv, false);
+            return;
+        }
+        let mut ret: sys::zval = std::mem::zeroed();
+        sys::zend_fiber_resume_exception(fiber, exc, &mut ret);
+        sys::zval_ptr_dtor(&mut ret);
+        super::zval::set_bool(rv, true);
+    }
+}
+
 fn parse_host_port(res: &str) -> Option<(String, u16)> {
     let (h, p) = res.rsplit_once(':')?;
     let host = h.trim_start_matches('[').trim_end_matches(']').to_string();

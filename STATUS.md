@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T02:40Z, end of Cycle 6)
+# STATUS — Ignis (updated 2026-09-16T04:00Z, end of Cycle 8)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket. Every number below links to VALIDATION.md.
 
@@ -21,6 +21,8 @@
 | **E3** RSS over 4.6M requests, worker mode, 1 thread | RSS 26.9 → 26.2 MB over 1.5M hello; PHP heap flat to the byte; `/sleep?ms=1` at 500 conns = 131k req/s | V-10 |
 | **E13** fiber-scoped `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` + `Ignis\Scope` | 0 mismatches (300 in-process checks, 200 concurrent HTTP); +100 ns per fiber switch | V-11 |
 | **E6 (tcp)** unmodified `file_get_contents('http://…')` suspends the fiber | 3 × 200 ms fetches in **203 ms on one thread** (server calling itself); 100/100 concurrent; hook-disabled control deadlocks | V-12 |
+| **E7** Revolt driver: Revolt + amphp/amp + amphp/socket examples unchanged | 7/8 byte-identical (1 timing race in the example), timer benchmarks ≤ 1× of StreamSelectDriver | V-13 |
+| **E11** client disconnect cancels request fiber + children; `Ignis\deadline()` | **0.78 ms** worst-case cancel latency, `finally` runs, no phantom work; 504 at 102 ms for a 100 ms deadline | V-14 |
 
 ## REFUTED / INCONCLUSIVE and why
 
@@ -82,6 +84,6 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## Ranked recommendation for the next 3 cycles
 
-1. **E7 Revolt driver** (Cycle 7, in progress): `AbstractDriver` needs only `activate/dispatch/deactivate/now`; `dispatch()` = `ignis_poll(timeout)`. Needs fd readiness ops for AMPHP's socket layer (raw fds watched with tokio `AsyncFd`) — the hooked `tcp://` transport has no fd, so AMPHP runs with the hook off.
-2. **E11 cancellation**: hyper drops the response channel on client disconnect → reactor emits a cancel event → the request fiber gets a `CancelledException` at its next suspension point; one wall-clock deadline per request inherited by `Ignis\async` children.
-3. **E5' least-inflight dispatch + E6' `ssl://`**: fix the /cpu p99 gap vs FrankenPHP (V-9) and make `https://` fetches suspend (rustls on the tokio side).
+1. **E8 Symfony**: `symfony/runtime` adapter over `Ignis\serve`, RequestStack decorated with `Ignis\Scope` so interleaved requests never share it; `$_SERVER` per fiber already exists (V-11). Composer works here with `--prefer-source` (V-13).
+2. **E5' least-inflight dispatch + E6' `ssl://`** (rustls on the tokio side; the transport hook already owns the connection).
+3. **E12 isolation**: a fatal in one thread must only kill that thread; supervisor restarts it without an opcache reset (threads already independent, V-9). Then E14 (runtime-owned pgsql pool via tokio-postgres) and E10 (tonic on the shared hyper stack).

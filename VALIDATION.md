@@ -358,3 +358,26 @@ Packages (composer `--prefer-source` via the git proxy; dist downloads are block
 Benchmarks (wall, same binary): `benchmark-timers.php` select 740 ms / **ignis 723 ms**; `benchmark-ticks-delay.php` 227 / **225 ms**; `benchmark-timers-delay.php` 342 / **325 ms** (target ≤ 2×: CONFIRMED, it is ≤ 1×).
 
 Result: 7/8 byte-identical, the 8th a documented timing race → H15 CONFIRMED. The driver is 122 lines of PHP: ADR-0001 (c)'s claim that the loop shape is Revolt-compatible holds literally.
+
+## V-14 — H16 (E11): client disconnect cancels the request fiber and its children; per-request deadline (CONFIRMED)
+
+Date: 2026-09-16T03:5xZ. Command: `bench/e11-cancel.sh` (1 PHP thread, release). `/slow` sleeps 5 s and spawns an `Ignis\async` child sleeping 5 s, with a `finally` that counts; 20 clients (`curl -m 0.2`) disconnect after 200 ms.
+
+```
+(a) after the disconnects (+300 ms):
+{"resumes":82,"fibers":40,"idle":39,"cancelled":20,"cancel_age_us_max":760,"cancel_latency_us_max":781,"slow_finally_ran":20}
+(b) /deadline?ms=100 around Ignis\sleep(1000):  status=504 time=102.1 ms / 102.3 ms / 102.2 ms
+(c) /fetch?ms=100 afterwards: {"bodies":["slept\n","slept\n","slept\n"],"ms":102.6}
+(d) 5.5 s later: {"resumes":100,"fibers":40,"idle":39,"cancelled":23,"slow_finally_ran":20}
+```
+
+| check | result | target |
+|---|---|---|
+| requests cancelled on disconnect | 20/20; child fibers cancelled too (40 pooled fibers, 39 idle while `/stats` runs) | all |
+| `finally` blocks executed (unwinding, not killing) | 20/20 | — |
+| cancel latency, hyper drop → PHP throw (worst of 20) | **0.78 ms** (0.76 ms of it is the poll wake-up; the throw itself is µs) | ≤ 10 ms → CONFIRMED |
+| no phantom work | 5.5 s later `resumes` grew only by the 3 deadline requests + stats; the 5 s sleeps never resumed | CONFIRMED |
+| `Ignis\deadline(100)` on a 1000 ms handler | 504 in **102.1–102.3 ms** | 100–130 ms → CONFIRMED |
+| E6 after cancellations | works (102.6 ms) | green → CONFIRMED |
+
+Mechanism (ADR-0009): a `Drop` guard in hyper's service future emits `Outcome::Cancelled { dropped_at }`; the loop throws `Ignis\CancelledException` into the request fiber and every child spawned under its fiber-scoped request id (`Fiber::throw` for userland parks, `ignis_cancel_parked_any` → `zend_fiber_resume_exception` for C stream parks). Deadlines are timer ops tagged with the request id; `DeadlineExceededException` becomes 504.

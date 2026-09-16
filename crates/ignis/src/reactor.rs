@@ -70,6 +70,8 @@ pub enum Outcome {
     Closed,
     /// The watched fd is ready.
     Ready,
+    /// The client of request `id` went away (ADR-0009); `dropped_at` is when hyper dropped it.
+    Cancelled { dropped_at: std::time::Instant },
     Error(String),
 }
 
@@ -249,7 +251,13 @@ impl Reactor {
     }
 
     /// Tokio side: deliver an HTTP request to PHP and get a channel for the answer.
+    #[cfg(test)]
     pub fn deliver_request(&self, req: HttpRequest) -> oneshot::Receiver<HttpResponse> {
+        self.deliver_request_with_id(req).1
+    }
+
+    /// Deliver an HTTP request, returning the request id (needed for cancel-on-drop, ADR-0009).
+    pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.responders.lock().unwrap().insert(id, tx);
@@ -258,7 +266,15 @@ impl Reactor {
             // PHP thread gone: drop the responder so the connection gets a 500.
             self.responders.lock().unwrap().remove(&id);
         }
-        rx
+        (id, rx)
+    }
+
+    /// Tokio side: the response future for `id` was dropped before PHP answered.
+    pub fn cancel_request(&self, id: u64) {
+        if self.responders.lock().unwrap().remove(&id).is_some() {
+            self.inflight.fetch_add(1, Ordering::Relaxed);
+            let _ = self.done_tx.send(Completion { id, outcome: Outcome::Cancelled { dropped_at: std::time::Instant::now() } });
+        }
     }
 
     /// PHP-thread side: answer request `id`. Returns false if unknown/already answered.

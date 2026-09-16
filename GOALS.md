@@ -27,9 +27,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 4: E3~~ DONE (V-10).
 
-~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13).
+~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14).
 
-Next question (Cycle 8): E11 — does a client disconnect cancel the request's fiber (and its `Ignis\async` children) within 10 ms, and does one wall-clock deadline per request work? Then E5', E6' (ssl), E8 (Symfony).
+Next question (Cycle 9): E5' — does least-inflight dispatch close the /cpu p99 gap vs FrankenPHP at 4 threads (V-9: 17.5 vs 15.6 ms)? Then E8 (Symfony via symfony/runtime, fiber-scoped RequestStack) as far as the night allows.
 
 ## Ranking (after Cycle 0, kept for history)
 

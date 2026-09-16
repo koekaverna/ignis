@@ -38,3 +38,7 @@ ZEND_API void test_scheduler_set_idle_hook(ignis_ts_idle_hook_t hook);
 #define IGNIS_HAS_ASYNC_ABI 0
 #endif
 static const int IGNIS_HAS_ASYNC_ABI_CONST = IGNIS_HAS_ASYNC_ABI;
+
+/* Exported by Zend/zend_fibers.c in 8.5.10 (ZEND_API) but not declared in
+ * zend_fibers.h; declared here so bindgen exposes it (used for E11). */
+ZEND_API void zend_fiber_resume_exception(zend_fiber *fiber, zval *exception, zval *return_value);

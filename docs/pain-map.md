@@ -5,8 +5,8 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 ### PHP-FPM
 1. Pool exhaustion at low CPU: workers block on I/O, listen queue grows, 502/504 → concurrency decoupled from process count; an I/O wait costs a Fiber, not a worker. — **ADDRESSED** for `Ignis\sleep` (V-2/V-5) and for **unmodified tcp stream I/O** (V-12: `file_get_contents('http://…')` suspends the fiber); NOT for sqlite/libpq-style in-process I/O (V-12).
 2. Slow-dependency cascade drains the whole pool → per-endpoint fiber budget and circuit breaker on the connection pool. — NOT STARTED.
-3. Phantom workers: nginx times out, PHP keeps building a response nobody reads → client disconnect cancels the Fiber and its pending futures. — NOT STARTED (E11).
-4. Three unaligned timeouts; max_execution_time counts CPU time, not wall-clock → one wall-clock deadline per request, inherited by child fibers and futures. — NOT STARTED (E11).
+3. Phantom workers: nginx times out, PHP keeps building a response nobody reads → client disconnect cancels the Fiber and its pending futures. — **ADDRESSED** (ADR-0009, V-14: 0.78 ms cancel latency, children included, `finally` runs).
+4. Three unaligned timeouts; max_execution_time counts CPU time, not wall-clock → one wall-clock deadline per request, inherited by child fibers and futures. — **ADDRESSED** (ADR-0009, V-14: `Ignis\deadline()` → 504 at 102 ms, inherited by children).
 5. Reactive fork-based scaling lag → fibers spawn in microseconds; threads start once. — **ADDRESSED** (V-4: 4.5 µs per job on a warm pool).
 6. 30–80 MB per worker; pool sized by RAM → per-request memory is a fiber stack. — ADDRESSED with a caveat (V-5: ~34 KB RSS per parked fiber; 16 KiB of it is Zend's fixed VM stack page).
 7. Framework bootstrap per request → worker mode, kernel boots once. — **ADDRESSED** for the Ignis API (H6: script stays resident); NOT STARTED for Symfony (E8).
@@ -23,7 +23,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 
 ### FrankenPHP
 1. Worker mode requires app adaptation and a leak-free app → same requirement, with tooling: leak detector, fiber-scoped services. — NOT STARTED (E13).
-2. Aborted connections stall the server without ignore_user_abort → disconnect is a cancellation event, not a Zend signal. — NOT STARTED (E11).
+2. Aborted connections stall the server without ignore_user_abort → disconnect is a cancellation event, not a Zend signal. — **ADDRESSED** (V-14).
 3. Sizing formula num_threads × memory_limit + GOMEMLIMIT; workers vs threads confusion → one axis: threads = cores, fibers = concurrency, memory = fiber budget; no GC heap. — **ADDRESSED** for threads/fibers (ADR-0004, V-9: `--threads N`, 3.7–4× scaling); the fiber budget (pool cap + queueing) is NOT STARTED, see V-5 memory note.
 4. Thread contention on small CPU: PHP thread yields to hand output to Caddy → buffered response channel, no thread switch per write. — **ADDRESSED** (ADR-0002: one `ignis_respond` per request, oneshot to hyper).
 5. Hot reload drops custom extensions → modules registered once per process; thread restart never re-registers. — DESIGNED (ADR-0001: module registered in MINIT once).
@@ -33,7 +33,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 ### Swoole
 1. Own coroutines: statics, class state and superglobals change on switch → native Fibers plus superglobal swap on the fiber-switch observer and a fiber-scoped container. — **ADDRESSED** (ADR-0006, V-11: superglobals swapped per fiber at +100 ns/switch, `Ignis\Scope` WeakMap container); userland statics remain the app's (leak detector NOT STARTED).
 2. Xdebug/Xhprof incompatibility → Fibers are supported by Xdebug natively. — ADDRESSED by construction (native `Fiber`, no custom context switching).
-3. Forgotten $response->end() holds the connection → response is the Fiber's return value; return or exception closes the connection. — **ADDRESSED** (ADR-0002, `Ignis\serve` handler returns `Response`; exception → 500).
+3. Forgotten $response->end() holds the connection → response is the Fiber's return value; return or exception closes the connection. — **ADDRESSED** (ADR-0002, `Ignis\serve` handler returns `Response`; exception → 500; cancellation → unwinds, V-14).
 4. Deadlock when the only coroutine yields; CPU-heavy work starves others → per-thread watchdog logs long fibers with trace; work-stealing routes new requests to other threads. — NOT STARTED (E12).
 5. Incomplete hooks (curl_multi etc.) → native Rust drivers for HTTP, Postgres, MySQL, Redis; stream-layer hooks for the rest. — **ADDRESSED for `tcp://` streams** (ADR-0007, V-12); `ssl://`, curl, sqlite, libpq NOT STARTED; V-7 shows the engine ABI does not cover I/O either.
 6. One blocking call stalls the whole process → stalls one thread of N; supervisor sees it via watchdog. — DESIGNED (ADR-0004: N independent threads, V-9); watchdog NOT STARTED (E12).

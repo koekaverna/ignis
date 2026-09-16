@@ -77,6 +77,7 @@ static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> = Sync
     arg_info(c"post"),
     arg_info(c"cookie"),
 ]);
+static ARGINFO_CANCEL: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"fiber"), arg_info(c"exception")]);
 static ARGINFO_WATCH: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"stream"), arg_info(c"mode")]);
 static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
     arg_info_head(4),
@@ -144,6 +145,14 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
             // suspension before we continue. Everything else goes to userland.
             match c.outcome {
                 Outcome::Ready => sys::add_index_long(rv, c.id, 1),
+                Outcome::Cancelled { dropped_at } => {
+                    // ['kind' => 'cancel', 'age_us' => µs since hyper dropped the request]
+                    let mut item: sys::zval = std::mem::zeroed();
+                    zval::set_new_array(&mut item);
+                    sys::add_assoc_stringl_ex(&mut item, c"kind".as_ptr(), 4, c"cancel".as_ptr(), 6);
+                    sys::add_assoc_long_ex(&mut item, c"age_us".as_ptr(), 6, dropped_at.elapsed().as_micros() as i64);
+                    sys::zend_hash_index_update((*rv).value.arr, c.id, &mut item);
+                }
                 Outcome::Connected { .. } | Outcome::Data(_) | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
                     if !super::stream::resume_parked(c.id, c.outcome) {
                         tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
@@ -154,7 +163,7 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
             }
             match c.outcome {
                 Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
-                Outcome::Ready => {}
+                Outcome::Ready | Outcome::Cancelled { .. } => {}
                 Outcome::Request(req) => {
                     let mut item: sys::zval = std::mem::zeroed();
                     request_to_zval(&mut item, &req);
@@ -298,7 +307,8 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(not(php_async_abi))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 8]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 9]> = SyncStatic([
+    fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
@@ -310,7 +320,8 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 8]> = SyncStatic([
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 10]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 11]> = SyncStatic([
+    fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
@@ -380,9 +391,9 @@ mod tests {
     fn function_table_is_terminated() {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_watch");
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[1].fname) }.to_str().unwrap(), "ignis_set_superglobals");
-        assert_eq!(FUNCTIONS.0[1].num_args, 4);
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[6].fname) }.to_str().unwrap(), "ignis_respond");
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_cancel_parked_any");
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[2].fname) }.to_str().unwrap(), "ignis_set_superglobals");
+        assert_eq!(FUNCTIONS.0[2].num_args, 4);
+        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[7].fname) }.to_str().unwrap(), "ignis_respond");
     }
 }

@@ -56,3 +56,7 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-15T23:57:49Z C7 IMPLEMENT — IgnisDriver (Revolt AbstractDriver: activate/dispatch/deactivate/now), ignis_watch + Op::Watch (tokio AsyncFd, regular files always ready), amphp installed from source via composer --prefer-source; 6/7 examples identical, fiber-local-manual is a timing race, amp-socket needs ext-filter (rebuilding libphp with filter/ctype/tokenizer).
 - 2026-09-16T00:03:34Z C7 VALIDATE — H15/E7 CONFIRMED (V-13): 7/8 Revolt+AMPHP examples byte-identical on IgnisDriver (1 timing race), amphp/socket TCP client works, timer benchmarks <= 1x of StreamSelectDriver.
 - 2026-09-16T00:03:34Z C7 REASSESS — E7' = AMPHP on hooked transport + signals; Cycle 8 = E11 cancellation + deadline.
+- 2026-09-16T00:05:15Z C8 START — question: does a client disconnect cancel the request fiber and its children within 10 ms; does a per-request wall-clock deadline work (E11)?
+- 2026-09-16T00:05:15Z C8 RESEARCH/DECIDE/HYPOTHESIZE — research 08, ADR-0009, H16.
+- 2026-09-16T00:11:56Z C8 VALIDATE — H16/E11 CONFIRMED (V-14): 20/20 disconnects cancelled incl. children, finally ran, worst latency 0.78 ms; deadline 504 at 102 ms; E6 still green.
+- 2026-09-16T00:11:56Z C8 REASSESS — E11' = under load; Cycle 9 = E5' least-inflight dispatch (small), then E8 Symfony attempt.

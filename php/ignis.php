@@ -68,8 +68,27 @@ final class Future
     }
 }
 
+class CancelledException extends \RuntimeException
+{
+}
+
+final class DeadlineExceededException extends CancelledException
+{
+}
+
 final class Loop
 {
+    /** @var array<int,\Fiber> request id => fiber running the handler */
+    private static array $requestFibers = [];
+    /** @var array<int,list<\Fiber>> request id => child fibers spawned by it */
+    private static array $children = [];
+    /** @var array<int,int> op id => request id for deadline timers */
+    private static array $deadlines = [];
+    /** @var array<int,int> fiber object id => op id it is parked on (userland parks) */
+    private static array $parkedOn = [];
+    public static int $cancelled = 0;
+    public static int $cancelAgeUsMax = 0;
+    public static int $cancelLatencyUsMax = 0;
     /** @var array<int,\Fiber> op id => fiber waiting for it */
     private static array $waiting = [];
     /** @var list<array{0:\Fiber,1:mixed}> fibers to resume with a value */
@@ -104,7 +123,12 @@ final class Loop
             return $result;
         }
         self::$waiting[$id] = $fiber;
-        return \Fiber::suspend();
+        self::$parkedOn[\spl_object_id($fiber)] = $id;
+        try {
+            return \Fiber::suspend();
+        } finally {
+            unset(self::$parkedOn[\spl_object_id($fiber)]);
+        }
     }
 
     /** @internal */
@@ -133,13 +157,26 @@ final class Loop
     public static function spawn(callable $fn, mixed ...$args): Future
     {
         $future = new Future();
+        // Attribute the child to the current request (E11): the request id is fiber-scoped.
+        $requestId = Scope::get('ignis.request');
+        if ($requestId !== null) {
+            $fn = static function () use ($fn, $requestId, $args) {
+                Scope::set('ignis.request', $requestId);
+                return $fn(...$args);
+            };
+            $args = [];
+        }
         $job = [$fn, $args, $future];
         $fiber = array_pop(self::$idle);
         if ($fiber !== null) {
             self::$ready[] = [$fiber, $job];
         } else {
             ++self::$fibersCreated;
-            self::$pending[] = [new \Fiber(self::poolBody(...)), $job];
+            $fiber = new \Fiber(self::poolBody(...));
+            self::$pending[] = [$fiber, $job];
+        }
+        if ($requestId !== null) {
+            self::$children[$requestId][] = $fiber;
         }
         return $future;
     }
@@ -202,7 +239,17 @@ final class Loop
                 }
                 foreach ($events as $id => $payload) {
                     if (\is_array($payload)) {
-                        self::dispatchRequest($id, $payload);
+                        if (($payload['kind'] ?? null) === 'cancel') {
+                            self::cancelRequest($id, new CancelledException('client disconnected'), (int) $payload['age_us']);
+                        } else {
+                            self::dispatchRequest($id, $payload);
+                        }
+                        continue;
+                    }
+                    if (isset(self::$deadlines[$id])) {
+                        $req = self::$deadlines[$id];
+                        unset(self::$deadlines[$id]);
+                        self::cancelRequest($req, new DeadlineExceededException('deadline exceeded'), 0);
                         continue;
                     }
                     $fiber = self::$waiting[$id] ?? null;
@@ -233,6 +280,8 @@ final class Loop
         $handler = self::$requestHandler;
         $request = new Http\Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body']);
         self::spawn(static function () use ($handler, $request, $id): void {
+            self::$requestFibers[$id] = \Fiber::getCurrent();
+            Scope::set('ignis.request', $id);
             // E13: this fiber gets its own $_SERVER/$_GET/$_POST/$_COOKIE (ADR-0006).
             if (\function_exists('ignis_set_superglobals')) {
                 \ignis_set_superglobals(...$request->superglobals());
@@ -242,11 +291,71 @@ final class Loop
                 if (!$response instanceof Http\Response) {
                     $response = Http\Response::text("handler must return Ignis\\Http\\Response\n", 500);
                 }
+            } catch (DeadlineExceededException $e) {
+                $response = Http\Response::text("504 deadline exceeded\n", 504);
+            } catch (CancelledException $e) {
+                $response = Http\Response::text("499 cancelled\n", 499);
             } catch (\Throwable $e) {
                 $response = Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
+            } finally {
+                unset(self::$requestFibers[$id], self::$children[$id]);
+                Scope::set('ignis.request', null);
             }
             \ignis_respond($id, $response->status, $response->headers, $response->body);
         });
+    }
+
+    /** Throw $e into the request's fiber and its children at their suspension points (ADR-0009). */
+    private static function cancelRequest(int $requestId, CancelledException $e, int $ageUs): void
+    {
+        $t0 = hrtime(true);
+        $targets = self::$children[$requestId] ?? [];
+        if (isset(self::$requestFibers[$requestId])) {
+            $targets[] = self::$requestFibers[$requestId];
+        }
+        foreach (array_reverse($targets) as $fiber) {
+            self::throwInto($fiber, $e);
+        }
+        ++self::$cancelled;
+        self::$cancelAgeUsMax = max(self::$cancelAgeUsMax, $ageUs);
+        self::$cancelLatencyUsMax = max(self::$cancelLatencyUsMax, $ageUs + (int) ((hrtime(true) - $t0) / 1000));
+    }
+
+    private static function throwInto(\Fiber $fiber, \Throwable $e): void
+    {
+        if ($fiber->isTerminated() || !$fiber->isSuspended()) {
+            return;
+        }
+        $opId = self::$parkedOn[\spl_object_id($fiber)] ?? null;
+        if ($opId !== null) {
+            unset(self::$waiting[$opId]); // parked in userland (Ignis\sleep / await)
+            ++self::$resumes;
+            $fiber->throw($e);
+            return;
+        }
+        // Parked in a C stream op? Let Rust resume it with the exception.
+        foreach (self::$waiting as $op => $f) {
+            if ($f === $fiber) {
+                unset(self::$waiting[$op]);
+                ++self::$resumes;
+                $fiber->throw($e);
+                return;
+            }
+        }
+        if (\function_exists('ignis_cancel_parked_any')) {
+            // We do not know the op id of a C park; the Rust side searches its table.
+            \ignis_cancel_parked_any($fiber, $e);
+        }
+    }
+
+    /** Wall-clock deadline for the current request (E11): after $ms the request fiber and its children get DeadlineExceededException. */
+    public static function deadline(int $ms): void
+    {
+        $requestId = Scope::get('ignis.request');
+        if ($requestId === null) {
+            throw new \LogicException('Ignis\\deadline() must be called inside a request');
+        }
+        self::$deadlines[\ignis_submit_sleep($ms)] = $requestId;
     }
 }
 
@@ -280,6 +389,12 @@ final class Scope
         }
         return (self::$map?->offsetExists($fiber) ? self::$map[$fiber] : [])[$key] ?? $default;
     }
+}
+
+/** One wall-clock deadline for the current request, inherited by its Ignis\async children. */
+function deadline(int $ms): void
+{
+    Loop::deadline($ms);
 }
 
 /** Non-blocking sleep: the fiber suspends, tokio owns the timer. */

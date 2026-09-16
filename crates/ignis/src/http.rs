@@ -100,8 +100,25 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
         .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
         .collect();
     let uri = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
-    let rx = reactor.deliver_request(HttpRequest { method: parts.method.as_str().to_string(), uri, headers, body });
-    match rx.await {
+    let rx = reactor.deliver_request_with_id(HttpRequest { method: parts.method.as_str().to_string(), uri, headers, body });
+    // If this future is dropped (client disconnect, ADR-0009) before PHP
+    // answers, the guard tells the reactor to cancel the request's fiber.
+    struct CancelOnDrop {
+        reactor: Arc<Reactor>,
+        id: u64,
+        answered: bool,
+    }
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            if !self.answered {
+                self.reactor.cancel_request(self.id);
+            }
+        }
+    }
+    let mut guard = CancelOnDrop { reactor: reactor.clone(), id: rx_id(&rx), answered: false };
+    let out = rx.1.await;
+    guard.answered = true;
+    match out {
         Ok(r) => {
             let mut b = Response::builder().status(r.status);
             for (k, v) in r.headers {
@@ -112,6 +129,12 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
         // PHP dropped the responder without answering (handler crashed hard).
         Err(_) => Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n")),
     }
+}
+
+/// The request id is the oneshot's key in the reactor; deliver_request hands it
+/// back through the receiver's paired id (see Reactor::deliver_request_with_id).
+fn rx_id(rx: &(u64, tokio::sync::oneshot::Receiver<crate::reactor::HttpResponse>)) -> u64 {
+    rx.0
 }
 
 fn simple(status: StatusCode, msg: &'static str) -> Response<Full<Bytes>> {
