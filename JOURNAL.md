@@ -386,3 +386,17 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   ~8.3 ns per syscall on the non-fiber path (budget 20), and this libcurl never calls `getaddrinfo`
   (0 hits on a hostname): acceptance (3) must be restated per library once R1 says which resolver
   each uses. scribe reconciled STATUS/ROADMAP/pain-map to the product state (47 V-n references).
+- 2026-09-16T23:25Z — **M4-1, M4-11, M4-12 landed together in `pg.rs` (V-44, V-42/V-43 addenda).**
+  A lease knows when it was taken and who took it: `oldest_lease_ms` reads 3001 half-way through a
+  6 s hold and the release logs `held_ms=6002`; a thread dying with two leases returns both permits
+  (`available` 2 of 2 after the respawn, was 1); three threads opening the same DSN share one pool
+  (`pool_id=1` × 12, was 1/2/3). ADR-0015 amended: its "process-wide" described the Rust object,
+  not what an application got. nextest 10/10; smoke and phpt running.
+- 2026-09-16T23:40Z — **E18-R1 done (research 26, sonnet)** and it corrected my R3: libcurl 8.18.0
+  here is the threaded resolver, not c-ares — `getaddrinfo` runs on a helper pthread
+  (`lib/asyn-thrdd.c:447`) and the PHP thread waits in `poll` on a socketpair, which the `poll`
+  interposer already catches. My "0 hits" came from resolving `localhost.`: curl answers localhost
+  without a resolver since 7.87 and strips the trailing dot. Research 28 corrected in place, with
+  the wrong sentence quoted. The export list is 31 symbols from `nm`, `__poll_chk` included (libssh2,
+  libkrb5 only). Acceptance (3) is per library: curl through `poll`, libpq (`src/common/ip.c:65`,
+  synchronous) and libphp through the interposed `getaddrinfo`.

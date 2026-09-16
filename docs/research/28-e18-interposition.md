@@ -51,13 +51,21 @@ read via interposer: 188.2 ns/call; direct syscall: 180.0 ns/call; gate overhead
    shared library loaded later. E18's mechanism is real.
 2. **Rust std keeps working** with `read` interposed — the forward path is a direct `syscall`, so
    there is no `dlsym` in the hot path and no way to recurse into ourselves.
-3. **`getaddrinfo` was never called by libcurl** on this box — 0 hits for a hostname (`localhost.`,
-   trailing dot to defeat any shortcut). This libcurl does not resolve through glibc's
-   `getaddrinfo` on the calling thread: it is either c-ares (its own UDP queries — which we would
-   see as `poll`, and did) or the threaded resolver (glibc on a helper thread curl spawns, which
-   would still hit our export — so 0 hits says c-ares). E18-R1 settles which. Consequence for
-   acceptance (3): "`getaddrinfo` parks via the runtime resolver" is about libpq and libphp's own
-   `gethostbyname`/`getaddrinfo` (ext/standard, ext/sockets), not about this libcurl.
+3. **`getaddrinfo` showed 0 hits — and that is my experiment's fault, not a fact about libcurl.**
+   Research 26 (E18-R1) read this build's source: libcurl 8.18.0 uses the *threaded* resolver
+   (`AsynchDNS`, no c-ares): `Curl_async_getaddrinfo()` spawns a pthread (`lib/asyn-thrdd.c:447`)
+   whose `getaddrinfo_thread()` calls glibc's `getaddrinfo()` (`lib/curl_addrinfo.c:543`) on that
+   helper thread and signals the caller over a socketpair/eventfd. A call on the helper thread
+   would still bind to our export — the counter here is not gated — so the 0 means no glibc call
+   happened at all, and the reason is the hostname I chose: since 7.87 curl answers `localhost`
+   itself without any resolver, and the URL parser drops the trailing dot I added to defeat
+   exactly that. The first version of this note said "this libcurl never calls getaddrinfo"; that
+   sentence was wrong. Consequence for acceptance (3), now stated correctly: for curl the PHP
+   thread never blocks in `getaddrinfo` — it blocks in `poll` on the resolver's socketpair, which
+   the `poll` interposer already catches (8 hits above), so curl's resolve parks *through `poll`*;
+   the interposed `getaddrinfo` must recognise the helper thread as "not a fiber" and fall through.
+   "Parks via the runtime resolver" applies to libpq (`pg_getaddrinfo_all` → synchronous
+   `getaddrinfo` on the caller's thread, `src/common/ip.c:65`) and to libphp's own name lookups.
 4. **`read` 0 hits** is expected: the connection to port 1 never opened, so curl never read.
 5. **Gate cost: ~8 ns per syscall on the non-fiber path** (a thread-local read and a branch in front
    of a 180 ns syscall) — under acceptance (4)'s 20 ns. This is one measurement with the interposer
@@ -76,7 +84,7 @@ read via interposer: 188.2 ns/call; direct syscall: 180.0 ns/call; gate overhead
   `__builtin_return_address(0)`, so each exported symbol is a 3-line C shim (compiled by `cc` in
   `build.rs`) that captures it and calls the Rust handler with it as an extra argument. Resolved to
   a library with `dladdr` once per call site and cached by address — only on the park path.
-- The resolver acceptance has to be restated per library once R1 reports which resolver each uses.
+- The resolver acceptance is per library (research 26): curl parks through `poll`; libpq and libphp through the interposed `getaddrinfo` → runtime resolver `Op`.
 
 The scratch crate, for the record:
 

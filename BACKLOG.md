@@ -136,7 +136,7 @@ libraries that hold a lock across a blocking call on the `block` path. The php_s
 hook (ADR-0007) stays as it is. Default policy for an unknown caller is `block` — delegating is
 always semantically correct; parking wrongly is a hang.
 
-### E18-R1 Which blocking symbols the installed libraries actually import `research` `in progress (batch 5)`
+### E18-R1 Which blocking symbols the installed libraries actually import `research` `done (research 26: 31-symbol export list incl. __poll_chk; curl = threaded resolver, libpq = synchronous getaddrinfo)`
 `nm -D --undefined-only` / `objdump -T` on the `.so` files this binary links (see `ldd target/release/ignis`):
 libcurl, libpq, libssl, libcrypto, libphp, libsqlite3, libonig, libz, libnghttp2. For each: the
 blocking libc symbols it imports, and from reading the library's I/O layer which ones sit on the
@@ -181,7 +181,7 @@ env/toml; `IGNIS_NO_UNIVERSAL_PARK` as the hook-off control (every hook claim ne
 
 ## M4 — Operate
 
-### M4-1 Hold-time on pool leases `main` `open`
+### M4-1 Hold-time on pool leases `main` `done (V-44)`
 **What.** `pg::Lease` gets an `Instant` at acquire; `pg::stats` reports the oldest live lease's age
 and the count of leases older than a threshold; a `warn!` when a lease passes `IGNIS_PG_LEASE_WARN_MS`
 (default 5000). Same for offload jobs in flight.
@@ -257,7 +257,7 @@ and a query on the recycled connection sees no state from before (`SHOW search_p
 Needs PostgreSQL: the builder image has `postgresql-client`; run `postgres:17-alpine` over a
 bind-mounted unix socket as research 24 did (TCP publishing is broken on the dev box).
 
-### M4-11 A PHP thread dying with a lease leaks the pool permit for ever `main` `open` — next, with M4-1
+### M4-11 A PHP thread dying with a lease leaks the pool permit for ever `main` `done (V-42 addendum: available back to max)`
 **What.** V-42: `--threads 2 --supervise`, pool max 2, both threads holding a lease, `/fatal` on
 one → after the respawn `available` is 1 of 2 and stays there; `created` unchanged, so the
 connection object is orphaned inside `LEASES` with its permit. Nothing associates a lease with the
@@ -266,7 +266,7 @@ reactor in `Lease`; on unregister, reset-and-return every lease it owns (the res
 tokio side, so a dying thread cannot block it). **Acceptance.** `bench/m4-pool-survives.sh`'s
 "available back to max" line flips to PASS, 3 of 3 runs.
 
-### M4-12 Every thread opens its own pool — ADR-0015's "process-wide" is false as deployed `main` `open` — next, with M4-1
+### M4-12 Every thread opens its own pool — ADR-0015's "process-wide" is false as deployed `main` `done (V-43 addendum: one pool id across threads)`
 **What.** V-43: `ignis_pg_open(dsn, max)` mints a new pool per call and every worker thread runs the
 script, so `--threads 3` gives `pool_id` 1, 2, 3 — three pools of `max` each. At `threads = cores`
 (24 here) with `max = 20` that is 480 connections against PostgreSQL's default `max_connections =
