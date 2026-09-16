@@ -1,0 +1,28 @@
+{
+    "name": "ignis/runtime",
+    "description": "PHP userland for the Ignis application server: the fiber scheduler (Ignis\\Loop, async/all/sleep/deadline), the symfony/runtime adapter, the Revolt driver, the PostgreSQL pool and the offload client. Requires the ignis binary; does nothing under php-fpm or php-cli.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.4"
+    },
+    "suggest": {
+        "symfony/runtime": "Set APP_RUNTIME=Ignis\\Symfony\\IgnisRuntime in .env and point ignis.toml's entry at public/index.php.",
+        "revolt/event-loop": "REVOLT_DRIVER=Ignis\\Revolt\\IgnisDriver runs AMPHP on the Ignis reactor."
+    },
+    "autoload": {
+        "files": [
+            "ignis.php",
+            "pg/ignis-pg.php",
+            "offload/ignis-offload.php",
+            "grpc/ignis-grpc.php"
+        ],
+        "psr-4": {
+            "Ignis\\Symfony\\": "symfony/src/",
+            "Ignis\\Revolt\\": "amphp/src/"
+        }
+    },
+    "config": {
+        "allow-plugins": false
+    }
+}

@@ -1409,3 +1409,51 @@ Not done, kept on M2's list: a static binary. There is no `libphp.a` (`--enable-
 `libphp.so` pulls ~35 shared libraries through libcurl (krb5, gnutls, ldap, ssh2, rtmp…), so a
 `-static-pie` build is a rebuild of PHP with a trimmed curl — a separate piece of work, not a
 blocker for "install in under two minutes".
+
+### V-39 addendum — the published image passes the same checks in CI (M2 CONFIRMED)
+
+`.github/workflows/image.yml` run on `574b231`: **success**. It built the image, pushed
+`ghcr.io/koekaverna/ignis:latest` and `:574b231…`, started the pushed image and, from inside it,
+read `{"status":"ok"…}` from `/_ignis/health` and found no "not found" in `ldd /usr/local/bin/ignis`.
+That is the "downloaded artifact on a fresh box" half; with the local half above, M2 is met.
+
+## V-40 — M3, Symfony leg: an untouched `symfony/skeleton` served by the runtime image (CONFIRMED)
+
+Date: 2026-09-16T19:1xZ. Skeleton created by `composer create-project symfony/skeleton` inside the
+PHP builder image (`php-cli` there is 8.3.6 NTS — composer's host, not the app's runtime), then
+`composer require symfony/runtime`. The Ignis side is a composer package, `php/composer.json`
+(`ignis/runtime`: `files` autoload for `ignis.php`/pg/offload/grpc, psr-4 for `Ignis\Symfony\` and
+`Ignis\Revolt\`), installed as a path repository with `symlink: false`.
+
+The recipe, and the two things that did NOT work first:
+
+```
+composer config platform.php 8.5.10                       # resolve for the app's PHP, not the CLI's
+composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php","options":{"symlink":false}}'
+composer require ignis/runtime:@dev
+composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
+composer dump-autoload                                    # regenerates vendor/autoload_runtime.php
+# ignis.toml: entry = "/app/public/index.php", listen = "0.0.0.0:8080"
+```
+
+- `composer require` failed until `platform.php` was pinned (the builder's CLI is 8.3, the
+  package wants ≥ 8.4).
+- `APP_RUNTIME=…` in `.env` does **nothing**: symfony/runtime reads it from `$_SERVER` before
+  `.env` is loaded, so `public/index.php` ran as one CGI request, printed the page and exited 0 —
+  and the supervisor respawned it ten times and gave up ("restart budget exhausted"). The runtime
+  class belongs in `composer.json` `extra.runtime.class`.
+- `var/` must be writable by the image's `ignis` user (`chmod -R a+rwX var` after composer, which
+  ran as root).
+
+Served with `ignis:local`, `threads = 2`, the skeleton at `/app`:
+
+| check | result |
+|---|---|
+| `/_ignis/health` | `{"status":"ok","threads":2,"stalled":0,"restarts":0}` |
+| `GET /` ×3 | `404 Not Found`, body "Welcome to Symfony!", 39 390–39 391 bytes — the bare skeleton's own welcome page (no routes defined) |
+| 20 concurrent `GET /` | 20 × `404 Not Found`, all answered |
+| health after load | unchanged, restarts 0 |
+| container log | only Symfony's own `[error] … NotFoundHttpException: No route found for "GET http://localhost/"` — the welcome 404 in dev mode |
+
+Not done: the Laravel leg, and publishing `ignis/runtime` to Packagist (today it is a path
+repository).

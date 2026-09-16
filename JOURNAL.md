@@ -284,3 +284,11 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   then smoke-tests the pushed image itself. Local: 55.6 s build, **64 MB**, health ok on 24 threads,
   `/` answers, `ldd` 0 "not found", runs as `ignis`. The "downloaded artifact" half of the
   acceptance is CI's on this push.
+- 2026-09-16T19:15Z — **M2 closed (image.yml green on `574b231`) and M3's Symfony leg confirmed
+  (V-40).** The product shape for frameworks turned out to be a composer package, not a wrapper
+  script: `php/composer.json` publishes `ignis/runtime`; the app sets `extra.runtime.class` and
+  `ignis.toml` points at `public/index.php`. Two dead ends recorded: `APP_RUNTIME` in `.env` is read
+  too late by symfony/runtime (the app ran as one CGI request and the supervisor burned its restart
+  budget — exactly the failure the raised log floor made visible), and the builder image's 8.3 CLI
+  needs `platform.php` pinned. Bare skeleton from the runtime image: welcome page, 20/20 concurrent,
+  health ok, 0 restarts. Laravel open.
