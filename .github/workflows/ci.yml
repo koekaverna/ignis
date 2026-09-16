@@ -108,7 +108,9 @@ jobs:
       # the bench script starts it itself from $TEMPORAL.
       - name: temporal CLI
         run: |
-          curl -sSL "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" -o /tmp/temporal.tar.gz
+          # --retry: temporal.download reset the connection on run 35137661859 and turned `main` red
+          # for a reason that had nothing to do with the commit.
+          curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" -o /tmp/temporal.tar.gz
           tar -xzf /tmp/temporal.tar.gz -C /usr/local/bin temporal && temporal --version
       - name: build with the temporal feature
         run: timeout 2400 cargo build --release -p ignis --features temporal
