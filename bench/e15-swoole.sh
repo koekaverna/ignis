@@ -10,7 +10,8 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BIN=$ROOT/target/release/ignis
 PHP=/opt/php85-zts/bin/php
-SRC=${SWOOLE_SRC:-/home/user/cmp/swoole-src}/tests/swoole_runtime
+# CI clones into /home/user/cmp; fall back to $HOME so a local checkout can run it too.
+SRC=${SWOOLE_SRC:-$([ -d /home/user/cmp/swoole-src ] && echo /home/user/cmp/swoole-src || echo "$HOME/cmp/swoole-src")}/tests/swoole_runtime
 OUT=/tmp/swoole-e15
 TIMEOUT=${E15_TIMEOUT:-20}
 [ -x "$BIN" ] || { echo "missing $BIN (do not build from here)"; exit 2; }

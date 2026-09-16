@@ -7,7 +7,9 @@ cd "$(dirname "$0")/.."
 # the client can never disagree and curl a stranger that happens to hold the port.
 ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
 BIN=./target/release/ignis; EX=php/amphp/vendor/revolt/event-loop/examples; AEX=php/amphp/examples
-export IGNIS_PHP_INI=/home/user/ignis/php/amphp/ignis.ini IGNIS_NO_STREAM_HOOK=1
+# The ini lives in this repo; it used to be an absolute path to another machine, so on any
+# other checkout the ini silently did not apply.
+export IGNIS_PHP_INI="$PWD/php/amphp/ignis.ini" IGNIS_NO_STREAM_HOOK=1
 run() { # driver script [stdin-file]
   local d="$1" s="$2"; shift 2
   if [ $# -gt 0 ]; then REVOLT_DRIVER="$d" timeout 30 $BIN "$s" < "$1" 2>&1; else REVOLT_DRIVER="$d" timeout 30 $BIN "$s" 2>&1 </dev/null; fi

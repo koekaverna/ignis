@@ -61,7 +61,7 @@ $run = static fn (): int => (new PHPUnit\TextUI\Application)->run($_SERVER['argv
 if (!getenv('IGNIS_MODE')) {
     exit($run());
 }
-require '/home/user/ignis/php/ignis.php';
+require '__IGNIS_ROOT__/php/ignis.php';
 $stop = new stdClass();
 $stop->v = false;
 $noiseTicks = 0;
@@ -87,6 +87,9 @@ fwrite(STDERR, sprintf(
 ));
 exit($rc);
 PHPEOF
+# The heredoc is quoted, so the repo root is substituted after the fact; it used to be an
+# absolute path to another machine, which made this suite unrunnable off that box.
+sed -i "s|__IGNIS_ROOT__|$ROOT|" "$1/run.php"
 }
 
 install_symfony() {

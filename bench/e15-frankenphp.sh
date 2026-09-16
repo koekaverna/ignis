@@ -7,7 +7,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 BIN=${BIN:-$REPO/target/release/ignis}
-FP=${FP:-/home/user/frankenphp}
+# CI clones into /home/user; fall back to $HOME so a local checkout can run it too.
+FP=${FP:-$([ -d /home/user/frankenphp ] && echo /home/user/frankenphp || echo "$HOME/frankenphp")}
 DOCROOT=$FP/testdata
 PORT=${PORT:-8087}
 BASE=http://127.0.0.1:$PORT
