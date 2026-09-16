@@ -88,6 +88,10 @@ for kv in ${dflags+"${dflags[@]}"}; do
 done
 
 export IGNIS_PHP_INI="$tmpini"
+# run-tests compares output byte for byte, so the harness opts out of the binary's default
+# log floor (`warn` since 2026-09-16, so an operator sees a worker respawn). Without this,
+# one warning on stderr fails a test: fibers main dropped 108 -> 72 when the floor was raised.
+export RUST_LOG="${RUST_LOG:-error}"
 
 # A7 (C22): a hung test used to leave an orphaned binary bound to the test's fixed port, which
 # poisoned later tests with "Address already in use". Two findings from measuring it:

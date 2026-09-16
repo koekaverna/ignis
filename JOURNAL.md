@@ -243,3 +243,17 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   and reported N as "N queued". It is not — the server only queues what it has read. Reading the
   live queue depth from an exempt `/stats` is what made the numbers mean anything, and it changed
   the marginal figure from an apparent 9 B to 33 kB.
+- 2026-09-16T17:05Z — **a worker could die and respawn with the operator seeing nothing.** Owner asked
+  whether a held resource shows up in the logs. It does not, and the audit was worse than the
+  question: nothing tracks hold time (`Lease` is `{pool, conn, _permit}`, no timestamp; `pg::stats`
+  returns only idle/created/permits), nothing above `debug` mentions a held resource at all (all 19
+  such lines are startup or failure), and with `RUST_LOG` unset `EnvFilter`'s default directive is
+  `error`, so even the warnings we do have were invisible — including the watchdog's "php threads
+  busy for > 1 s" and the supervisor's "worker script ended; respawning". Raised the default floor to
+  `warn`; a deliberate fatal now prints all three lines with no configuration.
+  **The risk I named in the same commit message then bit me**: phpt compares output byte for byte, so
+  one warning on stderr fails a test — fibers main dropped **108 → 72**, fiber 78 → 62, streams main
+  133 → 125. Caught before commit by running the suites. Fixed at the harness (`scripts/ignis-php`
+  exports `RUST_LOG=error`) rather than by reverting the visibility; suites back to 108/78, 91/84,
+  133/125 and smoke GREEN. Hold-time tracking and per-dependency counters stay unbuilt — they belong
+  to B2.

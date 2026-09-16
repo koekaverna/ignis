@@ -23,8 +23,18 @@ pub static RESTARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
+    // Without RUST_LOG, EnvFilter's default directive is `error`, which hid the watchdog's
+    // "php threads busy for > 1 s" and the supervisor's "worker script ended; respawning" — a
+    // worker could die and respawn with the operator seeing nothing (found while chasing H31,
+    // where it also cost three wrong conclusions from probes whose output was being discarded).
+    // `warn` is the floor now; `info` and below stay opt-in. The phpt harness sets RUST_LOG=error
+    // itself, because run-tests compares output byte for byte and a single warning fails a test —
+    // raising the floor without that cost fibers main 108 -> 72 before it was caught.
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
         .with_writer(std::io::stderr)
         .init();
 
