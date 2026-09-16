@@ -46,6 +46,17 @@ Replay test = run the same PHP workflow twice: once against the dev server, once
 - PHP already has what the workflow side needs: fibers (deterministic by construction here: no real I/O in a
   workflow fiber), per-fiber state (`Ignis\Scope`), and the parked-fiber wake path.
 
+## sdk-core git layout (clone at `/home/user/temporal-sdk-core`, verified)
+- Workspace crates: `temporalio-sdk-core` (`crates/sdk-core`, edition 2024, rust-version 1.88), `temporalio-common`
+  (the `Worker` trait: `poll_workflow_activation`, `complete_workflow_activation`, …), `temporalio-protos`
+  (`coresdk::workflow_activation`, `workflow_completion`, `workflow_commands`), `temporalio-client`
+  (`ClientOptionsBuilder`), `temporalio-sdk` (a Rust SDK), and **`temporalio-sdk-core-c-bridge`**: a C ABI
+  (`temporal_core_worker_poll_workflow_activation` etc., `crates/sdk-core-c-bridge/src/worker.rs:680`) that the
+  .NET/Ruby SDKs use. For Ignis the Rust crates link directly; the C bridge is the fallback if another host
+  language is ever needed.
+- Entry points: `CoreRuntime::new_assume_tokio(RuntimeOptions)`, `init_worker(&runtime, WorkerConfig, client)`,
+  `init_replay_worker(ReplayWorkerInput)` (replay without a server — the half of E9 that needs no dev server).
+
 ## Surprises
 - The sdk-python bridge is smaller than expected (~700 lines of Rust): the whole design rests on "poll returns
   bytes, complete takes bytes" — the same two-op seam the Ignis reactor already uses for HTTP.
