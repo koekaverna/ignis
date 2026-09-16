@@ -64,11 +64,16 @@ listed in research 29 separately.
   because PHP's own TLS streams handle buffered plaintext; **verify with
   `bench/php/a6_tls_select.php`** under park with the factory off — until then B7 stays open.
 - **Failure-mode change: exceptions → hangs.** A wrong hook throws; a wrong park waits. Two
-  countermeasures are part of the model, not options: **(a) a boot self-check** — a libcurl and a
+  countermeasures are part of the model, not options — **(a) built and measured (V-52), (b) half
+  built (V-52)**: **(a) a boot self-check** — a libcurl and a
   libpq probe at startup with a non-zero interposer hit counter, refuse to start otherwise (the
   research-28 "0 hits" mistake made mechanical); **(b) a blocked-in-fiber detector** — any syscall
   in a fiber that blocks longer than N ms without parking logs library + PHP function and
-  increments `ignis_blocked_in_fiber_seconds{lib,func}`. Both **unbuilt**.
+  increments `ignis_blocked_in_fiber_seconds{lib,func}`. Of (b), the *surprising* half is built —
+  a call whose policy says `park` that could not park is counted and warned at the moment it gives
+  up (`PARK_FAILED`) — and the other half, a `block` row exceeding N ms, is **not**: a thread stuck
+  in a syscall cannot report on itself, so it belongs to the watchdog (ADR-0012) reading a
+  per-thread marker. Specified in research 32, recorded rather than half-built.
 - **Coverage as a metric:** parked-wait-time / total-wait-time in fibers on `/_ignis/metrics`.
   Today this number does not exist; it is the number the ADR is accepted against.
 

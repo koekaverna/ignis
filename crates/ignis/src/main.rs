@@ -130,6 +130,15 @@ fn main() -> ExitCode {
         }
     };
 
+    // ADR-0037 §4(a): universal park's failure mode is a hang, not an exception, so prove the
+    // interposers really bind inside the policy's libraries before anything can depend on them.
+    // After MINIT (extensions loaded, so RTLD_NOLOAD sees them), before any worker thread exists.
+    #[cfg(feature = "universal-park")]
+    if let Err(e) = php::park::selfcheck() {
+        eprintln!("ignis: {e}");
+        return ExitCode::from(2);
+    }
+
     // A5: `-r` / stdin code is a single script on this thread, like php-cli.
     if let Some((code, name)) = inline {
         let status = match engine.eval(&code, &name) {

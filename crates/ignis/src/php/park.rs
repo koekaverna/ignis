@@ -31,8 +31,9 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::ffi::{c_int, c_uint, c_void, CStr};
-use std::sync::OnceLock;
+use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use ignis_sys as sys;
 
@@ -55,6 +56,23 @@ static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 /// every row lock-free). Anything libphp calls that is not listed stays `block`; `getaddrinfo`
 /// has no fd and is offload's, not park's.
 const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libcurl,libpq,libssl,libcrypto";
+
+/// Set only while the boot self-check probes: makes `site_parks` record which library each
+/// resolved call site came from, so the check can prove a third-party `.so` really binds to us.
+static PROBING: AtomicBool = AtomicBool::new(false);
+static PROBE_HITS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// How many times a call site whose policy says `park` could not park and blocked instead
+/// (ADR-0037 §4's detector, the surprising half: policy said park, the runtime could not).
+/// Read by `ignis_stats()`; a non-zero value means a fiber thread blocked where it should not have.
+pub static PARK_FAILED: AtomicU64 = AtomicU64::new(0);
+
+/// Called by the four park helpers when they give up and the caller falls through to the blocking
+/// syscall. Logged at `warn` because this is not supposed to happen on a worker thread.
+fn park_failed(what: &str) {
+    PARK_FAILED.fetch_add(1, Ordering::Relaxed);
+    tracing::warn!(what, "universal park: policy says park but the call could not park — it blocked the thread");
+}
 
 /// `IGNIS_PARK_TRACE=1`: one stderr line per decision, for diagnosing a library that misbehaves
 /// under `park`. Off by default; the check is a `OnceLock<bool>` load.
@@ -135,6 +153,9 @@ unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
             let name = CStr::from_ptr(info.dli_fname).to_string_lossy();
             let base = name.rsplit('/').next().unwrap_or(&name).to_string();
             let parks = libs().iter().any(|(l, s)| base.starts_with(l.as_str()) && s.as_deref().is_none_or(|s| s == sym));
+            if PROBING.load(Ordering::Relaxed) && parks {
+                PROBE_HITS.lock().unwrap().push(base.clone());
+            }
             trace(&format!("site {key:#x} {sym} from {base}: parks={parks}"));
             parks
         } else {
@@ -238,11 +259,14 @@ unsafe fn ready_now(fd: c_int, events: i16) -> bool {
 /// Park until `fd` is ready in `dir`. `false` = could not park (no fiber/reactor, switching
 /// blocked, unwound by a cancellation) — the caller then makes the blocking call as before.
 unsafe fn park_on(fd: c_int, write: bool) -> bool {
-    let Some(r) = super::module::try_reactor() else { trace("park_on: no reactor"); return false };
+    let Some(r) = super::module::try_reactor() else { park_failed("park_on: no reactor"); return false };
     let id = r.submit(Op::Watch { fd, write });
     trace(&format!("park_on fd={fd} write={write} op={id}"));
     let ok = unsafe { await_any(&[id]).is_some() };
     trace(&format!("park_on fd={fd} resumed ok={ok}"));
+    if !ok {
+        park_failed("park_on: the fiber could not suspend (switch blocked or unwinding)");
+    }
     ok
 }
 
@@ -280,7 +304,7 @@ unsafe fn park_io(fd: c_int, write: bool) -> Wait {
 }
 
 unsafe fn park_sleep(us: u64) -> bool {
-    let Some(r) = super::module::try_reactor() else { return false };
+    let Some(r) = super::module::try_reactor() else { park_failed("park_sleep: no reactor"); return false };
     let id = r.submit(Op::Sleep { us });
     unsafe { matches!(await_op(id), Some(Outcome::Slept { .. })) }
 }
@@ -391,7 +415,7 @@ pub unsafe extern "C" fn ignis_park_sendto(ret: *const c_void, fd: c_int, buf: *
 /// timer in the same race. `None` = could not park (the caller makes the blocking call itself);
 /// `Some(true)` = an fd woke us; `Some(false)` = the timer won.
 unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> Option<bool> {
-    let reactor = super::module::try_reactor()?;
+    let Some(reactor) = super::module::try_reactor() else { park_failed("park_pollfds: no reactor"); return None };
     let mut ids = Vec::with_capacity(fds.len() * 2 + 1);
     for p in fds {
         if p.fd < 0 {
@@ -704,5 +728,134 @@ pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *
             }
         }
         libc::syscall(libc::SYS_writev, fd, iov, cnt) as isize
+    }
+}
+
+// ---- boot self-check (ADR-0037 §4(a), research 32) --------------------------------------------
+
+/// Proves that the interposed symbols really bind inside the third-party libraries the policy
+/// names — research 28's mistake ("0 hits" looked like success) made mechanical.
+///
+/// Runs once, on the main thread, after PHP MINIT (so `dlopen(RTLD_NOLOAD)` can see the extensions'
+/// libraries) and before any worker thread exists. For each policy library that is *loaded*, it
+/// makes that library's own code call an interposed symbol and checks that the call reached us.
+/// Nothing here is on any hot path.
+///
+/// `Ok(())` when every probed library was hit — or when there is nothing to probe (an empty policy,
+/// a build where neither curl nor libpq is loaded). `Err(msg)` names the library that missed.
+pub fn selfcheck() -> Result<(), String> {
+    if std::env::var_os("IGNIS_NO_UNIVERSAL_PARK").is_some() {
+        tracing::info!("park self-check skipped (IGNIS_NO_UNIVERSAL_PARK)");
+        return Ok(());
+    }
+    if std::env::var_os("IGNIS_SKIP_PARK_SELFCHECK").is_some() {
+        tracing::warn!("park self-check skipped (IGNIS_SKIP_PARK_SELFCHECK)");
+        return Ok(());
+    }
+    // Probe only third-party libraries the policy names: libphp is always loaded and its call
+    // sites are covered by the source audit (research 30), not by binding.
+    let wanted: Vec<(&str, &str)> = [("libcurl", "libcurl.so.4"), ("libpq", "libpq.so.5")]
+        .into_iter()
+        .filter(|(name, _)| libs().iter().any(|(l, _)| l == name))
+        .collect();
+    if wanted.is_empty() {
+        tracing::info!("park self-check: no third-party library in the policy, nothing to probe");
+        return Ok(());
+    }
+
+    PROBE_HITS.lock().unwrap().clear();
+    PROBING.store(true, Ordering::Relaxed);
+    // The gate is a thread-local: pretend a fiber is active so the handlers do their policy
+    // resolution. There is no reactor on this thread, so nothing can actually park — a probe that
+    // reaches `park_on` forwards, which is exactly the behaviour we want at boot.
+    PARK.with(|p| p.set(1));
+    let mut probed: Vec<&str> = Vec::new();
+    for (name, soname) in &wanted {
+        // SAFETY: dlopen(RTLD_NOLOAD) only reports whether the object is already mapped; every
+        // symbol below is called with the signature its own header declares.
+        unsafe {
+            let c_so = std::ffi::CString::new(*soname).unwrap();
+            let h = libc::dlopen(c_so.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+            if h.is_null() {
+                tracing::debug!(lib = name, "park self-check: not loaded in this process, not probed");
+                continue;
+            }
+            probed.push(name);
+            if *name == "libcurl" {
+                probe_libcurl(h);
+            } else {
+                probe_libpq(h);
+            }
+        }
+    }
+    PARK.with(|p| p.set(0));
+    PROBING.store(false, Ordering::Relaxed);
+    let hits = PROBE_HITS.lock().unwrap().clone();
+
+    let missed: Vec<&str> = probed
+        .iter()
+        .copied()
+        .filter(|name| !hits.iter().any(|h| h.starts_with(name)))
+        .collect();
+    if missed.is_empty() {
+        tracing::info!(probed = ?probed, hits = hits.len(), "park self-check ok");
+        return Ok(());
+    }
+    Err(format!(
+        "universal park is enabled and the policy names {missed:?}, but a call made by {} own code did not reach the \
+         interposed symbols — the library is loaded and its blocking calls would silently block the thread. \
+         Check that the binary exports them (`nm -D`) and that no LD_PRELOAD shadows them; \
+         IGNIS_SKIP_PARK_SELFCHECK=1 starts anyway, IGNIS_PARK= disables the policy.",
+        if missed.len() == 1 { "its" } else { "their" }
+    ))
+}
+
+/// Make libcurl's own code call `connect(2)` against a unix socket path that does not exist: the
+/// kernel answers `ENOENT` at once, so the probe costs nothing and needs no network, no DNS and no
+/// listener. (A loopback port nothing listens on is *not* equivalent: on this box a `connect` to a
+/// closed loopback port hangs until the timeout instead of answering ECONNREFUSED — that made the
+/// first version of this self-check cost 1.3 s on every process start.) Only who called us matters.
+unsafe fn probe_libcurl(h: *mut c_void) {
+    unsafe {
+        let init: Option<unsafe extern "C" fn() -> *mut c_void> = std::mem::transmute(libc::dlsym(h, c"curl_easy_init".as_ptr()));
+        let setopt: Option<unsafe extern "C" fn(*mut c_void, c_int, ...) -> c_int> = std::mem::transmute(libc::dlsym(h, c"curl_easy_setopt".as_ptr()));
+        let perform: Option<unsafe extern "C" fn(*mut c_void) -> c_int> = std::mem::transmute(libc::dlsym(h, c"curl_easy_perform".as_ptr()));
+        let cleanup: Option<unsafe extern "C" fn(*mut c_void)> = std::mem::transmute(libc::dlsym(h, c"curl_easy_cleanup".as_ptr()));
+        let (Some(init), Some(setopt), Some(perform), Some(cleanup)) = (init, setopt, perform, cleanup) else {
+            tracing::warn!("park self-check: libcurl loaded but its API is not resolvable; not probed");
+            return;
+        };
+        let e = init();
+        if e.is_null() {
+            return;
+        }
+        const CURLOPT_URL: c_int = 10_002;
+        const CURLOPT_NOSIGNAL: c_int = 99;
+        const CURLOPT_CONNECTTIMEOUT_MS: c_int = 156;
+        const CURLOPT_UNIX_SOCKET_PATH: c_int = 10_231;
+        setopt(e, CURLOPT_URL, c"http://localhost/".as_ptr());
+        setopt(e, CURLOPT_UNIX_SOCKET_PATH, c"/nonexistent/ignis-park-selfcheck".as_ptr());
+        setopt(e, CURLOPT_NOSIGNAL, 1_i64);
+        setopt(e, CURLOPT_CONNECTTIMEOUT_MS, 200_i64); // a cap, not the expected cost
+        let _ = perform(e);
+        cleanup(e);
+    }
+}
+
+/// Make libpq's own code call `connect(2)`, same shape.
+unsafe fn probe_libpq(h: *mut c_void) {
+    unsafe {
+        let connectdb: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void> = std::mem::transmute(libc::dlsym(h, c"PQconnectdb".as_ptr()));
+        let finish: Option<unsafe extern "C" fn(*mut c_void)> = std::mem::transmute(libc::dlsym(h, c"PQfinish".as_ptr()));
+        let (Some(connectdb), Some(finish)) = (connectdb, finish) else {
+            tracing::warn!("park self-check: libpq loaded but its API is not resolvable; not probed");
+            return;
+        };
+        // A leading slash makes libpq treat `host` as a unix-socket directory: connect to
+        // `<dir>/.s.PGSQL.5432`, which does not exist, so it fails immediately.
+        let conn = connectdb(c"host=/nonexistent connect_timeout=2".as_ptr());
+        if !conn.is_null() {
+            finish(conn);
+        }
     }
 }

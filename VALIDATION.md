@@ -1979,3 +1979,50 @@ stops).
 With this, all five owner acceptances of E18 have a number: (1) (2) V-45, (3) V-45 + research 28
 (curl's threaded resolver is caught by `poll`, not by a resolver op — recorded as "not as written"),
 (4) research 28's 8.3 ns, (5) here.
+
+## V-52 — the boot self-check refuses to start when interposition does not bind, and the failed-park counter (CONFIRMED)
+
+Date: 2026-09-16T19:21:02Z. ADR-0037 §4(a) and research 32's spec, implemented and both of its arms measured.
+Universal park's failure mode is a hang, not an exception, so "it looked fine" must stop being
+possible — research 28's mistake (a "0 hits" run that read as success) is now mechanical.
+
+**What it does.** On the main thread, after PHP MINIT (so `dlopen(…, RTLD_NOLOAD)` sees the
+extensions' libraries) and before any worker thread exists, for each third-party library the
+*resolved* policy names and that is actually loaded, the check makes that library's own compiled
+code call an interposed symbol and verifies the call reached us (recorded in `site_parks` behind a
+`PROBING` flag, so nothing is added to any hot path). libphp is not probed: it is always loaded and
+its call sites are covered by the source audit, not by binding.
+
+| case | behaviour |
+|---|---|
+| policy names libcurl and libpq, both loaded | `park self-check ok probed=["libcurl","libpq"] hits=3` |
+| a probed library makes no interposed call (negative control, `probe_libpq` neutered and rebuilt) | **refuses to start: exit 2**, `ignis: universal park is enabled and the policy names ["libpq"], but a call made by its own code did not reach the interposed symbols …` |
+| the same build with `IGNIS_SKIP_PARK_SELFCHECK=1` | starts, runs normally (warned) |
+| `IGNIS_PARK=` (empty policy) | `no third-party library in the policy, nothing to probe`, starts |
+| `IGNIS_NO_UNIVERSAL_PARK=1` | skipped, starts |
+
+**Boot cost, and a defect found by measuring it.** The first version probed
+`connect()` to `127.0.0.1:1`, and cost **1.3 s on every process start** — on this box a `connect`
+to a closed loopback port does not answer `ECONNREFUSED`, it hangs until the timeout (a fact
+already recorded in `bench/e18.sh`'s comments and not carried into the design). At ~300 short-lived
+processes per phpt suite that is five minutes of pure waiting. Both probes now target a
+**nonexistent unix socket path** (`CURLOPT_UNIX_SOCKET_PATH=/nonexistent/…`,
+libpq `host=/nonexistent`): the kernel answers `ENOENT` at once, no network, no DNS, no listener.
+
+| | trivial script, 3 runs |
+|---|---|
+| self-check on (unix-socket probes) | **0.01 s** |
+| `IGNIS_NO_UNIVERSAL_PARK=1` | 0.01 s |
+| self-check on (first version, loopback probes) | 1.3 s |
+
+**The other half of ADR-0037 §4(b).** `PARK_FAILED` counts, and `warn` logs, every call whose policy
+says `park` and which could not park and blocked the thread instead — the four helpers
+(`park_on`, `park_io`/`park_pollfds`, `park_sleep`) report it at the moment they give up, so the
+alarm is immediate and needs no timing on any path. The *other* case in the spec — a `block` row
+that blocks longer than N ms — is **not built**, deliberately: a thread stuck in a syscall cannot
+report on itself, so that half belongs to the watchdog (ADR-0012) reading a per-thread "forwarding
+since" marker, and is recorded as such rather than half-built.
+
+**Gates** (this changes every process start, so the full set): `cargo nextest` 9/9; phpt counts and
+per-test sets all ≥ baseline (108/78, 133/125, 91/85), gate exit 0; `scripts/smoke.sh` exit 0;
+H36 re-run unchanged (park 200 ms with fiber 1 at `-2`, block and off 400 ms).
