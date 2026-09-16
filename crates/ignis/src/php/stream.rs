@@ -56,9 +56,13 @@ struct Sock {
     /// Set when a read hit `read_timeout_us`; reported by `stream_get_meta_data()` and cleared
     /// by the next successful read, as xp_socket does.
     timed_out: bool,
+    /// A4 (ADR-0018): `unix://` — the address is a filesystem path, not `host:port`.
+    is_unix: bool,
 }
 
 static ORIG_SSL: OnceLock<sys::php_stream_transport_factory> = OnceLock::new();
+/// A4: the stock `unix` factory, kept for the out-of-fiber and server cases.
+static ORIG_UNIX: OnceLock<sys::php_stream_transport_factory> = OnceLock::new();
 const TLS_PROTOS: [&std::ffi::CStr; 4] = [c"ssl", c"tls", c"tlsv1.2", c"tlsv1.3"];
 
 /// PHP's `ssl` context options → TlsOpts (defaults as in ext/openssl: verify on, host name = peer_name or the connect host).
@@ -131,7 +135,7 @@ pub unsafe fn adopt_fd(fd: c_int) -> *mut sys::php_stream {
         let id = reactor().submit(Op::Adopt { fd: dup });
         match await_op(id) {
             Some(Outcome::Connected { conn, fd, local, peer }) => {
-                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer, blocking: true, read_timeout_us: None, timed_out: false });
+                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer, blocking: true, read_timeout_us: None, timed_out: false, is_unix: false });
                 sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
             }
             _ => ptr::null_mut(),
@@ -280,13 +284,14 @@ unsafe extern "C" fn ignis_tcp_factory(
         const STREAM_XPORT_SERVER: c_int = 1;
         let in_fiber = !(*eg()).active_fiber.is_null();
         let proto_str = std::str::from_utf8(std::slice::from_raw_parts(proto as *const u8, protolen)).unwrap_or("tcp");
-        let is_tls = proto_str != "tcp";
+        let is_unix = proto_str == "unix";
+        let is_tls = !is_unix && proto_str != "tcp";
         if !in_fiber || !persistent_id.is_null() || (flags & STREAM_XPORT_SERVER) != 0 {
-            let orig = if is_tls { ORIG_SSL.get().copied().flatten() } else { ORIG_TCP.get().copied().flatten() };
+            let orig = if is_tls { ORIG_SSL.get().copied().flatten() } else if is_unix { ORIG_UNIX.get().copied().flatten() } else { ORIG_TCP.get().copied().flatten() };
             let Some(orig) = orig else { return ptr::null_mut() };
             return orig(proto, protolen, res, reslen, persistent_id, options, flags, timeout, context);
         }
-        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls, fd: -1, local: String::new(), peer: String::new(), blocking: true, read_timeout_us: None, timed_out: false });
+        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls, fd: -1, local: String::new(), peer: String::new(), blocking: true, read_timeout_us: None, timed_out: false, is_unix });
         sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
     }
 }
@@ -443,6 +448,29 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                     sys::STREAM_XPORT_OP_CONNECT | sys::STREAM_XPORT_OP_CONNECT_ASYNC => {
                         let name = std::str::from_utf8(std::slice::from_raw_parts((*xp).inputs.name as *const u8, (*xp).inputs.namelen))
                             .unwrap_or("");
+                        // A4: a unix socket is addressed by path; host:port parsing does not apply.
+                        if (*sock_of(stream)).is_unix {
+                            let id = reactor().submit(Op::ConnectUnix { path: name.to_string() });
+                            match await_op(id) {
+                                Some(Outcome::Connected { conn, fd, local, peer }) => {
+                                    let s = sock_of(stream);
+                                    (*s).conn = conn;
+                                    (*s).fd = fd;
+                                    (*s).local = local;
+                                    (*s).peer = peer;
+                                    (*xp).outputs.returncode = 0;
+                                }
+                                Some(Outcome::Error(e)) => {
+                                    if (*xp).want_errortext() != 0 {
+                                        let msg = std::ffi::CString::new(e).unwrap_or_default();
+                                        (*xp).outputs.error_text = sys::zend_strpprintf(0, c"%s".as_ptr(), msg.as_ptr());
+                                    }
+                                    (*xp).outputs.returncode = -1;
+                                }
+                                _ => (*xp).outputs.returncode = -1,
+                            }
+                            return OK;
+                        }
                         let Some((host, port)) = parse_host_port(name) else {
                             // A1: an unparseable address used to fail silently — returncode -1 with
                             // no error_text, so $errstr/$errno came back empty where stock fills them.
@@ -641,6 +669,18 @@ pub unsafe fn install() {
             let _ = ORIG_SSL.set(orig_ssl);
             for name in TLS_PROTOS {
                 sys::php_stream_xport_register(name.as_ptr(), Some(ignis_tcp_factory));
+            }
+        }
+        // A4 (ADR-0018): `unix://`. Only the client side is taken, like tcp — a `unix` server
+        // socket keeps the stock factory (the BIND/LISTEN/ACCEPT path is not ours, E15c).
+        // `udp`/`udg` are deliberately NOT registered: they are connectionless and addressed per
+        // packet, which does not fit the reactor's one-actor-per-connection model at all.
+        if std::env::var_os("IGNIS_NO_UNIX_HOOK").is_none() {
+            let ux = sys::zend_hash_str_find(ht, c"unix".as_ptr(), 4);
+            if !ux.is_null() {
+                let orig_unix = std::mem::transmute::<*mut c_void, sys::php_stream_transport_factory>((*ux).value.ptr);
+                let _ = ORIG_UNIX.set(orig_unix);
+                sys::php_stream_xport_register(c"unix".as_ptr(), Some(ignis_tcp_factory));
             }
         }
     }

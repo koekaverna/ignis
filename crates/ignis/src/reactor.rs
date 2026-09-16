@@ -35,6 +35,10 @@ pub enum Op {
     Upgrade { conn: u64, tls: TlsOpts },
     /// Adopt an already-connected socket (a dup'd fd from `stream_socket_accept`, E6''). Completes with `Connected`.
     Adopt { fd: i32 },
+    /// A4 (ADR-0018): connect a `unix://` stream socket by path. Completes with `Connected`.
+    /// Everything after the connect — the actor, reads, writes, close — is the tcp path unchanged,
+    /// because `UnixStream` is just another `AsyncRead + AsyncWrite`.
+    ConnectUnix { path: String },
     /// Read up to `max` bytes from `conn`. Completes with `Data` (empty = EOF).
     Read { conn: u64, max: usize },
     /// Read whatever `conn` holds right now without waiting (a non-blocking PHP stream, E6'').
@@ -63,6 +67,7 @@ impl std::fmt::Debug for Op {
             Op::Connect { host, port, tls } => write!(f, "Connect({host}:{port},tls={})", tls.is_some()),
             Op::Upgrade { conn, tls } => write!(f, "Upgrade({conn},{})", tls.server_name),
             Op::Adopt { fd } => write!(f, "Adopt({fd})"),
+            Op::ConnectUnix { path } => write!(f, "ConnectUnix({path})"),
             Op::Read { conn, max } => write!(f, "Read({conn},{max})"),
             Op::Write { conn, data } => write!(f, "Write({conn},{} bytes)", data.len()),
             Op::Close { conn } => write!(f, "Close({conn})"),
@@ -262,6 +267,23 @@ fn socket_meta(stream: &tokio::net::TcpStream) -> (i32, String, String) {
     (fd, local, peer)
 }
 
+/// Same, for a `unix://` socket. A connected unix stream usually has no peer path of its own, so
+/// PHP is given the path it dialled — which is what `stream_socket_get_name()` reports there.
+fn unix_meta(stream: &tokio::net::UnixStream, path: &str) -> (i32, String, String) {
+    use std::os::fd::AsRawFd;
+    // SAFETY: dup of a valid descriptor; the PHP stream owns and closes the copy.
+    let fd = unsafe { libc::dup(stream.as_raw_fd()) };
+    let name = |a: Result<tokio::net::unix::SocketAddr, std::io::Error>| {
+        a.ok().and_then(|a| a.as_pathname().map(|p| p.to_string_lossy().into_owned())).unwrap_or_default()
+    };
+    let local = name(stream.local_addr());
+    let peer = {
+        let p = name(stream.peer_addr());
+        if p.is_empty() { path.to_string() } else { p }
+    };
+    (fd, local, peer)
+}
+
 /// Register a connected stream with an actor and describe it to PHP.
 fn adopt(conns: &ConnMap, next_conn: &Arc<AtomicU64>, stream: BoxStream, meta: (i32, String, String), done: Sender<Completion>) -> Outcome {
     let conn = next_conn.fetch_add(1, Ordering::Relaxed);
@@ -421,6 +443,20 @@ impl Reactor {
                                     }
                                 }
                                 Err(e) => Outcome::Error(format!("connect {host}:{port}: {e}")),
+                            };
+                            let _ = done_tx.send(Completion { id, outcome });
+                        });
+                    }
+                    Op::ConnectUnix { path } => {
+                        let conns = conns.clone();
+                        let next_conn = next_conn.clone();
+                        tokio::spawn(async move {
+                            let outcome = match tokio::net::UnixStream::connect(&path).await {
+                                Ok(stream) => {
+                                    let meta = unix_meta(&stream, &path);
+                                    adopt(&conns, &next_conn, Box::new(stream), meta, done_tx.clone())
+                                }
+                                Err(e) => Outcome::Error(format!("connect unix://{path}: {e}")),
                             };
                             let _ = done_tx.send(Completion { id, outcome });
                         });
