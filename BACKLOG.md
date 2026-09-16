@@ -312,7 +312,7 @@ binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.ph
 functions in the stub: identical sets; `php -l` passes; loading the stub under the binary then
 calling `ignis_inflight()` still reaches the real function (the guard works).
 
-### H-9 `bench/compare.sh` writes its results header before checking what it can run `agent` `open`
+### H-9 `bench/compare.sh` writes its results header before checking what it can run `agent` `in progress (batch 3)`
 **What.** The header block is appended to `bench/results/compare.md` unconditionally, before the
 `ONLY=` filter and the binary preflight, so a run that stops at "frankenphp binary not found"
 still leaves an empty header row in a results file that is committed history. Move the header
@@ -327,7 +327,7 @@ distinguish `EG(exit_status)` from a real fatal (the `Engine::eval` sentinel alr
 `-r`): warn only on a fatal, `debug` on exit. **Acceptance.** Running `e1_sleep_10k.php` prints no
 WARN; a script with `trigger_error(..., E_USER_ERROR)` still prints one. `main` (guarded path).
 
-### H-8 Retire the `IGNIS_ADDR` name `agent` `open`
+### H-8 Retire the `IGNIS_ADDR` name `agent` `in progress (batch 3)`
 **What.** `bench/e15-frankenphp.sh` sets `IGNIS_ADDR`; `examples/classic_server.php` and
 `examples/grpc_server.php` fall back to it (H-1). One name: `IGNIS_LISTEN` everywhere, fallback
 removed. **Acceptance.** `grep -rn IGNIS_ADDR --include=*.sh --include=*.php --include=*.md . | grep -v JOURNAL | grep -v VALIDATION` is empty.
