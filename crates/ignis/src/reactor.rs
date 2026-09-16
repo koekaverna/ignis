@@ -14,7 +14,6 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use tokio::sync::{mpsc, oneshot};
 
 /// An I/O request submitted by PHP. Plain data only: no Zend pointers.
-#[derive(Debug)]
 pub enum Op {
     /// Complete after `ms` milliseconds (tokio timer wheel).
     Sleep { ms: u64 },
@@ -29,6 +28,24 @@ pub enum Op {
     /// Wait until a raw fd (dup'd by the reactor) is readable (`write=false`) or
     /// writable. One-shot. Completes with `Ready` (ADR-0008).
     Watch { fd: i32, write: bool },
+    /// Any tokio future producing a PHP-facing outcome (`Json` or `Failed`);
+    /// used by feature-gated backends (Temporal, ADR-0013) without touching
+    /// this file. Plain data in, plain data out.
+    Custom(std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>>),
+}
+
+impl std::fmt::Debug for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Op::Sleep { ms } => write!(f, "Sleep({ms})"),
+            Op::Connect { host, port } => write!(f, "Connect({host}:{port})"),
+            Op::Read { conn, max } => write!(f, "Read({conn},{max})"),
+            Op::Write { conn, data } => write!(f, "Write({conn},{} bytes)", data.len()),
+            Op::Close { conn } => write!(f, "Close({conn})"),
+            Op::Watch { fd, write } => write!(f, "Watch({fd},write={write})"),
+            Op::Custom(_) => write!(f, "Custom"),
+        }
+    }
 }
 
 /// Command to a connection actor (tokio side only).
@@ -72,6 +89,10 @@ pub enum Outcome {
     Ready,
     /// The client of request `id` went away (ADR-0009); `dropped_at` is when hyper dropped it.
     Cancelled { dropped_at: std::time::Instant },
+    /// PHP-facing result of a `Custom` op: a JSON document (delivered as a string payload).
+    Json(String),
+    /// PHP-facing failure of a `Custom` op: `['kind' => 'error', 'message' => ..]`.
+    Failed(String),
     Error(String),
 }
 
@@ -204,6 +225,12 @@ impl Reactor {
                                 }
                                 Err(e) => Outcome::Error(format!("connect {host}:{port}: {e}")),
                             };
+                            let _ = done_tx.send(Completion { id, outcome });
+                        });
+                    }
+                    Op::Custom(fut) => {
+                        tokio::spawn(async move {
+                            let outcome = fut.await;
                             let _ = done_tx.send(Completion { id, outcome });
                         });
                     }

@@ -78,6 +78,10 @@ static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> = Sync
     arg_info(c"cookie"),
 ]);
 static ARGINFO_CANCEL: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"fiber"), arg_info(c"exception")]);
+#[allow(dead_code)]
+static ARGINFO_T2: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"worker"), arg_info(c"json")]);
+#[allow(dead_code)]
+static ARGINFO_T3: SyncStatic<[sys::zend_internal_arg_info; 4]> = SyncStatic([arg_info_head(3), arg_info(c"a"), arg_info(c"b"), arg_info(c"c")]);
 static ARGINFO_WATCH: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"stream"), arg_info(c"mode")]);
 static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
     arg_info_head(4),
@@ -140,11 +144,25 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
         let done: Vec<Completion> = reactor().poll(timeout);
         zval::set_new_array(rv);
         for c in done {
-            // Completions for fibers parked inside a stream op (ADR-0007) are
-            // consumed here: the fiber is resumed and runs until its next
-            // suspension before we continue. Everything else goes to userland.
             match c.outcome {
+                // Completions for fibers parked inside a stream op (ADR-0007) are
+                // consumed here: the fiber is resumed and runs until its next
+                // suspension before we continue. Everything else goes to userland.
+                Outcome::Connected { .. } | Outcome::Data(_) | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
+                    if !super::stream::resume_parked(c.id, c.outcome) {
+                        tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
+                    }
+                }
+                Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
                 Outcome::Ready => sys::add_index_long(rv, c.id, 1),
+                Outcome::Json(json) => sys::add_index_stringl(rv, c.id, json.as_ptr() as *const c_char, json.len()),
+                Outcome::Failed(msg) => {
+                    let mut item: sys::zval = std::mem::zeroed();
+                    zval::set_new_array(&mut item);
+                    sys::add_assoc_stringl_ex(&mut item, c"kind".as_ptr(), 4, c"error".as_ptr(), 5);
+                    sys::add_assoc_stringl_ex(&mut item, c"message".as_ptr(), 7, msg.as_ptr() as *const c_char, msg.len());
+                    sys::zend_hash_index_update((*rv).value.arr, c.id, &mut item);
+                }
                 Outcome::Cancelled { dropped_at } => {
                     // ['kind' => 'cancel', 'age_us' => µs since hyper dropped the request]
                     let mut item: sys::zval = std::mem::zeroed();
@@ -153,17 +171,6 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                     sys::add_assoc_long_ex(&mut item, c"age_us".as_ptr(), 6, dropped_at.elapsed().as_micros() as i64);
                     sys::zend_hash_index_update((*rv).value.arr, c.id, &mut item);
                 }
-                Outcome::Connected { .. } | Outcome::Data(_) | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
-                    if !super::stream::resume_parked(c.id, c.outcome) {
-                        tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-            match c.outcome {
-                Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
-                Outcome::Ready | Outcome::Cancelled { .. } => {}
                 Outcome::Request(req) => {
                     let mut item: sys::zval = std::mem::zeroed();
                     request_to_zval(&mut item, &req);
@@ -172,7 +179,6 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                     // copies the zval bits and takes ownership of `item`.
                     sys::zend_hash_index_update((*rv).value.arr, c.id, &mut item);
                 }
-                _ => unreachable!("stream outcomes are consumed above"),
             }
         }
     }
@@ -319,7 +325,7 @@ const fn fe_end() -> sys::zend_function_entry {
     }
 }
 
-#[cfg(not(php_async_abi))]
+#[cfg(all(not(php_async_abi), not(feature = "temporal")))]
 static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 10]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
@@ -333,6 +339,27 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 10]> = SyncStatic([
     fe_end(),
 ]);
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
+/// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
+#[cfg(all(not(php_async_abi), feature = "temporal"))]
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 17]> = SyncStatic([
+    fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
+    fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
+    fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_temporal_complete", crate::backend::temporal::zif_complete_activation, ARGINFO_T2.0.as_ptr(), 2),
+    fe(c"ignis_temporal_poll_activity", crate::backend::temporal::zif_poll_activity, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_temporal_complete_activity", crate::backend::temporal::zif_complete_activity, ARGINFO_T2.0.as_ptr(), 2),
+    fe(c"ignis_temporal_shutdown", crate::backend::temporal::zif_shutdown, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
+    fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
+    fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
+    fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe_end(),
+]);
 #[cfg(php_async_abi)]
 static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 12]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
@@ -406,9 +433,11 @@ mod tests {
     fn function_table_is_terminated() {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[0].fname) }.to_str().unwrap(), "ignis_stats");
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[3].fname) }.to_str().unwrap(), "ignis_set_superglobals");
-        assert_eq!(FUNCTIONS.0[3].num_args, 4);
-        assert_eq!(unsafe { CStr::from_ptr(FUNCTIONS.0[8].fname) }.to_str().unwrap(), "ignis_respond");
+        let names: Vec<String> = FUNCTIONS.0.iter().filter(|f| !f.fname.is_null()).map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string()).collect();
+        for n in ["ignis_stats", "ignis_set_superglobals", "ignis_respond", "ignis_poll"] {
+            assert!(names.contains(&n.to_string()), "{n} missing");
+        }
+        let sg = FUNCTIONS.0.iter().find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals").unwrap();
+        assert_eq!(sg.num_args, 4);
     }
 }
