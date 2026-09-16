@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential autoconf bison re2c pkg-config git curl ca-certificates \
       libxml2-dev libsqlite3-dev libonig-dev zlib1g-dev libssl-dev libpq-dev libcurl4-openssl-dev \
-      clang libclang-dev protobuf-compiler postgresql-client wrk jq python3 \
+      clang libclang-dev protobuf-compiler libprotobuf-dev postgresql-client wrk jq python3 \
       php-cli php-xml php-mbstring php-curl composer \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/build-php.sh /tmp/build-php.sh

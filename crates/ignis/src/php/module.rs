@@ -235,7 +235,30 @@ unsafe extern "C" fn zif_ignis_watch(ex: *mut sys::zend_execute_data, rv: *mut s
             sys::zend_throw_exception(ptr::null_mut(), c"ignis_watch(): stream has no selectable file descriptor".as_ptr(), 0);
             return;
         }
+        // Already ready? Complete synchronously so a `poll(0)` right after arming sees it
+        // (E15b: Revolt's DriverTest expects a writable fd to dispatch in the tick that armed it).
+        let mut pfd = libc::pollfd { fd, events: if mode == 2 { libc::POLLOUT } else { libc::POLLIN }, revents: 0 };
+        if libc::poll(&mut pfd, 1, 0) > 0 && pfd.revents != 0 {
+            let r = reactor();
+            let id = r.reserve_op();
+            r.complete(id, Outcome::Ready);
+            zval::set_long(rv, id as i64);
+            return;
+        }
         let id = reactor().submit(Op::Watch { fd, write: mode == 2 });
+        zval::set_long(rv, id as i64);
+    }
+}
+
+/// `ignis_cancel(int $op): int` — cancel a pending `ignis_watch` op; closes the watched dup'd fd (E15b).
+unsafe extern "C" fn zif_ignis_cancel(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: plain integer argument.
+    unsafe {
+        let mut target: sys::zend_long = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut target) != sys::SUCCESS {
+            return;
+        }
+        let id = reactor().submit(Op::CancelWatch { target: target as u64 });
         zval::set_long(rv, id as i64);
     }
 }
@@ -643,10 +666,11 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 25]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 26]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
+    fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
@@ -673,7 +697,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 25]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 32]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 33]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -684,6 +708,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 32]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
+    fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
@@ -708,10 +733,11 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 32]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 27]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::stream::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
+    fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),

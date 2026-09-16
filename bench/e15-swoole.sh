@@ -7,10 +7,10 @@
 #
 # Never uses pkill; every child runs under `timeout` (20 s, SIGKILL after 2 more).
 set -uo pipefail
-ROOT=/home/user/ignis
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BIN=$ROOT/target/release/ignis
 PHP=/opt/php85-zts/bin/php
-SRC=/home/user/cmp/swoole-src/tests/swoole_runtime
+SRC=${SWOOLE_SRC:-/home/user/cmp/swoole-src}/tests/swoole_runtime
 OUT=/tmp/swoole-e15
 TIMEOUT=${E15_TIMEOUT:-20}
 [ -x "$BIN" ] || { echo "missing $BIN (do not build from here)"; exit 2; }

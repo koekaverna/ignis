@@ -30,7 +30,7 @@ cat > "$TMP/phpunit-run.php" <<'EOF'
 <?php declare(strict_types=1);
 // Minimal PHPUnit entry point for the embed SAPI: no shebang, no dom/libxml/xmlwriter gate,
 // and $_SERVER['PHP_SELF'] filled in. Everything else is stock PHPUnit.
-$root = getenv('AMPHP_ROOT') ?: '/home/user/ignis/php/amphp';
+$root = getenv('AMPHP_ROOT') ?: dirname(__DIR__) . '/php/amphp';
 $_SERVER['PHP_SELF'] ??= $_SERVER['argv'][0] ?? __FILE__;
 $_SERVER['SCRIPT_NAME'] ??= $_SERVER['PHP_SELF'];
 $_SERVER['SCRIPT_FILENAME'] ??= $_SERVER['PHP_SELF'];

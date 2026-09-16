@@ -24,8 +24,9 @@
 set -u
 
 STOCK_PHP=${IGNIS_STOCK_PHP:-/opt/php85-zts/bin/php}
-IGNIS_BIN=${IGNIS_BIN:-/home/user/ignis/target/release/ignis}
-HARNESS=${IGNIS_PHPT_HARNESS:-/home/user/ignis/scripts/phpt-harness.php}
+SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+IGNIS_BIN=${IGNIS_BIN:-$SELF_DIR/../target/release/ignis}
+HARNESS=${IGNIS_PHPT_HARNESS:-$SELF_DIR/phpt-harness.php}
 
 orig_args=("$@")
 

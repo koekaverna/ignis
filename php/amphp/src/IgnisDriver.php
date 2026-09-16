@@ -69,8 +69,12 @@ final class IgnisDriver extends AbstractDriver
         if ($callback instanceof StreamReadableCallback || $callback instanceof StreamWritableCallback) {
             unset($this->streamCallbacks[$callback->id]);
             if (isset($this->watchOf[$callback->id])) {
-                // The one-shot watch may still fire; its completion is then ignored.
-                unset($this->pendingWatch[$this->watchOf[$callback->id]], $this->watchOf[$callback->id]);
+                // Cancel the one-shot watch on the reactor (closes its dup'd fd); a late completion is ignored.
+                $op = $this->watchOf[$callback->id];
+                unset($this->pendingWatch[$op], $this->watchOf[$callback->id]);
+                if (\function_exists('ignis_cancel')) {
+                    \ignis_cancel($op);
+                }
             }
         } elseif ($callback instanceof TimerCallback) {
             $this->timerQueue->remove($callback);

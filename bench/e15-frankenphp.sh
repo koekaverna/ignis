@@ -5,7 +5,8 @@
 # Prints one `PASS|FAIL|SKIP <script> <detail>` line per test and a final `passed=N failed=N skipped=N`.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-BIN=${BIN:-/home/user/ignis/target/release/ignis}
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+BIN=${BIN:-$REPO/target/release/ignis}
 FP=${FP:-/home/user/frankenphp}
 DOCROOT=$FP/testdata
 PORT=${PORT:-8087}

@@ -29,6 +29,8 @@ pub enum Op {
     /// Wait until a raw fd (dup'd by the reactor) is readable (`write=false`) or
     /// writable. One-shot. Completes with `Ready` (ADR-0008).
     Watch { fd: i32, write: bool },
+    /// Cancel a pending `Watch` (E15b: a cancelled watch leaked its dup'd fd); both ops complete with `Error("cancelled")`.
+    CancelWatch { target: u64 },
     /// Any tokio future producing a PHP-facing outcome (`Json` or `Failed`);
     /// used by feature-gated backends (Temporal, ADR-0013) without touching
     /// this file. Plain data in, plain data out.
@@ -44,6 +46,7 @@ impl std::fmt::Debug for Op {
             Op::Write { conn, data } => write!(f, "Write({conn},{} bytes)", data.len()),
             Op::Close { conn } => write!(f, "Close({conn})"),
             Op::Watch { fd, write } => write!(f, "Watch({fd},write={write})"),
+            Op::CancelWatch { target } => write!(f, "CancelWatch({target})"),
             Op::Custom(_) => write!(f, "Custom"),
         }
     }
@@ -208,6 +211,8 @@ impl Reactor {
         rt.spawn(async move {
             let conns: ConnMap = Arc::new(Mutex::new(HashMap::new()));
             let next_conn = Arc::new(AtomicU64::new(1));
+            // Pending fd watches by op id, so a cancel can abort the task (closing the dup'd fd).
+            let watches: Arc<Mutex<HashMap<u64, tokio::task::AbortHandle>>> = Arc::new(Mutex::new(HashMap::new()));
             while let Some((id, op)) = rx.recv().await {
                 let done_tx: Sender<Completion> = done_for_task.clone();
                 match op {
@@ -245,10 +250,20 @@ impl Reactor {
                         });
                     }
                     Op::Watch { fd, write } => {
-                        tokio::spawn(async move {
+                        let watches2 = watches.clone();
+                        let handle = tokio::spawn(async move {
                             let outcome = watch_fd(fd, write).await;
+                            watches2.lock().unwrap().remove(&id);
                             let _ = done_tx.send(Completion { id, outcome });
                         });
+                        watches.lock().unwrap().insert(id, handle.abort_handle());
+                    }
+                    Op::CancelWatch { target } => {
+                        if let Some(h) = watches.lock().unwrap().remove(&target) {
+                            h.abort(); // drops the AsyncFd → closes the dup'd fd
+                            let _ = done_tx.send(Completion { id: target, outcome: Outcome::Error("cancelled".into()) });
+                        }
+                        let _ = done_tx.send(Completion { id, outcome: Outcome::Error("cancelled".into()) });
                     }
                     Op::Read { conn, max } => forward(&conns, conn, ConnCmd::Read { id, max }, id, &done_tx),
                     Op::Write { conn, data } => forward(&conns, conn, ConnCmd::Write { id, data }, id, &done_tx),

@@ -130,6 +130,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: build
         run: timeout 1800 cargo build --release -p ignis
+      # The ported suite scripts were written on a box where the repo lives at /home/user/ignis.
+      - name: path compatibility
+        run: mkdir -p /home/user /home/user/cmp && ln -sfn "$GITHUB_WORKSPACE" /home/user/ignis
       - name: php-src phpt suites (fibers, streams, sockets) in stock / main / fiber mode
         if: matrix.suite == 'phpt'
         run: |

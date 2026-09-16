@@ -635,3 +635,39 @@ Before the Cycle-17 fixes (porter's pinned run): main 108 / 79 / 124, fiber 77 /
 **E15d — FrankenPHP `testdata/*.php` through `php/classic.php`** (`bench/e15-frankenphp.sh`; three consecutive runs identical): **passed 29 / failed 4 / skipped 33**. The four failures are runtime gaps, not adapter bugs: no peer address in the request payload (`REMOTE_ADDR`/`REMOTE_PORT`), a single `Cookie` header kept and no PHP-style cookie-name mangling, `putenv()` persisting across requests, no multipart/`$_FILES`. Skips: 18 worker-mode/resident-state tests, 5 FrankenPHP-only functions, 8 Caddy directives or php.ini variants, 2 fixtures not reproducible over plain HTTP. The classic-mode adapter itself (script included per request in the fiber, output buffered, `header()`/`http_response_code()` mapped, `php://input` userland wrapper) is a new deliverable: Ignis can serve classic scripts.
 
 E15b (Revolt DriverTest) and E15e (Symfony/Doctrine chaos mode) are in progress / not started; CI (`.github/workflows/ci.yml`) now runs the phpt, Swoole and FrankenPHP suites with `scripts/ci-gate.sh` guarding these pass counts.
+
+## V-23 addendum — E15b Revolt `DriverTest` on `IgnisDriver` (CONFIRMED after two driver fixes)
+
+Date: 2026-09-16T03:20:33Z. Port: research 19 (model=porter): `php/amphp/test/IgnisDriverTest.php` extends Revolt's abstract `DriverTest` (3 tests repaired with `#[DataProvider]` because revolt ships a PHPUnit-9 suite; the same repaired class runs over `StreamSelectDriver` as the baseline). Runner: `bench/e15-revolt.sh` — phpunit 12 runs *inside* the ignis binary (needed: `$argv`, shebang skip, `$_SERVER['PHP_SELF']`, STDIN/STDOUT/STDERR — all added this night).
+
+| run (main agent's own) | result |
+|---|---|
+| stock CLI, `StreamSelectDriver` (baseline) | Tests: 81, Assertions: 222, Errors: 1, Skipped: 8 |
+| ignis, `IgnisDriver`, before the fixes (3 runs) | 81 / 222 / Errors 1 / **Failures 1–2** / Skipped 8 |
+| ignis, `IgnisDriver`, after the fixes (3 runs) | **81 / 222 / Errors 1 / Failures 0 / Skipped 8** — identical to the baseline |
+
+The porter's root cause held: a one-shot `ignis_watch` is completed on the tokio side, so an fd that is *already* ready was not dispatched in the tick that armed it (`ignis_poll(0)` returned first). Fixes: (1) `ignis_watch` probes the fd with `poll(2)` timeout 0 and completes the op synchronously when it is ready; (2) `ignis_cancel(op)` (new `Op::CancelWatch`) aborts the tokio watch task from `IgnisDriver::deactivate()`, which closes the dup'd fd — the porter's probe (200 arm/cancel cycles) went from **+110 fds to +0**. Classification: the 1 error is upstream (`testNoMemoryLeak` uses `getTestResultObject()`, removed in PHPUnit 10; identical on the baseline); the 8 skips are signal tests (ext-posix not built; identical on the baseline); signals remain unsupported in `IgnisDriver` (`UnsupportedFeatureException`). One of the four environment variants (`IGNIS_NO_STREAM_HOOK=1`) still showed a single timing failure in one run; the default configuration was clean 3/3.
+
+## V-24 — H24 (E16, part 1): offload pool of synchronous PHP threads (CONFIRMED for the pool; pdo_pgsql/curl routing pending the libphp rebuild)
+
+Date: 2026-09-16T03:20:33Z. Command: `bench/e16-offload.sh 8` (`ignis --offload 8 bench/php/e16_offload.php`, prelude `bench/php/e16_prelude.php`); load average 7 (a C-core build in the background).
+
+```
+blocking calls: 100 x 200 ms through 8 workers: 2608 ms wall (bound = ceil(100/8) x 200 = 2600 ms); distinct worker threads used: 8; fiber thread ticked 233 times (10 ms sleeps) meanwhile
+copy overhead: empty args, 2000 sequential calls: 13.3 us per call round trip (serialized size 6 B)
+copy overhead: 1KB args, 2000 sequential calls: 27.2 us per call round trip (serialized size 1597 B)
+copy overhead: 64KB args, 2000 sequential calls: 431.0 us per call round trip (serialized size 75699 B)
+callbacks: worker called back 5 times, sum=30 (expect 30), callbacks run on the caller: 5
+exception: DomainException(boom from the worker, code 42) propagated as RemoteException
+--offload 100: 100 x 200 ms through 100 workers: 243 ms wall (bound 200 ms)
+```
+
+| claim | result |
+|---|---|
+| wall time is bounded by the pool size, never by the fiber thread | 8 workers: **2608 ms** for 100 × 200 ms (bound 2600); 100 workers: **243 ms** (bound 200; thread start-up and 100 TSRM contexts); the fiber thread kept ticking (233 × 10 ms sleeps during the 2.6 s) |
+| copy-in/copy-out cost per call | **13 µs** (no args), **27 µs** (1 KB array), 431 µs (64 KB): `serialize` + crossbeam channel + `unserialize`, both ways, plus one reactor hop. For scale: a native pool query is 112 µs (V-21) |
+| callbacks from the worker run on the calling thread | 5/5, in a fiber of the caller, worker blocked meanwhile |
+| exceptions | class/message/code/trace cross back as `RemoteException` |
+| shutdown | workers leave their PHP request before `php_embed_shutdown` (poison job + join); the first version aborted with `zend_mm_heap corrupted` at exit |
+
+Not yet: config-driven auto-routing of `curl_*`/`PDO`/`SQLite3`/`Redis` (proxies pinned to a worker, function-handler trampolines) and the pdo_pgsql/curl_exec tests — the libphp rebuild with `--with-pdo-pgsql --with-pgsql --with-curl --with-openssl` is running.
