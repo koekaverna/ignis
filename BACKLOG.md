@@ -222,7 +222,7 @@ Bench: a handler that creates cycles; compare p99 and RSS with `IGNIS_LOOP_GC=1`
 
 ## M5 — Ship
 
-### M5-1 Release workflow `agent` `in progress (batch 2)`
+### M5-1 Release workflow `agent` `done (validated by main: worktree dry run bumps Cargo.toml+Cargo.lock to 0.0.2-rc.1 and prints the tag commands; workflow parses; the tag push and the first real run are the owner's)`
 **What.** `.github/workflows/release.yml` on a `v*` tag: build the image with `image.yml`'s
 Dockerfile, tag `ghcr.io/koekaverna/ignis:vX.Y.Z`, attach the `ignis` binary + `libphp.so` tarball
 to the GitHub release (with a note that it needs the six runtime libraries — M2's `ldd` list),
@@ -311,6 +311,13 @@ binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.ph
 **Acceptance.** `grep -oE 'fe\(c"(ignis_[a-z_]+)"' crates/ignis/src/php/module.rs | sort -u` vs the
 functions in the stub: identical sets; `php -l` passes; loading the stub under the binary then
 calling `ignis_inflight()` still reaches the real function (the guard works).
+
+### H-9 `bench/compare.sh` writes its results header before checking what it can run `agent` `open`
+**What.** The header block is appended to `bench/results/compare.md` unconditionally, before the
+`ONLY=` filter and the binary preflight, so a run that stops at "frankenphp binary not found"
+still leaves an empty header row in a results file that is committed history. Move the header
+write to after the preflight passes. **Acceptance.** `ONLY=franken bash bench/compare.sh` on this
+box leaves `git status --short bench/results/compare.md` empty.
 
 ### H-8 Retire the `IGNIS_ADDR` name `agent` `open`
 **What.** `bench/e15-frankenphp.sh` sets `IGNIS_ADDR`; `examples/classic_server.php` and
