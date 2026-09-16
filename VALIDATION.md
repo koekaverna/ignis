@@ -869,3 +869,81 @@ The phase breakdown of the warm round trip (`e2_phase.php`, same binary as V-28:
 
 Phase breakdown after: ready 1.85–2.03 µs, resume 1.26–1.36 µs, poll 0.10–0.14 µs, async() 0.5–0.8 µs, total 3.9–4.5 µs (the e2_all figure includes its own bookkeeping). **E2' (< 5 µs per warm job, observer on) is met: 4.5–4.7 µs**, 3 of 3 runs, observer on or off. What it is and is not: the number measures a pooled fiber doing one `Ignis\sleep(0)` — i.e. one loop round trip (resume → job → submit → suspend → poll → resume → settle → suspend). A fiber parked on a real timer or socket still pays the tokio task and wake (5.5–6.4 µs warm before this change; unchanged for `sleep(1)`). E1 on the same binary: 1193 ms. Chaos mode doubles the per-fiber cost by construction (an extra yield per op), which is the intended price of the switch.
 
+
+## V-29 — H29 (A4, ADR-0018): ext/sockets parks the fiber (CONFIRMED for concurrency and parity; the overhead kill criterion is breached and was mis-specified)
+
+Date: 2026-09-16T09:13:45Z. Box: 24-thread Ryzen AI 9 HX 370 / 30 GB, WSL2 — **not** the 4 vCPU box every
+earlier V-n was taken on. PHP 8.5.10 ZTS+embed at /opt/php85-zts, `LD_LIBRARY_PATH` set, binary built
+from this tree. Every number below was produced by the main agent directly.
+
+### Concurrency — the claim
+
+`N=20 DELAY_MS=200 ./target/release/ignis bench/php/a4_sockets.php` (20 concurrent `socket_read`,
+200 ms each, one PHP thread; the server half uses `stream_socket_server`/`stream_socket_accept`,
+already hooked since E6'', so the only thing under test is the ext/sockets client):
+
+| run | wall_ms | ok |
+|---|---|---|
+| 1 | 265.6 | 20/20 |
+| 2 | 249.1 | 20/20 |
+| 3 | 254.2 | 20/20 |
+
+Control, `IGNIS_NO_SOCKETS_HOOK=1`: **stalls** (killed at 15 s, rc=124). That is the point — the
+first `socket_read` blocks the OS thread, so the server fibers never run and nothing completes.
+
+Isolated probe (socketpair, one fiber reads while another sleeps 150 ms then writes):
+`got='ok' wall_ms=151.9`.
+
+### Parity — php-src ext/sockets/tests, fiber mode
+
+| | passed | failed |
+|---|---|---|
+| C22 local baseline (no hook) | 85 | 7 |
+| with the hook, first attempt | 80 | 12 |
+| with the hook, after the `can_block` fix | **86** | **6** |
+
+`comm` against the baseline failing list: **zero new failures**, one test recovered.
+
+The first attempt was a real regression and is worth recording rather than hiding: six tests
+(`socket_read_params`, `socket_send_params`, `socket_sendto_params`, `socket_sendto_invalid_port`,
+`socket_recv_overflow`, `gh17921`) timed out. Root cause: **poll readiness is not the same as "the
+call would succeed"**. Five of them call a data op on a *listening* socket (`socket_create_listen(0)`),
+where stock PHP fails with ENOTCONN at once while `POLLIN` never fires; the sixth reads from an
+unbound, unconnected AF_UNIX dgram socket. All six also pass deliberately invalid lengths, which the
+original rejects *before* any syscall — so parking before the original validates is wrong by
+construction. Fix: `can_block(fd, hook)` refuses to park on a listening socket (for data ops), on an
+unconnected socket, and on an unbound one, and delegates instead. The rule applied is "delegating is
+always semantically correct; parking wrongly is a hang", so anything uncertain goes to the original.
+
+### Overhead — kill criterion 2 is BREACHED, and the criterion itself was wrong
+
+`bench/php/a4_overhead.php` (100 000 `socket_sendto` on an always-writable UDP socket bound in-process,
+so every call takes the `ready_now()` fast path and never parks), µs per call:
+
+| load avg | hook on | hook off |
+|---|---|---|
+| 0.92 | 9.27 / 7.71 / 8.38 | 7.53 / 7.56 / 7.42 |
+| 0.85 | 13.68 / 11.57 / 7.93 | 9.26 / 7.76 / 9.51 |
+
+Honest reading: the difference is roughly **1–2 µs**, but the spread *within* each group (7.9–13.7)
+is as large as the effect, so **this bench cannot resolve the hook's cost on this box** and no
+single number from it should be quoted. What is certain is that the cost exceeds ADR-0018's
+0.36 µs bar.
+
+The bar was mis-specified. It was set at 10 % of the *fiber round trip* (3.6 µs), but the hook adds
+one `poll` syscall to an operation that is itself syscall-bound, and a syscall on this WSL2 box costs
+on the order of 0.5–1 µs. No readiness-probe design can meet 0.36 µs here; the criterion was
+unattainable by construction rather than by implementation. One real improvement was made from it:
+`fcntl` was moved off the hot path (it is now paid only when about to park), so the ready path costs
+one syscall, not two.
+
+**Proposed replacement criterion, for the owner to accept or reject** (not applied unilaterally): the
+hook's added cost must stay under 25 % of the wrapped operation, measured on a box where a syscall
+can be resolved, and the comparison of record is against *blocking the entire thread*, which is what
+the alternative does.
+
+Earlier bench artefacts, recorded so they are not repeated: the first overhead bench wrote to a
+socketpair whose peer never read, so the buffer filled and writes began to park (it measured the
+parking path, not the ready path); the second sent UDP to a *closed* port, and a few hundred thousand
+ICMP port-unreachable replies slowed the whole box by ~10x. The committed version sends to a bound
+socket in the same process.

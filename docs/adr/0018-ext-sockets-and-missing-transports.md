@@ -1,6 +1,6 @@
 # ADR-0018 — ext/sockets parking and the missing stream transports
 
-Status: proposed (Cycle 22, 2026-09-16; research 22, verified against php-src php-8.5.10 by the main agent). Affects pain-map items: Swoole 5 (incomplete hooks — `SOCKETS` is the largest blocked group in research 15, 46 + 9 tests). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation), ADR-0016 (offload pool). Implements roadmap item A4.
+Status: accepted, with kill criterion 2 breached and a replacement proposed (Cycle 22; V-29)  (originally proposed Cycle 22, 2026-09-16; research 22, verified against php-src php-8.5.10 by the main agent). Affects pain-map items: Swoole 5 (incomplete hooks — `SOCKETS` is the largest blocked group in research 15, 46 + 9 tests). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation), ADR-0016 (offload pool). Implements roadmap item A4.
 
 ## Context
 
@@ -48,3 +48,25 @@ Reversed if any of the following holds after implementation:
 1. Fiber-mode `ext/sockets` phpt drops below the local baseline taken in Cycle 22 — that is, the hook breaks parity it was supposed to preserve.
 2. The per-call overhead on an already-ready socket exceeds 10 % of the warm round trip **measured on this box** — 3.6 µs via the `sleep(0)` fast path, 3.9 µs via a real timer (C22 baseline, JOURNAL 2026-09-16T08:15:50Z) — i.e. the hook costs more than ~0.36 µs when it does not park. (The 4.5 µs this criterion originally cited is the old 4 vCPU box's figure and is not a valid bound here.)
 3. The Swoole shim does not improve on the `sockets/*` group at all, which would mean the blocked group was blocked by something other than the missing hooks.
+
+## Addendum (C22, after implementation — V-29)
+
+1. **Kill criterion 2 is breached.** Measured non-parking overhead is ~1-2 µs, against the 0.36 µs
+   bar. The bar itself was wrong: it was set at 10 % of the *fiber round trip*, but the hook adds one
+   `poll` syscall to an operation that is already syscall-bound, and a syscall on this WSL2 box costs
+   ~0.5-1 µs — no readiness-probe design can meet it. The bench also cannot resolve the difference
+   (within-group spread 7.9-13.7 µs against a ~1 µs effect), so no single figure from it is quotable.
+   Proposed replacement, **for the owner to accept or reject**: the added cost must stay under 25 % of
+   the wrapped operation, measured where a syscall is resolvable, with the comparison of record being
+   against blocking the whole thread. Not applied unilaterally; the original criterion stands as
+   breached until then.
+2. **One design rule was learned the hard way and is now in the code.** Readiness is not the same as
+   "the call would succeed": on a listening socket, or an unconnected or unbound one, the original
+   fails at once while `poll` never fires, and the original validates its arguments *before* any
+   syscall. The first implementation hung six php-src tests on exactly this. `can_block()` now
+   refuses to park in those states, under the rule **delegating is always semantically correct;
+   parking wrongly is a hang** — anything uncertain reaches the original unparked.
+3. **`fcntl` moved off the hot path**: readiness is probed first, and the blocking-mode check is paid
+   only when about to park. The ready path is one syscall, not two.
+4. Parity after the fix: fiber-mode `ext/sockets` **86 passed / 6 failed** against the C22 baseline of
+   85 / 7 — zero new failures, one recovered. Kill criterion 1 is satisfied.

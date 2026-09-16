@@ -222,6 +222,7 @@ pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi:
         super::stream::install();
         super::sleep::install();
         super::accept::install();
+        super::sockets::install();
         super::route::install();
         super::embed::fix_php_binary(_module_number);
     }

@@ -45,3 +45,23 @@ entry in VALIDATION.md.
 | H27 (E12') | A request in flight on a thread that dies gets a 500 at once; the supervisor's respawn serves the next one. | `bench/e12-inflight.sh` | < 1 s, not ≥ 3 s | 30 min | **CONFIRMED** (V-26): 500 after 0.30 s, respawn ok, 823 ms wall |
 | H28 (E2') | The remaining per-fiber warm cost after the E13' lazy swap is the reactor's per-op timer task, not the PHP loop: completing `Ignis\sleep(0)` (a yield) inline in the reactor brings the warm round trip under 5 µs with the observer on. | `bench/php/e2_all.php` N=10000, 3 reps, observer on/off; phase breakdown before/after | < 5 µs warm, observer on | 20 min | **CONFIRMED** (V-28 addendum): 5.5–6.4 → **4.5–4.7 µs** warm (observer on), 4.4–4.7 off; phase breakdown ready 2.3–2.8 → 1.9–2.0, resume 1.7 → 1.3, poll unchanged; real sleeps unaffected; E1 1193 ms |
 
+
+## H29 (A4, ADR-0018) — CONFIRMED with a caveat
+
+**Statement.** Hooking the nine blocking `ext/sockets` read/write functions with the `accept.rs`
+"park, then delegate" pattern makes N concurrent `socket_read`s of D ms complete in ~D ms on one
+PHP thread instead of N×D, without dropping the C22 local phpt baseline (fiber-mode
+`ext/sockets`: 85 passed / 7 failed).
+
+**Test.** `bench/php/a4_sockets.php` (20 concurrent `socket_read`, 200 ms each, one thread; server
+half on the already-hooked stream transport) with `IGNIS_NO_SOCKETS_HOOK=1` as the control;
+`bench/php/a4_overhead.php` for the non-parking cost; php-src `ext/sockets/tests` in fiber mode for
+parity. Time box: one cycle.
+
+**Expected.** wall ≈ 200 ms hooked, control stalls; parity ≥ baseline; non-parking overhead
+< 0.36 µs (ADR-0018 kill criterion 2).
+
+**Result: CONFIRMED for concurrency and parity, REFUTED for the overhead criterion.** 249–266 ms
+for 20×200 ms, 20/20 ok, control stalls (V-29). Parity 86 passed / 6 failed — one better than
+baseline, zero new failures. The overhead criterion is exceeded and, more importantly, was
+unmeasurable as written: see V-29 and the ADR-0018 addendum.
