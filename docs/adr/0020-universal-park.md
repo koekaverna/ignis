@@ -133,7 +133,7 @@ elements below are not. Status per element:
 
 | owner's element | status |
 |---|---|
-| Export the ~25 blocking libc symbols behind a thread-local "fiber active" gate | **built, 11 symbols** (V-45: read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep); research 26's list is 31 with `__poll_chk`; the rest is stage 2 |
+| Export the ~25 blocking libc symbols behind a thread-local "fiber active" gate | **built, 20 symbols** (V-47 adds accept/accept4, select, ppoll, __poll_chk, recvmsg/sendmsg, readv/writev; stage 1, 11 symbols (V-45: read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep); research 26's list is 31 with `__poll_chk`; the rest is stage 2 |
 | Caller-library policy `park | offload | block` | **park \| block built** (`IGNIS_PARK`, default block); **`offload` unbuilt** — routing a call to a worker from inside the interposer, so a library on `offload` neither blocks the thread nor parks; ties to ADR-0016 |
 | Address-interval map from `dl_iterate_phdr` | **unbuilt** — today `dladdr` once per call site, cached by return address; the interval map is the cheaper lookup for the first hit and needed before the policy can be per *symbol* within a library (BACKLOG E18-C item 2) |
 | **Detector-first rollout**: block + measure + report before any park | **unbuilt, and it is the rollout order** — `IGNIS_PARK_TRACE=1` prints decisions (V-45); a report mode that counts would-park call sites per library while forwarding everything is the detector, and it runs against the E15 suites and a real application before any library goes on `park` |

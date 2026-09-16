@@ -206,7 +206,7 @@ wrapper is a second mechanism for the same call. Ordered by what each deletion r
    (A4) plus `accept.rs` — libphp's own `nanosleep`/`recv`/`send`/`accept`/`connect` call sites
    park instead. Precondition: A4's `can_block()` rule moves into `would_block()` — a `recv` on a
    listening or unconnected blocking socket must forward, never park (the six-test hang of A4).
-3. **After stage 2 interposes `select`:** `hooked_select` in `stream.rs`.
+3. **After stage 2 interposes `select` (done, V-47):** the `stream_select` hook — it lives in `accept.rs` with the accept hook, not in `stream.rs`; `libphp:select` parks it (201 vs 601 ms).
 4. **Kept, as the owner said:** the php_stream transport factory (ADR-0007/0017: `tcp://`,
    `ssl://`, `unix://`, rustls in the reactor). It is also the largest candidate: with universal
    park, `ext/openssl` would do TLS in-process with OpenSSL's `read`/`write` parked (policy `park`
@@ -218,7 +218,7 @@ wrapper is a second mechanism for the same call. Ordered by what each deletion r
 5. **Not wrappers, stay:** `superglobals.rs`, `route.rs`, `embed.rs`, the Revolt driver's `ignis_watch`.
 **Acceptance.** For each deletion: the suites and benches that validated the wrapper (V-12/V-22/V-25/V-26/V-29 for the hook family, V-24 for routing) give the same numbers through universal park, with the hook-off control now being `IGNIS_NO_UNIVERSAL_PARK=1`.
 
-### E18-I Implementation `main` `default build since ADR-0037 cycle 1 (V-46: sleep.rs deleted, lib:symbol policy, seed table); stage 1 built (V-45): read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep; H32 curl 279–337 ms, H33 pgsql 296–333 ms at N=100 (controls 20 s); feature off by default; stage 2 (getaddrinfo/select/accept/vectored/__poll_chk, ECANCELED, per-symbol policy) open`
+### E18-I Implementation `main` `default build since ADR-0037 cycle 1 (V-46: sleep.rs deleted, lib:symbol policy, seed table); stage 2 symbols built (V-47: accept/accept4, select, ppoll, __poll_chk, recvmsg/sendmsg, readv/writev; left: getaddrinfo, ECANCELED, boot self-check, blocked-in-fiber detector); stage 1 built (V-45): read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep; H32 curl 279–337 ms, H33 pgsql 296–333 ms at N=100 (controls 20 s); feature off by default; stage 2 (getaddrinfo/select/accept/vectored/__poll_chk, ECANCELED, per-symbol policy) open`
 C shim per exported symbol (captures `__builtin_return_address(0)`, calls into Rust) built by
 `cc` in `crates/ignis/build.rs`; Rust side in `crates/ignis/src/park/`; feature-gated
 (`universal-park`) so the overhead bench has its control build; `IGNIS_PARK_POLICY=libcurl=park,libpq=park`

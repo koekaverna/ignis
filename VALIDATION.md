@@ -1737,3 +1737,28 @@ Waited for load < 1.0 (start 0.93 1.76 1.38; end 3.91 2.45 1.65); `hello_server`
 The bands overlap completely: **no measurable gate cost on the hello path** (ADR-0037 §4/§7
 E4 gate met). Separate finding: both arms sit at ~58k req/s where V-6 measured 128k on this box
 (2026-09-15) — equal arms mean it is not park; BACKLOG H-12.
+
+## V-47 — E18 stage 2 symbols: accept/accept4, select, ppoll, __poll_chk, recvmsg/sendmsg, readv/writev (CONFIRMED for `select`; the rest built and gated)
+
+Date: 2026-09-16T17:57:25Z. Commit 6586626. `nm target/release/ignis`: 18 `ignis_park_*` handlers; the nine new
+names exported in dynsym. Gates on this binary: `cargo nextest run --workspace` 10/10;
+`bench/e15-phpt.sh` + `scripts/ci-gate.sh phpt` — fibers 108/78, streams 133/125, sockets 91/84
+(main/fiber), all ≥ baseline, exit 0.
+
+**`select` gate** (`scratchpad/select_probe2.php`: 3 fibers, each `stream_select()` on a silent
+`stream_socket_pair` with a 200 ms timeout; `IGNIS_NO_ACCEPT_HOOK=1` turns off the PHP-level
+`stream_select` hook, which lives in `accept.rs` — the record said `stream.rs`, corrected):
+
+| policy | total | evidence |
+|---|---|---|
+| hook off, `IGNIS_PARK=` | **601 ms** | blocks: three sequential waits |
+| hook off, `IGNIS_PARK=libphp:select` | **201 ms** | trace: 3 × `select n=… timeout=200: not ready, parking on 1 fds`, 3 × `woke by timer, fill r=0` |
+| hook off, `IGNIS_PARK=libphp:poll` | 601 ms | `php_select` waits in `select(2)`, not `poll` — the row must name `select` |
+| hook on (today) | 202 ms | the PHP-level hook, for reference |
+
+**Cycle-2 preview** (`bench/php/e15_fixes_server.php`: server socket + client on one thread):
+`IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_ACCEPT_HOOK=1 IGNIS_PARK=libphp:select,libphp:accept,libphp:poll,
+libphp:recv,libphp:send,libphp:connect,libphp:read,libphp:write` → `accepted / server got 'ping' /
+client got 'pong'`, exit 0; sites parked from libphp: connect ×1, poll ×2, recv ×1, send ×1 (the
+binary's own `write` forwards). The rows that enter the seed are decided by research 30 groups
+(a)/(c), not by this preview.
