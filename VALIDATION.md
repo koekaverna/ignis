@@ -857,3 +857,15 @@ Same as the side build in V-26 (0.30 s): the in-flight request on the dying thre
 
 `scripts/smoke.sh` on this binary: build, unit tests, hello, app.php, E2 green; E1 failed only while the two spinning harness processes loaded the box (1294 ms) and passed once they were gone (above); the remaining steps were not re-run inside smoke because it stops at the first failure — E12'/E13/E6/E11/E14 have their own fresh numbers tonight (V-26, V-28, V-25, V-21).
 
+### V-28 addendum (2026-09-16T05:10:48Z) — E2' met: `sleep(0)` completes in the reactor without a timer task (H28)
+
+The phase breakdown of the warm round trip (`e2_phase.php`, same binary as V-28: async() 0.8 µs, ready phase 2.3–2.8 µs, poll 0.1–1.0 µs, resume phase 1.7 µs, await 0.05 µs) showed the reactor side spending a `tokio::spawn` + timer + cancel-map insert/remove per `Op::Sleep { us: 0 }` — a yield to the loop that needs no timer at all. The reactor now completes a zero sleep inline (`Slept { late_us: 0 }` straight onto the completion channel); real sleeps are unchanged. Rebuilt `target/release/ignis` (HEAD + this change), same quiet box (load 1.2–1.9), `bench/php/e2_all.php` N=10000:
+
+| observer | per-fiber warm (µs) × 3 | per-fiber cold (µs) × 3 | `all()` 3 × 200 ms |
+|---|---|---|---|
+| on (default) | **4.54 / 4.67 / 4.51** | 17.9 / 20.8 / 17.6 | 201.9–202.0 ms |
+| off (`IGNIS_NO_SUPERGLOBALS=1`) | 4.71 / 4.40 / 4.37 | 17.8 / 19.3 / 17.9 | — |
+| on, `IGNIS_CHAOS=1` (extra 0 ms yield after every op, p = 0.5) | 8.76 / 9.20 | 23.1 / 21.3 | 201.1 ms |
+
+Phase breakdown after: ready 1.85–2.03 µs, resume 1.26–1.36 µs, poll 0.10–0.14 µs, async() 0.5–0.8 µs, total 3.9–4.5 µs (the e2_all figure includes its own bookkeeping). **E2' (< 5 µs per warm job, observer on) is met: 4.5–4.7 µs**, 3 of 3 runs, observer on or off. What it is and is not: the number measures a pooled fiber doing one `Ignis\sleep(0)` — i.e. one loop round trip (resume → job → submit → suspend → poll → resume → settle → suspend). A fiber parked on a real timer or socket still pays the tokio task and wake (5.5–6.4 µs warm before this change; unchanged for `sleep(1)`). E1 on the same binary: 1193 ms. Chaos mode doubles the per-fiber cost by construction (an extra yield per op), which is the intended price of the switch.
+

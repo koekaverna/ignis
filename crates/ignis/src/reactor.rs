@@ -384,6 +384,11 @@ impl Reactor {
             while let Some((id, op)) = rx.recv().await {
                 let done_tx: Sender<Completion> = done_for_task.clone();
                 match op {
+                    // `Ignis\sleep(0)` is a yield to the loop: complete it here, no timer task, no
+                    // cancel bookkeeping (E2': the pooled-fiber round trip is measured with it).
+                    Op::Sleep { us: 0 } => {
+                        let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us: 0 } });
+                    }
                     Op::Sleep { us } => {
                         let deadline = tokio::time::Instant::now() + Duration::from_micros(us);
                         // Cancellable like a watch (E6'': a stream_select timeout that lost the race
