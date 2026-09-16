@@ -56,32 +56,26 @@ function upstreamJson(string $url): array
 // ---------------------------------------------------------------------------
 // 3. Worker mode: the script stays resident; each request runs in its own
 //    fiber (✓ E4, V-5/V-6); $_SERVER/$_GET/$_POST/$_COOKIE and Ignis\Scope are
-//    fiber-scoped (✓ E13, V-11); Symfony RequestStack adapter → E8
+//    fiber-scoped (✓ E13, V-11); Symfony via symfony/runtime (✓ E8, V-16, php/symfony);
+//    client disconnect cancels the fiber and its children, Ignis\deadline() (✓ E11, V-14).
 // ---------------------------------------------------------------------------
-if (function_exists('Ignis\serve')) {
-    $pdo = new \PDO('sqlite::memory:');
-    $pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
-    $pdo->exec("INSERT INTO users (name) VALUES ('ada'), ('grace')");
+// Worker mode: boots once, then serves; each request runs in its own pooled fiber.
+$pdo = new \PDO('sqlite::memory:');
+$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+$pdo->exec("INSERT INTO users (name) VALUES ('ada'), ('grace')");
 
-    Ignis\serve(static function (Request $req) use ($pdo): Response {
-        return match ($req->path()) {
-            '/'          => Response::text("hello from fiber\n"),
-            '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
-            '/users'     => Response::json(usersFromDb($pdo)),
-            '/upstream'  => Response::json(upstreamJson('http://127.0.0.1:8080/dashboard')), // self-call, suspends (E6)
-            '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
-            '/sleep'     => (static function () use ($req): Response {
-                Ignis\sleep((int) ($req->query('ms') ?? 1000));
-                return Response::text("slept\n");
-            })(),
-            default      => Response::text("not found\n", 404),
-        };
-    });
-} else {
-    // Transport not implemented yet: run section 1 directly so the file is
-    // still a working program.
-    $t0 = hrtime(true);
-    $dashboard = fetchDashboard(1);
-    printf("dashboard for %s in %.1f ms (3 x 200 ms in parallel)\n", $dashboard['profile']['name'], (hrtime(true) - $t0) / 1e6);
-    echo "Ignis\\serve() not available yet (→ E4)\n";
-}
+Ignis\serve(static function (Request $req) use ($pdo): Response {
+    return match ($req->path()) {
+        '/'          => Response::text("hello from fiber\n"),
+        '/deadline'  => (static function (): Response { Ignis\deadline(100); Ignis\sleep(1000); return Response::text("never\n"); })(),
+        '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
+        '/users'     => Response::json(usersFromDb($pdo)),
+        '/upstream'  => Response::json(upstreamJson('http://127.0.0.1:8080/dashboard')), // self-call, suspends (E6)
+        '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
+        '/sleep'     => (static function () use ($req): Response {
+            Ignis\sleep((int) ($req->query('ms') ?? 1000));
+            return Response::text("slept\n");
+        })(),
+        default      => Response::text("not found\n", 404),
+    };
+});

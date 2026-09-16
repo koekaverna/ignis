@@ -458,3 +458,14 @@ Date: 2026-09-16T06:0xZ. `config/packages/framework.yaml` restored to the skelet
 | 4 (`--threads 4`) | 0 mismatches | **25,201 req/s**, p99 6.56 ms |
 
 Server alive, 0 critical/fatal log lines. The skeleton is now byte-untouched apart from the `request_stack` service override, the demo controller and the adapter autoload line. `scripts/build-php.sh` carries `--enable-session --with-iconv`.
+
+### V-11 addendum — observer cost re-measured after Cycles 6–11 (variance noted)
+
+Date: 2026-09-16T06:4xZ, idle box (load 0.14), `N=10000 ./target/release/ignis bench/php/e2_all.php` × 3 with the observer on vs `IGNIS_NO_SUPERGLOBALS=1`:
+
+| | cold per fiber | warm per job |
+|---|---|---|
+| observer on | 23.7 (under perf) / 25.6 / 55.1 / 79.2 µs | 8.0–11.4 µs |
+| observer off | 17.9 µs | 4.5 µs |
+
+The warm delta grew from ≈ +2 µs/job (V-11) to +3.5–7 µs/job, and the cold figure now varies 3×. The profile (`perf record`, observer on) shows `zend_fiber_object_gc` at 2.9%: PHP's cycle collector runs when its root buffer fills, and each run walks every pooled fiber; when that happens inside the timed window the per-fiber figure jumps. The observer's saved zvals add refcount traffic that feeds the root buffer. Consequence: E2' (< 5 µs warm) is **not met with the observer on** — it holds only with the observer off. The planned fix is E13' (lazy swap: no bookkeeping for fibers that never touch superglobals) plus scheduling `gc_collect_cycles()` from the loop's idle point instead of inside a request (RoadRunner pain-map item 2, "GC scheduled by the runtime off the hot path").
