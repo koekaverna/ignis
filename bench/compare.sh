@@ -23,12 +23,16 @@ sed "s|@@ROOT@@|$ROOT|g" bench/fpm/nginx.conf.tmpl > "$SCRATCH/nginx.conf"
 
 wait_port() { for _ in $(seq 1 100); do curl -sf "$1" >/dev/null 2>&1 && return 0; sleep 0.1; done; echo "server on $1 did not come up" >&2; return 1; }
 run_wrk()   { wrk -t"$T" -c"$C" -d"$D" --latency "$1" | awk '/Requests\/sec/{rps=$2} /^ +50%/{p50=$2} /^ +99%/{p99=$2} /Non-2xx|Socket errors/{err=err" "$0} END{printf "%s | %s | %s |%s", rps, p50, p99, err}'; }
-row()       { echo "| $1 | $2 |" | tee -a "$OUT"; }
+# Header is staged in scratch and only flushed into $OUT by the first row() call, so a run that
+# stops at a preflight check (binary not found etc.) never leaves an empty header behind in the
+# committed results file.
+HEADER="$SCRATCH/compare-header.md"
+row() { if [[ -f "$HEADER" ]]; then cat "$HEADER" >> "$OUT"; rm -f "$HEADER"; fi; echo "| $1 | $2 |" | tee -a "$OUT"; }
 
 {
   echo; echo "### $(date -u +%Y-%m-%dT%H:%M:%SZ) wrk -t$T -c$C -d$D, $(nproc) vCPU, $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
   echo "path: $URL_PATH"; echo; echo "| server | req/s | p50 | p99 | errors |"; echo "|---|---|---|---|---|"
-} >> "$OUT"
+} > "$HEADER"
 
 # --- Ignis, 1 PHP thread
 [[ " $ONLY " == *" ignis "* ]] && for IT in $IGNIS_THREADS_LIST; do

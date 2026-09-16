@@ -312,7 +312,7 @@ binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.ph
 functions in the stub: identical sets; `php -l` passes; loading the stub under the binary then
 calling `ignis_inflight()` still reaches the real function (the guard works).
 
-### H-9 `bench/compare.sh` writes its results header before checking what it can run `agent` `in progress (batch 3)`
+### H-9 `bench/compare.sh` writes its results header before checking what it can run `agent` `done (validated by main: preflight stop leaves compare.md untouched)`
 **What.** The header block is appended to `bench/results/compare.md` unconditionally, before the
 `ONLY=` filter and the binary preflight, so a run that stops at "frankenphp binary not found"
 still leaves an empty header row in a results file that is committed history. Move the header
