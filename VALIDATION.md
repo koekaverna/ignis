@@ -2121,3 +2121,63 @@ runtime documents it: `require_once`, or guard with `function_exists()`.
 own gate — the first local run read 1 because `~/frankenphp` was not checked out on this box, the
 same class of local-gate hole as the Swoole clone earlier; with `testdata` present, 29);
 `scripts/smoke.sh` exit 0.
+
+## V-55 — M4-4 `/_ignis/metrics`, the startup banner, and the production deploy path (CONFIRMED)
+
+Date: 2026-09-16T20:20:58Z. The MVP push: what an operator needs to run this in production and see what it is
+doing. Agent work re-run by main where it produced a number (C15).
+
+**`/_ignis/metrics`** — Prometheus text, answered by the runtime, never by PHP (ADR-0022), so it
+keeps answering while every PHP thread is wedged. 22 metrics, 66 lines. Two sources: what Rust
+already knows (threads, stalls, restarts, in-flight requests and ops, failed parks, pool leases)
+read from the registry per request, and what only the PHP loop knows (budget, queue, rejections,
+fiber pool) published by each loop into **its own reactor's** slots once per loop turn — per
+reactor and not global, because one global set would be last-writer-wins across threads, i.e.
+wrong exactly under load. A wedged loop stops publishing and
+`ignis_stats_published_age_seconds` says so.
+
+| acceptance (BACKLOG M4-4) | result |
+|---|---|
+| `promtool check metrics` passes | **exit 0**, no warnings (`prom/prometheus:latest`) |
+| every counter in `ignis_stats()` has a metric | threads, stalled, restarts — plus 19 more |
+| answers under `wrk -c 200` within 10 ms | **1.9–5.5 ms** over 20 scrapes during `wrk -t2 -c200 -d8s` at 55,784 req/s |
+| counters actually move | `ignis_requests_handled_total` 450,357 after that run; `fibers_idle`/`resumes` consistent |
+
+**Startup banner.** `docs/operate.md`'s rewrite found that a clean start is invisible: the default
+log floor is `warn` (H-10) and every startup line is `info`, so an operator sees an empty screen and
+cannot tell whether the park self-check even ran. `ignis serve` now prints one line to stderr:
+
+    ignis 0.0.1 — threads=24 listen=127.0.0.1:8191 park=libcurl,libpq,libssl,libcrypto,libphp:15 symbols — ready
+
+Only for `serve`, never for a script run: the phpt harness fails a test on a single unexpected
+stderr line, which is the same trap that cost 108 → 72 passes when the log floor was raised.
+
+**`bench/app-check.sh`** (agent, re-run by main): the post-deploy acceptance check, against the
+owner's real Symfony app, its own instance on :8189 with `APP_ENV=test`:
+
+    PASS health 200 {"status":"ok"} | PASS route / 200 | PASS 404 | PASS 1 MB body survives
+    PASS 200/200 sequential | INFO rss first=56832 kB last=56852 kB delta=20 kB
+    PASS 50/50 concurrent | PASS alive + healthy at end       app_check pass=7 fail=0
+
+3.4 s, exit 0. The 20 kB RSS delta over 200 requests is reported, not asserted — a threshold nobody
+has justified is not a gate.
+
+**Two defects in the release path, found before the tag was pushed** (agent audit of
+`.github/workflows/release.yml`, which has never run):
+1. `workflow_dispatch` was documented as a dry run and was not one: `push: true` was unconditional,
+   so a "test" would have published a real `ghcr.io/koekaverna/ignis:<tag>` image, and
+   `softprops/action-gh-release` would have created the git tag and the GitHub Release as well.
+   Now `push: ${{ github.event_name == 'push' }}`, `load:` on dispatch, and the release step gated.
+2. Previous-tag detection used an unfiltered `git tag --sort=-v:refname`; the repo's existing
+   `night-1-done` tag would have been picked as "previous" for the first real `v*` release. Now
+   `--list 'v*'`.
+
+**Also written** (agents, docs only): `docker/compose.prod.yaml` and `docs/deploy.md` (the
+production recipe, with V-40's four holes as ordered steps and an explicit note that `APP_RUNTIME`
+in `.env` does nothing — it must be a real environment variable), `docs/release.md` (the tag
+procedure plus "what is still unproven" — everything that needs a real tag push), and a rewritten
+`docs/operate.md` runbook.
+
+**Still missing for production, named:** graceful reload/drain (M4-5) — a redeploy today is a hard
+restart, so in-flight requests are lost; and the HTTP front door has no body-size cap, header
+timeout, idle timeout or connection cap.

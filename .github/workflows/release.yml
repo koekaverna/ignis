@@ -42,11 +42,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # BUG (found in audit, never exercised): with push:true unconditional, a workflow_dispatch
+      # "dry run" was not a dry run at all — it would publish a real ghcr.io/koekaverna/ignis image
+      # under whatever tag the owner typed, and (see "create GitHub release" below) softprops/
+      # action-gh-release creates the git tag and the GitHub Release too if they don't exist yet.
+      # That is exactly the real-tag-push side effect the dispatch path exists to test *before*.
+      # push only on a real tag push; load (local only) on dispatch so the later steps that `docker
+      # run`/`docker create` this same tag still find the image without hitting the registry.
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
-          push: true
+          push: ${{ github.event_name == 'push' }}
+          load: ${{ github.event_name == 'workflow_dispatch' }}
           tags: ghcr.io/koekaverna/ignis:${{ steps.v.outputs.tag }}
           cache-from: type=gha,scope=ignis-runtime
           cache-to: type=gha,scope=ignis-runtime,mode=max
@@ -116,7 +124,11 @@ jobs:
         id: notes
         run: |
           git fetch --tags --force
-          prev="$(git tag --sort=-v:refname | grep -v "^${{ steps.v.outputs.tag }}$" | head -1 || true)"
+          # BUG (found in audit): unfiltered `git tag` also matches non-release tags (repo has
+          # "night-1-done"), so the very first real vX.Y.Z release would have picked that as
+          # "previous" and dumped its entire unrelated history into the notes instead of printing
+          # "Initial release." Restrict to v* so only prior releases count as "previous".
+          prev="$(git tag --list 'v*' --sort=-v:refname | grep -v "^${{ steps.v.outputs.tag }}$" | head -1 || true)"
           range_end="HEAD"
           git rev-parse -q --verify "refs/tags/${{ steps.v.outputs.tag }}" >/dev/null && range_end="${{ steps.v.outputs.tag }}"
           {
@@ -134,7 +146,12 @@ jobs:
           } > /tmp/release-notes.md
           cat /tmp/release-notes.md
 
+      # Only on a real tag push: softprops/action-gh-release creates the git tag (if absent) and
+      # publishes the release, which is the exact real-world side effect a dispatch dry run must
+      # not cause (see the build-push-action comment above). Dispatch runs get the tarball as a
+      # workflow artifact instead, below.
       - name: create GitHub release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.v.outputs.tag }}
@@ -142,3 +159,10 @@ jobs:
           body_path: /tmp/release-notes.md
           prerelease: ${{ contains(steps.v.outputs.tag, '-') }}
           files: ignis-${{ steps.v.outputs.tag }}-linux-x86_64.tar.gz
+
+      - name: upload dry-run artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ignis-${{ steps.v.outputs.tag }}-linux-x86_64
+          path: ignis-${{ steps.v.outputs.tag }}-linux-x86_64.tar.gz

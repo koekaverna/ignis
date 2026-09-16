@@ -108,6 +108,10 @@ pub struct Reactor {
     /// Microseconds `poll` spins on `try_recv` before sleeping the thread (H30, `IGNIS_POLL_SPIN_US`).
     /// 0 = off. Read once here so the hot path never touches the environment.
     spin_us: u64,
+    /// What this thread's PHP loop publishes about itself for `/_ignis/metrics` (M4-4). Per
+    /// reactor, not global: one loop per thread, and a single set of counters would be
+    /// last-writer-wins.
+    pub published: crate::metrics::Published,
 }
 
 async fn watch_fd(fd: i32, write: bool) -> Outcome {
@@ -202,6 +206,7 @@ impl Reactor {
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
             spin_us: std::env::var("IGNIS_POLL_SPIN_US").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
+            published: crate::metrics::Published::default(),
         })
     }
 

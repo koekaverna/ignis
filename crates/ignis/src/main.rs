@@ -6,6 +6,7 @@ mod backend;
 mod config;
 mod grpc;
 mod http;
+mod metrics;
 mod offload;
 mod pg;
 mod php;
@@ -32,7 +33,12 @@ fn main() -> ExitCode {
         println!("ignis {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    let raw = if raw.first().is_some_and(|a| a == "serve") {
+    // `serve` is the production entry: it gets a one-line startup banner on stderr. A plain script
+    // run gets nothing, because the phpt harness treats a single stderr line as a test failure and
+    // the default log floor is `warn` — which is why a clean start was otherwise invisible to an
+    // operator (found while rewriting docs/operate.md).
+    let serving = raw.first().is_some_and(|a| a == "serve");
+    let raw = if serving {
         match config::serve_to_legacy_args(raw[1..].to_vec()) {
             Ok(v) => v,
             Err(e) => {
@@ -122,6 +128,7 @@ fn main() -> ExitCode {
     // Main thread = PHP thread 0 (php_embed_init runs here).
     // PHP's argv is `[script, args...]` (like php-cli), so `$argv[0]` is the script (E15 harnesses).
     let php_args: Vec<String> = args.iter().cloned().collect();
+    metrics::mark_start();
     let mut engine = match php::embed::Engine::init(&php_args) {
         Ok(e) => e,
         Err(e) => {
@@ -137,6 +144,15 @@ fn main() -> ExitCode {
     if let Err(e) = php::park::selfcheck() {
         eprintln!("ignis: {e}");
         return ExitCode::from(2);
+    }
+    if serving {
+        eprintln!(
+            "ignis {} — threads={} listen={} park={} — ready",
+            env!("CARGO_PKG_VERSION"),
+            std::env::var("IGNIS_THREADS").unwrap_or_else(|_| std::thread::available_parallelism().map_or("?".into(), |n| n.to_string())),
+            std::env::var("IGNIS_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into()),
+            php::park::policy_summary(),
+        );
     }
 
     // A5: `-r` / stdin code is a single script on this thread, like php-cli.

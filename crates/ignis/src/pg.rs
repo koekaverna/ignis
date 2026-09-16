@@ -265,6 +265,29 @@ pub fn lease_ages(pool_id: u64) -> (u64, usize) {
     (oldest, over)
 }
 
+/// Pool-wide lease numbers for `/_ignis/metrics` (M4-4): (oldest live lease in ms, leases older
+/// than the warn threshold, live leases). Unlike `lease_ages()` this asks about every pool at once
+/// and never blocks: a lease whose slot is locked right now is counted as live and skipped for
+/// age, because the metrics endpoint must answer while PHP threads are busy, not wait for them.
+pub fn lease_metrics() -> (u64, usize, usize) {
+    let warn = lease_warn_ms();
+    let (mut oldest, mut over, mut live) = (0u64, 0usize, 0usize);
+    let slots: Vec<_> = leases().lock().unwrap().values().cloned().collect();
+    for slot in slots {
+        if let Ok(guard) = slot.try_lock()
+            && let Some(l) = guard.as_ref()
+        {
+            live += 1;
+            let ms = l.since.elapsed().as_millis() as u64;
+            oldest = oldest.max(ms);
+            if ms >= warn {
+                over += 1;
+            }
+        }
+    }
+    (oldest, over, live)
+}
+
 /// `IGNIS_PG_LEASE_WARN_MS`, default 5000; read once.
 fn lease_warn_ms() -> u64 {
     static V: OnceLock<u64> = OnceLock::new();

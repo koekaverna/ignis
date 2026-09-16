@@ -99,6 +99,28 @@ fn libs() -> &'static [(String, Option<String>)] {
     })
 }
 
+/// One-line description of the active policy, for the startup banner: libraries, and how many
+/// symbol-scoped rows sit behind each (`libphp:15` reads better than fifteen names).
+pub fn policy_summary() -> String {
+    if std::env::var_os("IGNIS_NO_UNIVERSAL_PARK").is_some() {
+        return "off".into();
+    }
+    let mut whole: Vec<&str> = Vec::new();
+    let mut scoped: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for (lib, sym) in libs() {
+        match sym {
+            None => whole.push(lib.as_str()),
+            Some(_) => *scoped.entry(lib.as_str()).or_default() += 1,
+        }
+    }
+    if whole.is_empty() && scoped.is_empty() {
+        return "none".into();
+    }
+    let mut parts: Vec<String> = whole.iter().map(|l| (*l).to_string()).collect();
+    parts.extend(scoped.iter().map(|(l, n)| format!("{l}:{n} symbols")));
+    parts.join(",")
+}
+
 /// Registers the gate's fiber-switch observer. Called at MINIT (superglobals.rs).
 pub fn install() {
     if std::env::var_os("IGNIS_NO_UNIVERSAL_PARK").is_some() {

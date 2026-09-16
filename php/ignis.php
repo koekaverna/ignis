@@ -131,6 +131,10 @@ final class Loop
     public static int $fiberBudget = 0;
     public static int $queueDepth = 0;
     public static int $inflightRequests = 0;
+    /** Requests this loop has finished answering (M4-4). */
+    public static int $handled = 0;
+    /** False when the runtime is too old to have ignis_publish_stats() (a script run, a test). */
+    private static bool $publishStats = true;
     public static int $queuedPeak = 0;
     public static int $rejected = 0;
     public static int $admittedAfterQueue = 0;
@@ -259,6 +263,7 @@ final class Loop
         if (!self::$chaosInit) {
             self::chaosInit();
             self::gcInit();
+            self::$publishStats = \function_exists('ignis_publish_stats');
         }
         try {
             while (!$stop()) {
@@ -298,6 +303,24 @@ final class Loop
                 if (self::$loopGc && (++self::$gcTick & 255) === 0 && gc_status()['roots'] >= self::$gcRoots) {
                     gc_collect_cycles(); // idle point: no fiber is mid-request here (checked every 256 polls: gc_status() allocates)
                     ++self::$gcRuns;
+                }
+                // M4-4: hand this loop's counters to the runtime so /_ignis/metrics can answer
+                // them while PHP is busy. One call per loop turn, right before the poll that is
+                // about to block — a handful of integer stores, and a wedged loop simply stops
+                // publishing, which the endpoint reports as an ageing sample rather than a lie.
+                if (self::$publishStats) {
+                    \ignis_publish_stats([
+                        'budget' => self::$fiberBudget,
+                        'queue_depth' => self::$queueDepth,
+                        'queued' => \count(self::$requestQueue) - self::$queueHead,
+                        'queued_peak' => self::$queuedPeak,
+                        'queued_admitted' => self::$admittedAfterQueue,
+                        'rejected' => self::$rejected,
+                        'fibers_idle' => \count(self::$idle),
+                        'fibers_created' => self::$fibersCreated,
+                        'resumes' => self::$resumes,
+                        'handled' => self::$handled,
+                    ]);
                 }
                 $t = hrtime(true);
                 $events = \ignis_poll(-1);
@@ -561,6 +584,7 @@ final class Loop
                 // The slot is released after the answer is on its way, and the next waiting
                 // request is admitted from here — the loop needs no extra wait point for it.
                 --self::$inflightRequests;
+                ++self::$handled;
                 self::drainQueue();
             }
         });

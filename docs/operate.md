@@ -1,101 +1,178 @@
 # Operating Ignis
 
-For a team running `ignis serve` in production: how to size it, what happens under load, how to
-read its health and logs, and every knob in `ignis.toml`. See [ignis.toml.example](../ignis.toml.example)
-for the file itself and [README.md](../README.md) for install/run. Numbers here link to
-[VALIDATION.md](../VALIDATION.md) (`V-n`); none are guessed.
+For a team running `ignis serve` in production: how it starts, what to watch, what to do when
+something is wrong, and where the edges of the runtime are. See
+[ignis.toml.example](../ignis.toml.example) for the config file and [README.md](../README.md) for
+install/run. Numbers here link to [VALIDATION.md](../VALIDATION.md) (`V-n`); none are guessed —
+where nothing has been measured or wired up yet, this file says "not yet exposed" instead.
 
-## Sizing
+## Start and stop
 
-Three independent axes — do not confuse them:
+```
+$ ignis serve --config ignis.toml           # entry script + flags come from the file
+$ ignis serve app.php                       # entry script as a positional arg, defaults for the rest
+$ ignis [--threads N] [--offload M] [--supervise] script.php [args...]   # the pre-config form
+$ ignis --version
+```
 
-- **`threads` = cores.** One PHP worker thread per core, each with its own embedded engine and its
-  own reactor (`ADR-0004`, `ADR-0010`). Default: the machine's available parallelism
-  (`std::thread::available_parallelism`). More threads than cores buys nothing on CPU-bound work
-  and costs context-switch overhead; fewer under-uses the box.
-- **`budget.fibers` = concurrency, per thread.** `IGNIS_FIBER_BUDGET` (default 1024) is how many
-  request fibers one thread admits at once. A request past that waits as **data** — a small PHP
-  array in a FIFO — not as a fiber, which is the whole point of the budget (ADR-0019). Total
-  concurrent in-flight requests the process will *admit* is therefore `threads × budget.fibers`.
-- **Memory is the third axis, not a knob.** `memory ≈ fibers × 14.7 kB + held connections × 33 kB`
-  — both are *marginal* costs, i.e. the RSS delta per additional held request, **measured on one
-  box** (V-37): admitting a fiber costs 14.7 kB over just holding the connection (47.7 kB per held
-  request with a fiber vs 33.0 kB queued as data). The connection term dominates at scale: at 4000
-  held requests the queued arm used 132,484 kB against 188,920 kB with a fiber each — about 30%
-  less, not an order of magnitude, and **the budget does not bound RSS on its own** — a held
-  connection still costs ~33 kB whatever `budget.fibers` is set to (V-37; `ADR-0019` consequences).
-  There is no connection-count cap yet (ROADMAP B8); size `budget.queue` and your load balancer's
-  own connection limit accordingly until it lands.
+`serve` bridges `ignis.toml` into the environment (file value, then product default, each only
+where the environment is silent) before rewriting itself into the second form above, so
+`IGNIS_THREADS=8 ignis serve` beats the file (V-38). Precedence overall: CLI flag > environment
+variable > `ignis.toml` key > built-in default; an unknown key in the file is a parse error, not a
+silently ignored one.
 
-Rule of thumb: pick `threads` = cores first, then raise `budget.fibers` until `threads ×
-budget.fibers` covers your worst-case concurrent in-flight requests, then check RSS against the
-formula above for that many held requests plus your own per-request PHP heap.
+**What a clean start looks like.** At the default log floor (`warn`), a clean start prints
+**nothing** — V-39 measured this directly ("log at the default warn floor: empty"). The three
+lines an operator might expect to see — `universal park installed`, the boot self-check's
+`park self-check ok`, and `listening` — are all logged at `info`, so they only appear with
+`RUST_LOG=info` or `log = "info"` in the file. There is no separate "started successfully" line at
+`warn`; silence after boot **is** the success signal, and `/_ignis/health` returning `200` (below)
+is the positive confirmation to script against, not a log line.
 
-## Budget, queue, and 503 (ADR-0019)
+**What a refusal looks like.** The boot self-check (ADR-0037 §4(a)) runs once, after PHP's MINIT
+and before any worker thread exists: for every third-party library the park policy names and that
+is actually loaded, it makes that library's own code call an interposed symbol and checks the call
+reached the runtime. If it did not, the process **refuses to start: exit code 2**, with a message
+printed to stderr unconditionally (not gated by log level) naming the library, e.g.:
 
-1. Each thread admits at most `budget.fibers` (`IGNIS_FIBER_BUDGET`) request fibers at once. `0`
-   means unlimited (pre-B1 behaviour).
-2. A request that cannot be admitted waits as data in a FIFO, not as a Fiber.
-3. Past `budget.queue` (`IGNIS_QUEUE_DEPTH`) requests, the server answers **`503` with
-   `retry-after: 1`** immediately instead of queueing without bound. `0` means an unbounded queue.
-4. A slot is released in the admitted request's outermost `finally`, which admits the next waiting
-   request — no new wait point, no new reactor `Op`.
-5. `IGNIS_BUDGET_EXEMPT` (`exempt` in the file, default `["/_ignis/"]`) is a comma-separated list of
-   path prefixes admitted regardless of the budget — a saturated server is exactly when its own
-   health/stats endpoints must not queue behind the load they report.
-6. A client that disconnects while queued is dropped from the queue and never admitted.
+```
+ignis: universal park is enabled and the policy names ["libpq"], but a call made by its own code
+did not reach the interposed symbols — the library is loaded and its blocking calls would silently
+block the thread. Check that the binary exports them (`nm -D`) and that no LD_PRELOAD shadows
+them; IGNIS_SKIP_PARK_SELFCHECK=1 starts anyway, IGNIS_PARK= disables the policy.
+```
 
-Measured (V-37, `bench/b1-budget.sh`): budget 2, 10 concurrent `/sleep?ms=200` serialises to
-**1028 ms** (ideal 1000) with **10/10 answered**, nothing lost. Budget 2 + queue depth 3, 12
-concurrent `/sleep?ms=300` gives exactly **5 × 200 ms answered, 7 × 503** — the 2 admitted + 3
-queued the configuration allows. The budget does not cost admitted requests latency: p99 of `/`
-under load was 1.79–1.90 ms with budget 0 (unlimited) and 1.78–1.89 ms with budget 512 across three
-paired reps — fully overlapping ranges (V-37).
+This is not a warning to triage later — it is the difference between "this policy will park
+correctly" and "this policy will silently block a worker thread the first time it's used", proven
+at boot instead of discovered in an incident (V-52: the same class of blind spot that let research
+28 read a `getaddrinfo` probe that hit 0 times as success when it should have read as "not tested
+yet"). Two escape hatches, both loud: `IGNIS_SKIP_PARK_SELFCHECK=1` starts anyway and logs a `warn`
+line; `IGNIS_PARK=` (empty) removes the policy so there is nothing to probe. Other loud-refusal
+exits at `2`: a misspelled `ignis.toml` key, a missing `entry`, or an entry script that does not
+exist (V-38).
 
-## `/_ignis/health`
+**Other invalid-argument and misconfiguration errors** — no entry script given, an entry file that
+does not exist — print a one-line usage/error message to stderr and exit `2` (V-38); these are
+caught before any thread is created.
 
-Answered by the Rust runtime before dispatch — not by PHP, and exempt from the budget by
-construction, so a saturated server can still be probed. **`200`** while at least one worker thread
-is alive and not stalled; **`503`** otherwise, so a load balancer stops sending traffic to a wedged
-process even when PHP itself cannot say so (V-38):
+## What to watch
+
+| signal | threshold that means trouble | where visible today |
+|---|---|---|
+| threads stalled | any thread that has not called `ignis_poll` for **> 1 s** is counted `stalled` (the watchdog, ADR-0012); `/_ignis/health` flips from `200` to `503` when no thread is both alive and unstalled (V-38) | `/_ignis/health` (`stalled` field, answered by the runtime, exempt from the budget by construction); log `WARN php threads busy for > 1 s without polling` (V-17) |
+| worker restarts | any nonzero and climbing `restarts`; a slot that hits **10 restarts/minute** (ADR-0012's own cap) stops being respawned, so capacity for that slot is gone until the process restarts | `/_ignis/health` (`restarts` field, cumulative); log `WARN worker script ended; respawning … status=NNN` for a fatal, `DEBUG script called exit()` for a clean exit (V-17, H-10) |
+| requests queued and rejected | a `503` with header `retry-after: 1` is the budget shedding load by design (ADR-0019), not a crash; watch `rejected` trending up against sustained legitimate traffic, not a single spike | **not yet exposed by the runtime.** An application can expose its own `/stats` route calling `Ignis\Loop`'s counters (V-38 shows the shape: `budget`, `queue_depth`, `inflight`, `queued`, `queued_peak`, `queued_admitted`, `rejected`) — this is application code, not a runtime endpoint |
+| park failures | **any nonzero value** means a fiber thread blocked where the policy said it should have parked (V-52) — this is always worth paging on, not a threshold to tune | log only: `WARN universal park: policy says park but the call could not park — it blocked the thread` (`what=<symbol>`). The counter itself (`PARK_FAILED`) is **not yet exposed** through `/_ignis/health` or any PHP-callable stats function — only the log line is visible today |
+| PostgreSQL lease age | a lease older than `IGNIS_PG_LEASE_WARN_MS` (default 5000 ms) is a held connection (V-42/V-43/V-44) | log: `WARN pg lease held longer than IGNIS_PG_LEASE_WARN_MS lease=N held_ms=N` at release (V-44); live gauge via calling `ignis_pg_stats($pool_id)` from PHP (`oldest_lease_ms`, `leases_over_warn`) — an application must expose this itself (e.g. its own `/stats` route); **not yet exposed** as a runtime endpoint |
+| RSS | `memory_limit` is per thread (ADR-0025) — an OOM in one fiber ends that thread's script and every other fiber on it; size against the marginal-cost formula in `ignis.toml.example`'s comments and V-37 (**~14.7 kB per admitted fiber, ~33 kB per held connection whether admitted or queued**) | **not yet exposed** as a runtime metric — read the process's own RSS externally (`ps`, cgroup accounting, a node exporter). A Prometheus renderer exists in the source (`ignis_pg_lease_age_seconds_max`, `ignis_threads_stalled`, `ignis_park_failed_total` and others are already defined) but it is not wired to any HTTP route yet — no V-n validates it reachable, and BACKLOG M4-4/ADR-0022 record `/_ignis/metrics` as unbuilt. Do not query for it; it will 404 |
+
+`/_ignis/health` itself: answered by the Rust runtime before dispatch, never by PHP, so it keeps
+answering while every PHP thread is wedged (ADR-0022). Example:
 
 ```
 $ curl -w ' [%{http_code}]' http://127.0.0.1:8096/_ignis/health
 {"status":"ok","threads":2,"stalled":0,"restarts":0} [200]
 ```
 
-`/_ignis/metrics` (Prometheus) does not exist yet — BACKLOG M4-4.
+## Symptom → cause → action
 
-## Logging
+**A thread is wedged in a blocking call that never returns.** Symptom: `stalled` in
+`/_ignis/health` stays at 1+ and does not clear; the watchdog's `WARN` line repeats. Cause: this is
+what universal park cannot cover — a blocking call on a **regular file** (epoll refuses regular
+files, so `would_block` forwards it and the OS thread genuinely waits: `file_get_contents()` on
+disk, the opcache file cache, `ext/session`'s `flock(LOCK_EX)` on the session file — ADR-0024,
+research 30 group (d)), or a library whose policy row is deliberately `block` because it holds a
+lock across the call (ADR-0020; H36/V-51 proved the alternative — `park` — deadlocks such a
+library). Action: this thread is not crashed, so the supervisor does not help; identify the call
+with `IGNIS_PARK_TRACE=1` on a reproduction (one stderr line per park decision — expensive, use
+off of production traffic), then either move the call to an offload worker, avoid the blocking
+resource, or accept the stall as a known limit of that code path. If it traces to session-file
+locking specifically, see the next row.
 
-The default floor is **`warn`**: with `RUST_LOG` unset, nothing below `warn` prints, but a worker
-respawn or a stalled thread is never silent (V-38; JOURNAL 2026-09-16T17:05Z — the floor used to
-default to `error`, which hid exactly those two lines, and was raised deliberately). Set
-`log = "info"` in the file or `RUST_LOG=info` to see hook installation and more detail; either
-accepts full `RUST_LOG` (`tracing_subscriber::EnvFilter`) syntax, e.g. `RUST_LOG=ignis=debug`.
-`RUST_LOG` (or `IGNIS_PHP_INI`-style CLI/env precedence) always beats the file's `log` key.
+**A session-file lock stalls a thread.** Symptom: same as above (a thread that will not clear
+`stalled`), specifically under a file-based session handler with concurrent requests that share a
+session id. Cause: `ext/session/mod_files.c`'s `flock(LOCK_EX)` on the session file is a regular-file
+block (see above) — with one PHP thread per core and the "two tabs, same session" pattern this is a
+real, reproducible stall (BACKLOG R-SESS; ADR-0024's added 2026-09-17 non-goal). Action: no runtime
+fix exists yet. Route session storage away from the default file handler (a custom handler backed
+by the PostgreSQL pool, or another store) or avoid concurrent requests against one session id under
+load.
 
-What a respawn and a stall look like at the `warn` floor (V-17, quoted verbatim by JOURNAL
-2026-09-16T17:05Z):
+**The request queue is filling up.** Symptom: rising `queued`/`rejected` on an application's own
+`/stats` route (not yet a runtime endpoint — see the watch table); clients see `503` with
+`retry-after: 1`. Cause: offered concurrency exceeds `threads × budget.fibers` plus
+`budget.queue` (ADR-0019) — either a legitimate burst, or fibers being held open longer than
+expected by a slow downstream (check the PostgreSQL lease age and park-failure rows first). Action:
+if the load is legitimate and sustained, raise `budget.fibers`/`budget.queue` per the sizing
+formula (V-37) and recheck RSS headroom; if a downstream is the real cause, fix that — raising the
+budget only defers the same problem to a bigger queue.
 
-```
-WARN worker script ended; respawning (opcache SHM untouched) slot=3 status=255
-WARN php threads busy for > 1 s without polling stalled=1 total=4 … stalled=0
-```
+**A fatal ends a worker.** Symptom: log `WARN worker script ended; respawning (opcache SHM
+untouched) slot=N status=255`; `/_ignis/health`'s `restarts` increments. Cause: an uncaught error,
+exception, or bailout in a request fiber (ADR-0012). Action: the supervisor respawns the thread
+automatically, inside its ~50 ms tick, with opcache SHM untouched — no recompilation, and
+throughput on the rest of the process is unaffected while the respawn happens (V-17: 95.7% of
+baseline recovery, other threads kept serving at 90,108 req/s / p99 2.67 ms). Nothing to do for
+availability by itself, **but the request that was in flight on that thread is lost** — it receives
+no response (ADR-0024 §1: no durability across crashes) — so the client-side fix is an idempotency
+key or retry, and the operator-side fix is finding and patching whatever fataled. Watch for the
+10-restarts-per-minute-per-slot cap: past it, that slot stops respawning and stays down until the
+process itself restarts.
 
-The first line is the supervisor (ADR-0012): a worker whose script ended (fatal, uncaught bailout,
-`exit`) is respawned as a new OS thread with a fresh TSRM context; opcache SHM is untouched, so
-there is no recompilation (V-17: recovery inside the 50 ms supervisor tick, back to 95.7% of
-baseline throughput). The second is the watchdog: a thread that has not called `ignis_poll` for
-over 1 s (a CPU-bound handler with no suspension point) is reported `stalled=1`, then `stalled=0`
-once it returns — other threads keep serving throughout (V-17: 90,108 req/s / p99 2.67 ms on the
-rest while one thread spun).
+**An unguarded top-level function kills a classic worker.** Symptom: in classic mode, a second (or
+later) request to the same worker fails with an uncatchable `Fatal error: Cannot redeclare function
+…`, and that worker's script ends (the supervisor respawns it — see above, and the request that hit
+the redeclare is lost). Cause: classic mode has two shapes, and this is specific to the newer one.
+`Ignis\Classic\serve()` (fiber-based) never lets entry-script top-level state reach request code at
+all: a top-level `$x = ...` never becomes `$GLOBALS['x']`, and `global $x` inside a function reads
+`NULL` — surprising, but harmless, because nothing accumulates. The classic **worker loop**
+(`Ignis\Classic\listen()`/`accept()`/`respond()`, `examples/classic_worker.php`) fixes that half —
+entry-script globals behave exactly like stock `php -S` (V-54) — by including the entry script at
+the true top level of one long-lived PHP execution, which is also why the *other* half breaks: a
+top-level `function foo() {}` or `class Foo {}` from request 1 is still in the function/class table
+on request 2, and PHP's redeclare fatal cannot be caught by any handler. Action: guard every
+top-level declaration in a classic entry script with `function_exists()`/`class_exists()`, or
+`require_once` it — the same discipline RoadRunner's and FrankenPHP's worker modes require of any
+script that is included more than once in a process. There is no runtime fix; see V-54 for why a
+fix would cost the worker model's own bootstrap saving.
+
+## Known limits
+
+- **No durability across crashes.** In-flight requests live in memory only. A worker that dies
+  answers its own in-flight requests with nothing (client sees a dropped connection) and the
+  supervisor respawns the thread (V-17); a process that dies loses everything the process was
+  holding. Use idempotency keys with upstreams; use a queue for replay/audit/fan-out, not as a
+  substitute for "don't hold a worker" (ADR-0024 §1).
+- **One application per process.** The PHP kernel boots once per thread (V-16); there is no
+  per-route or per-tenant isolation inside one `ignis serve` — run separate processes for separate
+  applications (ADR-0024 §3).
+- **Blocking calls on regular files are never made asynchronous.** `file_get_contents()` on disk,
+  the opcache file cache, and `ext/session`'s file-lock handler all stall the OS thread they run
+  on, not a fiber — epoll cannot watch a regular file, so there is no way to park these calls
+  (ADR-0024, added 2026-09-17; see the session-lock row above for the sharpest case, BACKLOG
+  R-SESS).
+- **Classic mode has two shapes with different rules, and neither is free of a gap** (V-53, V-54):
+  `serve()` loses entry-script globals but never corrupts state across requests; the worker loop
+  keeps entry-script globals but fatals on an unguarded top-level function/class redeclaration on
+  the second request. Pick the shape that matches the application, and guard top-level
+  declarations either way.
+- **`memory_limit` is per thread, not per fiber or per request.** One fiber's OOM ends the whole
+  thread's script, taking every other in-flight fiber on that thread with it (ADR-0025); there is
+  no per-fiber memory accounting.
+- **Linux-only, by construction.** Universal park depends on `epoll`, raw `syscall` numbers and
+  `dladdr` semantics that are Linux-specific (ADR-0037's build/distribution table); there is no
+  other-OS target.
+- **Graceful reload is not built.** `SIGHUP` drain-and-respawn and `SIGTERM` drain-then-exit are
+  designed (they would reuse ADR-0012's existing per-thread respawn mechanism) but not implemented
+  — a config change needs a process restart today, which drops in-flight connections (BACKLOG
+  M4-5).
 
 ## Configuration reference
 
-Every key in `ignis.toml` and every `IGNIS_*` / `RUST_LOG` environment variable `crates/ignis/src/config.rs`
-reads, with its default. Precedence, highest first: CLI flag > environment variable > file > default
-(`deny_unknown_fields`: a misspelled key is a parse error, not a silently ignored one).
+Every key in `ignis.toml` and every `IGNIS_*` / `RUST_LOG` environment variable
+`crates/ignis/src/config.rs` reads, with its default. Precedence, highest first: CLI flag >
+environment variable > file > default (`deny_unknown_fields`: a misspelled key is a parse error,
+not a silently ignored one).
 
 | toml key | env var | default | what it does |
 |---|---|---|---|
@@ -110,12 +187,10 @@ reads, with its default. Precedence, highest first: CLI flag > environment varia
 | `budget.queue` | `IGNIS_QUEUE_DEPTH` | `4096` | requests allowed to wait before `503`; `0` = unbounded |
 | `exempt` | `IGNIS_BUDGET_EXEMPT` | `["/_ignis/"]` | path prefixes admitted regardless of the budget |
 
+Three more env vars are read directly, not through `ignis.toml` (no file key exists for them):
+`IGNIS_PARK` (the park policy table, `lib` or `lib:symbol` rows, ADR-0020/ADR-0037), `IGNIS_SKIP_PARK_SELFCHECK`
+(bypass the boot self-check above), `IGNIS_PARK_TRACE` (one stderr line per park decision — a
+diagnostic tool, not for production traffic), and `IGNIS_PG_LEASE_WARN_MS` (default `5000`, the
+threshold in the watch table above).
+
 `ignis --version` and `ignis serve [--config PATH] [entry.php]` are the CLI surface (V-38).
-
-## Graceful reload
-
-**Not yet — BACKLOG M4-5.** `SIGHUP` draining (stop accepting on old workers, let in-flight
-requests finish, respawn each PHP thread one at a time without an opcache reset) and `SIGTERM`
-drain-then-exit are designed (the mechanism ADR-0012 already has for a crash respawn is the same
-one reload would reuse) but not implemented. Until then, a config change needs a process restart,
-which drops in-flight connections.

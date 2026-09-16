@@ -280,6 +280,46 @@ unsafe extern "C" fn zif_ignis_stats(_ex: *mut sys::zend_execute_data, rv: *mut 
     }
 }
 
+/// `ignis_publish_stats(array $stats): void` — the PHP loop hands its own counters to the runtime
+/// so `/_ignis/metrics` can answer them while PHP is busy (M4-4). Called once per loop turn, next
+/// to the `ignis_poll()` that is about to block, so the cost is a handful of relaxed stores.
+unsafe extern "C" fn zif_ignis_publish_stats(ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
+    // SAFETY: VM frame on the PHP thread; the array is borrowed for the duration of the call and
+    // only integer values are read out of it.
+    unsafe {
+        let mut arr: *mut sys::zval = ptr::null_mut();
+        if sys::zend_parse_parameters(zval::num_args(ex), c"a".as_ptr(), &mut arr) != sys::SUCCESS {
+            return;
+        }
+        let ht = (*arr).value.arr;
+        if ht.is_null() {
+            return;
+        }
+        let published = &reactor().published;
+        let mut key: *mut sys::zend_string = ptr::null_mut();
+        let mut val: *mut sys::zval;
+        let mut pos: sys::HashPosition = 0;
+        sys::zend_hash_internal_pointer_reset_ex(ht, &mut pos);
+        while {
+            val = sys::zend_hash_get_current_data_ex(ht, &mut pos);
+            !val.is_null()
+        } {
+            let mut idx: sys::zend_ulong = 0;
+            if sys::zend_hash_get_current_key_ex(ht, &mut key, &mut idx, &mut pos) == sys::HASH_KEY_IS_STRING
+                && !key.is_null()
+                && zval::type_of(val) == sys::IS_LONG
+            {
+                let name = std::slice::from_raw_parts((*key).val.as_ptr() as *const u8, (*key).len);
+                if let Ok(name) = std::str::from_utf8(name) {
+                    published.set(name, (*val).value.lval.max(0) as u64);
+                }
+            }
+            sys::zend_hash_move_forward_ex(ht, &mut pos);
+        }
+        published.stamp();
+    }
+}
+
 unsafe extern "C" fn zif_ignis_inflight(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: rv is VM-owned writable storage.
     unsafe { zval::set_long(rv, reactor().inflight() as i64) }
@@ -696,7 +736,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 29]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -705,6 +745,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
     fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
@@ -729,7 +770,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 28]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 36]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -745,6 +786,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
     fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
@@ -767,7 +809,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 30]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 31]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
@@ -776,6 +818,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 30]> = SyncStatic([
     fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_poll", zif_ignis_poll, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
     fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),

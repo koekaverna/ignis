@@ -1,0 +1,89 @@
+# Production-shaped compose file for the published image (ghcr.io/koekaverna/ignis — not a local
+# build; see docker/Dockerfile for what's in it, V-39 for the size/dependency numbers). Recipe:
+# docs/deploy.md. Every env var and config key below is read by the binary itself
+# (crates/ignis/src/config.rs, crates/ignis/src/main.rs) — nothing here is invented.
+#
+#   docker compose -f docker/compose.prod.yaml up -d
+#
+# Prerequisite: ./ignis.toml (entry + listen, README.md#install) and your app under ./app, both
+# next to this file — or edit the volume paths below to point at them.
+
+services:
+  ignis:
+    image: ghcr.io/koekaverna/ignis:latest   # pin to a sha tag (image.yml pushes one per push) for a reproducible rollback target
+    restart: unless-stopped
+
+    # The image already runs as the unprivileged `ignis` user (docker/Dockerfile: `USER ignis`,
+    # `useradd --system --shell /usr/sbin/nologin`) — nothing to set here.
+
+    # Root filesystem is read-only; the binary writes nothing at runtime except stderr logs
+    # (tracing_subscriber, main.rs) and PHP's session/temp files, which land in /tmp. The app tree
+    # is a separate, writable bind mount below — read_only does not touch it.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      # docker/Dockerfile's CMD is `serve --config /etc/ignis/ignis.toml`; config.rs parses this
+      # file with `deny_unknown_fields`, so a typo'd key fails loudly instead of being ignored.
+      - ./ignis.toml:/etc/ignis/ignis.toml:ro
+      # Not :ro — Symfony's var/ must be writable by the container's user (V-40; docs/deploy.md).
+      - ./app:/app
+
+    environment:
+      # config.rs precedence is CLI flag > environment variable > ignis.toml > product default, so
+      # anything set here beats the same key in ignis.toml. Prefer putting `entry`/`listen` in the
+      # file (they don't change per deploy) and reserve env vars for what changes per box/rollout.
+
+      # IGNIS_THREADS: PHP worker threads (main.rs reads it directly; config.rs bridges the file's
+      # `threads` key into it). Default: the container's available parallelism (honours cgroup CPU
+      # quota). Set explicitly once you've picked a `deploy.resources.limits.cpus` below, since the
+      # default otherwise sees the host's full core count.
+      IGNIS_THREADS: "4"
+
+      # IGNIS_LISTEN: host:port the listener binds (config.rs). Leave this to ignis.toml's `listen`
+      # key (docker/ignis.toml already ships "0.0.0.0:8080" — 127.0.0.1 is unreachable from outside
+      # the container); uncomment only to override without editing the mounted file.
+      # IGNIS_LISTEN: "0.0.0.0:8080"
+
+      # RUST_LOG: default "warn" (main.rs) — a worker respawn or a stalled-thread warning is never
+      # silent at that floor. Raise to "info" to also see the supervisor and watchdog's routine
+      # lines; config.rs bridges ignis.toml's `log` key into this same variable.
+      # RUST_LOG: "info"
+
+      # Only if the boot self-check (php/park.rs) refuses to start — see docs/deploy.md's
+      # "when it does not start" section before setting this.
+      # IGNIS_SKIP_PARK_SELFCHECK: "1"
+
+    healthcheck:
+      # No curl/wget in the runtime image (only libcurl4t64, the shared library — docker/Dockerfile's
+      # apt list); bash's /dev/tcp is what .github/workflows/image.yml uses to probe the same image
+      # (V-39), so it's known to work here. Explicit `bash -c`, not CMD-SHELL: CMD-SHELL runs under
+      # /bin/sh, which is dash on this base image and does not have /dev/tcp. 200 "ok" while >=1 PHP
+      # thread is registered and not all are stalled; 503 "unavailable" otherwise (http.rs's
+      # health()) — Docker only checks the exit code, so grep on the status field.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /_ignis/health HTTP/1.0\r\n\r\n' >&3 && grep -q '\"status\":\"ok\"' <&3"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+    deploy:
+      resources:
+        limits:
+          # Starting point, not a benchmarked ceiling — size to your traffic. Match cpus to
+          # IGNIS_THREADS above (each PHP thread is one OS thread doing real work between polls).
+          # RSS is NOT bounded by the fiber budget below (V-37: a fiber budget caps fiber count,
+          # not RSS — the dominant term is held connections), so watch actual usage and raise this
+          # if the container gets OOM-killed rather than assuming the budget protects you.
+          cpus: "2"
+          memory: 512M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
