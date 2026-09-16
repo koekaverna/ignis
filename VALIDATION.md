@@ -399,3 +399,26 @@ Two bugs surfaced only under sustained 4-thread load (the earlier 4-thread numbe
 2. **Heap corruption from a forged refcount flag** (`superglobals.rs`): `ignis_set_superglobals` stored its array arguments with `IS_ARRAY_EX` (refcounted) type flags regardless of the array. A literal `[]` is the process-shared immutable `zend_empty_array`; four threads incrementing/decrementing its refcount concurrently corrupted it → `zend_mm_heap corrupted` after a few seconds of load. Bisected by disabling subsystems (`IGNIS_NO_SUPERGLOBALS=1` survived, `IGNIS_NO_STREAM_HOOK=1` died). Fixed by copying the argument zvals verbatim (their flags are authoritative). Lesson recorded in DECISIONS.md: never construct a zval's type_info by hand for data PHP handed us.
 
 Both fixed versions ran 2 × 10 s of `/cpu` + 10 s hello at 4 threads with 0 socket errors and no abort.
+
+## V-16 — H18 (E8): symfony/skeleton in worker mode on Ignis with a fiber-scoped RequestStack (CONFIRMED, sessions caveat)
+
+Date: 2026-09-16T05:3xZ. Setup: `symfony/skeleton` (7.x) + `symfony/runtime` installed from source (`composer create-project --prefer-source`); skeleton sources untouched except (1) one service override in `config/services.yaml` (`request_stack` → `Ignis\Symfony\FiberRequestStack`), (2) a demo controller, (3) a PSR-4 autoload line for the adapter. Entry: `php/symfony/worker.php` sets `SCRIPT_FILENAME` and `APP_RUNTIME=Ignis\Symfony\IgnisRuntime` and requires the untouched `public/index.php`. Kernel booted once (`APP_ENV=prod`, warmed cache). Command: `bench/e8-symfony.sh` (1 PHP thread).
+
+```
+== /                       HTTP/1.1 200 OK   Hello from Symfony on Ignis
+e8 whoami n=100 mismatches=0
+== hello throughput (wrk -t2 -c64 -d10s)   99% 12.65ms   Requests/sec: 7769.76
+server alive   log critical/fatal lines: 0
+```
+
+| check | result | target |
+|---|---|---|
+| skeleton boots once under the Ignis runtime and serves `/` | 200, body from the controller | boots → CONFIRMED |
+| 100 concurrent `/whoami?tag=i&ms=200` (controller reads `RequestStack::getCurrentRequest()`, `Ignis\sleep(200)`, reads it again) | **0 mismatches**: every fiber saw its own Request before and after suspending while 99 others were in flight | 0 → CONFIRMED |
+| hello-world through the full Symfony kernel, worker mode, 1 thread | **7,770 req/s**, p99 12.65 ms (V-6: php-fpm+nginx hello *without* a framework = 9.9k; FrankenPHP worker hello 27.6k) | ≥ 5k → CONFIRMED |
+
+Caveats (honest):
+- `framework.session` was **disabled** for this run: the libphp used tonight was built without `ext-session` (and `iconv`); a rebuild with both is in progress and the run is repeated with sessions on (see addendum below when present).
+- `intl` is not built (Symfony logs a deprecation for performance); `iconv` absent until the rebuild.
+- The runner maps one `Set-Cookie` header only; multi-cookie responses need the multi-value header path in `ignis_respond` (E8').
+- Debugging note: the first attempt overrode the `RequestStack` *class alias* in services.yaml, which created a second instance (controller got the fiber-scoped one, `HttpKernel` kept the original) — the `request_stack` service id must be overridden.

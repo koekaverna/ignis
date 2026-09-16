@@ -27,9 +27,9 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 4: E3~~ DONE (V-10).
 
-~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15).
+~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15). ~~Cycle 10: E8~~ DONE (V-16).
 
-Next question (Cycle 10): E8 — does symfony/skeleton boot once in worker mode behind a symfony/runtime adapter over `Ignis\serve`, with a fiber-scoped RequestStack so two interleaved requests never see each other's Request?
+Remaining OPEN: E9 (Temporal), E10 (gRPC), E12 (isolation/supervisor), E14 (connection pool). Next question (Cycle 11): E12 — does a fatal error or a 30 s CPU loop in one thread leave the other threads serving, and can the supervisor restart that thread without an opcache reset?
 
 ## Ranking (after Cycle 0, kept for history)
 

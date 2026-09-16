@@ -9,7 +9,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 4. Three unaligned timeouts; max_execution_time counts CPU time, not wall-clock → one wall-clock deadline per request, inherited by child fibers and futures. — **ADDRESSED** (ADR-0009, V-14: `Ignis\deadline()` → 504 at 102 ms, inherited by children).
 5. Reactive fork-based scaling lag → fibers spawn in microseconds; threads start once. — **ADDRESSED** (V-4: 4.5 µs per job on a warm pool).
 6. 30–80 MB per worker; pool sized by RAM → per-request memory is a fiber stack. — ADDRESSED with a caveat (V-5: ~34 KB RSS per parked fiber; 16 KiB of it is Zend's fixed VM stack page).
-7. Framework bootstrap per request → worker mode, kernel boots once. — **ADDRESSED** for the Ignis API (H6: script stays resident); NOT STARTED for Symfony (E8).
+7. Framework bootstrap per request → worker mode, kernel boots once. — **ADDRESSED** for the Ignis API (H6) and for Symfony (ADR-0011, V-16: kernel booted once, 7.8k req/s through it).
 8. No connection pool; pconnect leaks transactions → runtime-owned pool with lease and session reset on return. — NOT STARTED (E14).
 
 ### RoadRunner
@@ -38,7 +38,7 @@ Not a task list. See BRIEF.md "Pain map" rules. Status per item: ADDRESSED / DES
 5. Incomplete hooks (curl_multi etc.) → native Rust drivers for HTTP, Postgres, MySQL, Redis; stream-layer hooks for the rest. — **ADDRESSED for `tcp://` streams** (ADR-0007, V-12); `ssl://`, curl, sqlite, libpq NOT STARTED; V-7 shows the engine ABI does not cover I/O either.
 6. One blocking call stalls the whole process → stalls one thread of N; supervisor sees it via watchdog. — DESIGNED (ADR-0004: N independent threads, V-9); watchdog NOT STARTED (E12).
 7. Fatal kills the worker with every coroutine in it → fatal kills one thread; pools and Table survive. — NOT STARTED (E12).
-8. Ecosystem fork (Hyperf, own clients, single listeners) → plain Symfony/Laravel via symfony/runtime, AMPHP via a Revolt driver. — **ADDRESSED for AMPHP** (ADR-0008, V-13: Revolt + amphp examples unchanged on `Ignis\Revolt\IgnisDriver`); Symfony NOT STARTED (E8).
+8. Ecosystem fork (Hyperf, own clients, single listeners) → plain Symfony/Laravel via symfony/runtime, AMPHP via a Revolt driver. — **ADDRESSED for AMPHP** (ADR-0008, V-13: Revolt + amphp examples unchanged on `Ignis\Revolt\IgnisDriver`); Symfony ADDRESSED via symfony/runtime (V-16).
 
 ### Engine-level (added by the owner, 2026-09-15)
 1. GC-triggered destructors may switch context: a `__destruct` running inside `gc_collect_cycles()` could call `Fiber::suspend()` → the scheduler must forbid or safely handle suspension during GC (Zend already calls `zend_fiber_switch_block()` around GC and destructors of dead fibers, zend_fibers.c/zend_gc.c; Ignis must never resume a fiber from inside a destructor and must treat `FiberError` from a blocked switch as a scheduler bug, not a user error). — DESIGNED (ADR-0003, V-7): on backend (b) the engine runs GC destructors in a dedicated GC coroutine via `defer` microtasks (zend_gc.c:2053-2088); on (a) `Ignis\Loop` never resumes from inside a destructor. NOT VALIDATED yet.
