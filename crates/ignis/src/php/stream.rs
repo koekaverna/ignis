@@ -121,44 +121,6 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
     }
 }
 
-/// Wrap an already-connected socket fd (from `stream_socket_accept`, E6'') in a hooked stream:
-/// the reactor adopts a dup of the fd. Returns null (the caller keeps the stock stream) on failure.
-///
-/// # Safety
-/// PHP thread, inside a fiber, from an internal function frame.
-pub unsafe fn adopt_fd(fd: c_int) -> *mut sys::php_stream {
-    unsafe {
-        let dup = libc::dup(fd);
-        if dup < 0 {
-            return ptr::null_mut();
-        }
-        let id = reactor().submit(Op::Adopt { fd: dup });
-        match await_op(id) {
-            Some(Outcome::Connected { conn, fd, local, peer }) => {
-                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer, blocking: true, read_timeout_us: None, timed_out: false, is_unix: false });
-                sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
-            }
-            _ => ptr::null_mut(),
-        }
-    }
-}
-
-/// True if `zv` is a hooked stream holding bytes the kernel fd no longer shows (our read-ahead):
-/// `stream_select()` must report it readable without parking.
-pub unsafe fn has_buffered(zv: *mut sys::zval) -> bool {
-    unsafe {
-        if super::zval::type_of(zv) != sys::IS_RESOURCE {
-            return false;
-        }
-        let stream = sys::zend_fetch_resource2_ex(zv, ptr::null(), sys::php_file_le_stream(), sys::php_file_le_pstream()) as *mut sys::php_stream;
-        if stream.is_null() || (*stream).ops != &OPS.0 as *const sys::php_stream_ops {
-            return false;
-        }
-        let s = sock_of(stream);
-        !s.is_null() && ((*s).pending.len() > (*s).pos || (*s).eof)
-    }
-}
-
 /// Park the running fiber until ANY of `ids` completes; returns the id that did. The other ids'
 /// completions are dropped later (no fiber waits on them any more). `None` = could not park.
 ///

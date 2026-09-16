@@ -51,9 +51,10 @@ thread_local! {
 static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 
 /// The default table (ADR-0037 §2): research 27's verdicts (libcurl, libpq, OpenSSL park) plus
-/// the libphp sleep group audited in research 30 group (b). libphp's other symbols stay `block`
-/// until research 30 has a row for them.
-const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto";
+/// libphp's audited groups (research 30: (a) ext/sockets, (b) sleep, (c) streams/network/openssl —
+/// every row lock-free). Anything libphp calls that is not listed stays `block`; `getaddrinfo`
+/// has no fd and is offload's, not park's.
+const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libcurl,libpq,libssl,libcrypto";
 
 /// `IGNIS_PARK_TRACE=1`: one stderr line per decision, for diagnosing a library that misbehaves
 /// under `park`. Off by default; the check is a `OnceLock<bool>` load.
@@ -184,6 +185,39 @@ unsafe fn park_on(fd: c_int, write: bool) -> bool {
     ok
 }
 
+/// The socket's own kernel timeout (`SO_RCVTIMEO` for reads, `SO_SNDTIMEO` for writes) in ms;
+/// 0 = none, and 0 for anything that is not a socket (a pipe has no such option).
+unsafe fn sock_timeout_ms(fd: c_int, write: bool) -> c_int {
+    let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+    let opt = if write { libc::SO_SNDTIMEO } else { libc::SO_RCVTIMEO };
+    if unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut tv as *mut libc::timeval as *mut c_void, &mut len) } != 0 {
+        return 0;
+    }
+    (tv.tv_sec as i64 * 1000 + (tv.tv_usec as i64 + 999) / 1000).clamp(0, c_int::MAX as i64) as c_int
+}
+
+#[derive(PartialEq)]
+enum Wait {
+    /// Ready, or could not park: make the real call as before.
+    Ready,
+    /// The socket's own timeout elapsed first — the kernel would return `EAGAIN` now, and the
+    /// real call would block for the whole timeout again, so the handler answers `EAGAIN` itself.
+    TimedOut,
+}
+
+/// Park until `fd` is ready in `dir` or its `SO_RCVTIMEO`/`SO_SNDTIMEO` elapses (research 30:
+/// `ext/sockets` users set those and expect the timeout; the point hook raced it, so does this).
+unsafe fn park_io(fd: c_int, write: bool) -> Wait {
+    let timeout = unsafe { sock_timeout_ms(fd, write) };
+    let fds = [libc::pollfd { fd, events: if write { libc::POLLOUT } else { libc::POLLIN }, revents: 0 }];
+    trace(&format!("park_io fd={fd} write={write} timeout={timeout}"));
+    match unsafe { park_pollfds(&fds, timeout) } {
+        Some(false) => Wait::TimedOut,
+        _ => Wait::Ready,
+    }
+}
+
 unsafe fn park_sleep(us: u64) -> bool {
     let Some(r) = super::module::try_reactor() else { return false };
     let id = r.submit(Op::Sleep { us });
@@ -199,7 +233,10 @@ pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mu
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
         {
-            park_on(fd, false);
+            if park_io(fd, false) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_read, fd, buf, n) as isize
     }
@@ -212,7 +249,10 @@ pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *c
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
         {
-            park_on(fd, true);
+            if park_io(fd, true) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_write, fd, buf, n) as isize
     }
@@ -226,7 +266,10 @@ pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mu
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
         {
-            park_on(fd, false);
+            if park_io(fd, false) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, std::ptr::null_mut::<c_void>(), std::ptr::null_mut::<c_void>()) as isize
     }
@@ -240,7 +283,10 @@ pub unsafe extern "C" fn ignis_park_send(ret: *const c_void, fd: c_int, buf: *co
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
         {
-            park_on(fd, true);
+            if park_io(fd, true) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_sendto, fd, buf, n, flags, std::ptr::null::<c_void>(), 0usize) as isize
     }
@@ -254,7 +300,10 @@ pub unsafe extern "C" fn ignis_park_recvfrom(ret: *const c_void, fd: c_int, buf:
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
         {
-            park_on(fd, false);
+            if park_io(fd, false) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, addr, alen) as isize
     }
@@ -268,7 +317,10 @@ pub unsafe extern "C" fn ignis_park_sendto(ret: *const c_void, fd: c_int, buf: *
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
         {
-            park_on(fd, true);
+            if park_io(fd, true) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_sendto, fd, buf, n, flags, addr, alen as usize) as isize
     }
@@ -519,7 +571,10 @@ pub unsafe extern "C" fn ignis_park_accept4(ret: *const c_void, fd: c_int, addr:
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
         {
-            park_on(fd, false);
+            if park_io(fd, false) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_accept4, fd, addr, alen, flags) as c_int
     }
@@ -533,7 +588,10 @@ pub unsafe extern "C" fn ignis_park_recvmsg(ret: *const c_void, fd: c_int, msg: 
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
         {
-            park_on(fd, false);
+            if park_io(fd, false) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_recvmsg, fd, msg, flags) as isize
     }
@@ -547,7 +605,10 @@ pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: 
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
         {
-            park_on(fd, true);
+            if park_io(fd, true) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_sendmsg, fd, msg, flags) as isize
     }
@@ -560,7 +621,10 @@ pub unsafe extern "C" fn ignis_park_readv(ret: *const c_void, fd: c_int, iov: *c
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
         {
-            park_on(fd, false);
+            if park_io(fd, false) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_readv, fd, iov, cnt) as isize
     }
@@ -573,7 +637,10 @@ pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
         {
-            park_on(fd, true);
+            if park_io(fd, true) == Wait::TimedOut {
+                *libc::__errno_location() = libc::EAGAIN;
+                return -1;
+            }
         }
         libc::syscall(libc::SYS_writev, fd, iov, cnt) as isize
     }

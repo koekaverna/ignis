@@ -67,7 +67,7 @@ SKIPPED	/home/koe/php-src/ext/sockets/tests/socket_import_stream-4-win.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_import_stream-4.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_listen-wrongparams.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_meminfo.phpt
-PASSED	/home/koe/php-src/ext/sockets/tests/socket_read_params.phpt
+FAILED	/home/koe/php-src/ext/sockets/tests/socket_read_params.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_recv_overflow.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_recvmsg.phpt
 PASSED	/home/koe/php-src/ext/sockets/tests/socket_reuseport_cbpf.phpt

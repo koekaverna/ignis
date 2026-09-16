@@ -4,5 +4,6 @@
 /home/koe/php-src/ext/sockets/tests/socket_create_listen_invalid_port.phpt
 /home/koe/php-src/ext/sockets/tests/socket_create_pair.phpt
 /home/koe/php-src/ext/sockets/tests/socket_export_stream-1.phpt
+/home/koe/php-src/ext/sockets/tests/socket_read_params.phpt
 /home/koe/php-src/ext/sockets/tests/socket_sendto_zerocopy.phpt
 /home/koe/php-src/ext/sockets/tests/socket_set_nonblock.phpt

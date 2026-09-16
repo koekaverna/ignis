@@ -152,7 +152,7 @@ PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_set_chunk_size.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_set_timeout_error.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_socket_get_name.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_socket_pair.phpt
-PASSED	/home/koe/php-src/ext/standard/tests/streams/stream_socket_recvfrom.phpt
+FAILED	/home/koe/php-src/ext/standard/tests/streams/stream_socket_recvfrom.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/temp_stream_seek.phpt
 SKIPPED	/home/koe/php-src/ext/standard/tests/streams/user-stream-dir-open-bailout.phpt
 SKIPPED	/home/koe/php-src/ext/standard/tests/streams/user-stream-open-bailout.phpt

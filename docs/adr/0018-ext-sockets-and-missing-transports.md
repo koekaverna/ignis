@@ -76,3 +76,15 @@ Reversed if any of the following holds after implementation:
    only when about to park. The ready path is one syscall, not two.
 4. Parity after the fix: fiber-mode `ext/sockets` **86 passed / 6 failed** against the C22 baseline of
    85 / 7 — zero new failures, one recovered. Kill criterion 1 is satisfied.
+
+## Addendum (2026-09-16) — the hooks are retired (ADR-0037 cycle 2, V-48)
+
+`sockets.rs` (nine `ext/sockets` handlers, `can_block`) and `accept.rs` (`stream_socket_accept`,
+`stream_select`) are deleted. The same calls park through universal park with the seed rows
+`libphp:select,accept,poll,recv,send,recvfrom,sendto,recvmsg,sendmsg,connect,read,write` (research
+30 groups (a)/(c): every site lock-free). What the hooks did that a bare interposer did not —
+`SO_RCVTIMEO`/`SO_SNDTIMEO` — moved into park itself (`park_io`: the socket's kernel timeout
+races the wait, and a timer win answers `EAGAIN` as the kernel would); `can_block`'s rule is
+covered by "readiness, then the real call": a listening or unconnected socket reports ready and
+the real call fails exactly as stock. The decision above stands as history; `unix://` (V-31) is
+unaffected (stream factory, step 4).

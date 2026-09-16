@@ -71,7 +71,7 @@ echo "== hello";           $T ./target/release/ignis examples/hello.php
 echo "== app.php (API spec: served in the background, routes curled)"
 # One address for the server and every curl below. Override with IGNIS_LISTEN when :8080 is taken —
 # before this, a stranger on :8080 was curled instead and its answers were reported as ours.
-export IGNIS_LISTEN="${IGNIS_LISTEN:-127.0.0.1:8080}"
+export IGNIS_LISTEN="${IGNIS_LISTEN:-127.0.0.1:8183}"  # never :8080 — it belongs to another project on the owner box, and it answers "/" with 200
 $T ./target/release/ignis examples/app.php >/dev/null 2>&1 & APP=$!
 up=0; for _ in $(seq 1 50); do curl -sf "http://$IGNIS_LISTEN/" >/dev/null && { up=1; break; }; sleep 0.1; done
 [ "$up" = 1 ] || { echo "app.php never answered on $IGNIS_LISTEN (port taken? set IGNIS_LISTEN=127.0.0.1:8099)"; kill $APP 2>/dev/null; exit 1; }

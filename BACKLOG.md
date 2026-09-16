@@ -194,7 +194,7 @@ problem: a fiber writing to stdout/stderr under the same build prints in every c
 script wraps the whole run in an outer `Ignis\async` and prints from inside it. **Acceptance.**
 The cause named, the script printing under park, and the number recorded in V-45.
 
-### E18-C Retire the PHP-level wrappers universal park makes redundant `main` `open` — owner question 2026-09-17
+### E18-C Retire the PHP-level wrappers universal park makes redundant `main` `in progress: sleep.rs (V-46), sockets.rs + accept.rs (V-48) gone; stream.rs (tcp/ssl/unix factory, rustls path) is ADR-0037 §6 step 4` — owner question 2026-09-17
 **What.** Each wrapper below exists to make one C call park. Once the syscall layer parks, the
 wrapper is a second mechanism for the same call. Ordered by what each deletion requires:
 1. **Now (when `universal-park` is the default):** the offload auto-routing entries for `curl_*`

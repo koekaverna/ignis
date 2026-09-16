@@ -69,3 +69,14 @@ against today's 1,458 + ~250 deleted and ~750 added. The measured half of that s
 `php/sleep.rs` is gone: **−112 Rust lines, −7 `unsafe {`, −8 `unsafe fn`** (measured, V-46). Row 7
 grew by the `lib:symbol` policy grammar and a per-site trace. Tree after the cycle: see V-46's
 recount. Mechanisms a wait can take: 6.
+
+## Addendum — cycle 2 (2026-09-16, V-48): rows 2 and 4 deleted
+
+`php/sockets.rs` (326 / 21 / 16) and `php/accept.rs` (315 / 11 / 12) are gone: **−641 Rust lines,
+−32 `unsafe {`, −28 `unsafe fn`**; park grew by the SO_*TIMEO race and stage-2 symbols. Running
+total deleted: 753 lines, 39 `unsafe {`. Mechanisms a wait can take: 4 (stream factory, offload,
+context, park).
+
+Final recount after cycle 2 (V-48 addendum): Rust 5,753 lines, 157 `unsafe {`, 126 `unsafe fn` —
+net −573 / −30 / −28 against the table above; the dead adoption path (`adopt_fd`, `has_buffered`,
+`Op::Adopt`, `set_double`, 64 lines) went with the hooks that fed it.

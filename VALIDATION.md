@@ -1779,3 +1779,55 @@ So V-6's 128k is the 4-vCPU box of 2026-09-15, not this 24-vCPU WSL2 (6.18) box:
 gives ~62k here. The code-side difference 2026-09-15 → today is **≈ 4–5 %** (61.5–63.1k vs
 58.3–60.0k, p99 +0.1 ms) — not universal park (on/off equal, addendum 2). Tree deleted after
 recording (disk rule).
+
+## V-48 — ADR-0037 cycle 2: `sockets.rs` and `accept.rs` deleted, the audited libphp rows carry their calls (CONFIRMED)
+
+Date: 2026-09-16T18:25:37Z. Two phases on the same tree, quiet box, suites one at a time.
+**Phase 1** — hooks compiled but off (`IGNIS_NO_SOCKETS_HOOK=1 IGNIS_NO_ACCEPT_HOOK=1`), rows via
+`IGNIS_PARK=libphp:sleep,usleep,nanosleep,select,accept,poll,recv,send,recvfrom,sendto,recvmsg,sendmsg,connect,read,write,libcurl,libpq,libssl,libcrypto`.
+**Phase 2** — the two files deleted, the same rows in the built-in seed, no env.
+
+| gate (the test that created the hook) | phase 1 | phase 2 |
+|---|---|---|
+| `a4_sockets.php` N=20 DELAY_MS=200 (V-29: 20 concurrent `socket_read`) | 243.7 ms, ok=20 | **246.6 ms, ok=20** (V-29 with the hook: ~222; without: stalls) |
+| `a4_unix.php` (V-29) | 202.8 ms, ok=10 | 201.6 ms, ok=10 |
+| `a4_overhead.php` 100k `socket_sendto`, µs/call | 8.04 | 13.57 (V-29's own spread is 7.4–13.7: this bench cannot resolve it, as V-29 says) |
+| `e18_timeo.php` — 3 fibers, `SO_RCVTIMEO`=200 ms on `socket_recv` (new; research 30's regression risk) | 3 × `false`/EAGAIN after 201 ms, total 201 ms | **3 × `false`/EAGAIN after 200 ms, total 201 ms** (blocked would be 600, a naive park never returns) |
+| `e15_fixes_server.php` (V-22/V-26: listen + accept + client on one thread) | ping/pong | ping/pong |
+| `e15_fixes_sleep.php` (V-22) | 201 / 1002 ms | 202 / 1001 ms |
+| select probe, 3 × `stream_select` 200 ms | 202 ms | 202 ms |
+| nested `all()` probe (E18-I1) | 202 ms | 202 ms |
+| nextest | 10/10 | 10/10 |
+| phpt gate (main/fiber): fibers, streams, sockets | 108/78, 133/124, 91/83 — all ≥ baseline | **108/78, 133/124, 91/83 — all ≥ baseline** (fiber sockets 84→83 and streams 125→124 against the hook-on run of V-46; both at the CI baseline) |
+| Swoole shim `--all` (gate 54) | 54/153 | **54/153** |
+| Revolt DriverTest (gate 80) | 80/81 (`testNoMemoryLeak`, the known race) | **80/81** |
+
+**Deleted, measured:** `php/sockets.rs` 326 lines / 21 `unsafe {` / 16 `unsafe fn`; `php/accept.rs` 315 /
+11 / 12 → **−641 lines, −32 blocks, −28 fns**. Tree after phase 2: Rust **5,817** lines, **161**
+`unsafe {`, **129** `unsafe fn` (from 6,230 / 180 / 146 after cycle 1; park grew by the SO_*TIMEO race
+and the stage-2 handlers). The dead adoption path the hooks fed (`stream.rs::adopt_fd`,
+`has_buffered`, `reactor::Op::Adopt` + its arm, `zval::set_double`) is cut after this table; the
+final recount is the addendum.
+
+**Local-gate fixes made on the way** (environment, not runtime): `bench/e15-revolt.sh` regenerates
+`ignis.ini` per checkout (the committed one hardcodes `/home/user/…`, rc=255 on any other box);
+Swoole needs `~/cmp/swoole-src` (cloned, 25 MB); AMPHP deps via the `composer` Docker image (no
+php-cli, no `ext/phar` here).
+
+### V-48 addendum — final recount after the dead adoption path was cut
+
+Build clean (no warnings), nextest 10/10. Tree: Rust **5,753** lines, **157** `unsafe {`, **126**
+`unsafe fn` — against 6,326 / 187 / 154 before ADR-0037 cycle 1: **−573 lines, −30 `unsafe {`,
+−28 `unsafe fn` net** (three hooks and their adoption path deleted, 1,121 lines; park grew by the
+policy grammar, stage-2 symbols and the SO_*TIMEO race). Research 29's measured "deletes" for
+rows 2–4 (753 lines) are now real; row 1 (the stream factory, 705 lines + the actor arms) is §6
+step 4.
+
+### V-48 addendum 2 — smoke on this box, and a gate defect
+
+`scripts/smoke.sh` exit 0 on the final binary with `IGNIS_LISTEN=127.0.0.1:8183`. Found on the
+way: smoke's default was `:8080`, which another project holds on the owner's box and which answers
+`/` with 200 — the app.php leg's readiness check (`curl -sf`, not content-based) accepted the
+stranger, so the morning's "green" smoke had printed that project's `NotFoundHttpException` for
+`/sleep?ms=5` as if it were ours, and the E13 HTTP leg (content-based) was the one that failed
+honestly. The default is now `:8183`; every bench and example reads `IGNIS_LISTEN`.

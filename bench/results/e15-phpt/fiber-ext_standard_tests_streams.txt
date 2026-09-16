@@ -11,4 +11,5 @@
 /home/koe/php-src/ext/standard/tests/streams/glob-wrapper.phpt
 /home/koe/php-src/ext/standard/tests/streams/stream_context_tcp_nodelay_server.phpt
 /home/koe/php-src/ext/standard/tests/streams/stream_select_null_usec.phpt
+/home/koe/php-src/ext/standard/tests/streams/stream_socket_recvfrom.phpt
 /home/koe/php-src/ext/standard/tests/streams/user_streams_context_001.phpt

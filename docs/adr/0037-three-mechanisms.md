@@ -123,3 +123,8 @@ exceptions.
   (b) audited; **§6 step 3: `sleep.rs` deleted** (−112 lines, −7 `unsafe {`), V-22's gate through
   park with both off-controls blocking; phpt gate ≥ baseline in all six cells. E18-I1 turned out to
   be the scheduler's idle check ignoring `$ready` — fixed, not park's. Mechanisms: 6.
+- **Cycle 2 (2026-09-17, V-47, V-48)** — stage-2 symbols (accept/accept4, select, ppoll, __poll_chk,
+  recvmsg/sendmsg, readv/writev); research 30 groups (a)/(c) audited (no locks); `SO_RCVTIMEO`/
+  `SO_SNDTIMEO` moved into park (`park_io`); **§6 step 3: `sockets.rs` and `accept.rs` deleted**
+  (−641 lines, −32 `unsafe {`), every creating test green in both phases. Deviation: two hooks in
+  one cycle (DECISIONS). Mechanisms: 4 — stream factory, offload, context, park. Next: step 4.

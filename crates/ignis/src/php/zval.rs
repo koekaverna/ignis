@@ -21,16 +21,6 @@ pub unsafe fn set_long(zv: *mut sys::zval, v: i64) {
 
 /// `ZVAL_DOUBLE(zv, v)`.
 ///
-/// # Safety
-/// Same as [`set_long`].
-#[inline]
-pub unsafe fn set_double(zv: *mut sys::zval, v: f64) {
-    unsafe {
-        (*zv).value.dval = v;
-        (*zv).u1.type_info = sys::IS_DOUBLE;
-    }
-}
-
 #[allow(dead_code)]
 /// `ZVAL_NULL(zv)`.
 ///

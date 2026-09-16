@@ -120,3 +120,21 @@ showed it too; fixed in `php/ignis.php`, so libpq is in the seed. `sleep.rs` (11
 `unsafe fn`) and `IGNIS_NO_SLEEP_HOOK` are deleted; V-22's gate script passes through park with
 both off-controls blocking (V-46). The "PHP function" policy column is not built: no row needs it
 yet.
+
+## 2026-09-16T18:15Z — ADR-0037 cycle 2: `sockets.rs` and `accept.rs` deleted together; SO_*TIMEO moved into park
+
+Two hooks in one cycle, against §6's "one per cycle": one gate run (phpt, Swoole, Revolt, the V-29
+a4 tests, the server leg, the new `e18_timeo`) covers both, and a red cell would have been split
+by the two env switches before deletion — it stayed green in phase 1 (hooks off via env, rows via
+`IGNIS_PARK`) and in phase 2 (files gone, seed rows). Research 30 groups (a)/(c) (agent, spot-checked
+by main at `sockets.c:294/692/926/1461`, `network.c:774/783`, `sendrecvmsg.c:207/248`): no lock on
+any path, so the rows enter the seed. The one semantic the hooks had that park lacked —
+`SO_RCVTIMEO`/`SO_SNDTIMEO` — is now park's own (`park_io`: `getsockopt` on the parking path,
+the kernel timeout races the wait, a timer win answers `EAGAIN` without the real call; `connect`
+keeps the `SO_ERROR` shape, `SO_SNDTIMEO` on connect is a recorded gap). `can_block`'s rule needs no
+code: readiness then the real call reproduces stock errors on listening/unconnected sockets
+(a4_sockets, phpt sockets in fiber mode at baseline). Local gates needed fixing to run at all:
+`php/amphp/ignis.ini` hardcoded `/home/user/…` (the bench now regenerates it per checkout),
+Swoole needs `~/cmp/swoole-src` (cloned), AMPHP deps installed with the `composer` Docker image
+because this PHP has no `ext/phar` and the box has no php-cli — `ext/phar` is not added to the
+product build for a dev need.

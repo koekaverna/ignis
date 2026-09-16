@@ -22,6 +22,9 @@ BIN=$ROOT/target/release/ignis
 PHP=${PHP_BIN:-/opt/php85-zts/bin/php}
 AMPHP=$ROOT/php/amphp
 TMP=${TMP_DIR:-/tmp/e15-revolt}
+mkdir -p "$TMP"
+# php/amphp/ignis.ini names prepend.php by an absolute path; regenerate it for this checkout.
+sed "s#^auto_prepend_file=.*#auto_prepend_file=$ROOT/php/amphp/prepend.php#" "$ROOT/php/amphp/ignis.ini" > "$TMP/ignis.ini"
 REPS=${REPS:-3}
 BOOT=$AMPHP/test/bootstrap.php
 mkdir -p "$TMP"
@@ -99,7 +102,7 @@ echo
 echo "-- [3] ignis binary, IgnisDriverTest.php (IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_UNIVERSAL_PARK=1), $REPS run(s)"
 IGN_LINE=""
 for i in $(seq 1 "$REPS"); do
-    IGNIS_PHP_INI=$AMPHP/ignis.ini IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_UNIVERSAL_PARK=1 \
+    IGNIS_PHP_INI=$TMP/ignis.ini IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_UNIVERSAL_PARK=1 \
         timeout 300 "$BIN" "$TMP/phpunit-run.php" --no-configuration --bootstrap "$BOOT" \
         "$AMPHP/test/IgnisDriverTest.php" > "$TMP/out-ignis-$i.txt" 2>&1
     rc=$?
@@ -122,9 +125,9 @@ run_variant() { # label env...
     echo "   $label: rc=$rc  $(summary "$TMP/out-var-$label.txt")"
     echo "           failing: $(failing "$TMP/out-var-$label.txt")"
 }
-run_variant no-stream-hook-only  "IGNIS_PHP_INI=$AMPHP/ignis.ini" "IGNIS_NO_STREAM_HOOK=1"
-run_variant no-park-only   "IGNIS_PHP_INI=$AMPHP/ignis.ini" "IGNIS_NO_UNIVERSAL_PARK=1"
-run_variant both-hooks-on        "IGNIS_PHP_INI=$AMPHP/ignis.ini"
+run_variant no-stream-hook-only  "IGNIS_PHP_INI=$TMP/ignis.ini" "IGNIS_NO_STREAM_HOOK=1"
+run_variant no-park-only   "IGNIS_PHP_INI=$TMP/ignis.ini" "IGNIS_NO_UNIVERSAL_PARK=1"
+run_variant both-hooks-on        "IGNIS_PHP_INI=$TMP/ignis.ini"
 run_variant no-ini               "IGNIS_NO_STREAM_HOOK=1" "IGNIS_NO_UNIVERSAL_PARK=1"
 echo
 

@@ -33,8 +33,6 @@ pub enum Op {
     Connect { host: String, port: u16, tls: Option<TlsOpts> },
     /// STARTTLS: wrap an open connection in TLS in place. Completes with `Ready` or `Error`.
     Upgrade { conn: u64, tls: TlsOpts },
-    /// Adopt an already-connected socket (a dup'd fd from `stream_socket_accept`, E6''). Completes with `Connected`.
-    Adopt { fd: i32 },
     /// A4 (ADR-0018): connect a `unix://` stream socket by path. Completes with `Connected`.
     /// Everything after the connect — the actor, reads, writes, close — is the tcp path unchanged,
     /// because `UnixStream` is just another `AsyncRead + AsyncWrite`.
@@ -66,7 +64,6 @@ impl std::fmt::Debug for Op {
             Op::TryRead { conn, max } => write!(f, "TryRead(conn={conn}, max={max})"),
             Op::Connect { host, port, tls } => write!(f, "Connect({host}:{port},tls={})", tls.is_some()),
             Op::Upgrade { conn, tls } => write!(f, "Upgrade({conn},{})", tls.server_name),
-            Op::Adopt { fd } => write!(f, "Adopt({fd})"),
             Op::ConnectUnix { path } => write!(f, "ConnectUnix({path})"),
             Op::Read { conn, max } => write!(f, "Read({conn},{max})"),
             Op::Write { conn, data } => write!(f, "Write({conn},{} bytes)", data.len()),
@@ -465,19 +462,6 @@ impl Reactor {
                         });
                     }
                     Op::Upgrade { conn, tls } => forward(&conns, conn, ConnCmd::Upgrade { id, tls }, id, &done_tx),
-                    Op::Adopt { fd } => {
-                        // SAFETY: the fd was dup'd by the PHP side for us; we own it from here.
-                        let std = unsafe { <std::net::TcpStream as std::os::fd::FromRawFd>::from_raw_fd(fd) };
-                        let outcome = match std.set_nonblocking(true).and_then(|_| tokio::net::TcpStream::from_std(std)) {
-                            Ok(stream) => {
-                                let _ = stream.set_nodelay(true);
-                                let meta = socket_meta(&stream);
-                                adopt(&conns, &next_conn, Box::new(stream), meta, done_tx.clone())
-                            }
-                            Err(e) => Outcome::Error(format!("adopt fd {fd}: {e}")),
-                        };
-                        let _ = done_tx.send(Completion { id, outcome });
-                    }
                     Op::Custom(fut) => {
                         tokio::spawn(async move {
                             let outcome = fut.await;
