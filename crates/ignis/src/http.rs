@@ -70,6 +70,11 @@ pub fn unregister(reactor: &Arc<Reactor>) {
     if let Some(registry) = REGISTRY.get() {
         registry.reactors.lock().unwrap().retain(|r| !Arc::ptr_eq(r, reactor));
     }
+    // E12': in-flight requests of a dying thread fail fast (500) instead of hanging.
+    let n = reactor.fail_pending();
+    if n > 0 {
+        tracing::warn!(pending = n, "php thread ended with requests in flight; answered 500");
+    }
 }
 
 /// Registers the calling thread's reactor as a request target and, on the

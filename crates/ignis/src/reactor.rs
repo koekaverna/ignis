@@ -526,6 +526,14 @@ impl Reactor {
         }
     }
 
+    /// The owning PHP thread is going away (script ended, fatal): every request it has not
+    /// answered gets its responder dropped, so hyper answers 500 / tonic answers an error now
+    /// instead of holding the connection until the client gives up (E12').
+    pub fn fail_pending(&self) -> usize {
+        let dropped = self.responders.lock().unwrap().drain().count() + self.streams.lock().unwrap().drain().count();
+        dropped
+    }
+
     /// Marks the owning PHP thread as alive (watchdog, ADR-0012).
     pub fn touch(&self) {
         self.last_active_us.store(self.created.elapsed().as_micros() as u64, Ordering::Relaxed);

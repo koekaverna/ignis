@@ -63,7 +63,9 @@ scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (-
 cargo build --release -p ignis && cargo nextest run     # binary + 8 unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
 scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7 (if amphp vendor present), E11, E12
 # E9: cargo build --release -p ignis --features temporal && bench/e9-temporal.sh   # needs /opt/gobin/temporal (built from temporalio/cli)
-# E10: bench/e10-grpc.sh (grpcurl + ghz from $GOPATH/bin); bench/e10-compare.sh  # Ignis vs pure tonic (examples/rust/grpc-baseline) vs RoadRunner (/home/user/cmp/rr)
+# E10: bench/e10-grpc.sh (grpcurl + ghz from $GOPATH/bin); bench/e10-compare.sh  # Ignis vs pure tonic (examples/rust/grpc-baseline) vs RoadRunner (/tmp/cmp/rr)
+# E14/E16/E6': bench/e14-pg.sh (PostgreSQL on 127.0.0.1); bench/e16-offload.sh 8 (offload pool + auto-routing); bench/e6-ssl.sh (ssl:// through the hook)
+# E15: bench/e15-phpt.sh, bench/e15-revolt.sh, bench/e15-swoole.sh --all, bench/e15-frankenphp.sh (also in CI); chaos: IGNIS_CHAOS=1 ./target/release/ignis <script>
 ./target/release/ignis --threads 4 examples/hello_server.php &  bench/wrk-hello.sh   # HTTP hello on :8080
 bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP worker vs php-fpm+nginx → bench/results/compare.md (URL_PATH=/cpu, IGNIS_THREADS_LIST="1 4")
 # backend (b): scripts/build-php-async.sh; PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis
