@@ -235,6 +235,10 @@ unsafe extern "C" fn hooked_select(ex: *mut sys::zend_execute_data, rv: *mut sys
         // seconds (null = forever), microseconds
         let secs_zv = arg(3);
         let timeout_us: Option<u64> = if zval::type_of(secs_zv) == sys::IS_NULL {
+            if n >= 5 && zval::type_of(arg(4)) != sys::IS_NULL {
+                orig(ex, rv); // ValueError: microseconds must be null when seconds is null
+                return;
+            }
             None
         } else {
             let secs = if zval::type_of(secs_zv) == sys::IS_LONG { (*secs_zv).value.lval.max(0) as u64 } else { 0 };

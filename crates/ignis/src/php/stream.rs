@@ -387,6 +387,7 @@ unsafe extern "C" fn op_cast(stream: *mut sys::php_stream, castas: c_int, ret: *
 }
 
 const OK: c_int = sys::PHP_STREAM_OPTION_RETURN_OK as c_int;
+const ERR: c_int = sys::PHP_STREAM_OPTION_RETURN_ERR as c_int;
 const NOTIMPL: c_int = sys::PHP_STREAM_OPTION_RETURN_NOTIMPL as c_int;
 
 unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, value: c_int, ptrparam: *mut c_void) -> c_int {
@@ -493,10 +494,30 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                 sys::add_assoc_bool_ex(arr, c"eof".as_ptr(), 3, (*s).eof && (*s).pos >= (*s).pending.len());
                 OK
             }
-            // Timeouts are the reactor's business; accept silently.
-            sys::PHP_STREAM_OPTION_READ_TIMEOUT | sys::PHP_STREAM_OPTION_CHECK_LIVENESS => {
+            // feof() on a stream with nothing buffered asks whether the peer is still there
+            // (xp_socket: poll + MSG_PEEK). Without this a `while (!feof($fp))` spins forever
+            // once the peer closed (bug70198).
+            sys::PHP_STREAM_OPTION_CHECK_LIVENESS => {
+                let s = sock_of(stream);
+                if (*s).eof {
+                    return ERR;
+                }
+                if (*s).pending.len() > (*s).pos || (*s).fd < 0 {
+                    return OK;
+                }
+                let mut pfd = libc::pollfd { fd: (*s).fd, events: libc::POLLIN | libc::POLLPRI, revents: 0 };
+                let ms: c_int = if value == -1 { 0 } else { value };
+                if libc::poll(&mut pfd, 1, ms) > 0 && pfd.revents & (libc::POLLIN | libc::POLLPRI | libc::POLLHUP | libc::POLLERR) != 0 {
+                    let mut b = [0u8; 1];
+                    let n = libc::recv((*s).fd, b.as_mut_ptr() as *mut c_void, 1, libc::MSG_PEEK | libc::MSG_DONTWAIT);
+                    if n == 0 || (n < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN)) {
+                        return ERR;
+                    }
+                }
                 OK
             }
+            // Timeouts are the reactor's business; accept silently.
+            sys::PHP_STREAM_OPTION_READ_TIMEOUT => OK,
             _ => NOTIMPL,
         }
     }

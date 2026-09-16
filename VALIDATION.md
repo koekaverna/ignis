@@ -801,7 +801,7 @@ fiber  ext/sockets/tests            118   75        5      38      (baseline 75)
 gate: all six >= baseline  (rc=0)
 ```
 
-`bench/results/e15-baseline.txt` raised to the new counts (fiber fibers 78, main streams 132, fiber streams 120). The 12 fiber-only stream failures that remain, classified: harness (stack traces include `phpt-harness.php`/`ignis.php` frames: bug77664, gh8409, user_streams_context_001; `open_basedir=.` rejects the harness path: bug70362) — *not applicable*; ours — bug60106-001/002 (unix-socket `stream_socket_get_name` on a hooked server socket), bug69521 and ghsa-3cr5-j632-f35r (error text for an invalid port / NUL host differs from stock), bug70198 (timeout, unexplored), stream_get_meta_data_socket_variation2 (`timed_out` after a read timeout is never set), stream_select_null_usec (the hook does not raise the "microseconds must be null" ValueError), gh14506 (`fclose` on STDIN/STDOUT should warn). The "not covered" line of V-26 no longer applies to the accept timeout.
+`bench/results/e15-baseline.txt` raised to the new counts (fiber fibers 78, main streams 132, fiber streams 120). The 12 fiber-only stream failures that remain, classified: harness (stack traces include `phpt-harness.php`/`ignis.php` frames: bug77664, gh8409, user_streams_context_001; `open_basedir=.` rejects the harness path: bug70362) — *not applicable*; ours — bug60106-001/002 (unix-socket `stream_socket_get_name` on a hooked server socket), bug69521 and ghsa-3cr5-j632-f35r (error text for an invalid port / NUL host differs from stock), stream_get_meta_data_socket_variation2 (`timed_out` after a read timeout is never set), gh14506 (`fclose` on STDIN/STDOUT should warn); **fixed right after this run** (2026-09-16T05:07:47Z): bug70198 — `feof()` on a hooked stream never asked the peer (`PHP_STREAM_OPTION_CHECK_LIVENESS` answered OK), so `while (!feof($fp))` spun at 100 % CPU forever (two such harness processes were found still running after the matrix; now poll + `MSG_PEEK` like xp_socket → PASS); stream_select_null_usec — the hook now lets the original raise the ValueError (the remaining diff is the harness frames in the stack trace → *not applicable*). The "not covered" line of V-26 no longer applies to the accept timeout.
 
 ## V-27 — H22e (E15e): Symfony and Doctrine suites under chaos scheduling (CONFIRMED)
 
@@ -818,4 +818,42 @@ suite=dbal                     stock/ignis/chaos×2   tests=3901 failures=1 erro
 Porter's full pass (same binary): http-kernel 1389 tests, 2 failures stock vs **3** under ignis/chaos; httpcache 103/103 in every mode with **222 539** forced yields and **445 363** noise interleavings under chaos (5 min of real `sleep()` parked on reactor timers); orm 3641 tests, 16 failures / 62 errors identical in every mode.
 
 **Claim: zero new failures from chaos** — every chaos count equals the plain-ignis count, both seeds agree. **One** test fails under ignis at all and not under stock: `CacheWarmerAggregateTest::testWarmupRecoversFromCorruptedDeprecationLog` runs `PHP_BINARY -- <script on stdin>`, a php-cli feature the embed binary lacks → *not applicable* (fails with chaos off too). Honest limits: dbal, orm and http-kernel never enter the Ignis loop (CPU + pdo_sqlite + files: 1–4 yields in total), so for them the result says only that the embed environment behaves; the scheduling claim rests on httpcache and http-foundation (sleep + ~30 hooked `tcp://` requests; the attribution probe with the hooks off drops the yields from 10 844 to 4). The 21 `PHP_BINARY -S` failures are worked around symmetrically (the two fixture servers are started on the stock CLI for every mode). 58/19 "separate process" errors come from the custom entry point (no `PHPUNIT_COMPOSER_INSTALL`) and are identical in all modes. Baseline failures (dbal 1, orm 16+62, http-kernel 2+26) are classified in research 20.
+
+## V-28 — quiet-box re-measurement after E13' (lazy swap), loop-scheduled GC and E12' (E1, E2', E12')
+
+Date: 2026-09-16T05:07:47Z. Binary: `target/release/ignis` rebuilt from `night-1` HEAD `b7fe7ca` (+ docs) once the E15e porter had released it; load average 1.2–2.0 on 4 vCPU (the two spinning bug70198 harness processes were killed first; before that E1 read 1294 ms and the smoke step failed). Every figure below is a fresh run, not a re-use.
+
+**E1** (`bench/php/e1_sleep_10k.php`, 10 000 fibers × 1000 ms, 3 reps):
+
+```
+wall_ms=1194.9 overhead_ms=194.9 peak_rss_kb=186368
+wall_ms=1175.4 overhead_ms=175.4 peak_rss_kb=186368
+wall_ms=1193.2 overhead_ms=193.2 peak_rss_kb=186368
+```
+
+Target < 1200 ms: met, by 5–25 ms. The cold margin has not improved since V-2 (1170–1190 ms then); under any contention it fails (V-2 addendum, and 1294 ms above). The warm pool remains the answer for services (V-4).
+
+**E2'** (`bench/php/e2_all.php`, N=10000, superglobals observer on/off × loop-scheduled GC on/off, 3 reps each; `all()` of 3 × 200 ms was 201.9–202.0 ms in every run):
+
+| observer | loop GC | per-fiber warm (µs) | per-fiber cold (µs) |
+|---|---|---|---|
+| on (default) | on (default) | 6.35 / 6.10 / 5.52 | 18.9 / 19.2 / 16.5 |
+| off (`IGNIS_NO_SUPERGLOBALS=1`) | on | 4.94 / 5.43 / 5.66 | 18.4 / 16.1 / 17.5 |
+| on | off (`IGNIS_LOOP_GC=0`) | 5.47 / 6.38 / 6.48 | 16.7 / 17.7 / 17.5 |
+| off | off | 6.71 / 5.76 / 6.18 | 19.0 / 17.3 / 17.6 |
+
+Reading: the observer's cost, **8.0–11.4 µs vs 4.5 µs** before the lazy swap (V-11 addendum), is now **≤ 0.7 µs and inside the run-to-run spread** (5.5–6.4 on vs 4.9–5.7 off) — E13' did what ADR-0011's follow-up asked. The E2' target itself (< 5 µs warm) is **not met** on this box in any combination (best single run 4.94 µs, medians 5.5–6.2 µs); the remaining cost is the pool/loop path, not the observer. Loop-scheduled GC makes no measurable difference here (this workload creates no cycles); the 3× cold variance of V-11 is gone (16–19 µs). Recorded as-is: E2' stays OPEN with the observer no longer the reason.
+
+**E12'** (`bench/e12-inflight.sh`, `--supervise --threads 1`, main binary):
+
+```
+/fatal -> 500 after 0.000877s
+in-flight /sleep?ms=3000 -> 500 after 0.303638s
+after respawn: / -> 200 after 0.000772s
+wall: 821 ms (a hang would be >= 3000 ms for the sleeping request)
+```
+
+Same as the side build in V-26 (0.30 s): the in-flight request on the dying thread gets its 500 the moment the thread unregisters, not after its 3 s sleep. E12' CONFIRMED on the main binary.
+
+`scripts/smoke.sh` on this binary: build, unit tests, hello, app.php, E2 green; E1 failed only while the two spinning harness processes loaded the box (1294 ms) and passed once they were gone (above); the remaining steps were not re-run inside smoke because it stops at the first failure — E12'/E13/E6/E11/E14 have their own fresh numbers tonight (V-26, V-28, V-25, V-21).
 
