@@ -16,9 +16,12 @@
  */
 #define _GNU_SOURCE
 #include <poll.h>
+#include <signal.h>
 #include <stddef.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -33,6 +36,14 @@ int ignis_park_connect(const void *ret, int fd, const struct sockaddr *addr, soc
 int ignis_park_nanosleep(const void *ret, const struct timespec *req, struct timespec *rem);
 int ignis_park_usleep(const void *ret, useconds_t us);
 unsigned ignis_park_sleep(const void *ret, unsigned s);
+/* stage 2 (ADR-0037 cycle 2) */
+int ignis_park_accept4(const void *ret, int fd, struct sockaddr *addr, socklen_t *alen, int flags);
+int ignis_park_select(const void *ret, int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv);
+int ignis_park_ppoll(const void *ret, struct pollfd *fds, nfds_t n, const struct timespec *ts, const sigset_t *mask);
+ssize_t ignis_park_recvmsg(const void *ret, int fd, struct msghdr *msg, int flags);
+ssize_t ignis_park_sendmsg(const void *ret, int fd, const struct msghdr *msg, int flags);
+ssize_t ignis_park_readv(const void *ret, int fd, const struct iovec *iov, int cnt);
+ssize_t ignis_park_writev(const void *ret, int fd, const struct iovec *iov, int cnt);
 
 ssize_t read(int fd, void *buf, size_t n) { return ignis_park_read(__builtin_return_address(0), fd, buf, n); }
 ssize_t write(int fd, const void *buf, size_t n) { return ignis_park_write(__builtin_return_address(0), fd, buf, n); }
@@ -45,3 +56,13 @@ int connect(int fd, const struct sockaddr *addr, socklen_t alen) { return ignis_
 int nanosleep(const struct timespec *req, struct timespec *rem) { return ignis_park_nanosleep(__builtin_return_address(0), req, rem); }
 int usleep(useconds_t us) { return ignis_park_usleep(__builtin_return_address(0), us); }
 unsigned sleep(unsigned s) { return ignis_park_sleep(__builtin_return_address(0), s); }
+int accept(int fd, struct sockaddr *addr, socklen_t *alen) { return ignis_park_accept4(__builtin_return_address(0), fd, addr, alen, 0); }
+int accept4(int fd, struct sockaddr *addr, socklen_t *alen, int flags) { return ignis_park_accept4(__builtin_return_address(0), fd, addr, alen, flags); }
+int select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv) { return ignis_park_select(__builtin_return_address(0), n, r, w, e, tv); }
+int ppoll(struct pollfd *fds, nfds_t n, const struct timespec *ts, const sigset_t *mask) { return ignis_park_ppoll(__builtin_return_address(0), fds, n, ts, mask); }
+/* _FORTIFY_SOURCE builds call poll through this; same policy row as `poll`. */
+int __poll_chk(struct pollfd *fds, nfds_t n, int timeout, size_t fdslen) { (void)fdslen; return ignis_park_poll(__builtin_return_address(0), fds, n, timeout); }
+ssize_t recvmsg(int fd, struct msghdr *msg, int flags) { return ignis_park_recvmsg(__builtin_return_address(0), fd, msg, flags); }
+ssize_t sendmsg(int fd, const struct msghdr *msg, int flags) { return ignis_park_sendmsg(__builtin_return_address(0), fd, msg, flags); }
+ssize_t readv(int fd, const struct iovec *iov, int cnt) { return ignis_park_readv(__builtin_return_address(0), fd, iov, cnt); }
+ssize_t writev(int fd, const struct iovec *iov, int cnt) { return ignis_park_writev(__builtin_return_address(0), fd, iov, cnt); }

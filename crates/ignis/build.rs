@@ -14,7 +14,11 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_UNIVERSAL_PARK").is_some() {
         println!("cargo:rerun-if-changed=csrc/park.c");
         cc::Build::new().file("csrc/park.c").opt_level(2).flag("-fno-builtin").compile("ignispark");
-        for s in ["read", "write", "recv", "send", "recvfrom", "sendto", "poll", "connect", "nanosleep", "usleep", "sleep"] {
+        for s in [
+            "read", "write", "recv", "send", "recvfrom", "sendto", "poll", "connect", "nanosleep", "usleep", "sleep",
+            // stage 2 (ADR-0037 cycle 2)
+            "accept", "accept4", "select", "ppoll", "__poll_chk", "recvmsg", "sendmsg", "readv", "writev",
+        ] {
             println!("cargo:rustc-link-arg=-Wl,-u,{s}");
             println!("cargo:rustc-link-arg=-Wl,--export-dynamic-symbol={s}");
         }
