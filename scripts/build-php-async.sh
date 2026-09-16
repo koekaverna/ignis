@@ -4,7 +4,7 @@
 set -euo pipefail
 BRANCH="${ASYNC_BRANCH:-async-core}"
 PREFIX="${PREFIX:-/opt/php86-async-zts}"
-SRC="${PHP_ASYNC_SRC:-/home/user/php-src-async}"
+SRC="${PHP_ASYNC_SRC:-$HOME/php-src-async}"
 JOBS="${JOBS:-$(nproc)}"
 
 if [ -x "$PREFIX/bin/php" ] && [ -f "$PREFIX/include/php/Zend/zend_async_API.h" ] \

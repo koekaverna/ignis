@@ -5,7 +5,7 @@
 set -euo pipefail
 PHP_TAG="${PHP_TAG:-php-8.5.10}"
 PREFIX="${PREFIX:-/opt/php85-zts}"
-SRC="${PHP_SRC:-/home/user/php-src}"
+SRC="${PHP_SRC:-$HOME/php-src}"
 JOBS="${JOBS:-$(nproc)}"
 
 # --disable-zend-signals: required by FrankenPHP (used as the E4 baseline against the same libphp).
