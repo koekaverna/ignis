@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T05:40Z, end of Cycle 10)
+# STATUS — Ignis (updated 2026-09-16T06:05Z, end of Cycle 11)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket. Every number below links to VALIDATION.md.
 
@@ -24,7 +24,8 @@
 | **E7** Revolt driver: Revolt + amphp/amp + amphp/socket examples unchanged | 7/8 byte-identical (1 timing race in the example), timer benchmarks ≤ 1× of StreamSelectDriver | V-13 |
 | **E11** client disconnect cancels request fiber + children; `Ignis\deadline()` | **0.78 ms** worst-case cancel latency, `finally` runs, no phantom work; 504 at 102 ms for a 100 ms deadline | V-14 |
 | **E5'** least-inflight dispatch, `/cpu` at 4 threads | p99 **12.4–12.8 ms** (FrankenPHP@4: 15.6 ms) at 9.1–9.3k req/s; two multi-thread bugs found and fixed (bind race, forged refcount flag on immutable arrays) | V-15 |
-| **E8** symfony/skeleton in worker mode via a `symfony/runtime` class, fiber-scoped RequestStack | 0/100 mismatches across suspensions; **7.8k req/s** through the full kernel on 1 thread; sessions disabled pending ext-session rebuild | V-16 |
+| **E8** symfony/skeleton in worker mode via a `symfony/runtime` class, fiber-scoped RequestStack, sessions on | 0/100 mismatches across suspensions; **7.2k req/s (1 thread) / 25.2k req/s (4 threads)** through the full kernel | V-16 |
+| **E12** fatal in one worker thread; CPU loop in one thread; supervisor respawn | fatal killed 1 of 4 workers, hello uninterrupted at 134k req/s, respawn within 50 ms, no opcache reset; spin stalled 1 thread, others 90k req/s p99 2.7 ms; recovery 96% | V-17 |
 
 ## REFUTED / INCONCLUSIVE and why
 
@@ -50,7 +51,7 @@ Zend allocates and frees a fresh mmap'd C stack per fiber; on a multi-threaded p
 ```
 scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (--disable-zend-signals) → /opt/php85-zts (idempotent, ~6 min)
 cargo build --release -p ignis && cargo nextest run     # binary + 8 unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
-scripts/smoke.sh                                       # hello, app.php, E1/E2 thresholds, 4 threads, E13 isolation, E6 fetch
+scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7 (if amphp vendor present), E11, E12
 ./target/release/ignis --threads 4 examples/hello_server.php &  bench/wrk-hello.sh   # HTTP hello on :8080
 bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP worker vs php-fpm+nginx → bench/results/compare.md (URL_PATH=/cpu, IGNIS_THREADS_LIST="1 4")
 # backend (b): scripts/build-php-async.sh; PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis
@@ -86,10 +87,10 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## Still open
 
-E9 (Temporal sdk-core), E10 (tonic gRPC), E12 (isolation/supervisor — Cycle 11 in progress), E14 (runtime-owned connection pool). Not started tonight: E9/E10/E14 are each a multi-hour build with new dependency trees (temporal sdk-core, tonic, tokio-postgres); the reactor's `Op`/`Outcome` seam and the C-park mechanism (ADR-0007) are the integration points for all three.
+E9 (Temporal sdk-core), E10 (tonic gRPC), E14 (runtime-owned connection pool). Not started tonight: each is a multi-hour build with a new dependency tree (temporal sdk-core, tonic, tokio-postgres) and, for E9/E14, a server this VM does not have; the reactor's `Op`/`Outcome` seam and the C-park mechanism (ADR-0007) are the integration points for all three.
 
 ## Ranked recommendation for the next 3 cycles
 
-1. **E12 isolation + supervisor** (in progress): fatal in one thread → that thread only; respawn without opcache reset; per-thread watchdog for CPU loops. Then the E8' items (sessions on, multi-cookie headers, 4-thread Symfony numbers).
-2. **E14 runtime-owned pgsql pool** via tokio-postgres: `Op::PgQuery` + a `PDO`-shaped PHP client; lease per fiber, transaction pins the lease, `DISCARD ALL` on return. Also the honest answer to the sqlite half of E6.
-3. **E6' `ssl://` + E10 tonic**: both ride the shared hyper/rustls stack; E10's server-streaming handler is the first use of a fiber that yields multiple responses.
+1. **E14 runtime-owned pgsql pool** via tokio-postgres: `Op::PgQuery` + a `PDO`-shaped PHP client; lease per fiber, transaction pins the lease, `DISCARD ALL` on return. Also the honest answer to the sqlite half of E6. Needs a PostgreSQL on the box (apt has it).
+2. **E10 tonic gRPC** on the shared hyper/h2 stack: unary first, then server-streaming (the first fiber that yields several responses through `ignis_respond`-style chunks); compare with RoadRunner's grpc plugin and ext-grpc.
+3. **E9 Temporal sdk-core**: research-first as the brief says (how sdk-python bridges core ↔ asyncio: the same "poll the core from the loop, complete activations from fibers" shape as ADR-0007); needs a Temporal dev server. Then E6' `ssl://`, E12' (500 for requests on a dying thread), E13' (lazy swap).

@@ -447,3 +447,14 @@ baseline: {"threads":4,"stalled":0,"restarts":0}   hello 133,153 req/s
 | throughput after fault + stall | 95.7% of baseline | ≥ 80% → CONFIRMED |
 
 Caveats: the request that triggered the fatal gets a closed connection (http 000), not a 500 — the dying thread's responders drop and hyper's error path closes; mapping that to 500 is a small follow-up. Requests in flight on the dying thread are lost the same way (E12'). A segfault in C would still take the process down (pain map: "remains true").
+
+### V-16 addendum — sessions enabled, libphp rebuilt with `session` + `iconv` (CONFIRMED)
+
+Date: 2026-09-16T06:0xZ. `config/packages/framework.yaml` restored to the skeleton's `session: true`; cache re-warmed; `bench/e8-symfony.sh` at 1 and 4 threads.
+
+| threads | `/whoami` interleaving (100 concurrent) | hello through the kernel, `wrk -t2 -c64 -d10s` |
+|---|---|---|
+| 1 | 0 mismatches | **7,205 req/s**, p99 11.74 ms |
+| 4 (`--threads 4`) | 0 mismatches | **25,201 req/s**, p99 6.56 ms |
+
+Server alive, 0 critical/fatal log lines. The skeleton is now byte-untouched apart from the `request_stack` service override, the demo controller and the adapter autoload line. `scripts/build-php.sh` carries `--enable-session --with-iconv`.

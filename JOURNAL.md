@@ -69,3 +69,4 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T00:26:30Z C10 REASSESS — E8' (sessions, multi-cookie, 4 threads); remaining open: E9, E10, E12, E14. Cycle 11 = E12 isolation + supervisor.
 - 2026-09-16T00:28:03Z C11 START — question: does a fatal or a long CPU loop in one thread leave the others serving; can the supervisor respawn that thread without an opcache reset (E12)?
 - 2026-09-16T00:29:40Z C11 VALIDATE — H19/E12 CONFIRMED (V-17): fatal kills one worker, respawned (restarts=1) with hello at 134k rps throughout; CPU spin stalls one thread (watchdog stalled=1), others 90k rps p99 2.7ms; recovery 95.7%.
+- 2026-09-16T00:31:07Z C11 REASSESS — E8 addendum with sessions on (7.2k/25.2k rps); open: E9/E10/E14 (research-first next); STATUS refreshed.
