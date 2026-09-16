@@ -3,7 +3,7 @@
 # Every key is optional; an unknown key is an error. Full reference: ignis.toml.example in the repo.
 
 # The image ships the hello server so `docker run` answers on its own. Point this at your app's
-# entry script (php/symfony/worker.php for Symfony) once it is mounted.
+# entry script once it is mounted (for Symfony: the app's own public/index.php — README.md#symfony).
 entry = "/opt/ignis/examples/hello_server.php"
 
 # Inside a container 127.0.0.1 is unreachable from the host, so the image binds all interfaces.

@@ -1,9 +1,16 @@
 <?php
-// Worker entry: the untouched symfony/skeleton public/index.php, with the two env knobs the embed SAPI lacks.
-require __DIR__ . '/../ignis.php';
-ini_set('memory_limit', '1G'); // pooled fibers × kernel: the default 128M is too small under load
-$_SERVER['SCRIPT_FILENAME'] = __DIR__ . '/app/public/index.php';
-$_SERVER['APP_RUNTIME'] = Ignis\Symfony\IgnisRuntime::class;
-$_SERVER['APP_ENV'] = getenv('APP_ENV') ?: 'prod';
-$_SERVER['APP_DEBUG'] = '0';
-require $_SERVER['SCRIPT_FILENAME'];
+// Retired (M3-2): this hardcoded app/public/index.php, which is wrong for any app not at that
+// exact path. Superseded by the ignis/runtime composer package (V-40, README.md#symfony).
+fwrite(STDERR, <<<'EOF'
+php/symfony/worker.php is retired. Migrate to the ignis/runtime composer package:
+
+composer config platform.php 8.5.10
+composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php","options":{"symlink":false}}'
+composer require ignis/runtime:@dev
+composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
+composer dump-autoload
+
+Then point ignis.toml's entry at your app's own public/index.php. See README.md#symfony (V-40).
+
+EOF);
+exit(2);

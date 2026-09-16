@@ -32,7 +32,7 @@ in `.env` does nothing; `var/` must be writable by the image's `ignis` user).
 from V-40 verbatim; no command in it references `php/symfony/worker.php`.
 **Constraints.** Do not invent numbers; link V-40 and V-16 for the ones you cite.
 
-### M3-2 Retire `php/symfony/worker.php` `agent` `in progress (batch 1)`
+### M3-2 Retire `php/symfony/worker.php` `agent` `done (validated by main: shim exits 2 with the migration note; references updated)`
 **What.** The wrapper with the hardcoded `app/public/index.php` is superseded by the composer
 package (V-40). Either delete it, or reduce it to a one-line shim that prints how to migrate and
 exits 2. Update every reference (`grep -rn worker.php bench scripts docs README.md`).
@@ -40,7 +40,7 @@ exits 2. Update every reference (`grep -rn worker.php bench scripts docs README.
 **Acceptance.** `grep -rn "symfony/worker.php" --include=*.sh --include=*.md --include=*.php . | grep -v JOURNAL | grep -v VALIDATION` is empty, or every hit is the migration note; `bench/e8-symfony.sh` still runs (it may need the package route — see M3-3).
 **Constraints.** JOURNAL/VALIDATION are history: never edit them to remove a mention.
 
-### M3-3 `bench/e8-symfony.sh` on the package route `agent` `in progress (batch 1)`
+### M3-3 `bench/e8-symfony.sh` on the package route `agent` `validating (script accepted by main; the number waits for a quiet-box re-run, and for M3-8 the comparable leg)`
 **What.** Make the E8 bench install the skeleton the way V-40 does (path repo, `platform.php`,
 `extra.runtime.class`, `dump-autoload`) instead of through `worker.php`, and keep its numbers
 comparable with V-16 (7.2k req/s at 1 thread / 25.2k at 4).

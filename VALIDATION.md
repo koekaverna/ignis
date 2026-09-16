@@ -1457,3 +1457,19 @@ Served with `ignis:local`, `threads = 2`, the skeleton at `/app`:
 
 Not done: the Laravel leg, and publishing `ignis/runtime` to Packagist (today it is a path
 repository).
+
+### V-40 addendum — three corrections to the recipe, found by M3-3 (agent), confirmed from the mechanism
+
+1. `composer require ignis/runtime:@dev` needs `--no-scripts` when composer runs on a PHP older
+   than 8.4 (the builder image's CLI is 8.3.6): `platform.php` satisfies the solver, but the
+   generated `vendor/composer/platform_check.php` checks the interpreter running Flex's
+   post-install `cache:clear`/`assets:install` hooks and fatals with "require a PHP version
+   >= 8.4.0". The V-40 run above did not hit it only because `symfony/runtime` had been required
+   before `ignis/runtime` entered the graph; the bench does it in the order a user would.
+2. With `--no-scripts` nothing creates `var/`; `mkdir -p var` before the `chmod`.
+3. Files composer writes as root in the bind-mounted directory cannot be removed from the host
+   without root; `bench/e8-symfony.sh` cleans up through the builder image.
+
+Numbers from the agent's run are **not** recorded here (rule C15); the bare skeleton answers `/`
+with the dev-mode welcome 404, so its throughput is a different quantity from V-16's prod-mode 200
+route — BACKLOG M3-8 adds the prod-mode leg before any comparison is drawn.

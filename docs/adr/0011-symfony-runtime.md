@@ -5,8 +5,9 @@ returns `IgnisWorkerRunner` for `HttpKernelInterface`; the runner calls `Ignis\s
 builds `Request::createFromGlobals()` (per-fiber superglobals) with the body, runs `handle()`/`terminate()`,
 and maps the Symfony Response to `Ignis\Http\Response`. `Ignis\Symfony\FiberRequestStack` keeps one stack
 per fiber via `Ignis\Scope`; it replaces the `RequestStack` service class in `config/services.yaml`.
-Entry: `php/symfony/worker.php` sets `SCRIPT_FILENAME` and `APP_RUNTIME` and requires the untouched
-`public/index.php`. Rejected: patching http-foundation; output-buffer capture of `send()` (per-thread OG).
+Entry: the skeleton's own untouched `public/index.php` (M3-2/M3-3, V-40: the old hardcoded worker
+shim is retired — the `ignis/runtime` composer package installs `extra.runtime.class` instead).
+Rejected: patching http-foundation; output-buffer capture of `send()` (per-thread OG).
 Pain-map: PHP-FPM 7 (bootstrap per request) ADDRESSED if V-16 holds; Swoole 8 (ecosystem) for Symfony.
 Kill criterion: any framework service that keeps request state outside RequestStack (e.g. session
 storage) leaking across interleaved requests → needs the fiber-scoped container generalised.

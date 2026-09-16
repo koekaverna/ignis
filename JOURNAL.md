@@ -328,3 +328,14 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   `/_ignis/health` + ADR-0019 and a `/stats` route (`budgetStats()` merged with resumes/idle/runtime);
   additive only. My re-run on :8132: the seven smoke routes answer 200,200,200,200,200,504,200 as
   before, `/stats` carries `budget`, health ok.
+- 2026-09-16T21:20Z — **M3-2 validated, M3-3 accepted as a script (sonnet, one agent for both).**
+  `php/symfony/worker.php` is a 17-line shim printing the migration note and exiting 2; the four
+  remaining references point at the app's own `public/index.php`. `bench/e8-symfony.sh` installs the
+  skeleton V-40's way inside the builder image — and the agent found three holes in that recipe
+  which README had just inherited verbatim: `--no-scripts` (composer's 8.3 CLI trips
+  `platform_check.php` in Flex's hooks even with `platform.php` pinned), `mkdir -p var`, and
+  root-owned cleanup through the image. Fixed in README, recorded as a V-40 addendum. The agent's
+  4.7k/13.4k req/s are **not recorded**: the bare skeleton answers the dev-mode 404, a different
+  quantity from V-16's prod 200 — BACKLOG M3-8 adds the prod leg; my re-run waits for a quiet box.
+  Batch 2 so far: H-2, H-3, H-7 validated and committed; M5-1's release workflow and
+  `scripts/release.sh` dry-run by me in a worktree.
