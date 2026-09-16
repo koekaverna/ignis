@@ -324,3 +324,7 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   a guarantee and it is Octane's own model — with a control run at budget 2 that must fail; M3-5b
   (`main`) is the ADR for a fiber-scoped container on the ADR-0006 observer. Option (b) dropped as
   the agent argued: strictly dominated.
+- 2026-09-16T21:00Z — **H-3 validated** (sonnet): `examples/app.php` gains a docblock line on
+  `/_ignis/health` + ADR-0019 and a `/stats` route (`budgetStats()` merged with resumes/idle/runtime);
+  additive only. My re-run on :8132: the seven smoke routes answer 200,200,200,200,200,504,200 as
+  before, `/stats` carries `budget`, health ok.

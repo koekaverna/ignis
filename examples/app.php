@@ -7,6 +7,10 @@
  * id that will validate it (→ E-n). It is executed by scripts/smoke.sh with
  * the parts that are not implemented yet guarded by feature checks, so the
  * file always runs; unimplemented parts are reported, never faked.
+ *
+ * The runtime answers `/_ignis/health` itself, never PHP: 200 while a worker is alive and not
+ * stalled, 503 otherwise (V-38). Admission control is ADR-0019: `budget.fibers` / `budget.queue`
+ * cap in-flight request fibers; past the queue depth the server answers 503 with `retry-after: 1`.
  */
 declare(strict_types=1);
 
@@ -84,6 +88,11 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
         })(),
+        '/stats'     => Response::json(array_merge(Ignis\Loop::budgetStats(), [                // admission control + fiber counters (✓ ADR-0019, V-37/V-38);
+            'resumes' => Ignis\Loop::$resumes,                                                  // set IGNIS_BUDGET_EXEMPT=/stats to keep it answering under load
+            'idle'    => Ignis\Loop::idleFibers(),
+            'runtime' => function_exists('ignis_stats') ? ignis_stats() : null,
+        ])),
         default      => Response::text("not found\n", 404),
     };
 }, $listen);

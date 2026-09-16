@@ -269,7 +269,7 @@ They hardcode `/home/user/ignis`. Generate them from templates at run time in `b
 and `bench/compare.sh` reaches the point where it needs `/opt/frankenphp-bin` (absent here) and
 says so, instead of failing on the path.
 
-### H-3 `examples/app.php` gains `/_ignis/health` mention and the budget `agent` `in progress (batch 2)`
+### H-3 `examples/app.php` gains `/_ignis/health` mention and the budget `agent` `done (validated by main: 7 routes unchanged, /stats has budget, health ok)`
 The API spec should show a handler reading `Ignis\Loop::budgetStats()` and the doc comment should
 say the runtime answers `/_ignis/health` itself. **Constraints.** "Change it only with intent"
 (CLAUDE.md): add, do not restructure; keep every existing route.
