@@ -66,6 +66,7 @@ E11 Cancellation: client disconnect cancels the request's Fiber and every pendin
 E12 Isolation: a fatal error or a deliberate 30s CPU loop in one Fiber affects only its thread; other threads keep serving; the supervisor restarts the thread without an opcache reset; pools and Table survive.
 E13 State: superglobals and a fiber-scoped container are swapped on every fiber switch via the zend_observer fiber-switch hook; two interleaved requests never observe each other's $_SERVER, $_POST or scoped services. A dev-mode leak detector reports any static that outlives its Fiber.
 E14 Connections: pool owned by the runtime; lease per Fiber; a transaction pins the lease; session reset on return (DISCARD ALL / COM_RESET_CONNECTION); a second acquire from the same pool inside one Fiber is an error, not a wait.
+E15 Compat (added by the owner during the night, 2026-09-16T01:55Z): run Zend/tests/fibers, ext/standard/tests/streams, ext/sockets/tests under ignis run-tests — report the pass rate, every failure classified (our bug / not applicable / upstream). Revolt DriverTest on IgnisDriver: 100%. Swoole swoole_runtime hook tests through an Ignis shim: report which hooks we lack. FrankenPHP testdata ported to integration tests. Symfony + Doctrine test suites in chaos mode (random fiber switch at every I/O point): zero new failures vs stock PHP.
 
 ### Cloud session rules (replace the git line under Morning deliverables)
 - Push after every commit. The VM can be reclaimed at any time; anything unpushed is lost.
