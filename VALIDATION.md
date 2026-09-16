@@ -615,3 +615,23 @@ Date: 2026-09-16T02:54:47Z. Source of the defects: the Swoole runtime-hook port 
 | `PHP_BINARY === ''` | `executable_location` set from `current_exe()` before `php_embed_init` | **not yet effective** (still empty); open |
 
 Swoole `swoole_runtime` (153 tests through `php/swoole/shim.php`), re-run by main after the first four fixes, under load average 25 (a C-core build and the phpt re-run shared the box, 15 tests hit the 20 s hang timeout): **PASS 44 / FAIL 79 / SKIP 30** (agent's pre-fix run: 42 / 81 / 30). The remaining blockers are the ones research 15 ranks: `Swoole\Coroutine\Socket` (36 tests), accept/stream_select inside fibers (19), file hooks (10), proc/pcntl (10), udp/unix transports (7). The sleep hook alone does not move the count because those tests also need the other hooks.
+
+## V-23 — E15a/c/d compat suites, agent-ported, re-run by the main agent (PARTIAL: E15b/e pending)
+
+Date: 2026-09-16T03:00:09Z. Ports: research 17 (php-src phpt, model=porter), research 15 (Swoole, model=main-spawned), research 16 (FrankenPHP, model=main-spawned). Every number below is from the main agent's own re-run on the live binary after the Cycle-17 fixes (V-22); the agents' pre-fix numbers are in their research docs.
+
+**E15a — php-src suites through `scripts/ignis-php` + `run-tests.php`** (`bench/e15-phpt.sh`; stock = `/opt/php85-zts/bin/php`, main = test in `{main}` under ignis, fiber = test included inside an Ignis fiber with hooks active):
+
+| suite | stock | ignis main | ignis fiber | main / stock |
+|---|---|---|---|---|
+| Zend/tests/fibers (110) | 108 pass, 0 fail, 2 skip | **108 / 0 / 2** | 77 / 31 / 2 | **100%** |
+| ext/sockets/tests (118) | 80 / 0 / 38 | **80 / 0 / 38** | 75 / 5 / 38 | **100%** |
+| ext/standard/tests/streams (160) | 138 / 0 / 22 | **131 / 7 / 22** | 116 / 22 / 22 | **94.9%** |
+
+Before the Cycle-17 fixes (porter's pinned run): main 108 / 79 / 124, fiber 77 / 74 / 102 — the server-socket fix and the STDIN/STDOUT/STDERR constants moved 8 main-mode and 15 fiber-mode tests to PASS. H22a's "≥ 95% of stock in main mode" holds for fibers and sockets and misses streams by one test (131 vs 131.1). Stock fails nothing → no *upstream* bucket. Remaining main-mode failures (7, all classified in research 17): `PHP_BINARY` empty (1, open in V-22), `open_basedir` applied to the primary script (1), proc_open of the php binary / CLI built-in server (5, not applicable). Fiber-mode failures are dominated by harness artifacts of include-inside-fiber (stack-trace tail, function scope for `global`, object ids) — 41 of the 73 distinct failures; real ones left: `stream_socket_get_name()`/`stream_select()` on hooked streams (`OP_GET_NAME` NOTIMPL, `cast` FAILURE) and `stream_type` reported as `ignis_tcp` instead of `tcp_socket`.
+
+**E15c — Swoole `tests/swoole_runtime` (153 tests) through `php/swoole/shim.php`** (`bench/e15-swoole.sh --all`): **PASS 44 / FAIL 79 / SKIP 30** (agent, pre-fix: 42 / 81 / 30; run under load 25 with 15 tests at the 20 s hang timeout, so a quiet re-run is owed). The hooks Ignis lacks, by tests blocked: `Swoole\Coroutine\Socket` / ext-sockets (36), accept and `stream_select` inside fibers (19), file hooks (10), proc/pcntl (10), udp/unix/udg transports (7); `sleep`/`usleep` are hooked now (V-22), `Runtime::enableCoroutine`/`Co\run`/`go`/`Co::sleep`/`WaitGroup`/`Channel`/`Timer` exist in the shim. Skips: 18 external hosts, 5 missing extensions (openssl/curl/pcntl), 7 Redis/MySQL/FTP fixtures.
+
+**E15d — FrankenPHP `testdata/*.php` through `php/classic.php`** (`bench/e15-frankenphp.sh`; three consecutive runs identical): **passed 29 / failed 4 / skipped 33**. The four failures are runtime gaps, not adapter bugs: no peer address in the request payload (`REMOTE_ADDR`/`REMOTE_PORT`), a single `Cookie` header kept and no PHP-style cookie-name mangling, `putenv()` persisting across requests, no multipart/`$_FILES`. Skips: 18 worker-mode/resident-state tests, 5 FrankenPHP-only functions, 8 Caddy directives or php.ini variants, 2 fixtures not reproducible over plain HTTP. The classic-mode adapter itself (script included per request in the fiber, output buffered, `header()`/`http_response_code()` mapped, `php://input` userland wrapper) is a new deliverable: Ignis can serve classic scripts.
+
+E15b (Revolt DriverTest) and E15e (Symfony/Doctrine chaos mode) are in progress / not started; CI (`.github/workflows/ci.yml`) now runs the phpt, Swoole and FrankenPHP suites with `scripts/ci-gate.sh` guarding these pass counts.

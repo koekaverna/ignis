@@ -28,6 +28,8 @@
 | **E12** fatal in one worker thread; CPU loop in one thread; supervisor respawn | fatal killed 1 of 4 workers, hello uninterrupted at 134k req/s, respawn within 50 ms, no opcache reset; spin stalled 1 thread, others 90k req/s p99 2.7 ms; recovery 96% | V-17 |
 | **E9 step 1** temporal-sdk-core (git) in a Rust binary against a locally built dev server | first activation polled and completed; run COMPLETED with the probe's payload | V-18 |
 | **E9** PHP workflow (2 activities + 500 ms timer) as a suspended fiber inside `ignis --features temporal`; deterministic replay | live run **COMPLETED in 1224 ms**, 5 activations, fiber kept alive between tasks; replay of the 22-event history **OK**; replay of the workflow without the timer **FAILS** with core's TMPRL1100 (negative control) | V-19 |
+| **E14** runtime-owned PostgreSQL pool, lease per fiber, transaction pins, one-round-trip reset | 200 fibers over 20 connections in **1046 ms** (ideal 1000); LeaseError with 0 ops; SET/temp do not leak; **112 µs/query**, 7.3k q/s on one thread | V-21 |
+| **E15a/c/d** compat: php-src phpt (fibers/sockets/streams) under ignis; Swoole runtime tests via a shim; FrankenPHP testdata via a classic-mode adapter | phpt main mode **108/108, 80/80, 131/138** of stock (0 upstream failures, every failure classified); Swoole 44/153 pass with the missing-hook ranking; FrankenPHP **29 pass / 4 fail / 33 n/a** | V-22, V-23 |
 | **E10** gRPC unary + server-streaming handlers in PHP on the same listener as HTTP (tonic framing, opaque-bytes codec); runtime-owned client parks the fiber | **16.7k req/s, p99 7.8 ms** on 1 PHP thread vs pure-tonic ceiling 21.1k / 6.3 ms vs RoadRunner grpc plugin 5.1k–11.4k / 12.6–17.8 ms (same box, same ghz load); 100 concurrent 200 ms calls: **215 ms** vs RR 5.03 s (4 workers); 100 Proxy calls each awaiting a 200 ms upstream: 217 ms | V-20 |
 
 ## REFUTED / INCONCLUSIVE and why
@@ -91,6 +93,10 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 ## Blocked downloads (network allowlist)
 
 `www.php.net`, `pecl.php.net` (403: no ext-grpc tarball; the C-core is built from the grpc/grpc git clone instead), `ppa.launchpadcontent.net` (ondrej PPA), `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works). Mirrors used: git clone for php-src, `index.crates.io` for crates, Ubuntu archive for tools.
+
+## CI
+
+`.github/workflows/ci.yml` (nextest + miri, smoke.sh with a Postgres service, E9 with the Temporal dev server, E15 matrix phpt/revolt/swoole/frankenphp gated by `scripts/ci-gate.sh` against `bench/results/e15-baseline.txt`); `php-image.yml` builds `ghcr.io/koekaverna/ignis-php:8.5.10-zts` from `scripts/build-php.sh`. Rule: compat and correctness suites run in CI; local runs are for VALIDATION numbers and perf.
 
 ## Still open
 
