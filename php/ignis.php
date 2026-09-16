@@ -292,7 +292,7 @@ final class Loop
                 }
                 // 3. nothing runnable: block on the reactor. A fiber parked inside a C hook
                 // (stream op, sleep) is not in $waiting but its op is in flight (E15c fix).
-                if (self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0) {
+                if (self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0 && self::$ready === [] && self::$pending === []) {
                     break;
                 }
                 if (self::$loopGc && (++self::$gcTick & 255) === 0 && gc_status()['roots'] >= self::$gcRoots) {
@@ -312,7 +312,9 @@ final class Loop
                     }
                     $events = $shuffled;
                 }
-                if ($events === [] && self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0) {
+                // ignis_poll() resumes C-parked fibers itself; a fiber they settled sits in $ready
+                // with nothing in flight — checking $ready here is what keeps a nested all() alive (E18-I1).
+                if ($events === [] && self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0 && self::$ready === [] && self::$pending === []) {
                     break;
                 }
                 foreach ($events as $id => $payload) {

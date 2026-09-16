@@ -96,10 +96,10 @@ echo "   failing: $(failing "$TMP/out-select-compat.txt")"
 echo
 
 # ---------------------------------------------------------------- ignis
-echo "-- [3] ignis binary, IgnisDriverTest.php (IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_SLEEP_HOOK=1), $REPS run(s)"
+echo "-- [3] ignis binary, IgnisDriverTest.php (IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_UNIVERSAL_PARK=1), $REPS run(s)"
 IGN_LINE=""
 for i in $(seq 1 "$REPS"); do
-    IGNIS_PHP_INI=$AMPHP/ignis.ini IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_SLEEP_HOOK=1 \
+    IGNIS_PHP_INI=$AMPHP/ignis.ini IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_UNIVERSAL_PARK=1 \
         timeout 300 "$BIN" "$TMP/phpunit-run.php" --no-configuration --bootstrap "$BOOT" \
         "$AMPHP/test/IgnisDriverTest.php" > "$TMP/out-ignis-$i.txt" 2>&1
     rc=$?
@@ -123,9 +123,9 @@ run_variant() { # label env...
     echo "           failing: $(failing "$TMP/out-var-$label.txt")"
 }
 run_variant no-stream-hook-only  "IGNIS_PHP_INI=$AMPHP/ignis.ini" "IGNIS_NO_STREAM_HOOK=1"
-run_variant no-sleep-hook-only   "IGNIS_PHP_INI=$AMPHP/ignis.ini" "IGNIS_NO_SLEEP_HOOK=1"
+run_variant no-park-only   "IGNIS_PHP_INI=$AMPHP/ignis.ini" "IGNIS_NO_UNIVERSAL_PARK=1"
 run_variant both-hooks-on        "IGNIS_PHP_INI=$AMPHP/ignis.ini"
-run_variant no-ini               "IGNIS_NO_STREAM_HOOK=1" "IGNIS_NO_SLEEP_HOOK=1"
+run_variant no-ini               "IGNIS_NO_STREAM_HOOK=1" "IGNIS_NO_UNIVERSAL_PARK=1"
 echo
 
 echo "== summary lines"

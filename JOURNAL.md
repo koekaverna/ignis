@@ -431,3 +431,5 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   writing: E18 is not "not started" (stage 1 is built and measured, V-45), and 0029's
   "accepted as policy" is set by main after reading the draft, not by the drafter.
 - 2026-09-16T17:10Z  ADR-0037 proposed: consolidation to three mechanisms (park/offload/context + one table); research 29 inventory measured, research 30 audit gate named; CI run on 5822e37 (E18 stage-1 code, feature off) green incl. E15 phpt.
+- 2026-09-16T17:36Z  ADR-0037 cycle 1: universal park default; `IGNIS_PARK` rows `lib[:symbol]`; sleep.rs deleted (V-22 gate 202/1001 ms through park, controls 2002/3000); research 30 group (b) audited; libpq out of the seed (E18-I1 = park × offload route). phpt gate running.
+- 2026-09-16T17:42Z  E18-I1 fixed (loop idle check ignored $ready; nested all() + C-parked fibers); H33 via bench script 308/301/303 ms; libpq joins the seed; phpt gate ok twice; target-park/ removed.

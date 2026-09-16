@@ -63,3 +63,9 @@ against today's 1,458 + ~250 deleted and ~750 added. The measured half of that s
   cannot be explained on a page today (ADR-0037 §3).
 - Row 1b cannot be counted without splitting `reactor.rs` by concern; that split is a
   prerequisite for measuring the deletion, not an estimate to keep.
+
+## Addendum — cycle 1 (ADR-0037 §6 step 3): row 3 deleted
+
+`php/sleep.rs` is gone: **−112 Rust lines, −7 `unsafe {`, −8 `unsafe fn`** (measured, V-46). Row 7
+grew by the `lib:symbol` policy grammar and a per-site trace. Tree after the cycle: see V-46's
+recount. Mechanisms a wait can take: 6.

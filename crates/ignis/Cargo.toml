@@ -50,7 +50,9 @@ cc = "1"
 [dev-dependencies]
 
 [features]
-# E18 (ADR-0020): interpose the blocking libc calls behind a fiber gate. Off by default until
-# H32–H36 are green; the overhead bench (H35) compares a build with it against one without.
+# E18 (ADR-0020): interpose the blocking libc calls behind a fiber gate. On by default since
+# ADR-0037 cycle 1 (it replaced the sleep hook); `--no-default-features` is the off build for the
+# overhead bench (H35), `IGNIS_NO_UNIVERSAL_PARK=1` the runtime off switch.
+default = ["universal-park"]
 universal-park = []
 temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-wkt-types"]

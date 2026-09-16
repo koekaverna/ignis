@@ -7,6 +7,9 @@
 //!    thread and nested call takes.
 //! 2. **Policy**: the caller's return address (captured by the C shim) is resolved with `dladdr`
 //!    once per call site and cached; only a library named in `IGNIS_PARK` (e.g. `libcurl,libpq`)
+//!    parks. An entry may name one interposed symbol — `libphp:usleep` — because libphp is built
+//!    with `-fvisibility=hidden` and `dladdr` cannot see its `zif_*` call sites (ADR-0037 §2: the
+//!    key is library × symbol; a call site calls exactly one symbol, so the per-site cache holds).
 //!    parks. The default for everyone else — libphp included — is `block`: delegating is always
 //!    semantically correct, parking wrongly is a hang (ADR-0018).
 //! 3. **Readiness first** (the A4 rule; H31's lesson that a reactor round trip costs ~100 µs at
@@ -43,8 +46,14 @@ thread_local! {
     static SITES: RefCell<HashMap<usize, bool>> = RefCell::new(HashMap::new());
 }
 
-/// Libraries allowed to park, from `IGNIS_PARK` (comma-separated basename prefixes). Empty = none.
-static LIBS: OnceLock<Vec<String>> = OnceLock::new();
+/// Policy rows from `IGNIS_PARK`: `lib` (every symbol) or `lib:symbol`, comma-separated basename
+/// prefixes. Unset = the seed below; set but empty = nothing parks.
+static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
+
+/// The default table (ADR-0037 §2): research 27's verdicts (libcurl, libpq, OpenSSL park) plus
+/// the libphp sleep group audited in research 30 group (b). libphp's other symbols stay `block`
+/// until research 30 has a row for them.
+const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto";
 
 /// `IGNIS_PARK_TRACE=1`: one stderr line per decision, for diagnosing a library that misbehaves
 /// under `park`. Off by default; the check is a `OnceLock<bool>` load.
@@ -57,11 +66,17 @@ fn trace(msg: &str) {
     }
 }
 
-fn libs() -> &'static [String] {
+fn libs() -> &'static [(String, Option<String>)] {
     LIBS.get_or_init(|| {
-        std::env::var("IGNIS_PARK")
-            .map(|v| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect())
-            .unwrap_or_default()
+        let v = std::env::var("IGNIS_PARK").unwrap_or_else(|_| SEED.to_string());
+        v.split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| match s.split_once(':') {
+                Some((l, sym)) => (l.to_string(), Some(sym.to_string())),
+                None => (s.to_string(), None),
+            })
+            .collect()
     })
 }
 
@@ -97,17 +112,17 @@ impl Drop for InHandler {
     }
 }
 
-/// `Some(guard)` only when this call may park: gate at 1 and the caller's library on the list.
-unsafe fn may_park(ret: *const c_void) -> Option<InHandler> {
+/// `Some(guard)` only when this call may park: gate at 1 and (caller's library, `sym`) on the list.
+unsafe fn may_park(ret: *const c_void, sym: &str) -> Option<InHandler> {
     if PARK.with(|p| p.get()) != 1 {
         return None;
     }
     PARK.with(|p| p.set(2));
     let guard = InHandler;
-    if unsafe { site_parks(ret) } { Some(guard) } else { None }
+    if unsafe { site_parks(ret, sym) } { Some(guard) } else { None }
 }
 
-unsafe fn site_parks(ret: *const c_void) -> bool {
+unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
     let key = ret as usize;
     if let Some(b) = SITES.with(|s| s.borrow().get(&key).copied()) {
         return b;
@@ -118,8 +133,12 @@ unsafe fn site_parks(ret: *const c_void) -> bool {
         if libc::dladdr(ret, &mut info) != 0 && !info.dli_fname.is_null() {
             let name = CStr::from_ptr(info.dli_fname).to_string_lossy();
             let base = name.rsplit('/').next().unwrap_or(&name).to_string();
-            libs().iter().any(|l| base.starts_with(l.as_str()))
+            let parks = libs().iter().any(|(l, s)| base.starts_with(l.as_str()) && s.as_deref().is_none_or(|s| s == sym));
+            trace(&format!("site {key:#x} {sym} from {base}: parks={parks}"));
+            parks
         } else {
+            // Not in any loaded object (JIT'd code, a trampoline): nothing to key a policy on.
+            trace(&format!("site {key:#x} {sym}: dladdr found no object, parks=false"));
             false
         }
     };
@@ -176,7 +195,7 @@ unsafe fn park_sleep(us: u64) -> bool {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mut c_void, n: usize) -> isize {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "read")
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
         {
@@ -189,7 +208,7 @@ pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize) -> isize {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "write")
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
         {
@@ -202,7 +221,7 @@ pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *c
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mut c_void, n: usize, flags: c_int) -> isize {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "recv")
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
@@ -216,7 +235,7 @@ pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_send(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize, flags: c_int) -> isize {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "send")
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
@@ -230,7 +249,7 @@ pub unsafe extern "C" fn ignis_park_send(ret: *const c_void, fd: c_int, buf: *co
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_recvfrom(ret: *const c_void, fd: c_int, buf: *mut c_void, n: usize, flags: c_int, addr: *mut c_void, alen: *mut c_uint) -> isize {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "recvfrom")
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
@@ -244,7 +263,7 @@ pub unsafe extern "C" fn ignis_park_recvfrom(ret: *const c_void, fd: c_int, buf:
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_sendto(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize, flags: c_int, addr: *const c_void, alen: c_uint) -> isize {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "sendto")
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
@@ -259,7 +278,7 @@ pub unsafe extern "C" fn ignis_park_sendto(ret: *const c_void, fd: c_int, buf: *
 pub unsafe extern "C" fn ignis_park_poll(ret: *const c_void, fds: *mut libc::pollfd, n: libc::nfds_t, timeout: c_int) -> c_int {
     unsafe {
         let real = |t: c_int| libc::syscall(libc::SYS_poll, fds, n as usize, t) as c_int;
-        let Some(_g) = may_park(ret) else { return real(timeout) };
+        let Some(_g) = may_park(ret, "poll") else { return real(timeout) };
         if timeout == 0 || n == 0 {
             return real(timeout);
         }
@@ -313,7 +332,7 @@ pub unsafe extern "C" fn ignis_park_poll(ret: *const c_void, fds: *mut libc::pol
 pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr: *const c_void, alen: c_uint) -> c_int {
     unsafe {
         let real = || libc::syscall(libc::SYS_connect, fd, addr, alen as usize) as c_int;
-        let Some(_g) = may_park(ret) else { return real() };
+        let Some(_g) = may_park(ret, "connect") else { return real() };
         let flags = libc::fcntl(fd, libc::F_GETFL);
         if flags < 0 || flags & libc::O_NONBLOCK != 0 {
             trace(&format!("connect fd={fd}: already non-blocking, forwarding"));
@@ -353,7 +372,7 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_nanosleep(ret: *const c_void, req: *const libc::timespec, rem: *mut libc::timespec) -> c_int {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "nanosleep")
             && !req.is_null()
         {
             let us = (*req).tv_sec as u64 * 1_000_000 + (*req).tv_nsec as u64 / 1000;
@@ -372,7 +391,7 @@ pub unsafe extern "C" fn ignis_park_nanosleep(ret: *const c_void, req: *const li
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_usleep(ret: *const c_void, us: c_uint) -> c_int {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "usleep")
             && park_sleep(us as u64)
         {
             return 0;
@@ -385,7 +404,7 @@ pub unsafe extern "C" fn ignis_park_usleep(ret: *const c_void, us: c_uint) -> c_
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_uint {
     unsafe {
-        if let Some(_g) = may_park(ret)
+        if let Some(_g) = may_park(ret, "sleep")
             && park_sleep(s as u64 * 1_000_000)
         {
             return 0;

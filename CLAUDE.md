@@ -40,7 +40,7 @@ Benches are one script per expectation (`bench/eN-*.sh`), each writing into VALI
 The second backend (true-async fork, ADR-0003) is a separate prefix and target dir:
 `scripts/build-php-async.sh` then `PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis` (enables `cfg(php_async_abi)` → `backend/async_core.rs`).
 
-Useful env: `IGNIS_THREADS`, `IGNIS_PHP_INI` (the embed SAPI has no `-d`/`-c`/`-n`), `IGNIS_CHAOS`/`IGNIS_CHAOS_P`/`IGNIS_CHAOS_SEED` (random fiber switch at every await point), `IGNIS_NO_STREAM_HOOK` / `IGNIS_NO_SLEEP_HOOK` / `IGNIS_NO_SUPERGLOBALS` (hook-off controls — every hook claim needs one), `IGNIS_LOOP_GC`.
+Useful env: `IGNIS_THREADS`, `IGNIS_PHP_INI` (the embed SAPI has no `-d`/`-c`/`-n`), `IGNIS_CHAOS`/`IGNIS_CHAOS_P`/`IGNIS_CHAOS_SEED` (random fiber switch at every await point), `IGNIS_NO_STREAM_HOOK` / `IGNIS_NO_SUPERGLOBALS` / `IGNIS_NO_UNIVERSAL_PARK` (hook-off controls — every hook claim needs one), `IGNIS_PARK` (the policy table: `lib` or `lib:symbol` rows, ADR-0037), `IGNIS_LOOP_GC`.
 
 ## Architecture
 
@@ -51,7 +51,7 @@ One process, two worlds that only ever exchange plain data over channels:
 
 `reactor.rs` is the only bridge. PHP calls `ignis_submit_*()` (an `Op`: Sleep/Connect/Read/Write/Upgrade/Custom…) and `ignis_poll(timeout)`; HTTP requests, gRPC calls, timer completions and offload answers all arrive on that one completion channel, so a PHP thread has **exactly one wait point**. Invariants: no Zend pointer ever crosses to tokio, PHP never awaits a tokio future, an `Op` is plain data.
 
-`crates/ignis/src/php/` is the FFI/Zend boundary — `embed.rs` (engine lifecycle, `!Send` `Engine`, `WorkerThread::attach` per thread), `module.rs` (the `ignis` internal module: `ignis_submit_sleep`, `ignis_poll`, `ignis_serve`, `ignis_respond`, …), `zval.rs`, `stream.rs` (tcp/ssl/tls factories replaced at MINIT so unmodified `file_get_contents`/`fsockopen` park the fiber), `sleep.rs`, `accept.rs`, `superglobals.rs` (zend_observer fiber-switch hook swapping `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` per fiber), `route.rs`. `crates/ignis-sys` is raw bindgen over the embed SAPI headers.
+`crates/ignis/src/php/` is the FFI/Zend boundary — `embed.rs` (engine lifecycle, `!Send` `Engine`, `WorkerThread::attach` per thread), `module.rs` (the `ignis` internal module: `ignis_submit_sleep`, `ignis_poll`, `ignis_serve`, `ignis_respond`, …), `zval.rs`, `stream.rs` (tcp/ssl/tls factories replaced at MINIT so unmodified `file_get_contents`/`fsockopen` park the fiber), `park.rs` + `csrc/park.c` (universal park, ADR-0020/0037: the interposed libc calls, on by default, policy from `IGNIS_PARK`), `accept.rs`, `superglobals.rs` (zend_observer fiber-switch hook swapping `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` per fiber), `route.rs`. `crates/ignis-sys` is raw bindgen over the embed SAPI headers.
 
 `php/ignis.php` is the userland scheduler: `Ignis\Loop` (fiber pool — parked Fibers are reused, which is the single biggest win of the project, V-4), `Future`, `async()`, `all()`, `sleep()`, `deadline()`, `Scope`, `serve()`. It is deliberately shaped like a Revolt driver (`php/amphp/src/IgnisDriver.php`). Integrations layer on top without new primitives: `php/pg/`, `php/offload/`, `php/grpc/`, `php/temporal/`, `php/symfony/`, `php/swoole/shim.php`, `php/classic.php`.
 

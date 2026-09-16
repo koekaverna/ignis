@@ -102,3 +102,21 @@ rejected | superseded-by; only the main agent sets "accepted"; every number cite
 "unmeasured"; owner estimates are labelled as such. Addenda over renumbering. One commit per ADR,
 pushed one at a time. Where the note and the record disagreed, the record won and the ADR says so
 (ADR-0020 addendum on E18's state; ADR-0009 addendum on `spawn()` semantics today).
+
+## 2026-09-16T17:36Z — ADR-0037 cycle 1: universal park is the default build; the sleep hook is deleted
+
+Owner: "Поехали чистить все ненужное" (2026-09-17) after ADR-0037 — read as the go for §6 and as
+the pending "park default" decision. Done in this cycle: `universal-park` is a default Cargo feature
+(`--no-default-features` is the off build for H35, `IGNIS_NO_UNIVERSAL_PARK=1` the runtime switch);
+`IGNIS_PARK` rows are `lib` or `lib:symbol` because libphp is built with `-fvisibility=hidden` and
+`dladdr` sees only its library (measured: `zif_usleep`, `zif_sleep`, `php_select` absent from
+dynsym; 1,937 `zif_*` in the static symtab). Seed when `IGNIS_PARK` is unset:
+`libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto` — research 27's
+verdicts plus the libphp sleep group audited in research 30 (b). libpq was held out for an hour
+while E18-I1 was open; I1 turned out to be the scheduler's idle checks ignoring `$ready`/`$pending`
+(`ignis_poll()` resumes C-parked fibers itself, so a nested `all()` inside an outer fiber broke out
+of the loop with the outer fiber ready and nothing in flight) — pre-existing, the old sleep hook
+showed it too; fixed in `php/ignis.php`, so libpq is in the seed. `sleep.rs` (112 lines, 7 `unsafe {`, 8
+`unsafe fn`) and `IGNIS_NO_SLEEP_HOOK` are deleted; V-22's gate script passes through park with
+both off-controls blocking (V-46). The "PHP function" policy column is not built: no row needs it
+yet.

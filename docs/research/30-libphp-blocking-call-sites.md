@@ -1,7 +1,22 @@
 # 30 — libphp's blocking call sites: a symbol-level audit (placeholder; ADR-0037 §5)
 
-Status: **not done**. This document exists so the gate in ADR-0037 §6 step 2 has a name; nothing
-below is a result.
+Status: **group (b) done, the rest not started**. This document exists so the gate in ADR-0037 §6
+step 2 has a name.
+
+## Group (b) — `sleep` / `usleep` / `nanosleep` in libphp (audited 2026-09-17, php-8.5.10)
+
+`grep -rnE '\b(usleep|nanosleep|sleep)\(' main Zend TSRM ext/standard ext/sockets ext/openssl
+ext/opcache ext/session ext/pcntl` over the compiled tree (`--disable-all` + ADR-0027 §4's list):
+
+| symbol | call site | lock held on the path | verdict |
+|---|---|---|---|
+| `sleep` | `ext/standard/basic_functions.c` `PHP_FUNCTION(sleep)` → `php_sleep` = `sleep` (`main/php.h:264`) | none — PHP function body | park |
+| `usleep` | `ext/standard/basic_functions.c:1154` `PHP_FUNCTION(usleep)` | none | park |
+| `nanosleep` | `ext/standard/basic_functions.c:1182` (`time_nanosleep`), `:1233` (`time_sleep_until`) | none | park |
+| `usleep` | `main/streams/plain_wrapper.c:446` | — | not compiled on Linux (`PeekNamedPipe`, Windows pipe read-ahead) |
+| `usleep` | `ext/opcache/ZendAccelerator.c:863`, `:874` in `kill_all_lockers()` ← `accel_is_inactive()` (`:935`) ← `ZEND_RINIT_FUNCTION(zend_accelerator)` (`:2652`) between `zend_shared_alloc_lock()` (`:2713`) and unlock (`:2759`) | **yes, the opcache SHM lock** — but the site runs in RINIT on the main fiber (gate 0 → the real `usleep`), and only when *another process* holds the lock | park (unreachable inside a fiber under this runtime; revisit if RINIT ever runs in a fiber) |
+
+Test: V-46 — V-22's gate through park with the hook deleted.
 
 ## Question
 

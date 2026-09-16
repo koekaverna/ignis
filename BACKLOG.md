@@ -185,7 +185,7 @@ and prints `e18: curl_100x200ms wall_ms=<≈20000> …`, `e18: pgsql_100x200ms w
 `e18: overhead_ns delta=<≈0>`; WRITEFUNCTION fiber identity is recorded per transfer (today: all
 in the main fiber or each in its own — report which, that is a fact about offload-off blocking).
 
-### E18-I1 `bench/php/e18_pgsql.php` exits 0 and prints nothing under the park build `main` `open`
+### E18-I1 `bench/php/e18_pgsql.php` exits 0 and prints nothing under the park build `main` `done (2026-09-17, V-46): the loop's idle checks ignored $ready/$pending — ignis_poll() resumes C-parked fibers itself, the fiber they settle waits in $ready with nothing in flight, and a nested all() inside an outer fiber broke out of the loop; pre-existing (the old sleep hook showed it too), not an offload interaction; fixed in php/ignis.php; H33 through the bench script: 308/301/303 ms`
 **What.** Under `target-park` with `IGNIS_PARK=libpq` the agent's bench runs its 100 connections
 (the trace shows 100 forwarded `connect`s and 398 `poll` wake-ups), then exits 0 with **zero
 bytes on stdout and stderr**; the default build prints `e18: pgsql_100x200ms …`. Not a `write`
@@ -218,7 +218,7 @@ wrapper is a second mechanism for the same call. Ordered by what each deletion r
 5. **Not wrappers, stay:** `superglobals.rs`, `route.rs`, `embed.rs`, the Revolt driver's `ignis_watch`.
 **Acceptance.** For each deletion: the suites and benches that validated the wrapper (V-12/V-22/V-25/V-26/V-29 for the hook family, V-24 for routing) give the same numbers through universal park, with the hook-off control now being `IGNIS_NO_UNIVERSAL_PARK=1`.
 
-### E18-I Implementation `main` `stage 1 built (V-45): read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep; H32 curl 279–337 ms, H33 pgsql 296–333 ms at N=100 (controls 20 s); feature off by default; stage 2 (getaddrinfo/select/accept/vectored/__poll_chk, ECANCELED, per-symbol policy) open`
+### E18-I Implementation `main` `default build since ADR-0037 cycle 1 (V-46: sleep.rs deleted, lib:symbol policy, seed table); stage 1 built (V-45): read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep; H32 curl 279–337 ms, H33 pgsql 296–333 ms at N=100 (controls 20 s); feature off by default; stage 2 (getaddrinfo/select/accept/vectored/__poll_chk, ECANCELED, per-symbol policy) open`
 C shim per exported symbol (captures `__builtin_return_address(0)`, calls into Rust) built by
 `cc` in `crates/ignis/build.rs`; Rust side in `crates/ignis/src/park/`; feature-gated
 (`universal-park`) so the overhead bench has its control build; `IGNIS_PARK_POLICY=libcurl=park,libpq=park`

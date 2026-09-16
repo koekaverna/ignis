@@ -156,9 +156,11 @@ LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis serve examples/hello_s
 | Symfony via `symfony/runtime` | worker mode, fiber-scoped `RequestStack`, sessions | V-16 |
 | Revolt / AMPHP | `Ignis\Revolt\IgnisDriver` runs the examples unchanged | V-13, V-23 |
 
-Every hook has an off switch (`IGNIS_NO_STREAM_HOOK`, `IGNIS_NO_SLEEP_HOOK`, `IGNIS_NO_SOCKETS_HOOK`,
+Every hook has an off switch (`IGNIS_NO_STREAM_HOOK`, `IGNIS_NO_SOCKETS_HOOK`, `IGNIS_NO_UNIVERSAL_PARK` + the `IGNIS_PARK` table,
 `IGNIS_NO_SSL_HOOK`, `IGNIS_NO_UNIX_HOOK`, `IGNIS_NO_ACCEPT_HOOK`, `IGNIS_NO_SUPERGLOBALS`) — a
-claim about a hook is only ever made against its control.
+claim about a hook is only ever made against its control. `IGNIS_PARK` is the policy table
+(ADR-0037): comma-separated `lib` or `lib:symbol` rows naming what may park; unset = the built-in
+seed (`libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto`), empty = nothing.
 
 ## Where it is
 

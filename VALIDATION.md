@@ -1632,3 +1632,94 @@ Open from this stage: E18-I1 (`bench/php/e18_pgsql.php` exits 0 silently under p
 writing to stdout works, so the cause is elsewhere).
 phpt on the park build, absolute `IGNIS_BIN`, gate on, `IGNIS_PARK=libcurl,libpq`: **identical to
 the default build** — fibers 108/78, sockets 91/84, streams 133/125. Stage 1 is gated.
+
+## V-46 — ADR-0037 cycle 1: universal park is the default build, `sleep.rs` deleted, E18-I1 fixed (CONFIRMED)
+
+Date: 2026-09-16T17:43:48Z. Machine: WSL2 (6.18.33), quiet except where noted; `df` 10 % used. Binary:
+`target/release/ignis` from the cycle-1 tree (feature `universal-park` default; `park.c` linked;
+`nm` shows 11 `ignis_park_*` handlers and the interposed `read/poll/usleep/nanosleep/sleep` in
+dynsym). PHP 8.5.10 ZTS at `/opt/php85-zts`.
+
+**Why the policy key is `lib:symbol`.** `nm -D /opt/php85-zts/lib/libphp.so` has no `zif_usleep`,
+`zif_sleep`, `php_sleep`, `zif_socket_recv`, `php_sockop_read`, `php_select` (only `PHPAPI` names
+such as `_php_stream_read`, `php_network_connect_socket`); the static symtab has 1,937 `zif_*`.
+libphp is built `-fvisibility=hidden`, so `dladdr` resolves a libphp return address to the library
+only. The interposed symbol is known at the call, and a call site calls exactly one symbol, so the
+per-site cache keyed by return address still holds.
+
+**V-22's gate through park, hook deleted** (`bench/php/e15_fixes_sleep.php`, 10 fibers ×
+`usleep(200000)`; 3 × `sleep(1)`):
+
+| env | usleep leg | sleep leg |
+|---|---|---|
+| none (seed) — 5 runs | **202, 202, 202, 202, 202 ms** | **1001 ms** |
+| `IGNIS_NO_UNIVERSAL_PARK=1` (runtime off) | 2002 ms | 3000 ms |
+| `IGNIS_PARK=` (empty table) | 2002 ms | 3001 ms |
+
+Runs made with `env "$multi_word"` were discarded: zsh does not word-split an unquoted variable,
+so `IGNIS_NO_SLEEP_HOOK` received the value `1 IGNIS_PARK=libphp` and the table stayed empty — the
+"anomaly" those runs showed was the shell, not the binary. Every number above uses explicit
+assignments.
+
+**Suites on the new binary.** `cargo nextest run --workspace`: 10/10 (twice). `bench/e15-phpt.sh` +
+`scripts/ci-gate.sh phpt` (run twice, before and after the `ignis.php` fix; identical):
+
+| suite | stock | main (baseline) | fiber (baseline) |
+|---|---:|---:|---:|
+| Zend/tests/fibers | 108 | 108 (108) | 78 (78) |
+| ext/standard/tests/streams | 139 | 133 (133) | 125 (124) |
+| ext/sockets/tests | 91 | 91 (89) | 84 (83) |
+
+Gate exit 0, six cells ≥ baseline, three above it (baseline left as is; CI decides whether the
+gain is stable).
+
+**Deletion, measured.** `php/sleep.rs`: −112 lines, −7 `unsafe {`, −8 `unsafe fn`. Tree after:
+Rust **6,230** lines (from 6,326; `park.rs` grew by the grammar and a per-site trace), **180**
+`unsafe {` (from 187), **146** `unsafe fn` (from 154). `IGNIS_NO_SLEEP_HOOK` is gone; the revolt
+bench's "no sleep hook" variant became `IGNIS_NO_UNIVERSAL_PARK=1`.
+
+**Research 30 group (b)** (libphp's `sleep`/`usleep`/`nanosleep` call sites, php-8.5.10): three in
+`ext/standard/basic_functions.c` PHP-function bodies with no lock; `main/streams/plain_wrapper.c:446`
+is Windows-only; `ext/opcache/ZendAccelerator.c:863/874` sits under `zend_shared_alloc_lock()` in
+`ZEND_RINIT_FUNCTION(zend_accelerator)` — RINIT, main fiber, gate 0, so it forwards. Verdict `park`
+for the group.
+
+**E18-I1, found and fixed.** `bench/php/e18_pgsql.php` (outer fiber → 100 inner fibers → `new PDO`
++ `pg_sleep(0.2)` → `Ignis\all()` inside the outer fiber) exited 0 with no output under park.
+`RUST_LOG=ignis=debug`: "stream completion with no parked fiber" ×100 after the loop had left.
+Cause: both idle checks in `Loop::runUntil()` tested `$waiting`, `$requestHandler` and
+`ignis_inflight()` only; `ignis_poll()` resumes C-parked fibers itself, the inner fiber's
+`resolve()` puts the outer fiber in `$ready`, and with nothing in flight the loop broke out.
+Reproduced with `usleep` under park, with the *old* sleep hook (pre-existing, not cycle 1's) and
+with the offload route off (not an offload interaction); V-45's flat script never hit it because
+its top-level `all()` stops on `$stop()`. Fix: the checks also require `$ready === [] && $pending
+=== []`. After:
+
+| script | env | wall |
+|---|---|---|
+| nested probe, 10 × `usleep(200000)` | seed | 201 ms (before: silent exit) |
+| nested probe, 10 × pgsql `pg_sleep(0.2)` | seed, `IGNIS_NO_OFFLOAD_ROUTE=1` | 208, 209 ms (before: silent exit) |
+| `e18_pgsql.php` n=100 | `IGNIS_PARK=libpq IGNIS_NO_OFFLOAD_ROUTE=1` ×3 | **308, 301, 303 ms**, ok=100 (H33 through the project bench, not only V-45's scratch script) |
+| `e18_pgsql.php` n=100 | seed, route off | 303 ms |
+| `e18_pgsql.php` n=100 | seed, offload route on (the default product path) | 326 ms |
+| `e18_pgsql.php` n=10 | `IGNIS_PARK=` (off) | 2055 ms, ok=10 (blocks: control) |
+
+**Perf gate (ADR-0037 §4).** E1/E2 on the park build: V-45 addendum (1,175.9 ms / 201.03 ms,
+inside V-28's ±1 % band). E4/E5 on vs off: addendum below.
+
+### V-46 addendum — park on vs off, same box, back to back (2026-09-17)
+
+Off build: `CARGO_TARGET_DIR=target-nopark cargo build --release -p ignis --no-default-features`
+(`nm`: 0 `ignis_park_*`). Load average 3.6–4.2 during the runs (smoke and the off build had just
+finished) — **not a quiet box**; the on/off comparison is back-to-back under the same conditions,
+the absolute numbers are not the V-6/V-28 ones.
+
+| expectation | park on (default) | park off | note |
+|---|---|---|---|
+| E1 `e1_sleep_10k.php` N=10000 MS=1000, wall ms ×3 | 1154.6 / 1143.4 / 1145.2 | 1188.0 / 1165.0 / 1144.5 | both < 1200; on ≤ off |
+| E2 `e2_all.php` N=10000: all3x200 ms, warm µs/fiber ×3 | 201.72 / 201.61 / 200.86; 3.68 / 3.69 / 3.62 | 200.71 / 201.77 / 200.73; 3.32 / 3.72 / 3.64 | identical within noise |
+| E5 `e5_cpu.php` 4 threads, ms per thread ×3 | 38.8–42.1 (one outlier), typically 38.8–39.5 | 38.6–39.8 | identical |
+| E4 `hello_server` 1 thread, `wrk -t2 -c64 -d10s`, 1 run | **58,208 req/s**, p99 1.78 ms | **59,115 req/s**, p99 1.78 ms (60 timeouts) | −1.5 % on, single run, loaded box: indicative; the quiet three-run band is the next addendum |
+
+Gate cost stays consistent with research 28 (≈8 ns per interposed call): nothing here is
+distinguishable from noise. ADR-0037 §7's E4/E5 band from three quiet runs: pending.

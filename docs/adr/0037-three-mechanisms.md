@@ -114,3 +114,12 @@ exceptions.
 | outside the three | reason | since |
 |---|---|---|
 | (none yet) | | |
+
+## Progress
+
+- **Cycle 1 (2026-09-17, V-46)** — park is the default build; `IGNIS_PARK` rows are `lib[:symbol]`
+  (libphp is `-fvisibility=hidden`: `dladdr` sees the library, not `zif_*`); seed =
+  `libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto`; research 30 group
+  (b) audited; **§6 step 3: `sleep.rs` deleted** (−112 lines, −7 `unsafe {`), V-22's gate through
+  park with both off-controls blocking; phpt gate ≥ baseline in all six cells. E18-I1 turned out to
+  be the scheduler's idle check ignoring `$ready` — fixed, not park's. Mechanisms: 6.

@@ -84,7 +84,7 @@ wall=$(sed -E 's/.*wall_ms=([0-9.]+).*/\1/' <<<"$out")
 awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || { echo "E1 FAILED: wall_ms=$wall"; exit 1; }
 echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 $T ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
 echo "== E13 (isolation)"; $T ./target/release/ignis bench/php/e13_isolation.php
-echo "== E15 fixes (sleep hook, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
+echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
 echo "== E13 (200 concurrent HTTP)"; timeout 120 bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 timeout 120 bench/e6-fetch.sh | tail -2
 if [ -d php/amphp/vendor ]; then echo "== E7 (Revolt/AMPHP examples, both drivers; fiber-local-manual is a known timing race)"; timeout 120 bench/e7-revolt.sh | grep -E "^(DIFFER|e7)" || true; else echo "== E7 skipped (run: cd php/amphp && composer install --prefer-source)"; fi

@@ -11,9 +11,9 @@ Status: **accepted** (main agent, owner ADR sweep 2026-09-17); **superseded-by A
 | layer | what it catches | evidence |
 |---|---|---|
 | 1. Revolt driver (`Ignis\Revolt\IgnisDriver`) | AMPHP and anything written against Revolt — unchanged | V-13 (7/8 examples byte-identical), V-23 (DriverTest = StreamSelectDriver, gate revolt.pass 80) |
-| 2. php_stream / ext/sockets hooks | anything on php_stream: `file_get_contents('http://…')`, `fsockopen`, `ssl://`/`tls://`/`unix://`, STARTTLS, `stream_select`, `stream_socket_accept`, mysqlnd, the nine `ext/sockets` calls, `sleep()`/`usleep()` | V-12, V-25, V-26, V-29, V-22 |
+| 2. php_stream / ext/sockets hooks | anything on php_stream: `file_get_contents('http://…')`, `fsockopen`, `ssl://`/`tls://`/`unix://`, STARTTLS, `stream_select`, `stream_socket_accept`, mysqlnd, the nine `ext/sockets` calls | V-12, V-25, V-26, V-29 |
 | 3. offload workers | what never touches php_stream: `curl_*`, `PDO`/`SQLite3`, C SDKs, CPU-heavy calls | V-24 (100 × 200 ms bounded by the pool size, copy 13–67 µs) |
-| 4. universal park (ADR-0020) | the syscall layer under any C library on a `park` policy | V-45 (curl_exec, pdo_pgsql ≈ 300 ms for 100 × 200 ms; feature off by default) |
+| 4. universal park (ADR-0020) | the syscall layer under any C library on a `park` policy — since ADR-0037 cycle 1 also `sleep()`/`usleep()`/`time_nanosleep()` in libphp (the sleep hook is gone) | V-45 (curl_exec, pdo_pgsql ≈ 300 ms for 100 × 200 ms), V-46 (default build) |
 
 ## Options considered
 
