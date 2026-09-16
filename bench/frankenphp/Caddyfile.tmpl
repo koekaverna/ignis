@@ -1,0 +1,19 @@
+{
+	frankenphp {
+		num_threads {$NUM_THREADS}
+		worker {
+			file @@ROOT@@/bench/frankenphp/index.php
+			num {$WORKER_NUM}
+		}
+	}
+	admin off
+	auto_https off
+	log {
+		level ERROR
+	}
+}
+
+http://127.0.0.1:8081 {
+	root @@ROOT@@/bench/frankenphp
+	php_server
+}

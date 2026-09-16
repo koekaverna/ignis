@@ -91,6 +91,17 @@ each other's `app()`; then M3-5a's control run passes at `budget.fibers = 1024`.
 **Constraints.** `main` (`superglobals.rs`, an `unsafe` observer hook). ADR first, with the kill
 criterion from research 25.
 
+### M3-8 Prod-mode Symfony leg for the E8 bench and the recipe `agent` `open`
+**What.** The V-40 recipe and `bench/e8-symfony.sh` (M3-3) serve the skeleton in dev mode: `/` is
+the welcome **404** with the profiler on, so its req/s is not V-16's quantity (prod-mode 200 on a
+real route, 7.2k/25.2k). Add to the bench a second leg: `.env.local` with `APP_ENV=prod
+APP_DEBUG=0`, a minimal `src/Controller/HelloController.php` answering `/` with 200, cache warmed
+by the first request, then the same `wrk` shape; print both legs. README's Symfony section already
+says dev mode is the default — link the bench.
+**Acceptance.** The bench prints `dev-404` and `prod-200` lines for 1 and 4 threads; the prod-200
+numbers are within the run-to-run spread of V-16's on this box when the orchestrator re-runs them
+(if they are not, that is a finding, not a failure of this item).
+
 ### M3-6 Publish `ignis/runtime` to Packagist `main` `open`
 **What.** Packagist submission of `php/composer.json` (`ignis/runtime`), a tag that composer can
 resolve, and the README recipe switched from the path repository to `composer require ignis/runtime`.
@@ -263,7 +274,7 @@ same `ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"` + content-based readiness that the
 benches got (commit 52e81a5). **Acceptance.** `grep -rln "127.0.0.1:8080" bench examples php --include=*.sh --include=*.php`
 lists only files where it is the *default* inside `${IGNIS_LISTEN:-…}` or `getenv(...) ?: ...`.
 
-### H-2 `bench/frankenphp/Caddyfile` and `bench/fpm/nginx.conf` paths `agent` `in progress (batch 2)`
+### H-2 `bench/frankenphp/Caddyfile` and `bench/fpm/nginx.conf` paths `agent` `done (validated by main: templates render, stops with a clear message at the missing frankenphp binary)`
 They hardcode `/home/user/ignis`. Generate them from templates at run time in `bench/compare.sh`
 (`sed` the repo root in) so the comparison runs on any checkout. **Acceptance.** `bash -n` passes
 and `bench/compare.sh` reaches the point where it needs `/opt/frankenphp-bin` (absent here) and
