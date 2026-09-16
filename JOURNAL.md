@@ -430,3 +430,4 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   is the index; ROADMAP has an ADR map. Two owner statements corrected against the record while
   writing: E18 is not "not started" (stage 1 is built and measured, V-45), and 0029's
   "accepted as policy" is set by main after reading the draft, not by the drafter.
+- 2026-09-16T17:10Z  ADR-0037 proposed: consolidation to three mechanisms (park/offload/context + one table); research 29 inventory measured, research 30 audit gate named; CI run on 5822e37 (E18 stage-1 code, feature off) green incl. E15 phpt.

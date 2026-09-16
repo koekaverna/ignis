@@ -26,7 +26,7 @@ the main agent sets "accepted". Numbers in an ADR cite a V-n or say "unmeasured"
 | [0018](0018-ext-sockets-and-missing-transports.md) | `ext/sockets` parking and `unix://` | accepted, kill criterion 2 replaced (V-29, V-33) | park then delegate; readiness is not "would succeed" (`can_block`) |
 | [0019](0019-fiber-budget.md) | Fiber budget: admission with a queue and a 503 past it | accepted (V-37) | waiting requests are data, not fibers; the RSS bound is the connection cap (ADR-0025) |
 | [0020](0020-universal-park.md) | Universal park: interpose the blocking libc calls behind a fiber gate | accepted for the mechanism, stage 1 built (V-45); stage 2 elements recorded | default `block`, allow-list `park`; detector-first rollout; kill criterion: an OpenSSL/libcurl failure with a lock in the trace |
-| [0021](0021-io-coverage-layers.md) | I/O coverage is layered, not per-function | accepted | Revolt → stream hooks → offload → universal park, with what each cannot cover |
+| [0021](0021-io-coverage-layers.md) | I/O coverage is layered, not per-function | accepted; superseded-by 0037 as to mechanisms | Revolt → stream hooks → offload → universal park, with what each cannot cover |
 | [0022](0022-observability-contract.md) | Observability contract | accepted (per line built/unbuilt) | warn floor, runtime-answered health, hold-time on every lease, spans per park, loop lag, `ignis dump` |
 | [0023](0023-validation-rules.md) | Validation rules | accepted | suites gated in CI; benches local and quiet; soak = no trend past 5M; agents' numbers re-run by main; chaos mode standard |
 | [0024](0024-non-goals.md) | What the runtime does not promise | accepted | no durability across crashes, not a web server, one app per process, no NTS, no multi-tenant isolation, no sub-ms timers |
@@ -42,5 +42,6 @@ the main agent sets "accepted". Numbers in an ADR cite a V-n or say "unmeasured"
 | [0034](0034-gc-and-destructors.md) | GC and destructors | proposed | loop-scheduled GC; forbid-or-dedicate for `Fiber::suspend` in destructors, with the proving test |
 | [0035](0035-security-posture.md) | Security posture | proposed | unprivileged by default (built); limits, slowloris timeouts, per-IP caps, io_uring off, signed releases (unbuilt) |
 | [0036](0036-naming.md) | Naming | proposed (owner's decision) | `ignis` is taken on crates.io; alternatives recorded; rename cost grows after the first public push |
+| [0037](0037-three-mechanisms.md) | Consolidation to three mechanisms: park, offload, context, one table | proposed (accepted under its §7) | seven wait mechanisms → three plus a policy table; measured deletion 1,458 Rust / 55 `unsafe {`; gates: on/off re-measurement, libphp audit (research 30), one hook per cycle, rustls last |
 
 Research notes that ADRs rest on live in `docs/research/`; the numbers in `VALIDATION.md`.

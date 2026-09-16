@@ -34,7 +34,7 @@ Order: M1 → M2 → M3 → M4 → M5.
 | M3 Real apps unchanged | ADR-0011 (Symfony), ADR-0028 (Laravel: classic + budget 1 now), ADR-0006 addendum (fiber-scoped services), ADR-0029 (vendor state) |
 | M4 Operate | ADR-0022 (observability), ADR-0009 addendum (deadlines/cancellation gaps), ADR-0015 addenda (pool rules), ADR-0025 (memory: the connection cap), ADR-0030 (preemption, proposed) |
 | M5 Ship | ADR-0027 (distribution), ADR-0023 (validation rules), ADR-0035 (security), ADR-0036 (naming) |
-| E18 Universal park | ADR-0020 (+ addendum: the owner's design element by element), ADR-0021 (layers), ADR-0016 addendum (offload boundary) |
+| E18 Universal park | ADR-0020 (+ addendum: the owner's design element by element), ADR-0021 (layers), ADR-0016 addendum (offload boundary), **ADR-0037 (consolidation to three mechanisms; research 29 inventory, research 30 libphp audit gate)** |
 | B7 TLS read-ahead | ADR-0017, research 23 |
 | B8 connection cap | ADR-0025 |
 | Phase C protocol depth | ADR-0013, ADR-0014, ADR-0031 (WS/SSE), ADR-0032 (inbound TLS/h3) |

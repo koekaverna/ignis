@@ -1,6 +1,6 @@
 # ADR-0021 — I/O coverage is layered, not per-function
 
-Status: **accepted** (main agent, owner ADR sweep 2026-09-17). Affects pain-map items Swoole 5
+Status: **accepted** (main agent, owner ADR sweep 2026-09-17); **superseded-by ADR-0037 as to the mechanism count** — the four layers here describe *coverage* and what each cannot reach, and that table stands; the *mechanisms* behind them are consolidated to three (park, offload, context) by ADR-0037, which the owner had named "0021-three-mechanisms" before this number was taken. Affects pain-map items Swoole 5
 (incomplete hooks), PHP-FPM 1, RoadRunner 1. Depends on ADR-0007/0017 (stream hooks), ADR-0008
 (Revolt driver), ADR-0016 (offload), ADR-0020 (universal park, the fourth layer once it is on).
 

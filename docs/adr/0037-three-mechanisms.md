@@ -1,0 +1,116 @@
+# ADR-0037 — Consolidation to three mechanisms: park, offload, context, one policy table
+
+Status: **proposed** (owner note 2026-09-17; main agent). Becomes accepted only under §7. The owner
+named this file `0021-three-mechanisms`; 0021 was already taken by the coverage-layers ADR during
+the sweep and is not renumbered — it now points here. The mechanism budget is CLAUDE.md
+"Mechanism budget (owner, 2026-09-17)". Numbers: `docs/research/29-mechanism-inventory.md`
+(measured with `wc`/`grep`; `tokei`/`cloc` absent) and the V-n cited; "estimate" is labelled and
+kept out of the decision table. This note adds no code.
+
+## 1. Inventory — measured
+
+Seven wait mechanisms exist today (research 29): the stream transport factory (705 Rust, 16
+`unsafe {`), the reactor's connection actor and rustls arms (~250 of 812, estimate), `ext/sockets`
+hooks (326 / 21), the `sleep`/`usleep` swap (112 / 7), the `accept` hook (315 / 11), offload
+(329 Rust + 490 PHP / 10), the context observer (269 / 15), universal park stage 1 (397 Rust + 47 C /
+23). **Measured deletion under the target model: 1,458 Rust lines, 55 `unsafe {`, 53 `unsafe fn`**
+(rows 1–4). Keeps: context, park, offload's worker half, everything shared, every adapter. Adds:
+estimate ~750 lines / ~15 blocks (stage 2, per-symbol policy, boot self-check, detector). **Net:
+estimate −960 lines, −40 `unsafe {`** — an estimate because the adds are; the measured half is the
+1,458 / 55 / 53 that go.
+
+## 2. Target model
+
+Three mechanisms and one table; reactor/scheduler beneath, adapters above.
+
+| mechanism | is | is NOT allowed to |
+|---|---|---|
+| **park** | syscall interposition (ADR-0020) with a **per-symbol** policy: the return address resolves to a symbol name, not only a library, so libphp's own call sites can move from `block` to rows — only after the audit of §5 | **buffer**: it never holds bytes; readiness then the real call, one copy (the kernel's). It never changes an fd's flags except `connect`'s temporary `O_NONBLOCK`, restored before return |
+| **offload** | synchronous worker threads with copy-in/copy-out and worker-pinned proxies (ADR-0016 addendum); the routing trampolines become rows of the same table | **share objects**: scalars and arrays cross by copy, objects and resources never; a proxy is a handle, not the object |
+| **context** | fiber-switch observer slots (ADR-0006 addendum): superglobals are the first rows, listed vendor statics the next | **allocate per switch**: a slot swap is pointer moves; anything needing allocation happens at dispatch, not on the observer |
+| **table** | `symbol \| PHP function \| class → park \| offload \| block`, in `ignis.toml`, seeded with research 27's verdicts (libcurl park, libpq park, libssl/libcrypto park, libphp block until audited) | — |
+
+Adapters (Revolt, symfony/runtime, Laravel classic, gRPC, Temporal, `Ignis\Pg`) carry no
+mechanism: they call the scheduler's primitives (`Op::Sleep/Watch/Custom`, `ignis_watch`) and are
+listed in research 29 separately.
+
+## 3. Universality and maintainability — metrics, before / after
+
+| metric | before (measured where marked) | after (target) |
+|---|---|---|
+| mechanisms a wait can take | **7** (research 29) | **3** |
+| files a maintainer touches to add a new blocking **library** | 2–3, at least one guarded FFI file: `route.rs` + `php/offload/ignis-offload.php` (offload), or `stream.rs` (if on php_stream), or `sockets.rs` — measured by reading | 1 table row (+ a research verdict for `park`) |
+| … a new blocking **PHP function** | a hook in a guarded Rust file with arginfo (`sockets.rs` pattern, ~30 lines each — V-29) | 1 row |
+| … a new **vendor static** | code in `superglobals.rs` (a slot) | 1 context row (once the slot generalises; **today still code**) |
+| LOC / `unsafe {` per mechanism | 705/16, ~250/6, 326/21, 112/7, 315/11, 819/10, 269/15, 444/23 | park ≈ 1,200/38 (estimate), offload ≈ 700/8 (estimate), context 269/15 |
+| code paths a request's wait can take | **12**, enumerated: `Ignis\sleep`; `sleep()` hook; stream `op_read/write/connect`; `hooked_select`; `stream_socket_accept`; nine `ext/sockets` hooks; offload trampoline; `Ignis\offload()`; pg `Op::Custom`; gRPC client op; `ignis_watch` (Revolt); universal park | **2**: park or offload (adapters use reactor primitives beneath, not mechanisms) |
+| suites gating each mechanism (E15 phpt / Swoole / FrankenPHP / Revolt / chaos / soak) | stream: phpt+Revolt+chaos; sockets: phpt+Swoole; sleep: phpt; accept: phpt+Revolt+Swoole; **offload: none**; context: chaos+smoke; **park: none in CI** (research 29) | each of the three gated by every suite plus the soak, one column per mechanism, before anything is deleted |
+| "explain it to a new model in one page" | park: yes (ADR-0020 + `park.rs` header); offload: yes (ADR-0016 addendum); context: yes (ADR-0006 addendum); stream factory: **no** — four behaviours in one file; sockets: yes; sleep: yes; accept: partly | three pages, one per mechanism, with invariants — the §2 "is NOT allowed to" lines are their first paragraph |
+
+## 4. Performance and reliability — what changes, what must be re-measured
+
+- **Gate cost.** ~8.3 ns per syscall on the non-fiber path (research 28). A hello request on the
+  tokio side is on the order of 4–6 syscalls (accept/read/write/epoll — **estimate**), so ~50 ns
+  per request against 7.8 µs per request at V-6's 128k req/s — well under 1 % (estimate). Required
+  before any deletion: **E1/E2/E4/E5 re-measured with `universal-park` on vs off.** E1/E2 on the
+  park build already read 1,175.9 ms and 201.03 ms (V-45 addendum) against 1,144–1,159 and 201
+  off; the noise band from V-28 is E1 1,175–1,195 ms quiet, i.e. ±1 %, so E1 on is inside it.
+  E4/E5 on/off: **unmeasured**.
+- **Copies per read.** Today `op_read` copies the actor's `Bytes` into `Sock.pending`, then into
+  PHP's buffer — two copies after the kernel; under park the real `read` lands in PHP's buffer —
+  one. Measure on `/fetch` (E6) and E6'' before/after; **unmeasured**.
+- **TLS.** OpenSSL in PHP (`ext/openssl`, policy `park` per research 27) replaces rustls in the
+  reactor. A6 (TLS read-ahead invisible to `stream_select`, research 23) is expected to disappear
+  because PHP's own TLS streams handle buffered plaintext; **verify with
+  `bench/php/a6_tls_select.php`** under park with the factory off — until then B7 stays open.
+- **Failure-mode change: exceptions → hangs.** A wrong hook throws; a wrong park waits. Two
+  countermeasures are part of the model, not options: **(a) a boot self-check** — a libcurl and a
+  libpq probe at startup with a non-zero interposer hit counter, refuse to start otherwise (the
+  research-28 "0 hits" mistake made mechanical); **(b) a blocked-in-fiber detector** — any syscall
+  in a fiber that blocks longer than N ms without parking logs library + PHP function and
+  increments `ignis_blocked_in_fiber_seconds{lib,func}`. Both **unbuilt**.
+- **Coverage as a metric:** parked-wait-time / total-wait-time in fibers on `/_ignis/metrics`.
+  Today this number does not exist; it is the number the ADR is accepted against.
+
+## 5. Risks, each with mitigation and test
+
+| risk | mitigation | test |
+|---|---|---|
+| parking inside libphp under a lock (opcache SHM, TSRM, reentrancy locks) — research 27 did not walk compile/execute | a **symbol-level audit of libphp's blocking call sites** before any libphp symbol gets `park` (`docs/research/30-libphp-blocking-call-sites.md`, placeholder with acceptance); groups move to the table one at a time | H36's shim proves containment; E15 in fiber mode with each group on `park` |
+| toolchain fragility: glibc internal aliases (`fread` → internal `__read`), `__poll_chk`, LTO, `--wrap` for a static binary, raw `syscall()` numbers per arch | boot self-check + detector; the static build (ADR-0027, M5-5) is tested with `-Wl,--wrap` **before** the dynamic path is deleted | the self-check refuses to start on a miss; nightly runs the detector's counters |
+| loss of stream-level observability (URL, transport name, peer) that the factory had | spans reconstructed from the observer's PHP frame (function + args); **lost for good:** the transport's own view of a connection lifecycle (connect → upgrade → close as one span) — a socket is an fd to park | a span per parked call carries fd, symbol, library, PHP function (ADR-0022) |
+| loss of the runtime keep-alive idea for a native HTTP client (it lived in the tcp factory's connection actor) | **dropped** as a factory feature; recorded as a `connect()`-policy experiment (a `park` row that returns a pooled fd) — unbuilt, unscheduled | — |
+| Linux-only by construction (epoll, `syscall` numbers, `dladdr` semantics) | **accepted constraint**, stated in ADR-0024's non-goals and README | — |
+
+## 6. Migration plan — order, with gates
+
+1. E18-I lands behind the feature flag; H32–H36 green; E1/E2/E4/E5 re-measured on/off (§4).
+2. Per-symbol policy and the libphp audit (research 30); libphp symbols move to the table one
+   group at a time, each group gated by E15 fiber mode.
+3. Delete point hooks **one per cycle** — `sleep.rs` (V-22), `sockets.rs` (V-29), `accept.rs`
+   (V-26) — each gated by the test that created it passing with the hook off and park on; the E15
+   baseline may only go up; H31's rule (a non-blocking fd forwards) and A4's `can_block` rule (a
+   listening/unconnected socket forwards) move into `would_block` before their hooks go.
+4. The rustls factory last (V-12, V-25, V-26, V-31, V-36 re-run through park + `ext/openssl`); A6
+   closes by disappearance or stays open with the measured reason.
+5. Offload trampolines fold into the table; the `create_object` hook stays only if a row cannot
+   express "this class is constructed on a worker" — and the ADR says why.
+
+Rollback: the feature flag stays until step 4; deleted code is recoverable at tag
+`pre-consolidation` (owner-pushed; the session proxy refuses tags, 8ffd758).
+
+## 7. Decision criteria and status
+
+**Proposed.** Accepted only when: §1's totals are measured for the deletions actually made (not
+the estimates); §4's re-measurements show no regression beyond the V-28 noise band (±1 % on E1;
+the band for E4/E5 to be stated from three quiet runs each); and the libphp audit exists with a
+verdict per symbol.
+
+**Kill criterion.** Any E15 suite dropping below its baseline after a deletion that cannot be
+fixed inside park within one cycle → that hook returns, and this ADR records it in an **"outside
+the three"** table with the reason — the model stays three mechanisms plus listed, explained
+exceptions.
+
+| outside the three | reason | since |
+|---|---|---|
+| (none yet) | | |
