@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 PATH="$(go env GOPATH 2>/dev/null)/bin:$PATH"
 CONNS="${CONNS:-64}"; N="${N:-100000}"; PROTO=examples/grpc/greeter.proto
-RR="${RR:-/home/user/cmp/rr}"; RR_APP="${RR_APP:-/home/user/cmp/rr-app}"
+RR="${RR:-/tmp/cmp/rr}"; RR_APP="${RR_APP:-/tmp/cmp/rr-app}"
 run_ghz() { # addr label
   ghz --insecure --proto "$PROTO" --call ignis.Greeter/SayHello -d '{"name":"ada"}' -c "$CONNS" -n "$N" --connections 8 "$1" 2>&1 \
     | awk -v L="$2" '/Requests\/sec/{r=$2} /Average:/{a=$2} /99 % in/{p=$4} /Slowest:/{s=$2} /\[OK\]/{ok=$2} /Error distribution/{err=1} END{printf "| %s | %s | %s ms | %s ms | %s ms | %s/'"$N"' |\n", L, r, a, p, s, ok}'
