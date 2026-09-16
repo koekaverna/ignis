@@ -23,7 +23,7 @@ use crate::reactor::{Completion, HttpResponse, Op, Outcome, Reactor};
 
 /// One reactor per PHP OS thread (ADR-0004); set by the worker before it runs
 /// any PHP. The runtime handle is process-wide.
-static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+pub(crate) static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 thread_local! {
     static REACTOR: std::cell::OnceCell<Arc<Reactor>> = const { std::cell::OnceCell::new() };
 }
@@ -604,12 +604,13 @@ unsafe extern "C" fn zif_ignis_pg_acquire(ex: *mut sys::zend_execute_data, rv: *
         if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut p) != sys::SUCCESS {
             return;
         }
-        if let Some(lease) = crate::pg::try_acquire(p as u64) {
+        let owner = Arc::as_ptr(&reactor()) as usize; // M4-11: the lease belongs to this thread
+        if let Some(lease) = crate::pg::try_acquire(p as u64, owner) {
             zval::set_new_array(rv);
             sys::add_assoc_long_ex(rv, c"lease".as_ptr(), 5, lease as i64);
             return;
         }
-        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::acquire(p as u64))) as i64);
+        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::acquire(p as u64, owner))) as i64);
     }
 }
 
@@ -655,6 +656,10 @@ unsafe extern "C" fn zif_ignis_pg_stats(ex: *mut sys::zend_execute_data, rv: *mu
                 sys::add_assoc_long_ex(rv, c"idle".as_ptr(), 4, idle as i64);
                 sys::add_assoc_long_ex(rv, c"created".as_ptr(), 7, created as i64);
                 sys::add_assoc_long_ex(rv, c"available".as_ptr(), 9, available as i64);
+                // M4-1: hold-time visibility. `pools()[&id]` is safe here: stats() just found it.
+                let (oldest_ms, over) = crate::pg::lease_ages(p as u64);
+                sys::add_assoc_long_ex(rv, c"oldest_lease_ms".as_ptr(), 15, oldest_ms as i64);
+                sys::add_assoc_long_ex(rv, c"leases_over_warn".as_ptr(), 16, over as i64);
             }
             None => zval::set_null(rv),
         }

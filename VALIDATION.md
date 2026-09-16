@@ -1535,3 +1535,38 @@ DSN dedup. ADR-0015 §1 says a pool "is process-wide (shared by all PHP threads)
 Rust object's ownership, false of what an application gets: `threads × max` connections. At this
 box's default of 24 threads and the README's example `max = 20` that is 480 connections against
 PostgreSQL's default `max_connections = 100`. Fix: BACKLOG M4-12.
+
+## V-44 — M4-1: a held pg lease is visible and logged (CONFIRMED)
+
+Date: 2026-09-16T23:2xZ. `Lease` carries its acquire `Instant`; `ignis_pg_stats()` gains
+`oldest_lease_ms` and `leases_over_warn`; `release` warns past `IGNIS_PG_LEASE_WARN_MS` (default
+5000). Reproducer: one fiber holds a lease across `Ignis\sleep(6000)`, another samples the pool
+half-way.
+
+```
+before  {"idle":1,"created":1,"available":4,"oldest_lease_ms":0,"leases_over_warn":0}
+during  {"idle":0,"created":1,"available":3,"oldest_lease_ms":3001,"leases_over_warn":0}
+WARN ignis::pg: pg lease held longer than IGNIS_PG_LEASE_WARN_MS lease=3 held_ms=6002
+after   {"idle":1,"created":1,"available":4,"oldest_lease_ms":0,"leases_over_warn":0}
+```
+
+The owner's question of 17:05Z ("will we see in the logs if someone is holding?") is now yes for
+PostgreSQL leases: the age is a gauge while held and a warn line at release. Offload jobs and
+stream waits are still not covered — BACKLOG M4-6 inventories them.
+
+### V-42 addendum — fixed (M4-11)
+
+`OWNERS` maps lease id → the acquiring thread's reactor; `http_unregister_current` calls
+`pg::release_owned_by`, which spawns `release(id, reset=true)` on the runtime for each — the reset
+and the permit return never wait on the dying thread. `bench/m4-pool-survives.sh` after the fix:
+
+```
+before /fatal (both holds live): created=2 available=0
+after:                           created=2 available=2   idle=2   restarts=1
+available back to max: PASS (2 == 2)   search_path default: PASS   temp table gone: PASS
+```
+
+### V-43 addendum — fixed (M4-12)
+
+`pg::open` dedupes by DSN (`BY_DSN`); a second opener with a different `max` is warned and gets the
+first one's. The V-43 probe with `--threads 3`: **12 × `pool_id=1`** where it was 4 × 1, 4 × 2, 4 × 3.

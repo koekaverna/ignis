@@ -31,12 +31,19 @@ struct Pool {
     idle: Mutex<Vec<Conn>>,
     sem: Arc<Semaphore>,
     created: AtomicU64,
+    /// M4-12: the capacity the first opener asked for, so a later opener with a different `max`
+    /// can be warned rather than silently getting the first one's.
+    max: usize,
 }
 
 struct Lease {
     pool: Arc<Pool>,
     conn: Conn,
     _permit: OwnedSemaphorePermit,
+    /// M4-1: when the lease was handed out, so a held connection is visible (oldest age in
+    /// `stats`) and logged (`release` warns past `IGNIS_PG_LEASE_WARN_MS`). Before this nothing
+    /// tracked hold time at all — the owner's "will we see it in the logs?" was answered no.
+    since: std::time::Instant,
 }
 
 /// `DISCARD ALL` minus `DEALLOCATE ALL`/`DISCARD PLANS` (its documented expansion), so the
@@ -50,6 +57,12 @@ type Fut = Pin<Box<dyn Future<Output = Outcome> + Send>>;
 
 static POOLS: OnceLock<Mutex<HashMap<u64, Arc<Pool>>>> = OnceLock::new();
 static LEASES: OnceLock<Mutex<HashMap<u64, Arc<AsyncMutex<Option<Lease>>>>>> = OnceLock::new();
+/// M4-11: lease id → the reactor (thread) that acquired it, kept outside the lease's async mutex
+/// so a dying thread's leases can be found without waiting on a query in flight (V-42).
+static OWNERS: OnceLock<Mutex<HashMap<u64, usize>>> = OnceLock::new();
+/// M4-12: DSN → pool id, so every worker thread's `ignis_pg_open` of the same DSN shares one pool
+/// instead of each minting its own (V-43: `--threads 3` gave three pools of `max` each).
+static BY_DSN: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
 fn pools() -> &'static Mutex<HashMap<u64, Arc<Pool>>> {
@@ -58,14 +71,31 @@ fn pools() -> &'static Mutex<HashMap<u64, Arc<Pool>>> {
 fn leases() -> &'static Mutex<HashMap<u64, Arc<AsyncMutex<Option<Lease>>>>> {
     LEASES.get_or_init(|| Mutex::new(HashMap::new()))
 }
+fn owners() -> &'static Mutex<HashMap<u64, usize>> {
+    OWNERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn by_dsn() -> &'static Mutex<HashMap<String, u64>> {
+    BY_DSN.get_or_init(|| Mutex::new(HashMap::new()))
+}
 fn failed(msg: String) -> Outcome {
     Outcome::Failed(format!("pg: {msg}"))
 }
 
 /// `ignis_pg_open`: no I/O; connections are made lazily up to `max`.
 pub fn open(dsn: String, max: usize) -> u64 {
+    // M4-12: one pool per DSN per process. Every worker thread runs the same script and calls
+    // this; before, each call minted a pool, so an app got threads × max connections (V-43).
+    if let Some(&id) = by_dsn().lock().unwrap().get(&dsn) {
+        if let Some(p) = pools().lock().unwrap().get(&id)
+            && p.max != max.max(1)
+        {
+            tracing::warn!(pool = id, first = p.max, requested = max, "ignis_pg_open: same DSN opened with a different max; the first opener's applies");
+        }
+        return id;
+    }
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    let pool = Arc::new(Pool { dsn, idle: Mutex::new(Vec::new()), sem: Arc::new(Semaphore::new(max.max(1))), created: AtomicU64::new(0) });
+    let pool = Arc::new(Pool { dsn: dsn.clone(), idle: Mutex::new(Vec::new()), sem: Arc::new(Semaphore::new(max.max(1))), created: AtomicU64::new(0), max: max.max(1) });
+    by_dsn().lock().unwrap().insert(dsn, id);
     pools().lock().unwrap().insert(id, pool);
     id
 }
@@ -83,7 +113,7 @@ async fn connect(pool: &Pool) -> Result<Client, tokio_postgres::Error> {
 }
 
 /// `ignis_pg_acquire`: waits for a permit (pool exhausted) then reuses an idle connection or connects.
-pub fn acquire(pool_id: u64) -> Fut {
+pub fn acquire(pool_id: u64, owner: usize) -> Fut {
     Box::pin(async move {
         let Some(pool) = pools().lock().unwrap().get(&pool_id).cloned() else { return failed("unknown pool".into()) };
         let permit = match pool.sem.clone().acquire_owned().await {
@@ -99,13 +129,14 @@ pub fn acquire(pool_id: u64) -> Fut {
             },
         };
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit }))));
+        leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
+        owners().lock().unwrap().insert(id, owner);
         Outcome::Json(format!("{{\"lease\":{id}}}"))
     })
 }
 
 /// Fast path for `ignis_pg_acquire`: a free permit and an idle connection mean no reactor hop.
-pub fn try_acquire(pool_id: u64) -> Option<u64> {
+pub fn try_acquire(pool_id: u64, owner: usize) -> Option<u64> {
     let pool = pools().lock().unwrap().get(&pool_id).cloned()?;
     let permit = pool.sem.clone().try_acquire_owned().ok()?;
     let conn = {
@@ -119,7 +150,8 @@ pub fn try_acquire(pool_id: u64) -> Option<u64> {
         }
     };
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit }))));
+    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
+        owners().lock().unwrap().insert(id, owner);
     Some(id)
 }
 
@@ -182,9 +214,14 @@ pub fn query(lease_id: u64, sql: String, params_json: String) -> Fut {
 /// `ignis_pg_release`: `ROLLBACK; DISCARD ALL` (when `reset`) then back to idle; a failed reset closes the connection.
 pub fn release(lease_id: u64, reset: bool) -> Fut {
     Box::pin(async move {
+        owners().lock().unwrap().remove(&lease_id);
         let Some(slot) = leases().lock().unwrap().remove(&lease_id) else { return failed("unknown or released lease".into()) };
         let Some(lease) = slot.lock().await.take() else { return failed("lease released".into()) };
-        let Lease { pool, conn, _permit } = lease;
+        let Lease { pool, conn, _permit, since } = lease;
+        let held_ms = since.elapsed().as_millis() as u64;
+        if held_ms >= lease_warn_ms() {
+            tracing::warn!(lease = lease_id, held_ms, "pg lease held longer than IGNIS_PG_LEASE_WARN_MS");
+        }
         if reset {
             match conn.client.batch_execute(RESET_SQL).await {
                 Ok(()) => pool.idle.lock().unwrap().push(conn),
@@ -202,6 +239,36 @@ pub fn release(lease_id: u64, reset: bool) -> Fut {
 /// `ignis_pg_stats(pool)`: `(idle, created, available permits)` for VALIDATION tables.
 pub fn stats(pool_id: u64) -> Option<(usize, u64, usize)> {
     pools().lock().unwrap().get(&pool_id).map(|p| (p.idle.lock().unwrap().len(), p.created.load(Ordering::Relaxed), p.sem.available_permits()))
+}
+
+/// M4-1: (age of the oldest live lease in ms, live leases held ≥ `IGNIS_PG_LEASE_WARN_MS`) for a
+/// pool. A lease mid-query is behind its async mutex; `try_lock` skips it rather than block the
+/// PHP thread, so a lease inside a long query is counted from the moment it is free to inspect —
+/// which is exactly when its age is the interesting number.
+pub fn lease_ages(pool_id: u64) -> (u64, usize) {
+    let warn = lease_warn_ms();
+    let mut oldest = 0u64;
+    let mut over = 0usize;
+    let slots: Vec<_> = leases().lock().unwrap().values().cloned().collect();
+    for slot in slots {
+        if let Ok(guard) = slot.try_lock()
+            && let Some(l) = guard.as_ref()
+            && Arc::ptr_eq(&l.pool, &pools().lock().unwrap()[&pool_id])
+        {
+            let ms = l.since.elapsed().as_millis() as u64;
+            oldest = oldest.max(ms);
+            if ms >= warn {
+                over += 1;
+            }
+        }
+    }
+    (oldest, over)
+}
+
+/// `IGNIS_PG_LEASE_WARN_MS`, default 5000; read once.
+fn lease_warn_ms() -> u64 {
+    static V: OnceLock<u64> = OnceLock::new();
+    *V.get_or_init(|| std::env::var("IGNIS_PG_LEASE_WARN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5000))
 }
 
 fn bind(v: &Value, ty: &Type) -> Result<Box<dyn ToSql + Sync + Send>, String> {
@@ -301,4 +368,19 @@ fn col_to_json(row: &Row, i: usize, ty: &Type) -> Result<Value, String> {
         Type::VOID => Value::Null,
         _ => return Err(format!("unsupported type {} (oid {}); cast it to text in SQL", ty.name(), ty.oid())),
     })
+}
+
+/// M4-11 (V-42): a PHP thread is ending — return every lease it still holds. The reset and the
+/// permit return run on the runtime, so nothing here waits on the dying thread; a lease whose
+/// query is still in flight is released the moment that query finishes (`release` takes the
+/// lease's async mutex). Returns how many were reclaimed.
+pub fn release_owned_by(owner: usize, rt: &tokio::runtime::Handle) -> usize {
+    let ids: Vec<u64> = owners().lock().unwrap().iter().filter(|(_, o)| **o == owner).map(|(id, _)| *id).collect();
+    for &id in &ids {
+        rt.spawn(release(id, true));
+    }
+    if !ids.is_empty() {
+        tracing::warn!(leases = ids.len(), "php thread ended holding pg leases; reset and returned to the pool");
+    }
+    ids.len()
 }
