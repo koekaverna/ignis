@@ -1762,3 +1762,20 @@ libphp:recv,libphp:send,libphp:connect,libphp:read,libphp:write` → `accepted /
 client got 'pong'`, exit 0; sites parked from libphp: connect ×1, poll ×2, recv ×1, send ×1 (the
 binary's own `write` forwards). The rows that enter the seed are decided by research 30 groups
 (a)/(c), not by this preview.
+
+### V-46 addendum 3 — H-12: the V-6 commit rebuilt on today's box (2026-09-16T18:01Z)
+
+`git worktree add /tmp/cmp/v6 db2df39` (the commit V-6 measured, 2026-09-15 22:54), built with its
+own target dir, `hello_server` on :8182 (that binary has no `--threads`; single thread as in V-6),
+HEAD (`fb83df1`, park default) on :8181 with `--threads 1`; `wrk -t2 -c64 -d10s --latency`,
+alternating, load 0.39 at start.
+
+| arm | rep 1 | rep 2 |
+|---|---|---|
+| db2df39 (V-6's code) | **63,055 req/s**, p99 1.67 ms | **61,542**, p99 1.71 ms |
+| HEAD | **60,035**, p99 1.81 ms | **58,267**, p99 1.82 ms |
+
+So V-6's 128k is the 4-vCPU box of 2026-09-15, not this 24-vCPU WSL2 (6.18) box: the same code
+gives ~62k here. The code-side difference 2026-09-15 → today is **≈ 4–5 %** (61.5–63.1k vs
+58.3–60.0k, p99 +0.1 ms) — not universal park (on/off equal, addendum 2). Tree deleted after
+recording (disk rule).
