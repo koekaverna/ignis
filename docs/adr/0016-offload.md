@@ -14,3 +14,46 @@ Status: accepted (Cycle 18, 2026-09-16; V-24). Affects pain-map items: Swoole 5 
 - Any blocking extension becomes non-blocking for the fiber thread at the cost of two copies per call; the copy cost is measured and published next to the native-driver cost (E14), so the choice is informed.
 - Two knobs instead of one: `--threads` (fiber threads = cores) and `--offload` (workers = how many blocking calls may be in flight). The 8-worker test in the brief demonstrates the second knob bounding wall time.
 - Proxies are not the real objects (`instanceof`, `var_dump`); this is documented as the visible seam of auto-routing.
+
+## Addendum (owner ADR sweep, 2026-09-17) — what crosses the boundary, and what offload is for
+
+**Status: accepted** (main agent).
+
+**What crosses.** Scalars and arrays are copied in and out (V-24: 13–67 µs per call, 17–45 µs per
+auto-routed call); an exception on the worker returns as a `RemoteException` with the message.
+**What does not:** objects and resources. A closure is not copied (`Ignis\offload('strtoupper', …)`
+takes a function the worker can resolve — `examples/app.php`).
+
+**Worker-pinned proxies.** A `PDO`, `SQLite3` or `CurlHandle` created through auto-routing lives on
+one offload worker and every later call on it is routed to that worker (V-24 addendum: handles
+"live on an offload worker and are pinned to it"). *Built.*
+
+**Callbacks.** A callback the library invokes (`CURLOPT_WRITEFUNCTION`) runs on the **caller's
+thread**, in the calling fiber, with a `HandleRef` standing in for the handle; inside the callback
+only `curl_getinfo` is answered (V-24: `CURLOPT_WRITEFUNCTION` verified; other callbacks
+unmeasured). *Built for WRITEFUNCTION; the `curl_getinfo`-only rule is the contract, not a fence
+that exists in code — unbuilt as an enforced limit.*
+
+**Offload as vendor quarantine.** A library with per-thread statics or one that must not be
+interleaved runs on a worker one call at a time — ADR-0029's isolate ladder, step 3. *Unbuilt as
+a policy switch; the mechanism is the existing router.*
+
+**Offload as the universal answer for file I/O** until io_uring is measured: `SQLite3`/`PDO sqlite`
+and anything that does `read`/`pread`/`fsync` on regular files — universal park forwards those
+(ADR-0020: epoll refuses regular files). *Recorded; sqlite is routed today (V-24).*
+
+**Pool size is the concurrency bound**, documented: 100 blocking 200 ms calls take 2,608 ms on 8
+workers and 243 ms on 100 (V-24); docs/operate.md carries the sizing rule. With ADR-0020 on for a
+library (V-45: libcurl, libpq), that library leaves the pool and the bound no longer applies to
+it — BACKLOG E18-C item 1.
+
+**Options rejected.** Running callbacks on the worker (rejected: the callback is the
+application's code and expects its own fiber's scope, V-11); copying objects by serialisation
+(rejected: resources and closures do not survive it, and the cost would dwarf V-24's 13–67 µs).
+
+**Consequences.** Better: `curl_*`, `PDO` and `SQLite3` work unchanged today, with a bound the
+operator can size. Worse: a worker thread per concurrent call — the reason ADR-0020 exists.
+Affects E16, E18, M4-9 (cancelling an offload job on disconnect: unbuilt).
+
+**Kill criterion.** A routed library whose handle cannot be pinned (it migrates its own state
+between calls) — then it is `Ignis\offload()` only, never auto-routed.
