@@ -40,6 +40,37 @@ struct Sock {
     pending: Vec<u8>,
     pos: usize,
     eof: bool,
+    /// `ssl://`/`tls://` stream: handshake on connect (ADR-0017). `tcp://` streams may still
+    /// upgrade later through `stream_socket_enable_crypto()`.
+    tls_on_connect: bool,
+}
+
+static ORIG_SSL: OnceLock<sys::php_stream_transport_factory> = OnceLock::new();
+const TLS_PROTOS: [&std::ffi::CStr; 4] = [c"ssl", c"tls", c"tlsv1.2", c"tlsv1.3"];
+
+/// PHP's `ssl` context options → TlsOpts (defaults as in ext/openssl: verify on, host name = peer_name or the connect host).
+unsafe fn tls_opts(stream: *mut sys::php_stream, host: &str) -> crate::reactor::TlsOpts {
+    unsafe {
+        let ctx = if (*stream).ctx.is_null() { ptr::null() } else { (*(*stream).ctx).ptr as *const sys::php_stream_context };
+        let get = |name: &std::ffi::CStr| -> *mut sys::zval {
+            if ctx.is_null() { ptr::null_mut() } else { sys::php_stream_context_get_option(ctx, c"ssl".as_ptr(), name.as_ptr()) }
+        };
+        let flag = |name: &std::ffi::CStr, default: bool| -> bool {
+            let z = get(name);
+            if z.is_null() { default } else { sys::zend_is_true(z) }
+        };
+        let string = |name: &std::ffi::CStr| -> Option<String> {
+            let z = get(name);
+            if z.is_null() || super::zval::type_of(z) != sys::IS_STRING { None } else { Some(super::zval::zstr_to_string((*z).value.str_)) }
+        };
+        crate::reactor::TlsOpts {
+            server_name: string(c"peer_name").unwrap_or_else(|| host.to_string()),
+            verify_peer: flag(c"verify_peer", true),
+            verify_peer_name: flag(c"verify_peer_name", true),
+            allow_self_signed: flag(c"allow_self_signed", false),
+            cafile: string(c"cafile"),
+        }
+    }
 }
 
 /// `EG(...)` base pointer for the calling thread.
@@ -150,11 +181,14 @@ unsafe extern "C" fn ignis_tcp_factory(
         // owns client connections (E15c finding: NOTIMPL on BIND made them fail inside fibers).
         const STREAM_XPORT_SERVER: c_int = 1;
         let in_fiber = !(*eg()).active_fiber.is_null();
+        let proto_str = std::str::from_utf8(std::slice::from_raw_parts(proto as *const u8, protolen)).unwrap_or("tcp");
+        let is_tls = proto_str != "tcp";
         if !in_fiber || !persistent_id.is_null() || (flags & STREAM_XPORT_SERVER) != 0 {
-            let orig = ORIG_TCP.get().copied().flatten().expect("original tcp factory");
+            let orig = if is_tls { ORIG_SSL.get().copied().flatten() } else { ORIG_TCP.get().copied().flatten() };
+            let Some(orig) = orig else { return ptr::null_mut() };
             return orig(proto, protolen, res, reslen, persistent_id, options, flags, timeout, context);
         }
-        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false });
+        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls });
         sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
     }
 }
@@ -257,7 +291,8 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                             (*xp).outputs.returncode = -1;
                             return OK;
                         };
-                        let id = reactor().submit(Op::Connect { host, port });
+                        let tls = if (*sock_of(stream)).tls_on_connect { Some(tls_opts(stream, &host)) } else { None };
+                        let id = reactor().submit(Op::Connect { host, port, tls });
                         match await_op(id) {
                             Some(Outcome::Connected { conn }) => {
                                 (*sock_of(stream)).conn = conn;
@@ -275,6 +310,42 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                         OK
                     }
                     sys::STREAM_XPORT_OP_SHUTDOWN => OK,
+                    _ => NOTIMPL,
+                }
+            }
+            // STARTTLS (stream_socket_enable_crypto): SETUP records nothing (method is always TLS
+            // client here), ENABLE with activate=1 upgrades the connection in place (ADR-0017).
+            sys::PHP_STREAM_OPTION_CRYPTO_API => {
+                let cp = ptrparam as *mut sys::php_stream_xport_crypto_param;
+                match (*cp).op {
+                    sys::STREAM_XPORT_CRYPTO_OP_SETUP => {
+                        (*cp).outputs.returncode = 0;
+                        OK
+                    }
+                    sys::STREAM_XPORT_CRYPTO_OP_ENABLE => {
+                        if (*cp).inputs.activate == 0 {
+                            (*cp).outputs.returncode = -1; // TLS shutdown/downgrade not supported
+                            return OK;
+                        }
+                        let conn = (*sock_of(stream)).conn;
+                        let opts = tls_opts(stream, "");
+                        if opts.server_name.is_empty() {
+                            sys::php_error_docref(ptr::null(), sys::E_WARNING as c_int, c"ignis: stream_socket_enable_crypto() needs the 'peer_name' ssl context option on a hooked stream".as_ptr());
+                            (*cp).outputs.returncode = -1;
+                            return OK;
+                        }
+                        let id = reactor().submit(Op::Upgrade { conn, tls: opts });
+                        (*cp).outputs.returncode = match await_op(id) {
+                            Some(Outcome::Ready) => 1,
+                            Some(Outcome::Error(e)) => {
+                                let msg = std::ffi::CString::new(e).unwrap_or_default();
+                                sys::php_error_docref(ptr::null(), sys::E_WARNING as c_int, c"%s".as_ptr(), msg.as_ptr());
+                                -1
+                            }
+                            _ => -1,
+                        };
+                        OK
+                    }
                     _ => NOTIMPL,
                 }
             }
@@ -322,5 +393,14 @@ pub unsafe fn install() {
         let orig: sys::php_stream_transport_factory = std::mem::transmute::<*mut c_void, sys::php_stream_transport_factory>((*zv).value.ptr);
         let _ = ORIG_TCP.set(orig);
         sys::php_stream_xport_register(c"tcp".as_ptr(), Some(ignis_tcp_factory));
+        // ADR-0017: the TLS protocol names too (ext/openssl registered them; it is the fallback).
+        let ssl = sys::zend_hash_str_find(ht, c"ssl".as_ptr(), 3);
+        if !ssl.is_null() && std::env::var_os("IGNIS_NO_SSL_HOOK").is_none() {
+            let orig_ssl = std::mem::transmute::<*mut c_void, sys::php_stream_transport_factory>((*ssl).value.ptr);
+            let _ = ORIG_SSL.set(orig_ssl);
+            for name in TLS_PROTOS {
+                sys::php_stream_xport_register(name.as_ptr(), Some(ignis_tcp_factory));
+            }
+        }
     }
 }

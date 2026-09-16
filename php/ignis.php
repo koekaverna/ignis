@@ -63,6 +63,11 @@ final class Future
             $fiber = \Fiber::getCurrent();
             if ($fiber === null) {
                 Loop::runUntil(fn () => $this->done);
+                if (!$this->done) {
+                    // The loop went idle (nothing in flight, nothing waiting) with this future unsettled:
+                    // a fiber is stuck on something the loop does not know about. Say so instead of returning null.
+                    throw new \LogicException('Ignis\Future::await(): the loop stopped with this future unsettled (a fiber is parked on an op the loop never completes)');
+                }
             } else {
                 $this->waiters[] = $fiber;
                 \Fiber::suspend();

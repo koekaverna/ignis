@@ -34,6 +34,11 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "h
 # E10 (ADR-0014): gRPC framing + client channel; no codegen, no prost.
 tonic = { version = "0.14", default-features = false, features = ["server", "channel"] }
 futures-core = "0.3"
+# E6' (ADR-0017): TLS for hooked ssl:// streams; ring provider (no cmake/aws-lc build).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
+rustls-pemfile = "2"
 # E14 (ADR-0015): runtime-owned PostgreSQL pool; JSON boundary for params/rows.
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 

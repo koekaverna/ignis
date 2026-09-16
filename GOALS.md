@@ -35,7 +35,7 @@ is used: 4 threads ≥ 3.25× single-thread.
 
 ~~Cycle 5: E13~~ DONE (V-11). ~~Cycle 6: E6 tcp~~ DONE (V-12); sqlite REFUTED for hooks. ~~Cycle 7: E7~~ DONE (V-13). ~~Cycle 8: E11~~ DONE (V-14). ~~Cycle 9: E5'~~ DONE (V-15). ~~Cycle 10: E8~~ DONE (V-16).
 
-~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). ~~Cycle 14: E10~~ DONE (V-20). ~~Cycle 16: E14~~ DONE (V-21). ~~Cycle 18: E16~~ DONE (V-24). Remaining OPEN: E15e (chaos mode); raised targets E2'/E13', E6' ssl, E12' — each a multi-hour build; see STATUS.md ranking.
+~~Cycle 11: E12~~ DONE (V-17). ~~Cycles 12–13: E9~~ DONE (V-18, V-19). ~~Cycle 14: E10~~ DONE (V-20). ~~Cycle 16: E14~~ DONE (V-21). ~~Cycle 18: E16~~ DONE (V-24). ~~E6' ssl~~ DONE (V-25). Remaining OPEN: E15e (chaos mode, porter running); raised targets E2'/E13', E12' — each a multi-hour build; see STATUS.md ranking.
 
 ## Ranking (after Cycle 0, kept for history)
 

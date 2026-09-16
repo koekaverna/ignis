@@ -699,3 +699,31 @@ Bugs found on the way: proxies inherited the parent's `default_object_handlers` 
 - ext-grpc **does build and load on PHP 8.5.10 ZTS** (`grpc module version => 1.85.0dev`): C-core 4648 s (77 min, `nice -j2`, 3066 objects, 277 MB installed, `libgrpc.a` 49.7 MiB), the PHP extension 11.9 s on top, `grpc.so` 47.6 MiB (19.5 MiB stripped). It needed three workarounds: pecl is blocked, `configure` fails against a static C-core (`-lgrpc` alone), and libtool strips `--start-group` so the `.so` had to be linked by hand. Correction to the table's wording: not "client only" but **no supported server**: `Grpc\Server` primitives exist (`requestCall` is a blocking single-threaded completion-queue pull) with no server runtime or PHP server codegen upstream; the conclusion that it cannot serve E10's handlers stands.
 - RoadRunner: cold clone+build 91 s; warm re-link 6.4 s bought with 8.6 GB of Go module + build cache; 480 modules; binary 91.5 MiB.
 - Ignis: the `grpc-baseline` crate builds **cold in 56.9 s** (V-20's 23.5 s was the incremental rebuild); the ignis binary is 27.7 MiB after E14/E16 (V-20 measured 24.1 MiB before them).
+
+## V-25 — H25 (E6'): ssl:// / tls:// / https:// and STARTTLS through the stream hook (CONFIRMED)
+
+Date: 2026-09-16T03:50:09Z. Build: libphp with `--with-openssl` (ext/openssl now registers the stock `ssl`/`tls` transports and overrides `tcp`; Ignis's MINIT replaces `tcp`, `ssl`, `tls`, `tlsv1.2`, `tlsv1.3` with its factory and keeps the originals as fallbacks — `sslv3`, `tlsv1.0`, `tlsv1.1`, persistent and server sockets stay on openssl); rustls 0.23 (`ring` provider) + tokio-rustls 0.26 + webpki-roots in the reactor (ADR-0017). Test rig: three stock-PHP TLS servers (`bench/php/e6_ssl_server.php`, one connection at a time, 200 ms sleep, a leaf certificate for `localhost` signed by a throwaway CA). Command: `bench/e6-ssl.sh`.
+
+```
+== hook on
+hook on: 3 concurrent https fetches (200 ms each) in 217 ms; bodies: ["hello over tls from 8441","hello over tls from 8442","hello over tls from 8443"]
+verify [default (verify_peer on)]: FAIL — file_get_contents(https://127.0.0.1:8441/): Failed to open stream: connect 127.0.0.1:8441: tls handshake with 127.0.0.1: invalid peer certificate: UnknownIssuer
+verify [cafile]: ok
+verify [cafile + wrong peer_name]: FAIL — file_get_contents(https://127.0.0.1:8441/): Failed to open stream: connect 127.0.0.1:8441: tls handshake with example.invalid: invalid peer certificate: certificate not valid for name "example.invalid"; certificate is only valid for DnsName("localhost") or IpAddress(127.0.0.1)
+verify [cafile + verify_peer_name=false]: ok
+verify [allow_self_signed]: ok
+starttls on a ignis_tcp stream: enable_crypto=true, response="hello over tls from 8442"
+client exit=0
+== hook off (control)
+hook off: 3 concurrent https fetches (200 ms each) in 614 ms; bodies: ["hello over tls from 8441","hello over tls from 8442","hello over tls from 8443"]
+```
+
+| claim | result |
+|---|---|
+| 3 concurrent `file_get_contents('https://…')` on one PHP thread, servers sleep 200 ms each | **210–231 ms with the hook**, **613–623 ms with `IGNIS_NO_STREAM_HOOK=1`** (same code, same servers) |
+| verification follows the context options like ext/openssl | default (verify on, unknown CA): rejected `UnknownIssuer`; `cafile`: ok; wrong `peer_name`: rejected with the SAN list in the message; `verify_peer_name=false`: ok; `allow_self_signed`: ok |
+| STARTTLS: `stream_socket_enable_crypto()` on a hooked `tcp://` stream | upgrades in place (`Op::Upgrade`, rustls handshake on the tokio side), request/response then flow through the TLS session |
+
+Three defects fixed on the way: `Outcome::Ready` was not routed to a C-parked fiber (the STARTTLS fiber was left suspended and the script ended silently — `Future::await()` from `{main}` now throws when the loop stops with the future unsettled instead of returning null); TLS records were buffered until the next read (`flush()` after every write now); a self-signed leaf is `CaUsedAsEndEntity` for webpki, so the bench builds a CA + leaf.
+
+Not covered (ADR-0017): client certificates, `sslv3`/`tlsv1.0`/`1.1`, TLS downgrade, `peer_certificate` capture, server-side TLS on the Ignis listener.

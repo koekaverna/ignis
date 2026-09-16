@@ -167,6 +167,10 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                     super::stream::resume_parked(c.id, c.outcome);
                 }
                 Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
+                // A fiber parked inside a C hook on a readiness/upgrade op (STARTTLS, ADR-0017) resumes here.
+                Outcome::Ready if super::stream::is_parked(c.id) => {
+                    super::stream::resume_parked(c.id, c.outcome);
+                }
                 Outcome::Ready => sys::add_index_long(rv, c.id, 1),
                 Outcome::Json(json) => sys::add_index_stringl(rv, c.id, json.as_ptr() as *const c_char, json.len()),
                 Outcome::Blob(Some(b)) => sys::add_index_stringl(rv, c.id, b.as_ptr() as *const c_char, b.len()),
