@@ -367,3 +367,10 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   `debug!("script called exit()")`; `exit(255)` is the one case still read as a fatal, said in the
   comment. E1 prints 0 WARN lines, `trigger_error(E_USER_ERROR)` prints one with status=255,
   `exit(7)` returns 7, nextest 10/10, smoke GREEN (E12 respawn 1). Batch 3 (H-8, H-9) validated.
+- 2026-09-16T22:40Z — **E18 Universal park added by the owner, ADR first.** Recorded verbatim in
+  BRIEF.md's additional expectations, a GOALS row, and a BACKLOG section split by the loop: R1
+  (which blocking symbols the installed libraries import — `nm`, not memory), R2 (who holds a lock
+  across a blocking call, from source at the installed versions — this is what acceptance (5) and
+  the kill criterion are about), R3 (does interposition from the executable bind inside libcurl on
+  this toolchain — my experiment, it decides feasibility), then ADR-0020, then implementation
+  behind a feature flag with a hook-off control. R1 and R2 dispatched to sonnet agents; R3 is mine.

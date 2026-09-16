@@ -124,6 +124,61 @@ read from the new path and still pass.
 
 ---
 
+## E18 — Universal park (owner, 2026-09-16; ADR first)
+
+Export the blocking libc symbols from the ignis binary (`read`/`write`/`recv`/`send`/`poll`/
+`select`/`connect`/`accept`/`nanosleep`/`getaddrinfo`/…) so calls made *inside* libcurl, libpq,
+libssl and friends resolve to us; a thread-local "fiber active" gate decides in a few ns whether
+to park (submit `Op::Watch` on the fd, suspend the fiber, then make the real call once ready —
+the A4 "park then delegate" rule at the syscall layer) or to fall straight through to libc; a
+per-caller-library policy (`park` / `block`, resolved from the return address and cached) keeps
+libraries that hold a lock across a blocking call on the `block` path. The php_stream factory
+hook (ADR-0007) stays as it is. Default policy for an unknown caller is `block` — delegating is
+always semantically correct; parking wrongly is a hang.
+
+### E18-R1 Which blocking symbols the installed libraries actually import `research` `in progress (batch 5)`
+`nm -D --undefined-only` / `objdump -T` on the `.so` files this binary links (see `ldd target/release/ignis`):
+libcurl, libpq, libssl, libcrypto, libphp, libsqlite3, libonig, libz, libnghttp2. For each: the
+blocking libc symbols it imports, and from reading the library's I/O layer which ones sit on the
+request path (curl: `Curl_poll`/`Curl_socket_check`, `Curl_recv`/`Curl_send`, resolver; libpq:
+`pqSocketCheck`, `pqsecure_read/write`, `getaddrinfo`; OpenSSL: `BIO_read`/`BIO_write` → `read`/`write`
+or `recv`/`send`). Deliverable `docs/research/26-e18-blocking-symbols.md` with the exact list and
+versions. **Acceptance.** Every symbol in the ADR's export list appears in this note with the
+library that imports it and the call site, from `nm` and source, not memory.
+
+### E18-R2 Who holds a lock across a blocking call `research` `in progress (batch 5)`
+From the installed versions' source (`curl --version`, `openssl version`, `pg_config --version`;
+clone the matching tags under /tmp/cmp): does OpenSSL 3 hold any `CRYPTO_THREAD_*` lock across
+`BIO_read`/`BIO_write` or `RAND_bytes`; does libcurl hold `Curl_share_lock`/the multi handle's
+locks across `Curl_poll`; does libpq's `pg_g_threadlock` wrap anything that blocks. Deliverable
+`docs/research/27-e18-locks.md`: per library, the lock, the call it wraps, the line, and a verdict
+`park` / `block` / `park-except-init`. **Acceptance.** Each verdict cites a line; acceptance (5)'s
+deliberate mutex-holding test library is specified here (a 20-line C shim that locks a pthread
+mutex, calls `read`, unlocks — under `park` two fibers on one thread must deadlock).
+
+### E18-R3 Interposition from the executable binds inside a shared library `main` `open` — my experiment
+A scratch crate defining `#[no_mangle] extern "C" fn getaddrinfo` (forwarding via
+`dlsym(RTLD_NEXT)`), linked with `-Wl,--export-dynamic-symbol=getaddrinfo`, dlopening libcurl and
+running `curl_easy_perform` on a local URL: the interposer must be hit from inside libcurl. Also:
+does Rust std keep working with `read`/`write` interposed; does `--export-dynamic-symbol` work
+with the linker cargo uses here. Deliverable `docs/research/28-e18-interposition.md`.
+
+### E18-A ADR-0020 `main` `open` — after R1–R3
+Symbol list, gate, policy table with defaults, reentrancy guard (our own reactor calls `poll`;
+nested calls must fall through), `connect` via temporary `O_NONBLOCK` + park-on-writable + flag
+restore, `getaddrinfo` via a resolver `Op` with glibc-compatible `addrinfo` allocation (and
+`freeaddrinfo` interposed), the kill criterion verbatim from the owner, and the five acceptances as
+H32–H36 with their benches: `bench/php/e18_curl.php` (100 × 200 ms `curl_exec`, WRITEFUNCTION
+fiber identity), `bench/php/e18_pgsql.php` (offload off), `bench/php/e18_dns.php`,
+`bench/e18-overhead.sh` (two builds, 10M zero-length `read`s, < 20 ns delta), `bench/e18-deadlock.sh`
+(the R2 shim under `park` deadlocks with a timeout, under `block` passes).
+
+### E18-I Implementation `main` `open` — after E18-A
+C shim per exported symbol (captures `__builtin_return_address(0)`, calls into Rust) built by
+`cc` in `crates/ignis/build.rs`; Rust side in `crates/ignis/src/park/`; feature-gated
+(`universal-park`) so the overhead bench has its control build; `IGNIS_PARK_POLICY=libcurl=park,libpq=park`
+env/toml; `IGNIS_NO_UNIVERSAL_PARK` as the hook-off control (every hook claim needs one).
+
 ## M4 — Operate
 
 ### M4-1 Hold-time on pool leases `main` `open`
