@@ -275,8 +275,8 @@ final class Loop
                 if (self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0) {
                     break;
                 }
-                if (self::$loopGc && gc_status()['roots'] >= self::$gcRoots) {
-                    gc_collect_cycles(); // idle point: no fiber is mid-request here
+                if (self::$loopGc && (++self::$gcTick & 255) === 0 && gc_status()['roots'] >= self::$gcRoots) {
+                    gc_collect_cycles(); // idle point: no fiber is mid-request here (checked every 256 polls: gc_status() allocates)
                     ++self::$gcRuns;
                 }
                 $t = hrtime(true);
@@ -359,6 +359,7 @@ final class Loop
      */
     public static int $gcRoots = 5000;
     public static int $gcRuns = 0;
+    private static int $gcTick = 0;
     private static bool $loopGc = false;
 
     private static function gcInit(): void
