@@ -134,9 +134,9 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
 - 2026-09-16T11:40Z — **research 24: ext/pgsql async + `ignis_watch`** (owner question). Probe
   `bench/php/pg_async_probe.php`, no Rust change. Parking proved: 20 fibers × `pg_sleep(0.2)` on
   one PHP thread = **203.7 ms** vs a stock-blocking control of **4031.4 ms** (19.8×). Same box,
-  same server, 20 backend connections × 2000 `SELECT 1`, 3 reps: libpq path **19 939 / 19 215 /
-  20 033 q/s** vs the ADR-0015 tokio pool **13 386 / 12 538 / 11 468 q/s** — the userland path is
-  1.5–1.7× faster, because ADR-0015 §4 marshals params and rows as JSON. Serial (single fiber) it
+  same server, 20 backend connections × 2000 `SELECT 1`, 3 reps: libpq path **21 570 / 22 032 /
+  21 298 q/s** (rows decoded both sides) vs the ADR-0015 tokio pool **13 386 / 12 538 / 11 468
+  q/s** — the userland path is 1.6–1.9× faster, because ADR-0015 §4 marshals params and rows as JSON. Serial (single fiber) it
   is the worse one: 237.0 µs/query vs 116.6 stock-blocking, all of it the cross-thread round trip
   (a bare `ignis_watch` on an already-ready fd is 14.4 µs; exactly 1 park per query). Corrects
   pain-map item 1, which says libpq cannot be answered by hooks. Costs recorded: per-thread rather

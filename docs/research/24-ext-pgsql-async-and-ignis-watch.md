@@ -54,10 +54,15 @@ shape — 20 backend connections, 2000 `SELECT 1`, one PHP thread, 3 reps each:
 
 | path | q/s (3 reps) | µs/query |
 |---|---|---|
-| `ext/pgsql` async + `ignis_watch` | 19 939 / 19 215 / 20 033 | 49.9–52.0 |
+| `ext/pgsql` async + `ignis_watch` | 21 570 / 22 032 / 21 298 | 45.4–47.0 |
 | tokio pool, `Pool::query()` (V-21 path) | 13 386 / 12 538 / 11 468 | 74.7–87.2 |
 
-**1.5–1.7× in favour of the userland path**, with zero Rust. The pool's extra cost is structural:
+Both legs return decoded PHP arrays (`pg_fetch_all(PGSQL_ASSOC)` against the pool's JSON hop), so
+this is like for like. A first pass that fetched the result handle and discarded the rows measured
+19 215–20 033 q/s — *slower*, i.e. inside the noise: decoding one integer column is free, and the
+earlier run was simply the worse sample.
+
+**1.6–1.9× in favour of the userland path**, with zero Rust. The pool's extra cost is structural:
 ADR-0015 §4 marshals parameters and rows as JSON across the boundary; the libpq path decodes in
 place.
 
