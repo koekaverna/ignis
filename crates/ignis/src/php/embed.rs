@@ -18,15 +18,34 @@ use super::module;
 pub struct Engine {
     // !Send + !Sync: pins the engine to the thread that initialised it.
     _not_send: PhantomData<*mut ()>,
-    argv: Vec<CString>,
+}
+
+/// `argv` handed to PHP (`$argv`/`$_SERVER['argv']`, E15): `[script, args...]` like the CLI.
+/// Leaked for the process because `SG(request_info).argv` keeps the pointer on every thread.
+struct Argv {
+    argc: i32,
+    ptrs: *mut *mut c_char,
+}
+// SAFETY: written once before any thread reads it; the pointed-to strings are never freed.
+unsafe impl Sync for Argv {}
+unsafe impl Send for Argv {}
+static ARGV: std::sync::OnceLock<Argv> = std::sync::OnceLock::new();
+
+fn php_argv() -> &'static Argv {
+    ARGV.get().expect("Engine::init before WorkerThread::attach")
 }
 
 impl Engine {
     /// Starts TSRM, the SAPI, MINIT (with the ignis module) and RINIT.
-    pub fn init(argv0: &str) -> Result<Engine> {
-        let argv = vec![CString::new(argv0)?];
+    /// `args` is `[script, args...]`; PHP sees it as `$argv` (register_argc_argv is on by default).
+    pub fn init(args: &[String]) -> Result<Engine> {
+        let argv: Vec<CString> = args.iter().map(|a| CString::new(a.as_str())).collect::<Result<_, _>>()?;
+        let argv: &'static [CString] = Box::leak(argv.into_boxed_slice());
         let mut argv_ptrs: Vec<*mut c_char> = argv.iter().map(|s| s.as_ptr() as *mut c_char).collect();
         argv_ptrs.push(std::ptr::null_mut());
+        let argc = argv.len() as i32;
+        let argv_ptrs: &'static mut [*mut c_char] = Box::leak(argv_ptrs.into_boxed_slice());
+        let _ = ARGV.set(Argv { argc, ptrs: argv_ptrs.as_mut_ptr() });
         // SAFETY: php_embed_module is a process global written before any PHP
         // runs; we replace one function pointer with a compatible extern "C"
         // fn. php_embed_init then uses it exactly once. argv outlives the call
@@ -40,14 +59,14 @@ impl Engine {
                 let leaked: &'static CString = Box::leak(Box::new(ini));
                 sys::php_embed_module.php_ini_path_override = leaked.as_ptr() as *mut c_char;
             }
-            sys::php_embed_init(1, argv_ptrs.as_mut_ptr())
+            sys::php_embed_init(argc, argv_ptrs.as_mut_ptr())
         };
         if rc != sys::SUCCESS as i32 {
             bail!("php_embed_init failed ({rc})");
         }
         #[cfg(php_async_abi)]
         crate::backend::async_core::install();
-        Ok(Engine { _not_send: PhantomData, argv })
+        Ok(Engine { _not_send: PhantomData })
     }
 
     /// Runs a script file as the primary script of the current request.
@@ -94,6 +113,10 @@ impl WorkerThread {
             // other thread's relative paths.
             let sg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::sapi_globals_offset) as *mut sys::sapi_globals_struct;
             (*sg).options |= 1; // SAPI_OPTION_NO_CHDIR (main/SAPI.h: #define SAPI_OPTION_NO_CHDIR 1)
+            // Same `$argv` as the main thread (php_build_argv reads SG(request_info) at request startup).
+            let a = php_argv();
+            (*sg).request_info.argc = a.argc;
+            (*sg).request_info.argv = a.ptrs;
             if sys::php_request_startup() != sys::SUCCESS {
                 bail!("php_request_startup failed on worker thread");
             }
@@ -140,6 +163,5 @@ impl Drop for Engine {
     fn drop(&mut self) {
         // SAFETY: mirrors php_embed_init; called once on the owning thread.
         unsafe { sys::php_embed_shutdown() }
-        let _ = &self.argv;
     }
 }

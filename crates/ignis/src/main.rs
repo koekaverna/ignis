@@ -44,7 +44,7 @@ fn main() -> ExitCode {
         }
     }
     let Some(script) = args.first().map(PathBuf::from) else {
-        eprintln!("usage: ignis [--threads N] <script.php>");
+        eprintln!("usage: ignis [--threads N] [--supervise] <script.php> [args...]");
         return ExitCode::from(2);
     };
     let threads = threads.max(1);
@@ -60,7 +60,9 @@ fn main() -> ExitCode {
     php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
 
     // Main thread = PHP thread 0 (php_embed_init runs here).
-    let mut engine = match php::embed::Engine::init("ignis") {
+    // PHP's argv is `[script, args...]` (like php-cli), so `$argv[0]` is the script (E15 harnesses).
+    let php_args: Vec<String> = args.iter().cloned().collect();
+    let mut engine = match php::embed::Engine::init(&php_args) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("{e:#}");
