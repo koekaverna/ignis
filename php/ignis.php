@@ -137,13 +137,30 @@ final class Loop
             self::runUntil(fn () => $done);
             return $result;
         }
+        if (!self::$chaosInit) {
+            self::chaosInit();
+        }
         self::$waiting[$id] = $fiber;
         self::$parkedOn[\spl_object_id($fiber)] = $id;
         try {
-            return \Fiber::suspend();
+            $payload = \Fiber::suspend();
         } finally {
             unset(self::$parkedOn[\spl_object_id($fiber)]);
         }
+        if (self::$chaos && mt_rand() / mt_getrandmax() < self::$chaosP) {
+            // Extra switch point after the completion: park on a 0 ms timer so other fibers run
+            // before this one continues (the op itself is already consumed, nothing is lost).
+            self::$chaosYields++;
+            $yid = \ignis_submit_sleep(0);
+            self::$waiting[$yid] = $fiber;
+            self::$parkedOn[\spl_object_id($fiber)] = $yid;
+            try {
+                \Fiber::suspend();
+            } finally {
+                unset(self::$parkedOn[\spl_object_id($fiber)]);
+            }
+        }
+        return $payload;
     }
 
     /** @internal */
@@ -231,6 +248,9 @@ final class Loop
                 while (self::$ready !== []) {
                     $batch = self::$ready;
                     self::$ready = [];
+                    if (self::$chaos) {
+                        shuffle($batch);
+                    }
                     $t = hrtime(true);
                     foreach ($batch as [$fiber, $value]) {
                         ++self::$resumes;
@@ -250,6 +270,15 @@ final class Loop
                 $events = \ignis_poll(-1);
                 $t2 = hrtime(true);
                 self::$phaseNs['poll'] += $t2 - $t;
+                if (self::$chaos && \count($events) > 1) {
+                    $keys = array_keys($events);
+                    shuffle($keys);
+                    $shuffled = [];
+                    foreach ($keys as $k) {
+                        $shuffled[$k] = $events[$k];
+                    }
+                    $events = $shuffled;
+                }
                 if ($events === [] && self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0) {
                     break;
                 }
@@ -297,6 +326,33 @@ final class Loop
     public static array $unobserved = [];
     /** @var null|callable(array):void set by Ignis\Offload\Client (E16) */
     public static $offloadCallbackHandler = null;
+
+    /**
+     * Chaos mode (E15e): IGNIS_CHAOS=1 shuffles the order in which ready fibers and completed ops
+     * are resumed and adds an extra yield (a 0 ms timer) before every awaited op with probability
+     * IGNIS_CHAOS_P (default 0.5). IGNIS_CHAOS_SEED makes a run reproducible. Correct code must not
+     * notice; code that depends on resume order or on "no switch here" fails loudly.
+     */
+    public static bool $chaos = false;
+    public static float $chaosP = 0.5;
+    public static int $chaosYields = 0;
+    private static bool $chaosInit = false;
+
+    private static function chaosInit(): void
+    {
+        self::$chaosInit = true;
+        $env = getenv('IGNIS_CHAOS');
+        self::$chaos = $env !== false && $env !== '' && $env !== '0';
+        if (!self::$chaos) {
+            return;
+        }
+        $p = getenv('IGNIS_CHAOS_P');
+        if ($p !== false && is_numeric($p)) {
+            self::$chaosP = max(0.0, min(1.0, (float) $p));
+        }
+        $seed = getenv('IGNIS_CHAOS_SEED');
+        mt_srand($seed !== false && $seed !== '' ? (int) $seed : (int) (hrtime(true) % 2147483647));
+    }
 
     /** @param callable(Http\Request):Http\Response $handler */
     public static function serve(callable $handler, string $addr): void
