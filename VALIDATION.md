@@ -600,3 +600,18 @@ concurrency cold: 770 ms (ideal 400 ms)     concurrency warm: 429 ms (ideal 400 
 | per-query cost on one PHP thread | 112 µs sequential (prepared-statement cache per connection: 362 µs before it); 476 µs for acquire+query+reset+release (985 µs before the one-round-trip reset and the no-hop acquire); **7.3–8.1k q/s** with 2000 concurrent fibers |
 
 Not measured yet: `pdo_pgsql` on the same box for the per-query comparison (needs `--with-pdo-pgsql` in the PHP build; the E15 suites are running against the current libphp, rebuild queued for bencher). Not covered: prepared statements across pools, `COPY`, `LISTEN/NOTIFY`, TLS, MySQL/Redis (ADR-0015).
+
+## V-22 — Cycle 17: runtime defects found by the E15 ports, fixed and measured (CONFIRMED)
+
+Date: 2026-09-16T02:54:47Z. Source of the defects: the Swoole runtime-hook port (research 15, model=main-spawned), the php-src phpt port (research 17, model=porter) and the FrankenPHP testdata port (research 16, model=main-spawned). Commands: `/tmp/c17a.php`, `/tmp/c17b.php` (kept as `bench/php/e15_fixes.php` below), `bench/e15-swoole.sh --all`.
+
+| defect | fix | number |
+|---|---|---|
+| `stream_socket_server('tcp://…')` inside a fiber returned false (the tcp hook claimed server sockets and answered BIND/LISTEN with NOTIMPL) — 14 phpt tests + 8 Swoole tests | the factory leaves `STREAM_XPORT_SERVER` (= 1 in `php_stream_transport.h`; my first patch used 2 = CONNECT, which the porter caught before it shipped: it would have silently unhooked every client connect) on the stock transport | server in {main} (stock, `stream_type=tcp_socket`) + hooked client fiber (`stream_type=ignis_tcp`) on one thread exchange ping/pong; accept still blocks the thread like stock PHP |
+| `Loop::runUntil()` returned while a fiber was parked inside a C stream op (userland wait map empty) — every socket phpt in fiber mode died silently with exit 0 | the idle check also requires `ignis_inflight() === 0` | the porter's fiber-mode socket tests run (see V-23) |
+| `sleep()` / `usleep()` blocked the thread inside fibers (13 Swoole tests) | internal-function handlers swapped at MINIT (`crates/ignis/src/php/sleep.rs`): inside a fiber with a reactor they park on a µs timer op; outside they call the originals; `IGNIS_NO_SLEEP_HOOK=1` disables | **10 fibers × `usleep(200000)` = 201 ms** (blocking: 2000), **3 × `sleep(1)` = 1001 ms**; `usleep(20000)` outside a fiber = 20 ms via the original handler |
+| an exception in a fiber whose Future nobody awaits was lost (hid the bytea failure in V-21's first run) | `Future` registers unobserved rejections; `Loop::run()` rethrows the first one when it stops; `await()` un-registers | `Ignis\async(fn() => throw …); Loop::run()` → the exception surfaces |
+| `STDIN`/`STDOUT`/`STDERR` undefined under embed (13 of 15 main-mode phpt failures were this) | RINIT on every thread opens `php://stdin|stdout|stderr` and registers the three constants like sapi/cli | defined on main and worker threads, `fwrite(STDERR, …)` works |
+| `PHP_BINARY === ''` | `executable_location` set from `current_exe()` before `php_embed_init` | **not yet effective** (still empty); open |
+
+Swoole `swoole_runtime` (153 tests through `php/swoole/shim.php`), re-run by main after the first four fixes, under load average 25 (a C-core build and the phpt re-run shared the box, 15 tests hit the 20 s hang timeout): **PASS 44 / FAIL 79 / SKIP 30** (agent's pre-fix run: 42 / 81 / 30). The remaining blockers are the ones research 15 ranks: `Swoole\Coroutine\Socket` (36 tests), accept/stream_select inside fibers (19), file hooks (10), proc/pcntl (10), udp/unix transports (7). The sleep hook alone does not move the count because those tests also need the other hooks.
