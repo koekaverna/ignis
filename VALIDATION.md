@@ -758,6 +758,8 @@ accept in a fiber: 3 clients served in 305 ms (3 x 100 ms sequential sleeps in t
 | `stream_get_meta_data()['stream_type']` | `ignis_tcp` | `tcp_socket` (5 phpt tests check the stock label) |
 | `socket_import_stream()` / select fd | no fd (cast FAILURE) | a dup of the socket (owned by the PHP stream, closed with it); the first version wrote a pointer into the int-sized cast slot and smashed the stack — the cast protocol writes a `php_socket_t` |
 
+Swoole `swoole_runtime` re-run on this build: still **44 / 79 / 30** — the accept/select hooks alone move no Swoole test, because the blocked tests also need `Swoole\Coroutine\Socket`, file hooks or process control (research 15's ranking holds).
+
 Under `IGNIS_CHAOS=1` the same test passes (310 ms). Not covered: the `stream_socket_accept()` timeout argument only applies once the listener is readable (the park itself has no timeout yet); UDP/unix transports; `socket_*` (ext/sockets) calls remain blocking.
 
 **E12' — in-flight requests on a dying thread** (`bench/e12-inflight.sh`, `--supervise --threads 1`):
