@@ -57,6 +57,7 @@ impl Engine {
         let exe = std::env::current_exe().ok().and_then(|p| CString::new(p.to_string_lossy().into_owned()).ok());
         let rc = unsafe {
             sys::php_embed_module.startup = Some(module::ignis_sapi_startup);
+            sys::php_embed_module.register_server_variables = Some(register_server_variables);
             if let Some(exe) = exe {
                 let leaked: &'static CString = Box::leak(Box::new(exe));
                 sys::php_embed_module.executable_location = leaked.as_ptr() as *mut c_char;
@@ -164,6 +165,9 @@ fn run_file_on_current_thread(path: &Path) -> Result<i32> {
     // php_execute_script wraps execution in zend_try and returns false on
     // bailout, so no longjmp crosses our frame.
     let status = unsafe {
+        // Like php-cli: a `#!` first line on the primary script is skipped (E15b: vendor/bin/phpunit).
+        let cg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::compiler_globals_offset) as *mut sys::zend_compiler_globals;
+        (*cg).skip_shebang = true;
         let mut fh: sys::zend_file_handle = std::mem::zeroed();
         sys::zend_stream_init_filename(&mut fh, cpath.as_ptr());
         fh.primary_script = true;
@@ -175,6 +179,27 @@ fn run_file_on_current_thread(path: &Path) -> Result<i32> {
         exit_status()
     };
     Ok(status)
+}
+
+/// SAPI callback at request startup (every thread): the CLI-style `$_SERVER` script entries the
+/// stock embed leaves unset (E15b: PHPUnit's Configuration\Merger does `realpath($_SERVER['PHP_SELF'])`).
+/// The embed's own callback (environment import) is reproduced first.
+unsafe extern "C" fn register_server_variables(track_vars_array: *mut sys::zval) {
+    // SAFETY: called by php_hash_environment on the request's thread with the live $_SERVER array.
+    unsafe {
+        if let Some(import) = sys::php_import_environment_variables {
+            import(track_vars_array);
+        }
+        let Some(a) = ARGV.get() else { return };
+        if a.argc < 1 {
+            return;
+        }
+        let script = *a.ptrs;
+        for name in [c"PHP_SELF", c"SCRIPT_NAME", c"SCRIPT_FILENAME", c"PATH_TRANSLATED"] {
+            sys::php_register_variable(name.as_ptr(), script, track_vars_array);
+        }
+        sys::php_register_variable(c"DOCUMENT_ROOT".as_ptr(), c"".as_ptr(), track_vars_array);
+    }
 }
 
 /// MINIT: `PHP_BINARY`. php_embed_init() overwrites `executable_location` with argv[0] (the
