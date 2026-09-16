@@ -4,7 +4,7 @@
 set -uo pipefail
 TEMPORAL="${TEMPORAL:-/opt/gobin/temporal}"; PROBE="${PROBE:-/tmp/claude-0/-home-user-ignis/1a324a70-3e96-5249-98a3-65e34469a7f3/scratchpad/tprobe/target/debug/tprobe}"
 "$TEMPORAL" server start-dev --headless --ip 127.0.0.1 --port 7233 --log-level error > /tmp/temporal-dev.log 2>&1 & TS=$!
-for _ in $(seq 1 100); do "$TEMPORAL" operator namespace describe default >/dev/null 2>&1 && break; sleep 0.3; done
+for _ in $(seq 1 100); do "$TEMPORAL" operator namespace describe -n default >/dev/null 2>&1 && break; sleep 0.3; done
 echo "dev server up (pid $TS)"
 "$PROBE" > /tmp/ignis-e9-probe.log 2>&1 & PB=$!; sleep 2
 "$TEMPORAL" workflow start --task-queue ignis --type IgnisProbeWorkflow --workflow-id ignis-probe-1 --input '"hello"' 2>&1 | tail -2
