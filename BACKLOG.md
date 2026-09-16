@@ -40,7 +40,7 @@ exits 2. Update every reference (`grep -rn worker.php bench scripts docs README.
 **Acceptance.** `grep -rn "symfony/worker.php" --include=*.sh --include=*.md --include=*.php . | grep -v JOURNAL | grep -v VALIDATION` is empty, or every hit is the migration note; `bench/e8-symfony.sh` still runs (it may need the package route — see M3-3).
 **Constraints.** JOURNAL/VALIDATION are history: never edit them to remove a mention.
 
-### M3-3 `bench/e8-symfony.sh` on the package route `agent` `validating (script accepted by main; the number waits for a quiet-box re-run, and for M3-8 the comparable leg)`
+### M3-3 `bench/e8-symfony.sh` on the package route `agent` `done (V-41: main re-run 4,680.64 / 13,629.61 req/s vs agent's 4,663 / 13,360; dev-mode 404, prod leg is M3-8)`
 **What.** Make the E8 bench install the skeleton the way V-40 does (path repo, `platform.php`,
 `extra.runtime.class`, `dump-autoload`) instead of through `worker.php`, and keep its numbers
 comparable with V-16 (7.2k req/s at 1 thread / 25.2k at 4).
@@ -326,6 +326,13 @@ and `e2_all.php` do it on every run. A clean exit is not a warning. In `crates/i
 distinguish `EG(exit_status)` from a real fatal (the `Engine::eval` sentinel already does this for
 `-r`): warn only on a fatal, `debug` on exit. **Acceptance.** Running `e1_sleep_10k.php` prints no
 WARN; a script with `trigger_error(..., E_USER_ERROR)` still prints one. `main` (guarded path).
+
+### H-11 `examples/grpc_server.php` fails static analysis `agent` `open`
+**What.** phpantom flags lines 24–25: an `int` parameter receives `int|float` (the request's number
+fields are decoded from JSON). Pre-existing, not from today's edits. Cast or validate at the
+boundary so the example passes PHPStan level 6 with `php/stubs/ignis.php` loaded (H-7).
+**Acceptance.** `phpstan analyse -l 6 examples/grpc_server.php --autoload-file php/stubs/ignis.php`
+reports 0 errors (phpstan via the builder image's composer, `composer global require phpstan/phpstan`).
 
 ### H-8 Retire the `IGNIS_ADDR` name `agent` `in progress (batch 3)`
 **What.** `bench/e15-frankenphp.sh` sets `IGNIS_ADDR`; `examples/classic_server.php` and

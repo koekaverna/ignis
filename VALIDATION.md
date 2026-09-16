@@ -1473,3 +1473,24 @@ repository).
 Numbers from the agent's run are **not** recorded here (rule C15); the bare skeleton answers `/`
 with the dev-mode welcome 404, so its throughput is a different quantity from V-16's prod-mode 200
 route — BACKLOG M3-8 adds the prod-mode leg before any comparison is drawn.
+
+## V-41 — M3-3: E8 bench on the package route, bare skeleton in dev mode (CONFIRMED as a script; number recorded with its caveat)
+
+Date: 2026-09-16T21:5xZ. Box: this one, load 0.99 before the run, no other benchmark running.
+`IGNIS_LISTEN=127.0.0.1:8120 bench/e8-symfony.sh`: skeleton built inside the builder image the V-40
+way (`--no-scripts`, `platform.php`, path repo, `extra.runtime.class`, `dump-autoload`,
+`mkdir -p var`), served by `./target/release/ignis` on the skeleton's own `public/index.php`,
+`wrk -t2 -c64 -d10s` on `/`.
+
+| threads | agent's run (sonnet, M3-3) | **main's re-run** | p99 (main) |
+|---|---|---|---|
+| 1 | 4,663.14 req/s | **4,680.64 req/s** | 57.93 ms |
+| 4 | 13,360.23 req/s | **13,629.61 req/s** | 17.72 ms |
+
+Reproduces within 2 %. Server alive after each leg, 0 critical/fatal log lines.
+
+**Caveat that is the point of recording it this way:** every response is the skeleton's dev-mode
+welcome page — `404 Not Found`, 39 KB, profiler on (wrk counts all of them as non-2xx). That is a
+different quantity from V-16's prod-mode 200 on a real route (7.2k / 25.2k), so no comparison is
+drawn here. BACKLOG M3-8 adds the prod-mode leg; until then this is the floor for "the Symfony
+kernel handling a request and rendering its error page" on this box.

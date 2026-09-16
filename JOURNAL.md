@@ -355,3 +355,8 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   on the way: a clean `exit()` now logs as a fatal at `warn` — H-10, mine.
   Batch 2 tally: H-2, H-3, H-7, M5-1, M5-4 validated; batch 1: eight of eight, M3-3's number
   pending my re-run.
+- 2026-09-16T21:55Z — **M3-3 closed (V-41).** My re-run of `bench/e8-symfony.sh` on a quiet box:
+  4,680.64 req/s at 1 thread, 13,629.61 at 4 — within 2 % of the agent's numbers, so they enter
+  VALIDATION with both columns and the caveat that every response is the dev-mode 404 welcome page,
+  not V-16's prod 200. Batch 1 is now eight of eight. H-11 added from a phpantom finding on the
+  gRPC example (pre-existing `int|float`).
