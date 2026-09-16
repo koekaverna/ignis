@@ -252,7 +252,12 @@ pub unsafe extern "C" fn zif_ignis_cancel_parked_any(ex: *mut sys::zend_execute_
 fn parse_host_port(res: &str) -> Option<(String, u16)> {
     let (h, p) = res.rsplit_once(':')?;
     let host = h.trim_start_matches('[').trim_end_matches(']').to_string();
-    Some((host, p.parse().ok()?))
+    // A1: PHP parses the port with atoi() into an unsigned short, so a literal above 65535 WRAPS
+    // instead of failing — php-src bug69521 expects tcp://127.0.0.1:74321 to reach port 8785.
+    // Parsing straight into u16 rejected it, and the stream then failed with errno 0 inside a
+    // fiber while {main} and the stock CLI connected fine.
+    let port: i64 = p.parse().ok()?;
+    Some((host, port as u16))
 }
 
 unsafe extern "C" fn ignis_tcp_factory(
@@ -439,9 +444,28 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                         let name = std::str::from_utf8(std::slice::from_raw_parts((*xp).inputs.name as *const u8, (*xp).inputs.namelen))
                             .unwrap_or("");
                         let Some((host, port)) = parse_host_port(name) else {
+                            // A1: an unparseable address used to fail silently — returncode -1 with
+                            // no error_text, so $errstr/$errno came back empty where stock fills them.
+                            if (*xp).want_errortext() != 0 {
+                                // No interpolation of `name`: it is a &str over raw bytes, not a
+                                // NUL-terminated C string, and may itself contain NUL bytes.
+                                (*xp).outputs.error_text =
+                                    sys::zend_strpprintf(0, c"%s".as_ptr(), c"Failed to parse address".as_ptr());
+                            }
                             (*xp).outputs.returncode = -1;
                             return OK;
                         };
+                        // A1: stock rejects a NUL in the host name with this exact wording before it
+                        // resolves anything (php-src ghsa-3cr5-j632-f35r); passing it through to the
+                        // resolver produced a different message.
+                        if host.contains('\0') {
+                            if (*xp).want_errortext() != 0 {
+                                (*xp).outputs.error_text =
+                                    sys::zend_strpprintf(0, c"%s".as_ptr(), c"The hostname must not contain null bytes".as_ptr());
+                            }
+                            (*xp).outputs.returncode = -1;
+                            return OK;
+                        }
                         let tls = if (*sock_of(stream)).tls_on_connect { Some(tls_opts(stream, &host)) } else { None };
                         let id = reactor().submit(Op::Connect { host, port, tls });
                         match await_op(id) {
