@@ -2075,3 +2075,49 @@ Not fixed here: the fix is an ADR-level choice (run a classic entry on the threa
 instead of a fiber, losing in-request concurrency for that mode; or a per-request function-table
 and scope reset, losing the worker model's whole point). Recorded as BACKLOG R-GLOBALS with the
 options and this reproducer.
+
+## V-54 — classic mode gets a top-level worker loop: entry-script globals work (CONFIRMED); the redeclare half does not and cannot cheaply
+
+Date: 2026-09-16T20:10:04Z. Half of R-GLOBALS (V-53) fixed, and a wrong entry in my own backlog corrected.
+
+**Where an include must run for its top-level assignments to become globals** (`scratchpad/scope_probe.php`,
+one script, five placements):
+
+| the include runs... | `global $probe` in a function afterwards |
+|---|---|
+| at the top level of the main script | **`'value#499'`** |
+| inside a plain function | NULL |
+| inside a closure | NULL |
+| inside a Fiber | NULL |
+| inside a closure after `extract($GLOBALS, EXTR_REFS)` | NULL (it aliases *existing* globals; a new variable is still local) |
+
+So BACKLOG R-GLOBALS's option (1) — "run a classic entry on the thread's main context, not in a
+fiber" — was wrong: `Loop::runUntil()` is a method, and a method's scope is no more global than a
+fiber's. Corrected in place.
+
+**What was built.** `Ignis\Classic\listen()` / `accept()` / `respond()`: the loop belongs to the
+user's own script, the shape RoadRunner and FrankenPHP's worker mode use.
+`Loop::$rawRequestHandler` hands a request to the loop's caller instead of spawning a fiber for it
+(and both idle checks now keep the loop alive when it is set). `examples/classic_worker.php` is the
+copy-paste version.
+
+| | stock `php -S` | classic `serve()` (fibers) | classic worker loop (new) |
+|---|---|---|---|
+| `$wpdb` at top level → `$GLOBALS['wpdb']` | set | **NULL** | **set** |
+| `global $wpdb` in a function | set | **NULL** | **set** |
+| 3 requests in a row | 3 distinct values | 3 × NULL | **3 distinct values** |
+| 200 sequential requests | — | — | **198 distinct of 200** (two `mt_rand` collisions, not shared state) |
+| 404 for a missing path / static file / query string | — | — | 404 / served / parsed |
+| throughput, 1 thread, `wrk -t1 -c8 -d5s` | — | — | **10,526 req/s** |
+
+**Not fixed: the second half.** An unguarded top-level `function foo() {}` still survives into the
+next request, and PHP's "Cannot redeclare function" is a fatal that no handler can catch — it ends
+the worker (the supervisor respawns the thread; the in-flight request is lost). The only real fix
+is a PHP request cycle per HTTP request (RINIT/RSHUTDOWN), i.e. giving back exactly the bootstrap
+cost the worker model exists to avoid — an ADR, not a patch. Documented instead, as every worker
+runtime documents it: `require_once`, or guard with `function_exists()`.
+
+**Gates.** `cargo nextest` 9/9; **FrankenPHP testdata 29 ≥ baseline 29** (this is `classic.php`'s
+own gate — the first local run read 1 because `~/frankenphp` was not checked out on this box, the
+same class of local-gate hole as the Swoole clone earlier; with `testdata` present, 29);
+`scripts/smoke.sh` exit 0.

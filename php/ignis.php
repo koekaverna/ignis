@@ -292,7 +292,7 @@ final class Loop
                 }
                 // 3. nothing runnable: block on the reactor. A fiber parked inside a C hook
                 // (stream op, sleep) is not in $waiting but its op is in flight (E15c fix).
-                if (self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0 && self::$ready === [] && self::$pending === []) {
+                if (self::$waiting === [] && self::$requestHandler === null && self::$rawRequestHandler === null && \ignis_inflight() === 0 && self::$ready === [] && self::$pending === []) {
                     break;
                 }
                 if (self::$loopGc && (++self::$gcTick & 255) === 0 && gc_status()['roots'] >= self::$gcRoots) {
@@ -314,7 +314,7 @@ final class Loop
                 }
                 // ignis_poll() resumes C-parked fibers itself; a fiber they settled sits in $ready
                 // with nothing in flight — checking $ready here is what keeps a nested all() alive (E18-I1).
-                if ($events === [] && self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0 && self::$ready === [] && self::$pending === []) {
+                if ($events === [] && self::$waiting === [] && self::$requestHandler === null && self::$rawRequestHandler === null && \ignis_inflight() === 0 && self::$ready === [] && self::$pending === []) {
                     break;
                 }
                 foreach ($events as $id => $payload) {
@@ -459,8 +459,22 @@ final class Loop
      * B1 (ADR-0019): admit, queue, or shed. Queueing holds the request as data, so a queued
      * request costs a few hundred bytes instead of a Fiber's ~34 KB (V-5).
      */
+    /**
+     * Hands a request to the loop's caller instead of to a fiber. Set by `Ignis\Classic\listen()`
+     * for the top-level worker loop: an entry script `include`d from a fiber (or from any function)
+     * has its top-level variables as *locals*, so `$GLOBALS['x']` stays empty and `global $x` in a
+     * function sees null — measured in V-53. Only an include at the top level of the main script
+     * gets real globals, which is why that mode exists and why this hook does not spawn anything.
+     * @var null|callable(int,array):void
+     */
+    public static $rawRequestHandler = null;
+
     private static function dispatchRequest(int $id, array $raw): void
     {
+        if (self::$rawRequestHandler !== null) {
+            (self::$rawRequestHandler)($id, $raw);
+            return;
+        }
         if (!self::$budgetInit) {
             self::budgetInit();
         }

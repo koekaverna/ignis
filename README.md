@@ -126,6 +126,31 @@ Two traps (V-40):
   welcome page is a 404 and the profiler is on. Set `APP_ENV=prod` in `.env.local` for anything
   you measure or expose.
 
+## Legacy apps: the classic worker loop
+
+A framework front controller (Symfony, Laravel) keeps its state in objects and runs fine in worker
+mode. A procedural docroot usually does not: it assigns at the top level of `index.php` and reads
+those variables back with `global` inside functions. That only works if the `include` happens at
+the top level of the main script — not in a function, not in a closure, not in a fiber (V-54
+measured all four). So classic mode offers a loop your own script owns:
+
+```php
+require '/path/to/ignis/php/ignis.php';
+require '/path/to/ignis/php/classic.php';
+
+Ignis\Classic\listen('/var/www/html/public', '0.0.0.0:8080');
+while ($script = Ignis\Classic\accept()) {
+    include $script;          // top level of this script: real globals
+    Ignis\Classic\respond();
+}
+```
+
+`ignis --threads 4 examples/classic_worker.php /var/www/html/public` runs it. One request at a time
+per thread by construction — the loop is your `while`, so nothing else on that thread runs while
+the script does; concurrency comes from threads, as in php-fpm. Two rules, both the same as in
+RoadRunner and FrankenPHP's worker mode: declare functions and classes with `require_once` or
+behind `function_exists()`, and do not suspend inside the script.
+
 ## Build from source
 
 Ignis needs PHP 8.5.10 ZTS with the embed SAPI at `/opt/php85-zts`; distribution packages are
@@ -155,6 +180,8 @@ LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis serve examples/hello_s
 | a fatal error in a handler | ends one worker thread, which is respawned; other threads keep serving | V-17 |
 | Symfony via `symfony/runtime` | worker mode, fiber-scoped `RequestStack`, sessions | V-16 |
 | Revolt / AMPHP | `Ignis\Revolt\IgnisDriver` runs the examples unchanged | V-13, V-23 |
+| a legacy docroot that keeps state in globals (`$wpdb` and friends) | **only in the top-level worker loop** — `examples/classic_worker.php`. In that shape `$GLOBALS` and `global $x` behave as under `php -S`; in the fiber-based `Ignis\Classic\serve()` they do not, because an entry included from a fiber has its top-level variables as locals | V-53, V-54 |
+| a script that declares a function at top level without a guard | **fatals on the second request** (`Cannot redeclare`, uncatchable; the thread is respawned). Use `require_once` or `function_exists()` — the rule in every worker runtime | V-53, V-54 |
 
 Every hook has an off switch (`IGNIS_NO_SUPERGLOBALS`, `IGNIS_NO_UNIVERSAL_PARK` + the `IGNIS_PARK` table) — a
 claim about a hook is only ever made against its control. `IGNIS_PARK` is the policy table
