@@ -157,7 +157,7 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                 // Completions for fibers parked inside a stream op (ADR-0007) are
                 // consumed here: the fiber is resumed and runs until its next
                 // suspension before we continue. Everything else goes to userland.
-                Outcome::Connected { .. } | Outcome::Data(_) | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
+                Outcome::Connected { .. } | Outcome::Data(_) | Outcome::WouldBlock | Outcome::Written(_) | Outcome::Closed | Outcome::Error(_) => {
                     if !super::stream::resume_parked(c.id, c.outcome) {
                         tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
                     }

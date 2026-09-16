@@ -24,6 +24,27 @@ unsafe fn eg() -> *mut sys::zend_executor_globals {
 
 static ORIG_SELECT: OnceLock<Handler> = OnceLock::new();
 
+/// `FG(default_socket_timeout)` (ini `default_socket_timeout`, seconds) on this thread.
+/// `FG()` is a plain (not fast-offset) TSRM global: `ZEND_TSRMG(file_globals_id, ..)` indexes the
+/// thread's storage vector `(*(void ***) tsrm_get_ls_cache())[id - 1]`.
+unsafe fn fg() -> *mut sys::php_file_globals {
+    unsafe {
+        let storage = *(sys::tsrm_get_ls_cache() as *mut *mut *mut c_void);
+        *storage.add((sys::file_globals_id - 1) as usize) as *mut sys::php_file_globals
+    }
+}
+unsafe fn default_socket_timeout() -> i64 {
+    unsafe { (*fg()).default_socket_timeout as i64 }
+}
+/// Sets it and returns the previous value (used to make the original accept return at once).
+unsafe fn set_default_socket_timeout(v: i64) -> i64 {
+    unsafe {
+        let old = (*fg()).default_socket_timeout;
+        (*fg()).default_socket_timeout = v as sys::zend_long;
+        old as i64
+    }
+}
+
 pub unsafe fn install() {
     if std::env::var_os("IGNIS_NO_ACCEPT_HOOK").is_some() {
         return;
@@ -59,6 +80,8 @@ unsafe fn stream_fd(zv: *mut sys::zval, castas: u32) -> Option<i32> {
             return None;
         }
         let mut fd: std::ffi::c_int = -1;
+        // PHP_STREAM_CAST_INTERNAL (0x20000000): a probe, not a conversion — no "buffered data lost" warning.
+        let castas = castas | 0x2000_0000;
         if sys::_php_stream_cast(stream, castas as std::ffi::c_int, &mut fd as *mut std::ffi::c_int as *mut *mut c_void, 0) != sys::SUCCESS || fd < 0 {
             return None;
         }
@@ -77,11 +100,54 @@ unsafe extern "C" fn hooked_accept(ex: *mut sys::zend_execute_data, rv: *mut sys
         }
         let slot = std::mem::size_of::<sys::zend_execute_data>() / std::mem::size_of::<sys::zval>();
         let server = (ex as *mut sys::zval).add(slot);
-        // 1. Park until the listener is readable (a connection is queued).
+        let n = zval::num_args(ex) as usize;
+        // Timeout as PHP computes it: null → default_socket_timeout; < 0 → forever; non-finite → ValueError.
+        let tmo = if n >= 2 { (ex as *mut sys::zval).add(slot + 1) } else { std::ptr::null_mut() };
+        let timeout: f64 = if tmo.is_null() || zval::type_of(tmo) == sys::IS_NULL {
+            default_socket_timeout() as f64
+        } else if zval::type_of(tmo) == sys::IS_DOUBLE {
+            let v = (*tmo).value.dval;
+            if !v.is_finite() {
+                orig(ex, rv); // throws the ValueError
+                return;
+            }
+            v
+        } else if zval::type_of(tmo) == sys::IS_LONG {
+            (*tmo).value.lval as f64
+        } else {
+            orig(ex, rv); // let the original report the type error
+            return;
+        };
+        let timeout_us: Option<u64> = if timeout < 0.0 || timeout >= 1.8e13 { None } else { Some((timeout * 1_000_000.0) as u64) };
+        // 1. Park until the listener is readable (a connection is queued) or the timeout lapses.
         if let Some(fd) = stream_fd(server, sys::PHP_STREAM_AS_FD_FOR_SELECT) {
-            let id = super::module::reactor().submit(Op::Watch { fd, write: false });
-            if super::stream::await_op(id).is_none() {
+            let reactor = super::module::reactor();
+            let watch = reactor.submit(Op::Watch { fd, write: false });
+            let timer = timeout_us.map(|us| reactor.submit(Op::Sleep { us }));
+            let ids: Vec<u64> = std::iter::once(watch).chain(timer).collect();
+            let woke = super::stream::await_any(&ids);
+            for id in &ids {
+                if woke.as_ref().map(|w| w.0) != Some(*id) {
+                    reactor.submit(Op::CancelWatch { target: *id });
+                }
+            }
+            let Some((woke_id, _)) = woke else {
                 return; // fiber unwound while parked
+            };
+            if woke_id != watch {
+                // Timed out: the original with a zero timeout reports it the stock way
+                // (false + "Accept failed: Connection timed out") without blocking the thread.
+                let saved_default = set_default_socket_timeout(0);
+                let saved_arg: Option<sys::zval> = if tmo.is_null() { None } else { Some(*tmo) };
+                if !tmo.is_null() {
+                    zval::set_double(tmo, 0.0);
+                }
+                orig(ex, rv);
+                if let Some(v) = saved_arg {
+                    *tmo = v;
+                }
+                set_default_socket_timeout(saved_default);
+                return;
             }
         }
         // 2. The original accept returns at once now.
@@ -229,9 +295,10 @@ unsafe extern "C" fn hooked_select(ex: *mut sys::zend_execute_data, rv: *mut sys
             ids.push(t);
         }
         let woke = super::stream::await_any(&ids);
-        // Cancel the watches that did not fire (closes their dup'd fds); the timer just lapses.
+        // Cancel the watches (closes their dup'd fds) and the timer that did not fire: a lapsing
+        // timer would count as in flight and keep the userland loop alive (bug64438: 60 s).
         for id in &ids {
-            if Some(*id) != timer && woke.as_ref().map(|w| w.0) != Some(*id) {
+            if woke.as_ref().map(|w| w.0) != Some(*id) {
                 reactor.submit(Op::CancelWatch { target: *id });
             }
         }

@@ -4,6 +4,7 @@
 #include <sapi/embed/php_embed.h>
 #include <main/php_main.h>
 #include <main/php_streams.h>
+#include <ext/standard/file.h>
 #include <Zend/zend_API.h>
 #include <Zend/zend_exceptions.h>
 #include <Zend/zend_fibers.h>

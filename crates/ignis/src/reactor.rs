@@ -37,6 +37,9 @@ pub enum Op {
     Adopt { fd: i32 },
     /// Read up to `max` bytes from `conn`. Completes with `Data` (empty = EOF).
     Read { conn: u64, max: usize },
+    /// Read whatever `conn` holds right now without waiting (a non-blocking PHP stream, E6'').
+    /// Completes with `Data` or `WouldBlock`.
+    TryRead { conn: u64, max: usize },
     /// Write all of `data` to `conn`. Completes with `Written`.
     Write { conn: u64, data: Bytes },
     /// Close `conn`. Completes with `Closed`.
@@ -44,7 +47,7 @@ pub enum Op {
     /// Wait until a raw fd (dup'd by the reactor) is readable (`write=false`) or
     /// writable. One-shot. Completes with `Ready` (ADR-0008).
     Watch { fd: i32, write: bool },
-    /// Cancel a pending `Watch` (E15b: a cancelled watch leaked its dup'd fd); both ops complete with `Error("cancelled")`.
+    /// Cancel a pending `Watch` or `Sleep` (E15b: a cancelled watch leaked its dup'd fd); both ops complete with `Error("cancelled")`.
     CancelWatch { target: u64 },
     /// Any tokio future producing a PHP-facing outcome (`Json` or `Failed`);
     /// used by feature-gated backends (Temporal, ADR-0013) without touching
@@ -56,6 +59,7 @@ impl std::fmt::Debug for Op {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Op::Sleep { us } => write!(f, "Sleep({us}us)"),
+            Op::TryRead { conn, max } => write!(f, "TryRead(conn={conn}, max={max})"),
             Op::Connect { host, port, tls } => write!(f, "Connect({host}:{port},tls={})", tls.is_some()),
             Op::Upgrade { conn, tls } => write!(f, "Upgrade({conn},{})", tls.server_name),
             Op::Adopt { fd } => write!(f, "Adopt({fd})"),
@@ -72,6 +76,7 @@ impl std::fmt::Debug for Op {
 /// Command to a connection actor (tokio side only).
 enum ConnCmd {
     Read { id: u64, max: usize },
+    TryRead { id: u64, max: usize },
     Write { id: u64, data: Bytes },
     Close { id: u64 },
     Upgrade { id: u64, tls: TlsOpts },
@@ -198,6 +203,8 @@ pub enum Outcome {
     Connected { conn: u64, fd: i32, local: String, peer: String },
     /// Bytes read; empty means EOF.
     Data(Bytes),
+    /// `TryRead`: nothing available yet (not EOF).
+    WouldBlock,
     Written(usize),
     Closed,
     /// The watched fd is ready.
@@ -292,6 +299,23 @@ async fn conn_actor(stream: BoxStream, mut rx: mpsc::UnboundedReceiver<ConnCmd>,
                 };
                 let _ = done.send(Completion { id, outcome });
             }
+            ConnCmd::TryRead { id, max } => {
+                // One poll with a no-op waker: data already in the socket (or the TLS session) comes
+                // back; Pending means "would block" and registers no interest.
+                let mut buf = vec![0u8; max.clamp(1, 1 << 20)];
+                let mut fut = std::pin::pin!(stream.read(&mut buf));
+                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+                let outcome = match fut.as_mut().poll(&mut cx) {
+                    std::task::Poll::Ready(Ok(n)) => {
+                        drop(fut);
+                        buf.truncate(n);
+                        Outcome::Data(Bytes::from(buf))
+                    }
+                    std::task::Poll::Ready(Err(e)) => Outcome::Error(e.to_string()),
+                    std::task::Poll::Pending => Outcome::WouldBlock,
+                };
+                let _ = done.send(Completion { id, outcome });
+            }
             ConnCmd::Write { id, data } => {
                 // flush: a TLS session buffers records; plain TCP flush is a no-op.
                 let outcome = match stream.write_all(&data).await.and(stream.flush().await) {
@@ -355,19 +379,24 @@ impl Reactor {
         rt.spawn(async move {
             let conns: ConnMap = Arc::new(Mutex::new(HashMap::new()));
             let next_conn = Arc::new(AtomicU64::new(1));
-            // Pending fd watches by op id, so a cancel can abort the task (closing the dup'd fd).
+            // Pending fd watches and sleeps by op id, so a cancel can abort the task (closing the dup'd fd).
             let watches: Arc<Mutex<HashMap<u64, tokio::task::AbortHandle>>> = Arc::new(Mutex::new(HashMap::new()));
             while let Some((id, op)) = rx.recv().await {
                 let done_tx: Sender<Completion> = done_for_task.clone();
                 match op {
                     Op::Sleep { us } => {
                         let deadline = tokio::time::Instant::now() + Duration::from_micros(us);
-                        tokio::spawn(async move {
+                        // Cancellable like a watch (E6'': a stream_select timeout that lost the race
+                        // must not keep the loop alive until it lapses).
+                        let watches2 = watches.clone();
+                        let handle = tokio::spawn(async move {
                             tokio::time::sleep_until(deadline).await;
                             let late_us = deadline.elapsed().as_micros() as u64;
+                            watches2.lock().unwrap().remove(&id);
                             // Receiver dropped => PHP thread is gone; nothing to do.
                             let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us } });
                         });
+                        watches.lock().unwrap().insert(id, handle.abort_handle());
                     }
                     Op::Connect { host, port, tls } => {
                         let conns = conns.clone();
@@ -428,6 +457,7 @@ impl Reactor {
                         let _ = done_tx.send(Completion { id, outcome: Outcome::Error("cancelled".into()) });
                     }
                     Op::Read { conn, max } => forward(&conns, conn, ConnCmd::Read { id, max }, id, &done_tx),
+                    Op::TryRead { conn, max } => forward(&conns, conn, ConnCmd::TryRead { id, max }, id, &done_tx),
                     Op::Write { conn, data } => forward(&conns, conn, ConnCmd::Write { id, data }, id, &done_tx),
                     Op::Close { conn } => {
                         let tx = conns.lock().unwrap().remove(&conn);

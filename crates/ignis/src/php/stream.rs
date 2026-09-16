@@ -47,6 +47,8 @@ struct Sock {
     fd: i32,
     local: String,
     peer: String,
+    /// `stream_set_blocking()`: false = reads return what is there (or nothing) without parking.
+    blocking: bool,
 }
 
 static ORIG_SSL: OnceLock<sys::php_stream_transport_factory> = OnceLock::new();
@@ -122,7 +124,7 @@ pub unsafe fn adopt_fd(fd: c_int) -> *mut sys::php_stream {
         let id = reactor().submit(Op::Adopt { fd: dup });
         match await_op(id) {
             Some(Outcome::Connected { conn, fd, local, peer }) => {
-                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer });
+                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer, blocking: true });
                 sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
             }
             _ => ptr::null_mut(),
@@ -272,7 +274,7 @@ unsafe extern "C" fn ignis_tcp_factory(
             let Some(orig) = orig else { return ptr::null_mut() };
             return orig(proto, protolen, res, reslen, persistent_id, options, flags, timeout, context);
         }
-        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls, fd: -1, local: String::new(), peer: String::new() });
+        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls, fd: -1, local: String::new(), peer: String::new(), blocking: true });
         sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
     }
 }
@@ -301,8 +303,15 @@ unsafe extern "C" fn op_read(stream: *mut sys::php_stream, buf: *mut c_char, cou
     unsafe {
         let s = sock_of(stream);
         if (*s).pos >= (*s).pending.len() && !(*s).eof {
-            let id = reactor().submit(Op::Read { conn: (*s).conn, max: count.max(8192) });
+            let max = count.max(8192);
+            let id = if (*s).blocking {
+                reactor().submit(Op::Read { conn: (*s).conn, max })
+            } else {
+                reactor().submit(Op::TryRead { conn: (*s).conn, max })
+            };
             match await_op(id) {
+                // Non-blocking stream, nothing there: 0 bytes and no EOF, like recv() → EAGAIN.
+                Some(Outcome::WouldBlock) => return 0,
                 Some(Outcome::Data(d)) => {
                     if d.is_empty() {
                         (*s).eof = true;
@@ -380,7 +389,7 @@ unsafe extern "C" fn op_cast(stream: *mut sys::php_stream, castas: c_int, ret: *
 const OK: c_int = sys::PHP_STREAM_OPTION_RETURN_OK as c_int;
 const NOTIMPL: c_int = sys::PHP_STREAM_OPTION_RETURN_NOTIMPL as c_int;
 
-unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, _value: c_int, ptrparam: *mut c_void) -> c_int {
+unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, value: c_int, ptrparam: *mut c_void) -> c_int {
     unsafe {
         match option as u32 {
             sys::PHP_STREAM_OPTION_XPORT_API => {
@@ -469,8 +478,23 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                     _ => NOTIMPL,
                 }
             }
-            // Timeouts/blocking mode are the reactor's business; accept silently.
-            sys::PHP_STREAM_OPTION_READ_TIMEOUT | sys::PHP_STREAM_OPTION_BLOCKING | sys::PHP_STREAM_OPTION_CHECK_LIVENESS => {
+            sys::PHP_STREAM_OPTION_BLOCKING => {
+                let s = sock_of(stream);
+                let was = (*s).blocking;
+                (*s).blocking = value != 0;
+                was as c_int // the previous mode, as xp_socket reports it
+            }
+            // stream_get_meta_data(): the keys xp_socket fills in.
+            sys::PHP_STREAM_OPTION_META_DATA_API => {
+                let s = sock_of(stream);
+                let arr = ptrparam as *mut sys::zval;
+                sys::add_assoc_bool_ex(arr, c"timed_out".as_ptr(), 9, false);
+                sys::add_assoc_bool_ex(arr, c"blocked".as_ptr(), 7, (*s).blocking);
+                sys::add_assoc_bool_ex(arr, c"eof".as_ptr(), 3, (*s).eof && (*s).pos >= (*s).pending.len());
+                OK
+            }
+            // Timeouts are the reactor's business; accept silently.
+            sys::PHP_STREAM_OPTION_READ_TIMEOUT | sys::PHP_STREAM_OPTION_CHECK_LIVENESS => {
                 OK
             }
             _ => NOTIMPL,
