@@ -1,7 +1,0 @@
-Fatal error: Allowed memory size of 134217728 bytes exhausted (tried to allocate 9223372036854775839 bytes) in /home/user/php-src/Zend/tests/fibers/get-return-after-bailout.php on line 9
-
-Fatal error: Uncaught Error: Call to a member function getReturn() on null in /home/user/php-src/Zend/tests/fibers/get-return-after-bailout.php:5
-Stack trace:
-#0 [internal function]: {closure:/home/user/php-src/Zend/tests/fibers/get-return-after-bailout.php:3}()
-#1 {main}
-  thrown in /home/user/php-src/Zend/tests/fibers/get-return-after-bailout.php on line 5

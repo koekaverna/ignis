@@ -1,8 +1,0 @@
-001- Hello
-002- int(6)
-003- Goodbye
-004- int(8)
-001+ Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/user_streams_consumed_bug.php:16
-002+ Stack trace:
-003+ #0 {main}
-004+   thrown in /home/user/php-src/ext/standard/tests/streams/user_streams_consumed_bug.php on line 16

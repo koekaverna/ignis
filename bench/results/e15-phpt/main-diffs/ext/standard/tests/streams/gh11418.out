@@ -1,5 +1,0 @@
-Fatal error: Uncaught Exception: Failed server start in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc:180
-Stack trace:
-#0 /home/user/php-src/ext/standard/tests/streams/gh11418.php(27): ServerClientTestCase->run('\n$fp = fsockope...', Array)
-#1 {main}
-  thrown in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc on line 180

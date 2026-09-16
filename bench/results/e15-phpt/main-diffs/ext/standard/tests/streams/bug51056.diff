@@ -1,9 +1,0 @@
-001- fread read 8 bytes
-002- fread read 256 bytes
-003- fread read 45 bytes
-004- fread read 8 bytes
-001+ Fatal error: Uncaught Exception: Failed server start in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc:180
-002+ Stack trace:
-003+ #0 /home/user/php-src/ext/standard/tests/streams/bug51056.php(33): ServerClientTestCase->run('\n$fp = fsockope...', Array)
-004+ #1 {main}
-005+   thrown in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc on line 180

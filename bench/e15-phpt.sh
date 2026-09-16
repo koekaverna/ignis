@@ -8,7 +8,8 @@
 # Results: bench/results/e15-phpt/<mode>-<suite>.txt   (failing test names, one per line)
 #          bench/results/e15-phpt/<mode>-<suite>.log   (full run-tests output incl. --show-diff)
 #          bench/results/e15-phpt/<mode>-<suite>.tsv   (RESULT<TAB>test for every test)
-#          bench/results/e15-phpt/<mode>-diffs/...     (the .diff/.out run-tests wrote next to each test)
+#          bench/results/e15-phpt/<mode>-diffs/...     (the .diff/.out run-tests wrote next to each test;
+#                                                       gitignored — upstream test output, kept as a CI artifact)
 #          bench/results/e15-phpt/summary.md           (counts table)
 set -uo pipefail
 cd "$(dirname "$0")/.."

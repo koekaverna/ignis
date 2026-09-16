@@ -1,6 +1,0 @@
-Server failed to start
-Server output:
-
-Warning: include(/home/user/php-src/sapi/cli/tests/phpt-harness): Failed to open stream: Invalid argument in /home/user/ignis/scripts/phpt-harness.php on line 40
-
-Warning: include(): Failed opening '/home/user/php-src/sapi/cli/tests/phpt-harness' for inclusion (include_path='.:') in /home/user/ignis/scripts/phpt-harness.php on line 40

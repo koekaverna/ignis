@@ -1,8 +1,0 @@
-Server failed to start
-Server output:
-
-Warning: Unknown: Failed to open stream: Cannot allocate memory in Unknown on line 0
-
-Fatal error: Failed opening required '/home/user/php-src/sapi/cli/tests/bug64433' (include_path='.:') in Unknown on line 0
-Stack trace:
-#0 {main}

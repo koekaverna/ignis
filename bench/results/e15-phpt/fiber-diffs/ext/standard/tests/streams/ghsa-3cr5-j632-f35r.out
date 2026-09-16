@@ -1,2 +1,0 @@
-Warning: stream_socket_client(): Unable to connect to tcp://localhost\0.example.com:45803 () in /home/user/php-src/ext/standard/tests/streams/ghsa-3cr5-j632-f35r.php on line 8
-bool(false)

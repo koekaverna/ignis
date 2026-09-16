@@ -1,9 +1,9 @@
 # Builds and pushes ghcr.io/koekaverna/ignis-php:8.5.10-zts whenever the PHP build inputs change.
 name: php-image
-# Owner rule: only on night-1 and only when the build inputs change; never on every commit.
+# Owner rule: only on main and only when the build inputs change; never on every commit.
 on:
   push:
-    branches: [night-1]
+    branches: [main]
     paths:
       - scripts/build-php.sh
       - docker/php.Dockerfile

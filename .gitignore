@@ -13,3 +13,5 @@ php-src*/
 *.so
 *.a
 bench/.*.sh
+# php-src run-tests .diff/.out copies (bench/e15-phpt.sh): local + CI artifact only, not history
+/bench/results/e15-phpt/*-diffs/

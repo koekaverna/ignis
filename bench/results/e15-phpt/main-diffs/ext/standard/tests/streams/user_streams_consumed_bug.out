@@ -1,4 +1,0 @@
-Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/user_streams_consumed_bug.php:16
-Stack trace:
-#0 {main}
-  thrown in /home/user/php-src/ext/standard/tests/streams/user_streams_consumed_bug.php on line 16

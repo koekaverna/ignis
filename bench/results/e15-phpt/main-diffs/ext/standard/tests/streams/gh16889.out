@@ -1,5 +1,0 @@
-Fatal error: Uncaught ValueError: First element must contain a non-empty program name in /home/user/php-src/ext/standard/tests/streams/gh16889.php:8
-Stack trace:
-#0 /home/user/php-src/ext/standard/tests/streams/gh16889.php(8): proc_open(Array, Array, NULL)
-#1 {main}
-  thrown in /home/user/php-src/ext/standard/tests/streams/gh16889.php on line 8

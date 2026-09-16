@@ -1,9 +1,0 @@
-001- expected filesize=1000
-002- got filesize=1000
-003- int(1000)
-001+ Server failed to start
-002+ Server output:
-003+ 
-004+ Warning: include(/home/user/php-src/sapi/cli/tests/phpt-harness): Failed to open stream: Invalid argument in /home/user/ignis/scripts/phpt-harness.php on line 40
-005+ 
-006+ Warning: include(): Failed opening '/home/user/php-src/sapi/cli/tests/phpt-harness' for inclusion (include_path='.:') in /home/user/ignis/scripts/phpt-harness.php on line 40

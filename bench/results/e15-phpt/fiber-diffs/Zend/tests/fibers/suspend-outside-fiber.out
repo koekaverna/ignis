@@ -1,5 +1,0 @@
-Fatal error: Uncaught LogicException: Ignis\Future::await(): the loop stopped with this future unsettled (a fiber is parked on an op the loop never completes) in /home/user/ignis/php/ignis.php:69
-Stack trace:
-#0 /home/user/ignis/scripts/phpt-harness.php(58): Ignis\Future->await()
-#1 {main}
-  thrown in /home/user/ignis/php/ignis.php on line 69
