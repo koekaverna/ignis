@@ -1723,3 +1723,17 @@ the absolute numbers are not the V-6/V-28 ones.
 
 Gate cost stays consistent with research 28 (≈8 ns per interposed call): nothing here is
 distinguishable from noise. ADR-0037 §7's E4/E5 band from three quiet runs: pending.
+
+### V-46 addendum 2 — E4 quiet band, park on vs off, alternating ×3 (2026-09-16T17:52Z)
+
+Waited for load < 1.0 (start 0.93 1.76 1.38; end 3.91 2.45 1.65); `hello_server` 1 thread on
+127.0.0.1:8181, `wrk -t2 -c64 -d10s --latency`, arms alternated on/off/on/off/on/off.
+
+| arm | req/s (p99 ms) ×3 |
+|---|---|
+| park on (default build) | 57808.43 (1.86) / 58044.54 (1.80) / 58563.78 (1.77) |
+| park off (`--no-default-features`) | 57692.79 (1.86) / 58057.23 (1.85) / 56958.18 (1.84) |
+
+The bands overlap completely: **no measurable gate cost on the hello path** (ADR-0037 §4/§7
+E4 gate met). Separate finding: both arms sit at ~58k req/s where V-6 measured 128k on this box
+(2026-09-15) — equal arms mean it is not park; BACKLOG H-12.
