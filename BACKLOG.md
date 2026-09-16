@@ -50,7 +50,7 @@ did) and prints req/s for 1 and 4 threads. The orchestrator re-runs it before th
 VALIDATION.
 **Constraints.** The port is `IGNIS_LISTEN`, never a literal (the 2026-09-16 smoke incident).
 
-### M3-4 Laravel: research the route in `research` `in progress (batch 1)`
+### M3-4 Laravel: research the route in `research` `done (docs/research/25-laravel.md, validated by main)`
 **What.** Laravel does not use symfony/runtime. Read how Laravel Octane drives Swoole, RoadRunner
 and FrankenPHP (`laravel/octane`: `Octane\Swoole\SwooleClient`, the worker loop in
 `src/Worker.php`, request/response marshalling) and decide, with evidence, between (a) an Octane
@@ -63,13 +63,33 @@ criterion. No code.
 **Acceptance.** The note names the exact Octane interfaces a driver implements and the Laravel
 version it verified against, from source, not memory.
 
-### M3-5 Laravel adapter `agent` `open` — blocked on M3-4
-**What.** Implement the option M3-4 recommends under `php/laravel/`, plus a bench
-`bench/e8-laravel.sh` in the shape of M3-3, plus a README section like M3-1.
-**Acceptance.** A `laravel/laravel` skeleton served from the runtime image answers `/` with its
-welcome page, 20 concurrent requests all answered, `/_ignis/health` ok before and after, 0 restarts —
-the V-40 table, for Laravel. Two interleaved requests never see each other's `request()` (the
-V-16 RequestStack test, for Laravel's container).
+### M3-5a Laravel in classic mode, serialised by the budget `agent` `open`
+**What.** Research 25 (Octane v2.19.1, commit 68a2516): Octane never has two requests in one engine at
+once, and `Illuminate\Container\Container::$instance` is process-global — so any route that
+interleaves Laravel requests on one thread corrupts the container. `php/classic.php` already runs
+one `include` per request but only *assumes* no suspension ("a classic script must not suspend").
+Ship Laravel through classic mode with **`budget.fibers = 1` per thread**: ADR-0019 then makes the
+serialisation a guarantee (the second request waits as data), hooks can stay on, and the model is
+exactly Octane's own — one request per worker at a time, `threads` workers. `php/laravel/README`
+recipe + `bench/e8-laravel.sh` in M3-3's shape + a README section like M3-1.
+**Acceptance.** A `laravel/laravel` skeleton served from the runtime image with `budget.fibers = 1`
+answers `/` with its welcome page; 20 concurrent requests are all answered (queued, not
+interleaved — `/_ignis/stats` `queued_peak` ≥ 1 proves the queue engaged); health ok before and
+after; 0 restarts. And the safety proof: a route that does a hooked `file_get_contents('http://…')`
+mid-request, hit by two clients at once, records the same `spl_object_id(app())` before and after
+the fetch in both requests. Run the same test with `budget.fibers = 2` as the control and show it
+**fails** — that is what justifies the `1`.
+**Constraints.** Composer only in the builder image (V-40). Do not claim throughput; M3-3's shape.
+
+### M3-5b Fiber-scoped `Container::$instance` and Facade caches `main` `open` — needs an ADR
+**What.** The route to real Laravel concurrency: swap `Container::$instance` (and the Facade
+resolved-instance cache) on the fiber-switch observer, the ADR-0006 model that already swaps
+`$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` (`crates/ignis/src/php/superglobals.rs`). Research 25 §"decisive
+finding" and its option (a) kill criterion are the spec; then an Octane `Contracts\Client` for Ignis.
+**Acceptance.** The V-16 RequestStack test, for Laravel: two interleaved requests never observe
+each other's `app()`; then M3-5a's control run passes at `budget.fibers = 1024`.
+**Constraints.** `main` (`superglobals.rs`, an `unsafe` observer hook). ADR first, with the kill
+criterion from research 25.
 
 ### M3-6 Publish `ignis/runtime` to Packagist `main` `open`
 **What.** Packagist submission of `php/composer.json` (`ignis/runtime`), a tag that composer can

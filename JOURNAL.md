@@ -314,3 +314,13 @@ Timestamped log of every stage transition. UTC. Newest at the bottom.
   processes behind — killed by PID. M5-2/M5-3 (scribe): `docs/migrate.md` (25 V-n citations) and
   `docs/operate.md` (11; every `IGNIS_*` in config.rs and every toml key present, defaults match);
   the agent refused four claims it could not source and said which — the right failure mode.
+- 2026-09-16T20:35Z — **M3-4 validated, M3-5 re-scoped.** Research 25 (sonnet) read `laravel/octane`
+  at v2.19.1 / 68a2516 with line references: all three shipped Octane servers run `Worker::handle()`
+  one request at a time, `Container::$instance` is process-global, `octane:start --server=` is a
+  closed `match`. So the M3-5 acceptance I wrote ("two interleaved requests never see each other's
+  `request()`") cannot be met by any route today. `php/classic.php`'s own header says it *assumes*
+  no suspension; a hooked fetch inside a Laravel request would break that. Re-scoped: M3-5a ships
+  Laravel in classic mode with `budget.fibers = 1` per thread — ADR-0019 turns the assumption into
+  a guarantee and it is Octane's own model — with a control run at budget 2 that must fail; M3-5b
+  (`main`) is the ADR for a fiber-scoped container on the ADR-0006 observer. Option (b) dropped as
+  the agent argued: strictly dominated.
