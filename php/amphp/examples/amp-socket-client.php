@@ -5,7 +5,8 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use function Amp\Socket\connect;
 
-$socket = connect('tcp://127.0.0.1:8080');
+$listen = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';
+$socket = connect('tcp://' . $listen);
 $socket->write("GET /?amp=1 HTTP/1.0\r\nHost: localhost\r\n\r\n");
 $buf = '';
 while (null !== ($chunk = $socket->read())) {

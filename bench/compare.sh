@@ -4,6 +4,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 T="${1:-2}"; C="${2:-64}"; D="${3:-10s}"
+# Listen address for the Ignis server this script starts. Override with IGNIS_LISTEN when :8080
+# is taken; readiness for it is the expected body, never "something answered".
+ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
 ONLY="${ONLY:-ignis franken fpm}"   # space-separated subset to run
 URL_PATH="${URL_PATH:-/}"            # e.g. /cpu for the CPU-bound route
 IGNIS_THREADS_LIST="${IGNIS_THREADS_LIST:-1}"
@@ -24,7 +27,12 @@ row()       { echo "| $1 | $2 |" | tee -a "$OUT"; }
 # --- Ignis, 1 PHP thread
 [[ " $ONLY " == *" ignis "* ]] && for IT in $IGNIS_THREADS_LIST; do
 ./target/release/ignis --threads "$IT" examples/hello_server.php >"$SCRATCH/ignis-bench.log" 2>&1 & PID=$!
-wait_port http://127.0.0.1:8080/ && row "ignis ($IT PHP thread(s) + 2 tokio) $URL_PATH" "$(run_wrk http://127.0.0.1:8080$URL_PATH)"
+up=0; for _ in $(seq 1 50); do curl -sf "http://$ADDR/" 2>/dev/null | grep -q "Hello, World!" && { up=1; break; }; sleep 0.1; done
+if [ "${up:-0}" != 1 ] || ! kill -0 $PID 2>/dev/null; then
+  echo "our server never answered on $ADDR (port taken? set IGNIS_LISTEN); see the server log"
+  kill $PID 2>/dev/null; exit 1
+fi
+row "ignis ($IT PHP thread(s) + 2 tokio) $URL_PATH" "$(run_wrk http://$ADDR$URL_PATH)"
 kill $PID; wait $PID 2>/dev/null
 done
 

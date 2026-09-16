@@ -3,10 +3,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 BIN="${BIN:-./target/release/ignis}"; GOBIN="$(go env GOPATH 2>/dev/null)/bin"; PATH="$GOBIN:$PATH"
-ADDR="${ADDR:-127.0.0.1:8080}"; THREADS="${THREADS:-1}"; N="${N:-100000}"; CONNS="${CONNS:-64}"
+# Listen address for the server this script starts and every URL below. Override with
+# IGNIS_LISTEN when :8080 is taken; readiness is the expected body, never "something answered".
+ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
+THREADS="${THREADS:-1}"; N="${N:-100000}"; CONNS="${CONNS:-64}"
 PROTO=examples/grpc/greeter.proto
-IGNIS_ADDR="$ADDR" "$BIN" --threads "$THREADS" examples/grpc_server.php > /tmp/ignis-e10.log 2>&1 & SRV=$!
-for _ in $(seq 1 50); do curl -s "http://$ADDR/" >/dev/null 2>&1 && break; sleep 0.1; done
+"$BIN" --threads "$THREADS" examples/grpc_server.php > /tmp/ignis-e10.log 2>&1 & SRV=$!
+up=0; for _ in $(seq 1 50); do curl -s "http://$ADDR/" 2>/dev/null | grep -q "Ignis gRPC demo" && { up=1; break; }; sleep 0.1; done
+if [ "${up:-0}" != 1 ] || ! kill -0 $SRV 2>/dev/null; then
+  echo "our server never answered on $ADDR (port taken? set IGNIS_LISTEN); see the server log"
+  kill $SRV 2>/dev/null; exit 1
+fi
 echo "== grpcurl unary";     grpcurl -plaintext -proto "$PROTO" -d '{"name":"ada"}' "$ADDR" ignis.Greeter/SayHello
 echo "== grpcurl streaming"; grpcurl -plaintext -proto "$PROTO" -d '{"n":3}' "$ADDR" ignis.Greeter/Countdown | tr -d '\n '; echo
 echo "== grpcurl unknown method (expect Unimplemented)"; grpcurl -plaintext -proto "$PROTO" -d '{}' "$ADDR" ignis.Greeter/Nope 2>&1 | head -2
