@@ -2026,3 +2026,52 @@ since" marker, and is recorded as such rather than half-built.
 **Gates** (this changes every process start, so the full set): `cargo nextest` 9/9; phpt counts and
 per-test sets all ≥ baseline (108/78, 133/125, 91/85), gate exit 0; `scripts/smoke.sh` exit 0;
 H36 re-run unchanged (park 200 ms with fiber 1 at `-2`, block and off 400 ms).
+
+## V-53 — the owner's Symfony 8.1 app on the three-mechanism binary, and two classic-mode defects it does NOT hit (CONFIRMED)
+
+Date: 2026-09-16T19:35:09Z. Owner's question: can the Symfony project be tested already. It can — `../symfony-ignis`
+is wired to Ignis through `symfony/runtime` (`APP_RUNTIME=Ignis\Symfony\IgnisRuntime`, composer
+psr-4 `Ignis\Symfony\ -> ../ignis/php/symfony/src`, `files: ../ignis/php/ignis.php`) and normally
+runs in its own container on :8080. Its container was **not touched**: a second instance ran from
+the same checkout with `APP_ENV=test` (so `var/cache/test`, a different directory from the running
+dev instance) on 127.0.0.1:8187, with today's `target/release/ignis` — universal park default,
+three mechanisms, no rustls, boot self-check on.
+
+| | |
+|---|---|
+| readiness, first request | 200, body `{"hello":"ignis","php":"8.5.10"}` |
+| single requests, 3x | 200 in **1.4 / 1.9 / 2.4 ms** |
+| `wrk -t2 -c64 -d10s`, 4 PHP threads, 3 rounds | **21,127 / 21,029 / 21,272 req/s**, p99 **28.6 / 28.7 / 27.4 ms**, 0 socket errors, 0 non-2xx |
+| RSS | 48.4 MB at start -> **118.5 / 118.7 / 118.6 MB** across the three rounds (flat after the first) |
+| fatals / uncaught in the log | 0 |
+
+The box was not quiet (load 1.2) and this is the app's own JSON route, not a template render, so the
+throughput is a floor, not a benchmark — what it establishes is that a real Symfony app is unchanged
+by three cycles of deletion.
+
+## The two classic-mode defects (found on the way, NOT hit by Symfony)
+
+Both come from the same fact: in `Ignis\Classic` the entry script is `include`d **inside a fiber**,
+in one long-lived PHP request. Measured against stock `php -S` on the same two files:
+
+| script shape | stock `php -S` | Ignis classic mode |
+|---|---|---|
+| `$wpdb = ...` at top level, a function reading `global $wpdb` | `top-level='handle#1172' GLOBALS='handle#1172' global-in-fn='handle#1172'` | `top-level='handle#2868' GLOBALS=NULL global-in-fn=NULL` (3 requests, same every time) |
+| an unguarded top-level `function legacy_helper()` | request 1 and 2 both print `fn.php ok` | request 1 ok, **request 2 empty** — `Fatal error: Cannot redeclare function` |
+
+Cause: a file included inside a closure has its top-level variables as *locals of that closure*, so
+they never reach `$GLOBALS` and `global $x` finds nothing; and a function declared by the include
+stays in the function table for the life of the worker, so the next request redeclares it. php-fpm
+and `php -S` are unaffected because each request is a fresh PHP request in a fresh scope.
+
+This is a **product-level compatibility gap for legacy apps** (WordPress's `global $wpdb`, Drupal,
+any procedural docroot), not a test artefact — the phpt classification (research 33) had five
+`Zend/tests/fibers/destructors_*` rows blamed on "GC + destructor + Fiber"; re-run by main, the
+mechanism is this one, and the phpt harness hits it for the same reason classic mode does.
+Symfony does not hit it: `symfony/runtime` returns a closure and the Kernel keeps state in objects,
+never in entry-script globals — which is exactly why V-53's numbers are clean.
+
+Not fixed here: the fix is an ADR-level choice (run a classic entry on the thread's main context
+instead of a fiber, losing in-request concurrency for that mode; or a per-request function-table
+and scope reset, losing the worker model's whole point). Recorded as BACKLOG R-GLOBALS with the
+options and this reproducer.
