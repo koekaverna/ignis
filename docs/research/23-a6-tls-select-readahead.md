@@ -2,6 +2,9 @@
 
 Cycle 22, 2026-09-16. Roadmap item A6. Status: **the defect is real and now has a failing test**;
 no fix is landed, because the one tried did not work and cost a reactor round trip per TLS read.
+**Owner decision 2026-09-16: design 2 (the eventfd handed out by `op_cast`) is scheduled into Phase B
+as item B7; design 1 is explicitly NOT to be done** — a stopgap in the subtlest ownership code in
+`hooked_select`, which B7 would then replace, is the worst of the three outcomes.
 
 ## The defect
 

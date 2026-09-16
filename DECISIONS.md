@@ -35,6 +35,31 @@ Small decisions taken without asking (the big ones are ADRs in docs/adr/). Newes
 - **Baselines must be re-taken here before any Phase A claim.** The recorded numbers come from a 4 vCPU box; this one has 24 cores. E1 cold measured 1197.4 ms here against a 1200 ms threshold — a 2.6 ms margin, thinner than the recorded 1168–1178 ms, and taken while builds were running. No Phase A "improved X" claim is admissible against the old numbers.
 - **Known unknown #3 becomes measurable.** ROADMAP lists "scaling past 4 threads: TSRM and the allocator have not been measured at 16–64 threads" as unknown because the old box had 4 vCPU. It is answerable here and is folded into the bencher's baseline task.
 
+## Owner decisions — resolved 2026-09-16
+
+All four were put to the owner with the numbers and the cost of each option; the owner took the
+recommendation in every case ("применяй ко всем рекомендации").
+
+- **(a) ADR-0018 kill criterion 2 — replacement ACCEPTED.** The bar is now "added cost under 25 % of
+  the wrapped operation, measured where a syscall is resolvable, compared against blocking the whole
+  thread". Written into the ADR. The decisive argument arrived after the proposal: V-33 showed the old
+  anchor is not a constant — the warm round trip is 0.58 µs at 128 fibers in flight and 93 µs at one,
+  so "10 % of the round trip" is not a number until the concurrency is named. Rejecting would have
+  meant reversing ADR-0018 and losing fiber sockets 85→86 and Swoole 44→55 to a bar no readiness-probe
+  design can meet.
+- **(b) A6 — scheduled into Phase B as B7, design 2 (an eventfd handed out by `op_cast`).** Design 1
+  (patching the answer inside `hooked_select`) is explicitly NOT to be done: a stopgap in the subtlest
+  ownership code, which B7 would then replace, is the worst of the three outcomes. `op_cast` changing
+  what it hands out is the regression to watch, because E6''/V-26 depends on it.
+- **(c) A3 criterion — restatement ACCEPTED as "no monotonic trend past 5M", and re-run by the main
+  agent.** The old criterion asked two single points to agree within ±2 % while the quantity's own band
+  between adjacent checkpoints is ±10–12 %. The re-run was required because the evidence for changing
+  the criterion was the bencher's measurement, which rule C15 does not admit — changing a criterion on
+  inadmissible evidence is the exact substitution that rule exists to prevent. See V-35.
+- **(d) H31 — fix before B1.** `smoke.sh` runs E6 in CI and E6 fails roughly one run in three locally,
+  so the build will start flapping on its own; and B1's acceptance is measured with the same storm
+  shape, so the 0.1–0.3 % unanswered floor would sit inside its numbers and read as queueing.
+
 ## Owner decisions outstanding
 
 - **ADR-0018 kill criterion 2 (A4, `ext/sockets` overhead).** Measured at roughly 1–2 µs against a 0.36 µs bar (V-29); the bar was set at 10 % of the fiber round trip but the hook adds a syscall to an already syscall-bound call, which no readiness-probe design meets on this box. A replacement criterion is proposed in the ADR addendum (hook cost < 25 % of the wrapped operation, measured where a syscall can be resolved, compared against blocking the whole thread). Accept or reject.

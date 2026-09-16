@@ -1,6 +1,6 @@
 # ADR-0018 — ext/sockets parking and the missing stream transports
 
-Status: accepted, with kill criterion 2 breached and a replacement proposed (Cycle 22; V-29)  (originally proposed Cycle 22, 2026-09-16; research 22, verified against php-src php-8.5.10 by the main agent). Affects pain-map items: Swoole 5 (incomplete hooks — `SOCKETS` is the largest blocked group in research 15, 46 + 9 tests). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation), ADR-0016 (offload pool). Implements roadmap item A4.
+Status: accepted; kill criterion 2 replaced by owner decision 2026-09-16 (Cycle 22; V-29, V-33)  (originally proposed Cycle 22, 2026-09-16; research 22, verified against php-src php-8.5.10 by the main agent). Affects pain-map items: Swoole 5 (incomplete hooks — `SOCKETS` is the largest blocked group in research 15, 46 + 9 tests). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation), ADR-0016 (offload pool). Implements roadmap item A4.
 
 ## Context
 
@@ -46,7 +46,14 @@ Separately, `stream.rs::install()` replaces only `tcp` plus the TLS aliases, whi
 
 Reversed if any of the following holds after implementation:
 1. Fiber-mode `ext/sockets` phpt drops below the local baseline taken in Cycle 22 — that is, the hook breaks parity it was supposed to preserve.
-2. The per-call overhead on an already-ready socket exceeds 10 % of the warm round trip **measured on this box** — 3.6 µs via the `sleep(0)` fast path, 3.9 µs via a real timer (C22 baseline, JOURNAL 2026-09-16T08:15:50Z) — i.e. the hook costs more than ~0.36 µs when it does not park. (The 4.5 µs this criterion originally cited is the old 4 vCPU box's figure and is not a valid bound here.)
+2. ~~The per-call overhead on an already-ready socket exceeds 10 % of the warm round trip — i.e. more
+   than ~0.36 µs when it does not park.~~ **Replaced by owner decision 2026-09-16.** The added cost
+   must stay **under 25 % of the wrapped operation**, measured where a syscall is resolvable, with
+   the comparison of record being against blocking the whole thread. Reasons in the addendum; the
+   decisive one arrived after it (V-33): the old anchor is not a constant at all — the warm round
+   trip is 0.58 µs at 128 fibers in flight and 93 µs at one, so "10 % of the round trip" is not a
+   number until the concurrency is named. Measured overhead against the new bar: ~1–2 µs on a
+   `poll`-bound call, i.e. inside it.
 3. The Swoole shim does not improve on the `sockets/*` group at all, which would mean the blocked group was blocked by something other than the missing hooks.
 
 ## Addendum (C22, after implementation — V-29)
@@ -56,10 +63,9 @@ Reversed if any of the following holds after implementation:
    `poll` syscall to an operation that is already syscall-bound, and a syscall on this WSL2 box costs
    ~0.5-1 µs — no readiness-probe design can meet it. The bench also cannot resolve the difference
    (within-group spread 7.9-13.7 µs against a ~1 µs effect), so no single figure from it is quotable.
-   Proposed replacement, **for the owner to accept or reject**: the added cost must stay under 25 % of
-   the wrapped operation, measured where a syscall is resolvable, with the comparison of record being
-   against blocking the whole thread. Not applied unilaterally; the original criterion stands as
-   breached until then.
+   Replacement **accepted by the owner 2026-09-16** and now written into the kill criterion above:
+   the added cost must stay under 25 % of the wrapped operation, measured where a syscall is
+   resolvable, with the comparison of record being against blocking the whole thread.
 2. **One design rule was learned the hard way and is now in the code.** Readiness is not the same as
    "the call would succeed": on a listening socket, or an unconnected or unbound one, the original
    fails at once while `poll` never fires, and the original validates its arguments *before* any
