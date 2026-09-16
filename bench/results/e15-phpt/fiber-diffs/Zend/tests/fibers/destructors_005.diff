@@ -1,0 +1,12 @@
+001+ 1: Start destruct
+002+ 0: Start destruct
+003+ 0: End destruct
+     2: Start destruct
+     2: End destruct
+003- 0: Start destruct
+004- 0: End destruct
+005- 1: Start destruct
+     0: Collected
+     1: Live
+     2: Collected
+--

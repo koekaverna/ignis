@@ -1,0 +1,14 @@
+001- bool(true)
+002- bool(false)
+001+ Warning: Undefined variable $weakRef in /home/user/php-src/Zend/tests/fibers/destructors_010.php on line 28
+002+ 
+003+ Fatal error: Uncaught Error: Call to a member function get() on null in /home/user/php-src/Zend/tests/fibers/destructors_010.php:28
+004+ Stack trace:
+005+ #0 /home/user/ignis/scripts/phpt-harness.php(40): include()
+006+ #1 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+007+ #2 [internal function]: Ignis\Loop::poolBody(Array)
+008+ #3 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+009+ #4 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+010+ #5 {main}
+011+   thrown in /home/user/php-src/Zend/tests/fibers/destructors_010.php on line 28
+     Shutdown

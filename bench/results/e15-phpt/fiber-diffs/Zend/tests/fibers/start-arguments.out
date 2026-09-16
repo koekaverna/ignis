@@ -1,0 +1,13 @@
+int(1)
+
+Fatal error: Uncaught TypeError: {closure:/home/user/php-src/Zend/tests/fibers/start-arguments.php:11}(): Argument #1 ($x) must be of type int, string given in /home/user/php-src/Zend/tests/fibers/start-arguments.php:11
+Stack trace:
+#0 [internal function]: {closure:/home/user/php-src/Zend/tests/fibers/start-arguments.php:11}('test')
+#1 /home/user/php-src/Zend/tests/fibers/start-arguments.php(15): Fiber->start('test')
+#2 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+#3 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+#4 [internal function]: Ignis\Loop::poolBody(Array)
+#5 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+#6 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+#7 {main}
+  thrown in /home/user/php-src/Zend/tests/fibers/start-arguments.php on line 11

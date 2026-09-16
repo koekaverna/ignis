@@ -53,8 +53,14 @@ impl Engine {
         // Optional php.ini (PHP_INI_SYSTEM entries such as test_scheduler.enable
         // cannot be set at runtime). Kept alive for the process in INI_PATH.
         let ini = std::env::var("IGNIS_PHP_INI").ok().and_then(|p| CString::new(p).ok());
+        // PHP_BINARY (E15a finding: empty under the stock embed, breaks suites that re-exec PHP).
+        let exe = std::env::current_exe().ok().and_then(|p| CString::new(p.to_string_lossy().into_owned()).ok());
         let rc = unsafe {
             sys::php_embed_module.startup = Some(module::ignis_sapi_startup);
+            if let Some(exe) = exe {
+                let leaked: &'static CString = Box::leak(Box::new(exe));
+                sys::php_embed_module.executable_location = leaked.as_ptr() as *mut c_char;
+            }
             if let Some(ini) = ini {
                 let leaked: &'static CString = Box::leak(Box::new(ini));
                 sys::php_embed_module.php_ini_path_override = leaked.as_ptr() as *mut c_char;

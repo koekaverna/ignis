@@ -1,0 +1,11 @@
+001- bool(true)
+001+ Fatal error: Uncaught ValueError: First element must contain a non-empty program name in /home/user/php-src/ext/standard/tests/streams/gh16889.php:8
+002+ Stack trace:
+003+ #0 /home/user/php-src/ext/standard/tests/streams/gh16889.php(8): proc_open(Array, Array, NULL)
+004+ #1 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include('/home/user/php-...')
+005+ #2 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+006+ #3 [internal function]: Ignis\Loop::poolBody(Array)
+007+ #4 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
+008+ #5 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+009+ #6 {main}
+010+   thrown in /home/user/php-src/ext/standard/tests/streams/gh16889.php on line 8

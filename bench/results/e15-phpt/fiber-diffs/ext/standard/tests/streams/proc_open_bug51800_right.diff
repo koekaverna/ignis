@@ -1,0 +1,25 @@
+     array(3) {
+       ["status"]=>
+003-   int(0)
+003+   int(255)
+       ["stdout"]=>
+005-   string(10000) "a%s"
+005+   string(651) "
+006+ Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/process_proc_open_bug51800_right.php:7
+007+ Stack trace:
+008+ #0 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include()
+009+ #1 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+010+ #2 [internal function]: Ignis\Loop::poolBody(Array)
+011+ #3 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
+012+ #4 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+013+ #5 {main}
+014+   thrown in /home/user/php-src/ext/standard/tests/streams/process_proc_open_bug51800_right.php on line 7
+015+ "
+       ["stderr"]=>
+007-   string(10000) "b%s"
+017+   string(0) ""
+     }
+009- int(10000)
+010- int(10000)
+019+ int(651)
+020+ int(0)

@@ -1,0 +1,5 @@
+Warning: Unknown: open_basedir restriction in effect. File(/home/user/php-src/ext/standard/tests/streams/glob-wrapper.php) is not within the allowed path(s): (/does_not_exist) in Unknown on line 0
+
+Warning: Unknown: Failed to open stream: Operation not permitted in Unknown on line 0
+
+Fatal error: Failed opening required '/home/user/php-src/ext/standard/tests/streams/glob-wrapper.php' (include_path='.:') in Unknown on line 0

@@ -1,0 +1,64 @@
+001- Write some data:
+002- array(8) {
+003-   ["timed_out"]=>
+004-   bool(false)
+005-   ["blocked"]=>
+006-   bool(true)
+007-   ["eof"]=>
+008-   bool(false)
+009-   ["stream_type"]=>
+010-   string(%d) "tcp_socke%s"
+011-   ["mode"]=>
+012-   string(2) "r+"
+013-   ["unread_bytes"]=>
+014-   int(%i)
+015-   ["seekable"]=>
+016-   bool(false)
+017-   ["uri"]=>
+018-   string(21) "tcp://127.0.0.1:31334"
+019- }
+001+ Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:31334 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation4.php on line 4
+     
+021- 
+022- Read a line from the client:
+023- array(8) {
+024-   ["timed_out"]=>
+025-   bool(false)
+026-   ["blocked"]=>
+027-   bool(true)
+028-   ["eof"]=>
+029-   bool(false)
+030-   ["stream_type"]=>
+031-   string(%d) "tcp_socke%s"
+032-   ["mode"]=>
+033-   string(2) "r+"
+034-   ["unread_bytes"]=>
+035-   int(%i)
+036-   ["seekable"]=>
+037-   bool(false)
+038-   ["uri"]=>
+039-   string(21) "tcp://127.0.0.1:31334"
+040- }
+041- 
+042- 
+043- Close the server side socket and read the remaining data from the client:
+044- array(8) {
+045-   ["timed_out"]=>
+046-   bool(false)
+047-   ["blocked"]=>
+048-   bool(true)
+049-   ["eof"]=>
+050-   bool(true)
+051-   ["stream_type"]=>
+052-   string(%d) "tcp_socke%s"
+053-   ["mode"]=>
+054-   string(2) "r+"
+055-   ["unread_bytes"]=>
+056-   int(%i)
+057-   ["seekable"]=>
+058-   bool(false)
+059-   ["uri"]=>
+060-   string(21) "tcp://127.0.0.1:31334"
+061- }
+003+ Warning: fsockopen(): Unable to connect to tcp://127.0.0.1:31334:-1 (connect 127.0.0.1:31334: Connection refused (os error 111)) in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation4.php on line 7
+004+ Unable to create socket

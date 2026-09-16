@@ -1,0 +1,11 @@
+Fatal error: Uncaught Error: Undefined constant "STDERR" in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc:119
+Stack trace:
+#0 /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc(175): ServerClientTestCase->spawnWorkerProcess('server', '$server = strea...')
+#1 /home/user/php-src/ext/standard/tests/streams/gh11418.php(27): ServerClientTestCase->run('\n$fp = fsockope...', Array)
+#2 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include('/home/user/php-...')
+#3 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+#4 [internal function]: Ignis\Loop::poolBody(Array)
+#5 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
+#6 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+#7 {main}
+  thrown in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc on line 119

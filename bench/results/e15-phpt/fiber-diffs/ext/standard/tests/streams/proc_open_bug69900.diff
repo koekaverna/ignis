@@ -1,0 +1,19 @@
+001- hello0
+002- hello1
+003- hello2
+004- hello3
+005- hello4
+006- hello5
+007- hello6
+008- hello7
+009- hello8
+010- hello9
+001+ Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/test69900.php:7
+002+ Stack trace:
+003+ #0 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include()
+004+ #1 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+005+ #2 [internal function]: Ignis\Loop::poolBody(Array)
+006+ #3 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
+007+ #4 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+008+ #5 {main}
+009+   thrown in /home/user/php-src/ext/standard/tests/streams/test69900.php on line 7

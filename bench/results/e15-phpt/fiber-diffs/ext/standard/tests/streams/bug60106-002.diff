@@ -1,0 +1,15 @@
+     stream_socket_server(): socket path exceeded the maximum allowed length of %d bytes and was truncated
+002+ 
+003+ Deprecated: substr(): Passing null to parameter #1 ($string) of type string is deprecated in /home/user/php-src/ext/standard/tests/streams/bug60106-002.php on line 11
+004+ 
+005+ Warning: stream_socket_server(): Unable to connect to unix:///tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (Unknown error) in /home/user/php-src/ext/standard/tests/streams/bug60106-002.php on line 15
+006+ 
+007+ Warning: unlink(/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa): File name too long in /home/user/php-src/ext/standard/tests/streams/bug60106-002.php on line 16
+     stream_socket_server(): socket path exceeded the maximum allowed length of 108 bytes and was truncated
+003- Allowed length is now one more: yes
+009+ 
+010+ Warning: Undefined variable $max_normal_length in /home/user/php-src/ext/standard/tests/streams/bug60106-002.php on line 22
+011+ stream_socket_server(): socket path exceeded the maximum allowed length of 108 bytes and was truncated
+012+ Allowed length is now one more: 
+013+ Warning: Undefined variable $max_normal_length in /home/user/php-src/ext/standard/tests/streams/bug60106-002.php on line 28
+014+ no

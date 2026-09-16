@@ -1,0 +1,11 @@
+001- ** Opening %s
+001+ Warning: Unknown: open_basedir restriction in effect. File(/home/user/php-src/ext/standard/tests/streams/glob-wrapper.php) is not within the allowed path(s): (/does_not_exist) in Unknown on line 0
+     
+003- Warning: opendir(): open_basedir restriction in effect. File(%s) is not within the allowed path(s): (/does_not_exist) in %s%eglob-wrapper.php on line 5
+003+ Warning: Unknown: Failed to open stream: Operation not permitted in Unknown on line 0
+     
+005- Warning: opendir(%s): Failed to open directory: Operation not permitted in %s%eglob-wrapper.php on line 5
+006- Failed to open %s
+007- ** Opening glob://%s
+008- No files in glob://%s
+005+ Fatal error: Failed opening required '/home/user/php-src/ext/standard/tests/streams/glob-wrapper.php' (include_path='.:') in Unknown on line 0

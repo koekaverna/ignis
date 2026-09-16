@@ -1,0 +1,4 @@
+Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:31333 (Unknown error) in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.php on line 4
+
+Warning: fsockopen(): Unable to connect to tcp://127.0.0.1:31333:-1 (connect 127.0.0.1:31333: Connection refused (os error 111)) in /home/user/php-src/ext/standard/tests/streams/stream_get_meta_data_socket_variation3.php on line 7
+Unable to create socket

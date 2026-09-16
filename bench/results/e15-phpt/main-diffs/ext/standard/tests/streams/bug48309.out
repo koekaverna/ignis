@@ -1,0 +1,6 @@
+-- stream_copy_to_stream() --
+
+Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/bug48309.php:10
+Stack trace:
+#0 {main}
+  thrown in /home/user/php-src/ext/standard/tests/streams/bug48309.php on line 10

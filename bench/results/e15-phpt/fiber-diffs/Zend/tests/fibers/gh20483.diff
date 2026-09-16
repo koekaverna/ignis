@@ -1,0 +1,7 @@
+001- Fiber stack size is too small, it needs to be at least %d bytes
+001+ Fatal error: Uncaught Exception: Fiber stack size is too small, it needs to be at least 8192 bytes in /home/user/ignis/php/ignis.php:226
+002+ Stack trace:
+003+ #0 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+004+ #1 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+005+ #2 {main}
+006+   thrown in /home/user/ignis/php/ignis.php on line 226

@@ -1,0 +1,51 @@
+001- HELLO!
+002- default
+003- 200: HELLO!
+004- 201: HELLO!
+005- 204: HELLO!
+006- 301: REDIRECTED
+007- 302: REDIRECTED
+008- 303: REDIRECTED
+009- 304: HELLO!
+010- 305: HELLO!
+011- 307: REDIRECTED
+012- 404: HELLO!
+013- 500: HELLO!
+014- follow=0
+015- 200: HELLO!
+016- 201: HELLO!
+017- 204: HELLO!
+018- 301: HELLO!
+019- 302: HELLO!
+020- 303: HELLO!
+021- 304: HELLO!
+022- 305: HELLO!
+023- 307: HELLO!
+024- 404: HELLO!
+025- 500: HELLO!
+026- follow=1
+027- 200: REDIRECTED
+028- 201: REDIRECTED
+029- 204: REDIRECTED
+030- 301: REDIRECTED
+031- 302: REDIRECTED
+032- 303: REDIRECTED
+033- 304: REDIRECTED
+034- 305: REDIRECTED
+035- 307: REDIRECTED
+036- 404: REDIRECTED
+037- 500: REDIRECTED
+001+ Warning: Undefined array key "PHP_SELF" in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
+002+ 
+003+ Deprecated: basename(): Passing null to parameter #1 ($path) of type string is deprecated in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
+004+ 
+005+ Fatal error: Uncaught Error: Undefined constant "STDIN" in /home/user/php-src/sapi/cli/tests/php_cli_server.inc:42
+006+ Stack trace:
+007+ #0 /home/user/php-src/ext/standard/tests/streams/bug64433.php(3): php_cli_server_start('if(!empty($_REQ...')
+008+ #1 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include('/home/user/php-...')
+009+ #2 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+010+ #3 [internal function]: Ignis\Loop::poolBody(Array)
+011+ #4 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
+012+ #5 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+013+ #6 {main}
+014+   thrown in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 42

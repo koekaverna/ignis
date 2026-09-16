@@ -1,0 +1,25 @@
+--
+     object(Socket)#%d (0) {
+     }
+     bool(true)
+008- int(11)
+009- array(3) {
+010-   ["name"]=>
+011-   array(0) {
+012-   }
+013-   ["buffer_size"]=>
+014-   int(2000)
+015-   ["controllen"]=>
+016-   int(%d)
+017- }
+018- OK
+008+ 
+009+ Fatal error: Uncaught Error: Undefined constant "STDIN" in /home/user/php-src/ext/sockets/tests/socket_cmsg_rights.php:26
+010+ Stack trace:
+011+ #0 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(40): include()
+012+ #1 /tmp/e15-phpt/pinned/php/ignis.php(162): {closure:/tmp/e15-phpt/pinned/scripts/phpt-harness.php:38}()
+013+ #2 [internal function]: Ignis\Loop::poolBody(Array)
+014+ #3 /tmp/e15-phpt/pinned/php/ignis.php(226): Fiber->start(Array)
+015+ #4 /tmp/e15-phpt/pinned/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+016+ #5 {main}
+017+   thrown in /home/user/php-src/ext/sockets/tests/socket_cmsg_rights.php on line 26

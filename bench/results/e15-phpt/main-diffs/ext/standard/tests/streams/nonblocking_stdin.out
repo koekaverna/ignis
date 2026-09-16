@@ -1,0 +1,4 @@
+Fatal error: Uncaught Error: Undefined constant "STDIN" in /home/user/php-src/ext/standard/tests/streams/nonblocking_stdin.php:3
+Stack trace:
+#0 {main}
+  thrown in /home/user/php-src/ext/standard/tests/streams/nonblocking_stdin.php on line 3

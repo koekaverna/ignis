@@ -1,0 +1,5 @@
+stock	Zend/tests/fibers	110	108	0	2	0	0	1
+main	Zend/tests/fibers	110	108	0	2	0	0	2
+fiber	Zend/tests/fibers	110	77	31	2	0	0	2
+stock	ext/standard/tests/streams	160	138	0	22	0	0	5
+main	ext/standard/tests/streams	160	131	7	22	0	0	7

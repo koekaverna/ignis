@@ -1,0 +1,10 @@
+     array(2) {
+       [0]=>
+003-   object(Socket)#1 (0) {
+003+   object(Socket)#6 (0) {
+       }
+       [1]=>
+006-   object(Socket)#2 (0) {
+006+   object(Socket)#7 (0) {
+       }
+     }

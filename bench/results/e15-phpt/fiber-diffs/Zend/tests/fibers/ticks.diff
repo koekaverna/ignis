@@ -1,0 +1,16 @@
+001- 1
+002- 
+     Fatal error: Uncaught FiberError: Cannot switch fibers in current execution context in /home/user/php-src/Zend/tests/fibers/ticks.php:7
+     Stack trace:
+     #0 /home/user/php-src/Zend/tests/fibers/ticks.php(7): Fiber::suspend()
+     #1 /home/user/php-src/Zend/tests/fibers/ticks.php(9): {closure:/home/user/php-src/Zend/tests/fibers/ticks.php:5}()
+007- #2 [internal function]: {closure:%s:%d}()
+008- #3 %sticks.php(%d): Fiber->start()
+009- #4 {main}
+005+ #2 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+006+ #3 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+007+ #4 [internal function]: Ignis\Loop::poolBody(Array)
+008+ #5 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+009+ #6 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+010+ #7 {main}
+       thrown in %sticks.php on line %d

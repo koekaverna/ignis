@@ -43,11 +43,18 @@ final class Future
         $this->done = true;
         $this->value = $value;
         $this->error = $e;
+        if ($e !== null && $this->waiters === []) {
+            // Nobody is waiting: remember it so the loop can report it (an await() later un-registers it).
+            Loop::$unobserved[] = $e;
+            $this->unobservedError = $e;
+        }
         foreach ($this->waiters as $fiber) {
             Loop::markReady($fiber, null);
         }
         $this->waiters = [];
     }
+
+    private ?\Throwable $unobservedError = null;
 
     /** Suspends the current fiber until settled; rethrows on rejection. */
     public function await(): mixed
@@ -62,6 +69,14 @@ final class Future
             }
         }
         if ($this->error !== null) {
+            if ($this->unobservedError !== null) {
+                $k = array_search($this->unobservedError, Loop::$unobserved, true);
+                if ($k !== false) {
+                    unset(Loop::$unobserved[$k]);
+                    Loop::$unobserved = array_values(Loop::$unobserved);
+                }
+                $this->unobservedError = null;
+            }
             throw $this->error;
         }
         return $this->value;
@@ -226,15 +241,16 @@ final class Loop
                 if (self::$pending !== []) {
                     continue;
                 }
-                // 3. nothing runnable: block on the reactor
-                if (self::$waiting === [] && self::$requestHandler === null) {
+                // 3. nothing runnable: block on the reactor. A fiber parked inside a C hook
+                // (stream op, sleep) is not in $waiting but its op is in flight (E15c fix).
+                if (self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0) {
                     break;
                 }
                 $t = hrtime(true);
                 $events = \ignis_poll(-1);
                 $t2 = hrtime(true);
                 self::$phaseNs['poll'] += $t2 - $t;
-                if ($events === [] && self::$waiting === [] && self::$requestHandler === null) {
+                if ($events === [] && self::$waiting === [] && self::$requestHandler === null && \ignis_inflight() === 0) {
                     break;
                 }
                 foreach ($events as $id => $payload) {
@@ -267,7 +283,16 @@ final class Loop
         } finally {
             self::$running = false;
         }
+        // A fiber failed and nobody awaited its Future: surface it instead of losing it (E15c fix).
+        if (self::$unobserved !== []) {
+            $e = array_shift(self::$unobserved);
+            self::$unobserved = [];
+            throw $e;
+        }
     }
+
+    /** @var list<\Throwable> rejected futures nobody has awaited (reported when the loop stops) */
+    public static array $unobserved = [];
 
     /** @param callable(Http\Request):Http\Response $handler */
     public static function serve(callable $handler, string $addr): void

@@ -1,0 +1,18 @@
+--
+     2: End destruct
+     3: Start destruct
+     3: End destruct
+008- 0: End destruct
+008+ 
+009+ Warning: Undefined variable $f2 in /home/user/php-src/Zend/tests/fibers/destructors_006.php on line 37
+010+ 
+011+ Fatal error: Uncaught Error: Call to a member function resume() on null in /home/user/php-src/Zend/tests/fibers/destructors_006.php:37
+012+ Stack trace:
+013+ #0 /home/user/ignis/scripts/phpt-harness.php(40): include()
+014+ #1 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+015+ #2 [internal function]: Ignis\Loop::poolBody(Array)
+016+ #3 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+017+ #4 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+018+ #5 {main}
+019+   thrown in /home/user/php-src/Zend/tests/fibers/destructors_006.php on line 37
+     Shutdown

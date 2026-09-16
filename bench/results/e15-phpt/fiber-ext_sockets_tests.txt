@@ -1,0 +1,6 @@
+/home/user/php-src/ext/sockets/tests/socket_addrinfo_bind.phpt
+/home/user/php-src/ext/sockets/tests/socket_addrinfo_connect.phpt
+/home/user/php-src/ext/sockets/tests/socket_cmsg_rights.phpt
+/home/user/php-src/ext/sockets/tests/socket_create_listen_invalid_port.phpt
+/home/user/php-src/ext/sockets/tests/socket_create_pair.phpt
+/home/user/php-src/ext/sockets/tests/socket_set_nonblock.phpt

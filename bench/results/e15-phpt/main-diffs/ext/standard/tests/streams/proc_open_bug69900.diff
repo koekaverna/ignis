@@ -1,0 +1,31 @@
+001- hello0
+002- hello1
+003- hello2
+004- hello3
+005- hello4
+006- hello5
+007- hello6
+008- hello7
+009- hello8
+010- hello9
+001+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+002+ Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/test69900.php:7
+003+ 
+004+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+005+ Stack trace:
+006+ 
+007+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+008+ #0 {main}
+009+ 
+010+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+011+   thrown in /home/user/php-src/ext/standard/tests/streams/test69900.php on line 7
+012+ 
+013+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+014+ 
+015+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+016+ 
+017+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+018+ 
+019+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27
+020+ 
+021+ Notice: fwrite(): Write of 8 bytes failed with errno=32 Broken pipe in /home/user/php-src/ext/standard/tests/streams/proc_open_bug69900.php on line 27

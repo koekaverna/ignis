@@ -1,0 +1,12 @@
+--
+     
+     Fatal error: Uncaught Exception: test in %sthrow.php:%d
+     Stack trace:
+005- #0 {main}
+005+ #0 /home/user/ignis/scripts/phpt-harness.php(40): include()
+006+ #1 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+007+ #2 [internal function]: Ignis\Loop::poolBody(Array)
+008+ #3 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+009+ #4 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+010+ #5 {main}
+       thrown in %sthrow.php on line %d

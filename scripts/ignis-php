@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# scripts/ignis-php — php-src run-tests.php driver for the Ignis binary (E15a / H22a).
+#
+# Use as:  TEST_PHP_EXECUTABLE=scripts/ignis-php  (or run-tests.php -p scripts/ignis-php)
+#
+# run-tests.php builds two kinds of command lines (php-8.5.10/run-tests.php):
+#   bookkeeping / SKIPIF / CLEAN :  $php $pass_options [$extra_options] -q <ini -d flags> <script>
+#                                   $php -n -r "echo PHP_VERSION;"  /  $php -d ... -r "..."
+#   the test itself              :  $php $pass_options [--repeat N] <ini -d flags> -f "<test.php>" [-- args] 2>&1
+# Only the second one is interesting for Ignis. Everything with -q (SKIPIF/CLEAN), every -r/-m/-v/-i/--ri/
+# --version, and the run-test-info.php probe are delegated verbatim to /opt/php85-zts/bin/php: that is the
+# *same libphp build* as the one Ignis embeds, so those answers (PHP_VERSION, loaded extensions, skip
+# decisions) are identical to what the embed would give, and run-tests only uses them for bookkeeping.
+#
+# For a real test invocation the wrapper turns the CLI ini flags into a php.ini file, because the embed SAPI
+# only reads IGNIS_PHP_INI (php_ini_path_override) and has no -d/-c/-n:
+#   tmp ini = (contents of the -c file, unless -n) + one "key=value" line per -d
+# then execs:  IGNIS_PHP_INI=<tmp> target/release/ignis <test.php>
+# stdin, the environment and the exit code are passed through unchanged.
+#
+# IGNIS_PHPT_MODE=fiber runs the test inside an Ignis fiber (scripts/phpt-harness.php) instead of in {main},
+# so the tcp:// stream hook and the fiber-switch observer are active for the test body. The test path is
+# handed over in IGNIS_PHPT_FILE because $argv is not part of the contract here.
+set -u
+
+STOCK_PHP=${IGNIS_STOCK_PHP:-/opt/php85-zts/bin/php}
+IGNIS_BIN=${IGNIS_BIN:-/home/user/ignis/target/release/ignis}
+HARNESS=${IGNIS_PHPT_HARNESS:-/home/user/ignis/scripts/phpt-harness.php}
+
+orig_args=("$@")
+
+no_ini=0        # -n seen
+conf_file=""    # -c <file>
+script=""       # the script to run
+delegate=0      # bookkeeping invocation -> stock CLI
+declare -a dflags=()
+declare -a script_args=()
+
+i=0
+argc=$#
+while [ "$i" -lt "$argc" ]; do
+  a=${orig_args[$i]}
+  case "$a" in
+    -n) no_ini=1 ;;
+    -c) i=$((i + 1)); [ "$i" -lt "$argc" ] && conf_file=${orig_args[$i]} ;;
+    -c*) conf_file=${a#-c} ;;
+    -d) i=$((i + 1)); [ "$i" -lt "$argc" ] && dflags+=("${orig_args[$i]}") ;;
+    -d*) dflags+=("${a#-d}") ;;
+    # -q (NO_INTERACTION) only ever appears on run-tests' SKIPIF/CLEAN command lines; -r/-m/-v/-i/--ri/
+    # --version/-h are pure bookkeeping. All of them go to the stock CLI of the same build.
+    -q|-r|-m|-v|--verbose|-i|--ri|--version|-h|--help|-e|--rf|--rc|--re|--rz|--rd) delegate=1 ;;
+    --repeat) i=$((i + 1)) ;;   # run-tests' --repeat N: the embed runs the script once
+    -f)
+      i=$((i + 1))
+      [ "$i" -lt "$argc" ] && script=${orig_args[$i]}
+      ;;
+    --)
+      # everything after -- is $argv for the script (--ARGS-- section)
+      while [ $((i + 1)) -lt "$argc" ]; do i=$((i + 1)); script_args+=("${orig_args[$i]}"); done
+      ;;
+    -*) : ;;                    # any other flag we do not model: ignored for the ignis run
+    *)  [ -z "$script" ] && script=$a || script_args+=("$a") ;;
+  esac
+  i=$((i + 1))
+done
+
+# The extension/ini probe run-tests writes to php-src/run-test-info.php is bookkeeping too.
+case "${script##*/}" in run-test-info.php) delegate=1 ;; esac
+
+if [ "$delegate" = 1 ] || [ -z "$script" ]; then
+  exec "$STOCK_PHP" "${orig_args[@]}"
+fi
+
+# --- build the php.ini the embed will read ------------------------------------------------------
+tmpdir=${IGNIS_PHPT_TMPDIR:-/tmp/e15-phpt}
+mkdir -p "$tmpdir" 2>/dev/null
+tmpini=$(mktemp "$tmpdir/ini.XXXXXXXX") || exit 1
+trap 'rm -f "$tmpini"' EXIT INT TERM
+
+if [ "$no_ini" = 0 ] && [ -n "$conf_file" ] && [ -f "$conf_file" ]; then
+  cat -- "$conf_file" >> "$tmpini"
+  printf '\n' >> "$tmpini"
+fi
+for kv in ${dflags+"${dflags[@]}"}; do
+  # run-tests emits -d "name=value" (value addslashes'd, unquoted by the shell before we see it).
+  printf '%s\n' "$kv" >> "$tmpini"
+done
+
+export IGNIS_PHP_INI="$tmpini"
+
+if [ "${IGNIS_PHPT_MODE:-main}" = "fiber" ]; then
+  export IGNIS_PHPT_FILE="$script"
+  "$IGNIS_BIN" "$HARNESS" ${script_args+"${script_args[@]}"}
+else
+  "$IGNIS_BIN" "$script" ${script_args+"${script_args[@]}"}
+fi
+rc=$?
+rm -f "$tmpini"
+trap - EXIT INT TERM
+exit "$rc"

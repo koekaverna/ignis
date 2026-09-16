@@ -137,7 +137,10 @@ unsafe extern "C" fn on_destroy(ctx: *mut sys::zend_fiber_context) {
 /// `IGNIS_NO_SUPERGLOBALS` is set (used to measure the swap cost).
 pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi::c_int) -> sys::zend_result {
     // SAFETY: MINIT on the main thread (ADR-0007 transport hook).
-    unsafe { super::stream::install() };
+    unsafe {
+        super::stream::install();
+        super::sleep::install();
+    }
     if std::env::var_os("IGNIS_NO_SUPERGLOBALS").is_none() {
         // SAFETY: zend_observer_startup() ran in php_module_startup before MINIT;
         // zend_get_resource_handle hands out one of ZEND_MAX_RESERVED_RESOURCES

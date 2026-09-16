@@ -52,7 +52,7 @@ unsafe fn eg() -> *mut sys::zend_executor_globals {
 ///
 /// # Safety
 /// PHP thread, inside an internal call on the current fiber's stack.
-unsafe fn await_op(id: u64) -> Option<Outcome> {
+pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
     unsafe {
         let fiber = (*eg()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() {
@@ -71,6 +71,11 @@ unsafe fn await_op(id: u64) -> Option<Outcome> {
         }
         RESULTS.with(|r| r.borrow_mut().remove(&id))
     }
+}
+
+/// True if a fiber is parked (C-side) on op `id` on this thread.
+pub fn is_parked(id: u64) -> bool {
+    PARKED.with(|p| p.borrow().contains_key(&id))
 }
 
 /// Called by `ignis_poll` for every completion: if a fiber is parked on it,
@@ -140,8 +145,12 @@ unsafe extern "C" fn ignis_tcp_factory(
     // SAFETY: called by _php_stream_xport_create on the PHP thread with valid,
     // call-scoped pointers.
     unsafe {
+        // main/streams/php_stream_transport.h: STREAM_XPORT_SERVER = 1 (stream_socket_server()).
+        // Server sockets (bind/listen/accept) stay on the stock transport: the hook only
+        // owns client connections (E15c finding: NOTIMPL on BIND made them fail inside fibers).
+        const STREAM_XPORT_SERVER: c_int = 1;
         let in_fiber = !(*eg()).active_fiber.is_null();
-        if !in_fiber || !persistent_id.is_null() {
+        if !in_fiber || !persistent_id.is_null() || (flags & STREAM_XPORT_SERVER) != 0 {
             let orig = ORIG_TCP.get().copied().flatten().expect("original tcp factory");
             return orig(proto, protolen, res, reslen, persistent_id, options, flags, timeout, context);
         }

@@ -94,7 +94,7 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## Still open
 
-E15 (compat suites: php-src fibers/streams/sockets under ignis, Revolt DriverTest, Swoole runtime-hook shim, FrankenPHP testdata, Symfony/Doctrine chaos mode — added by the owner at 01:55Z, next after E10), E14 (runtime-owned connection pool). E9 is done in prototype scope (no signals/queries/cancel, `json/plain` payloads only — V-19); E10 is done for unary + server-streaming (no client-streaming/bidi, no TLS — V-20). E14 not started: needs tokio-postgres and a PostgreSQL on the box; the reactor's `Op::Custom` seam is the integration point.
+E16 (offload pool of sync PHP threads with own TSRM context + auto-routing of curl/PDO/SQLite3/Redis — added by the owner at 02:32, next main-agent cycle after the compat fixes), E15 (compat suitesZ: php-src fibers/streams/sockets under ignis, Revolt DriverTest, Swoole runtime-hook shim, FrankenPHP testdata, Symfony/Doctrine chaos mode — added by the owner at 01:55Z, next after E10), E14 (runtime-owned connection pool). E9 is done in prototype scope (no signals/queries/cancel, `json/plain` payloads only — V-19); E10 is done for unary + server-streaming (no client-streaming/bidi, no TLS — V-20). E14 not started: needs tokio-postgres and a PostgreSQL on the box; the reactor's `Op::Custom` seam is the integration point.
 
 ## Ranked recommendation for the next 3 cycles
 

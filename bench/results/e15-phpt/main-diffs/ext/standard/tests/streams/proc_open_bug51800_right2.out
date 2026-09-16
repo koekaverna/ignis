@@ -1,0 +1,15 @@
+array(3) {
+  ["status"]=>
+  int(255)
+  ["stdout"]=>
+  string(278) "
+Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/process_proc_open_bug51800_right2.php:10
+Stack trace:
+#0 {main}
+  thrown in /home/user/php-src/ext/standard/tests/streams/process_proc_open_bug51800_right2.php on line 10
+"
+  ["stderr"]=>
+  string(0) ""
+}
+int(278)
+int(0)

@@ -43,6 +43,11 @@ pub fn reactor() -> Arc<Reactor> {
     REACTOR.with(|c| c.get().expect("reactor not installed on this PHP thread").clone())
 }
 
+/// Same, without the panic: `None` on a thread that never installed a reactor (function hooks, E15c).
+pub fn try_reactor() -> Option<Arc<Reactor>> {
+    REACTOR.with(|c| c.get().cloned())
+}
+
 /// Wrapper so a struct holding raw pointers can be a `static`. The pointees
 /// are `'static` string literals and other statics; nothing is ever mutated
 /// after process start, so sharing across threads is sound.
@@ -106,7 +111,7 @@ unsafe extern "C" fn zif_ignis_submit_sleep(ex: *mut sys::zend_execute_data, rv:
             sys::zend_type_error(c"ignis_submit_sleep(): argument #1 ($ms) must be of type int".as_ptr());
             return;
         };
-        let id = reactor().submit(Op::Sleep { ms: ms.max(0) as u64 });
+        let id = reactor().submit(Op::Sleep { us: (ms.max(0) as u64) * 1000 });
         zval::set_long(rv, id as i64);
     }
 }
@@ -156,6 +161,10 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                     if !super::stream::resume_parked(c.id, c.outcome) {
                         tracing::debug!(id = c.id, "stream completion with no parked fiber (closed stream)");
                     }
+                }
+                // A fiber parked inside the sleep()/usleep() hook (E15c) is resumed here, like stream ops.
+                Outcome::Slept { late_us: _ } if super::stream::is_parked(c.id) => {
+                    super::stream::resume_parked(c.id, c.outcome);
                 }
                 Outcome::Slept { late_us } => sys::add_index_long(rv, c.id, late_us as i64),
                 Outcome::Ready => sys::add_index_long(rv, c.id, 1),
@@ -366,6 +375,33 @@ unsafe extern "C" fn zif_ignis_grpc_recv(ex: *mut sys::zend_execute_data, rv: *m
     }
 }
 
+/// RINIT (every PHP thread): define `STDIN`/`STDOUT`/`STDERR` like php-cli does
+/// (E15a finding: 13 of 15 main-mode phpt failures were these three constants).
+unsafe extern "C" fn rinit(_type: c_int, module_number: c_int) -> sys::zend_result {
+    // SAFETY: request startup on the calling thread; streams and constants are request-scoped
+    // (non-persistent), exactly like sapi/cli's php_cli_register_file_handles().
+    unsafe {
+        for (name, path, mode) in [(c"STDIN", c"php://stdin", c"rb"), (c"STDOUT", c"php://stdout", c"wb"), (c"STDERR", c"php://stderr", c"wb")] {
+            let stream = sys::_php_stream_open_wrapper_ex(path.as_ptr(), mode.as_ptr(), 0, ptr::null_mut(), ptr::null_mut());
+            if stream.is_null() {
+                continue;
+            }
+            // php_stream_to_zval: ZVAL_RES(zv, stream->res); the resource refcount is owned by the constant.
+            let mut c: sys::zend_constant = std::mem::zeroed();
+            c.value.value.res = (*stream).res;
+            c.value.u1.type_info = sys::IS_RESOURCE;
+            c.name = sys::zend_strpprintf(0, c"%s".as_ptr(), name.as_ptr());
+            // ZEND_CONSTANT_SET_FLAGS(&c, CONST_CS, module_number): flags in u2.constant_flags (low 16 bits = flags, high = module).
+            c.value.u2.constant_flags = (module_number as u32) << 16;
+            if sys::zend_register_constant(&mut c).is_null() {
+                // Already defined (a second RINIT on this thread): drop our stream.
+                sys::_php_stream_free(stream, 1 /* PHP_STREAM_FREE_CLOSE */);
+            }
+        }
+    }
+    sys::SUCCESS
+}
+
 /// `ignis_pg_open(string $dsn, int $max): int` — pool id, no I/O (E14).
 unsafe extern "C" fn zif_ignis_pg_open(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: args are VM-owned for the call; the dsn is copied.
@@ -566,7 +602,7 @@ pub static mut MODULE: sys::zend_module_entry = sys::zend_module_entry {
     functions: FUNCTIONS.0.as_ptr(),
     module_startup_func: Some(super::superglobals::minit),
     module_shutdown_func: None,
-    request_startup_func: None,
+    request_startup_func: Some(rinit),
     request_shutdown_func: None,
     info_func: None,
     version: c"0.0.1".as_ptr(),

@@ -1,0 +1,20 @@
+     array(3) {
+       ["status"]=>
+003-   int(0)
+003+   int(255)
+       ["stdout"]=>
+005-   string(1000000) "a%s"
+005+   string(278) "
+006+ Fatal error: Uncaught Error: Undefined constant "STDOUT" in /home/user/php-src/ext/standard/tests/streams/process_proc_open_bug51800_right2.php:10
+007+ Stack trace:
+008+ #0 {main}
+009+   thrown in /home/user/php-src/ext/standard/tests/streams/process_proc_open_bug51800_right2.php on line 10
+010+ "
+       ["stderr"]=>
+007-   string(1000000) "b%s"
+012+   string(0) ""
+     }
+009- int(1000000)
+010- int(1000000)
+014+ int(278)
+015+ int(0)

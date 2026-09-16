@@ -1,0 +1,5 @@
+001- object(Socket)#1 (0) {
+001+ object(Socket)#6 (0) {
+     }
+     socket_create_listen(): Argument #1 ($port) must be between 0 and 65535
+     socket_create_listen(): Argument #1 ($port) must be between 0 and 65535

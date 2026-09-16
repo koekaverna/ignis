@@ -1,0 +1,48 @@
+001- HELLO!
+002- default
+003- 200: HELLO!
+004- 201: HELLO!
+005- 204: HELLO!
+006- 301: REDIRECTED
+007- 302: REDIRECTED
+008- 303: REDIRECTED
+009- 304: HELLO!
+010- 305: HELLO!
+011- 307: REDIRECTED
+012- 404: HELLO!
+013- 500: HELLO!
+014- follow=0
+015- 200: HELLO!
+016- 201: HELLO!
+017- 204: HELLO!
+018- 301: HELLO!
+019- 302: HELLO!
+020- 303: HELLO!
+021- 304: HELLO!
+022- 305: HELLO!
+023- 307: HELLO!
+024- 404: HELLO!
+025- 500: HELLO!
+026- follow=1
+027- 200: REDIRECTED
+028- 201: REDIRECTED
+029- 204: REDIRECTED
+030- 301: REDIRECTED
+031- 302: REDIRECTED
+032- 303: REDIRECTED
+033- 304: REDIRECTED
+034- 305: REDIRECTED
+035- 307: REDIRECTED
+036- 404: REDIRECTED
+037- 500: REDIRECTED
+001+ Warning: Undefined array key "PHP_SELF" in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
+002+ 
+003+ Deprecated: basename(): Passing null to parameter #1 ($path) of type string is deprecated in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
+004+ Server failed to start
+005+ Server output:
+006+ 
+007+ Warning: Unknown: Failed to open stream: Cannot allocate memory in Unknown on line 0
+008+ 
+009+ Fatal error: Failed opening required '/home/user/php-src/sapi/cli/tests' (include_path='.:') in Unknown on line 0
+010+ Stack trace:
+011+ #0 {main}

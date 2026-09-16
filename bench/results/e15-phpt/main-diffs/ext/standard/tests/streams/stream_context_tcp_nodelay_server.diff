@@ -1,0 +1,8 @@
+001- server-delay:conn-nodelay
+001+ sh: 1: -d: not found
+002+ 
+003+ Fatal error: Uncaught Exception: Failed server start in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc:180
+004+ Stack trace:
+005+ #0 /home/user/php-src/ext/standard/tests/streams/stream_context_tcp_nodelay_server.php(27): ServerClientTestCase->run('    $test = str...', Array)
+006+ #1 {main}
+007+   thrown in /home/user/php-src/ext/openssl/tests/ServerClientTestCase.inc on line 180

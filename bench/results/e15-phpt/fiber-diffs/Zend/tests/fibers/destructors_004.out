@@ -1,0 +1,49 @@
+0: Start destruct
+1: Start destruct
+1: End destruct
+2: Start destruct
+2: End destruct
+Exception: 1 exception in /home/user/php-src/Zend/tests/fibers/destructors_004.php:22
+Stack trace:
+#0 [internal function]: Cycle->__destruct()
+#1 [internal function]: gc_destructor_fiber()
+#2 /home/user/php-src/Zend/tests/fibers/destructors_004.php(32): gc_collect_cycles()
+#3 [internal function]: {closure:/home/user/php-src/Zend/tests/fibers/destructors_004.php:26}()
+#4 /home/user/php-src/Zend/tests/fibers/destructors_004.php(39): Fiber->start()
+#5 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+#6 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+#7 [internal function]: Ignis\Loop::poolBody(Array)
+#8 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+#9 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+#10 {main}
+
+Next Exception: 2 exception in /home/user/php-src/Zend/tests/fibers/destructors_004.php:22
+Stack trace:
+#0 [internal function]: Cycle->__destruct()
+#1 [internal function]: gc_destructor_fiber()
+#2 /home/user/php-src/Zend/tests/fibers/destructors_004.php(32): gc_collect_cycles()
+#3 [internal function]: {closure:/home/user/php-src/Zend/tests/fibers/destructors_004.php:26}()
+#4 /home/user/php-src/Zend/tests/fibers/destructors_004.php(39): Fiber->start()
+#5 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+#6 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+#7 [internal function]: Ignis\Loop::poolBody(Array)
+#8 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+#9 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+#10 {main}
+0: End destruct
+
+Fatal error: Uncaught Exception: 0 exception in /home/user/php-src/Zend/tests/fibers/destructors_004.php:22
+Stack trace:
+#0 [internal function]: Cycle->__destruct()
+#1 [internal function]: gc_destructor_fiber()
+#2 /home/user/php-src/Zend/tests/fibers/destructors_004.php(36): Fiber->resume()
+#3 [internal function]: {closure:/home/user/php-src/Zend/tests/fibers/destructors_004.php:26}()
+#4 /home/user/php-src/Zend/tests/fibers/destructors_004.php(39): Fiber->start()
+#5 /home/user/ignis/scripts/phpt-harness.php(40): include('/home/user/php-...')
+#6 /home/user/ignis/php/ignis.php(162): {closure:/home/user/ignis/scripts/phpt-harness.php:38}()
+#7 [internal function]: Ignis\Loop::poolBody(Array)
+#8 /home/user/ignis/php/ignis.php(226): Fiber->start(Array)
+#9 /home/user/ignis/scripts/phpt-harness.php(54): Ignis\Loop::runUntil(Object(Closure))
+#10 {main}
+  thrown in /home/user/php-src/Zend/tests/fibers/destructors_004.php on line 22
+Shutdown

@@ -1,0 +1,14 @@
+001- expected filesize=1000
+002- got filesize=1000
+003- int(1000)
+001+ Warning: Undefined array key "PHP_SELF" in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
+002+ 
+003+ Deprecated: basename(): Passing null to parameter #1 ($path) of type string is deprecated in /home/user/php-src/sapi/cli/tests/php_cli_server.inc on line 20
+004+ Server failed to start
+005+ Server output:
+006+ 
+007+ Warning: Unknown: Failed to open stream: Cannot allocate memory in Unknown on line 0
+008+ 
+009+ Fatal error: Failed opening required '/home/user/php-src/sapi/cli/tests' (include_path='.:') in Unknown on line 0
+010+ Stack trace:
+011+ #0 {main}

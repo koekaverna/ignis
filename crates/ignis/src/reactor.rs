@@ -16,7 +16,8 @@ use tokio::sync::{mpsc, oneshot};
 /// An I/O request submitted by PHP. Plain data only: no Zend pointers.
 pub enum Op {
     /// Complete after `ms` milliseconds (tokio timer wheel).
-    Sleep { ms: u64 },
+    /// Sleep for `us` microseconds (sub-ms precision for the usleep hook, E15c).
+    Sleep { us: u64 },
     /// Open a TCP connection (ADR-0007). Completes with `Connected { conn }`.
     Connect { host: String, port: u16 },
     /// Read up to `max` bytes from `conn`. Completes with `Data` (empty = EOF).
@@ -37,7 +38,7 @@ pub enum Op {
 impl std::fmt::Debug for Op {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Op::Sleep { ms } => write!(f, "Sleep({ms})"),
+            Op::Sleep { us } => write!(f, "Sleep({us}us)"),
             Op::Connect { host, port } => write!(f, "Connect({host}:{port})"),
             Op::Read { conn, max } => write!(f, "Read({conn},{max})"),
             Op::Write { conn, data } => write!(f, "Write({conn},{} bytes)", data.len()),
@@ -208,8 +209,8 @@ impl Reactor {
             while let Some((id, op)) = rx.recv().await {
                 let done_tx: Sender<Completion> = done_for_task.clone();
                 match op {
-                    Op::Sleep { ms } => {
-                        let deadline = tokio::time::Instant::now() + Duration::from_millis(ms);
+                    Op::Sleep { us } => {
+                        let deadline = tokio::time::Instant::now() + Duration::from_micros(us);
                         tokio::spawn(async move {
                             tokio::time::sleep_until(deadline).await;
                             let late_us = deadline.elapsed().as_micros() as u64;
@@ -423,7 +424,7 @@ mod tests {
     fn sleep_completes_and_poll_drains() {
         let rt = rt();
         let r = Reactor::new(rt.handle());
-        let ids: Vec<u64> = (0..100).map(|_| r.submit(Op::Sleep { ms: 20 })).collect();
+        let ids: Vec<u64> = (0..100).map(|_| r.submit(Op::Sleep { us: 20_000 })).collect();
         assert_eq!(r.inflight(), 100);
         let t0 = std::time::Instant::now();
         let mut got = Vec::new();
