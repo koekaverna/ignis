@@ -1,6 +1,6 @@
 # ADR-0009 — Client disconnect is a cancel event; one wall-clock deadline per request; both throw at the suspension point
 
-Status: accepted (Cycle 8, 2026-09-16)
+Status: accepted (Cycle 8, 2026-09-16; accepted by V-14 — 20/20 disconnects cancelled including children at 0.78 ms worst case, `finally` ran, 504 at 102 ms for a 100 ms deadline)
 
 Decision: a `Drop` guard around the pending response in hyper's service future emits
 `Outcome::Cancelled` for the request id (stamped with the drop instant). The loop maps the id to the

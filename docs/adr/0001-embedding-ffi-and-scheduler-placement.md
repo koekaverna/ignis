@@ -1,6 +1,6 @@
 # ADR-0001 — Embedding via raw bindgen, reactor in Rust, scheduler in PHP userland
 
-Status: accepted (Cycle 0, 2026-09-15)
+Status: accepted (Cycle 0, 2026-09-15; accepted by V-1 — the bindgen embed runs a script in 16 ms — and V-2, whose profile puts the Rust side at 0.3% of PHP-thread samples, so the kill criterion (c) "move the scheduler into Rust" is not met)
 
 ## Context
 

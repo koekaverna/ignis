@@ -1,6 +1,6 @@
 # ADR-0008 — Revolt driver = `AbstractDriver` subclass over `ignis_poll`; fd readiness via tokio AsyncFd
 
-Status: accepted (Cycle 7, 2026-09-16)
+Status: accepted (Cycle 7, 2026-09-16; accepted by V-13 — 7/8 examples byte-identical, benchmarks ≤ 1× of StreamSelectDriver — and by V-23 addendum: Revolt's `DriverTest` 81 tests / 222 assertions / 0 failures after the readiness fast path and the cancel op that this ADR predicted)
 
 Context: E7. Research 07. Decision: implement `Ignis\Revolt\IgnisDriver` (activate/dispatch/deactivate/now)
 selected with `REVOLT_DRIVER`; add `Op::Watch` + `ignis_watch()` for readiness on real fds; run AMPHP with

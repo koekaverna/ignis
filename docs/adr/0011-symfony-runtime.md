@@ -1,6 +1,6 @@
 # ADR-0011 — Symfony via a custom `symfony/runtime` class; RequestStack fiber-scoped by service override
 
-Status: accepted (Cycle 10, 2026-09-16). Decision: `Ignis\Symfony\IgnisRuntime extends SymfonyRuntime`
+Status: accepted (Cycle 10, 2026-09-16; accepted by V-16 and its addendum — 0/100 `RequestStack` mismatches with sessions on, 7.2k req/s on 1 thread / 25.2k on 4). Decision: `Ignis\Symfony\IgnisRuntime extends SymfonyRuntime`
 returns `IgnisWorkerRunner` for `HttpKernelInterface`; the runner calls `Ignis\serve()` with a handler that
 builds `Request::createFromGlobals()` (per-fiber superglobals) with the body, runs `handle()`/`terminate()`,
 and maps the Symfony Response to `Ignis\Http\Response`. `Ignis\Symfony\FiberRequestStack` keeps one stack

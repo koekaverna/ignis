@@ -43,6 +43,10 @@ struct Sock {
     /// `ssl://`/`tls://` stream: handshake on connect (ADR-0017). `tcp://` streams may still
     /// upgrade later through `stream_socket_enable_crypto()`.
     tls_on_connect: bool,
+    /// dup of the socket for `stream_select()` / `socket_import_stream()`; -1 until connected.
+    fd: i32,
+    local: String,
+    peer: String,
 }
 
 static ORIG_SSL: OnceLock<sys::php_stream_transport_factory> = OnceLock::new();
@@ -101,6 +105,70 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
             return None;
         }
         RESULTS.with(|r| r.borrow_mut().remove(&id))
+    }
+}
+
+/// Wrap an already-connected socket fd (from `stream_socket_accept`, E6'') in a hooked stream:
+/// the reactor adopts a dup of the fd. Returns null (the caller keeps the stock stream) on failure.
+///
+/// # Safety
+/// PHP thread, inside a fiber, from an internal function frame.
+pub unsafe fn adopt_fd(fd: c_int) -> *mut sys::php_stream {
+    unsafe {
+        let dup = libc::dup(fd);
+        if dup < 0 {
+            return ptr::null_mut();
+        }
+        let id = reactor().submit(Op::Adopt { fd: dup });
+        match await_op(id) {
+            Some(Outcome::Connected { conn, fd, local, peer }) => {
+                let sock = Box::new(Sock { conn, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: false, fd, local, peer });
+                sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
+            }
+            _ => ptr::null_mut(),
+        }
+    }
+}
+
+/// Park the running fiber until ANY of `ids` completes; returns the id that did. The other ids'
+/// completions are dropped later (no fiber waits on them any more). `None` = could not park.
+///
+/// # Safety
+/// PHP thread, inside an internal call on the current fiber's stack.
+pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
+    unsafe {
+        let fiber = (*eg()).active_fiber;
+        if fiber.is_null() || sys::zend_fiber_switch_blocked() || ids.is_empty() {
+            return None;
+        }
+        PARKED.with(|p| {
+            let mut p = p.borrow_mut();
+            for id in ids {
+                p.insert(*id, fiber);
+            }
+        });
+        let mut ret: sys::zval = std::mem::zeroed();
+        sys::zend_fiber_suspend(fiber, ptr::null_mut(), &mut ret);
+        sys::zval_ptr_dtor(&mut ret);
+        // Whichever id resumed us left its outcome in RESULTS; unpark the rest.
+        PARKED.with(|p| {
+            let mut p = p.borrow_mut();
+            for id in ids {
+                p.remove(id);
+            }
+        });
+        if !(*eg()).exception.is_null() {
+            return None;
+        }
+        RESULTS.with(|r| {
+            let mut r = r.borrow_mut();
+            for id in ids {
+                if let Some(o) = r.remove(id) {
+                    return Some((*id, o));
+                }
+            }
+            None
+        })
     }
 }
 
@@ -188,7 +256,7 @@ unsafe extern "C" fn ignis_tcp_factory(
             let Some(orig) = orig else { return ptr::null_mut() };
             return orig(proto, protolen, res, reslen, persistent_id, options, flags, timeout, context);
         }
-        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls });
+        let sock = Box::new(Sock { conn: 0, pending: Vec::new(), pos: 0, eof: false, tls_on_connect: is_tls, fd: -1, local: String::new(), peer: String::new() });
         sys::_php_stream_alloc(&OPS.0, Box::into_raw(sock) as *mut c_void, ptr::null(), c"r+".as_ptr())
     }
 }
@@ -261,6 +329,9 @@ unsafe extern "C" fn op_close(stream: *mut sys::php_stream, _close_handle: c_int
                 // Fire and forget: the actor closes the socket; nobody waits.
                 reactor().submit(Op::Close { conn: sock.conn });
             }
+            if sock.fd >= 0 {
+                libc::close(sock.fd);
+            }
             (*stream).abstract_ = ptr::null_mut();
         }
         0
@@ -271,8 +342,23 @@ unsafe extern "C" fn op_flush(_stream: *mut sys::php_stream) -> c_int {
     0
 }
 
-unsafe extern "C" fn op_cast(_stream: *mut sys::php_stream, _castas: c_int, _ret: *mut *mut c_void) -> c_int {
-    sys::FAILURE as c_int // no file descriptor: stream_select() on this stream fails loudly
+/// `stream_select()` / `socket_import_stream()` get a dup of the socket: readiness is real,
+/// the data still flows through the reactor ops (E6''; research 17/15 asked for this).
+unsafe extern "C" fn op_cast(stream: *mut sys::php_stream, castas: c_int, ret: *mut *mut c_void) -> c_int {
+    unsafe {
+        const CAST_MASK: c_int = 0x1fff_ffff; // PHP_STREAM_CAST_MASK
+        let fd = (*sock_of(stream)).fd;
+        match (castas & CAST_MASK) as u32 {
+            sys::PHP_STREAM_AS_FD_FOR_SELECT | sys::PHP_STREAM_AS_FD | sys::PHP_STREAM_AS_SOCKETD if fd >= 0 => {
+                // Protocol (php_sockop_cast): `ret` points at a php_socket_t (int), not at a void*.
+                if !ret.is_null() {
+                    *(ret as *mut c_int) = fd;
+                }
+                sys::SUCCESS as c_int
+            }
+            _ => sys::FAILURE as c_int,
+        }
+    }
 }
 
 const OK: c_int = sys::PHP_STREAM_OPTION_RETURN_OK as c_int;
@@ -294,8 +380,12 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                         let tls = if (*sock_of(stream)).tls_on_connect { Some(tls_opts(stream, &host)) } else { None };
                         let id = reactor().submit(Op::Connect { host, port, tls });
                         match await_op(id) {
-                            Some(Outcome::Connected { conn }) => {
-                                (*sock_of(stream)).conn = conn;
+                            Some(Outcome::Connected { conn, fd, local, peer }) => {
+                                let s = sock_of(stream);
+                                (*s).conn = conn;
+                                (*s).fd = fd;
+                                (*s).local = local;
+                                (*s).peer = peer;
                                 (*xp).outputs.returncode = 0;
                             }
                             Some(Outcome::Error(e)) => {
@@ -310,6 +400,20 @@ unsafe extern "C" fn op_set_option(stream: *mut sys::php_stream, option: c_int, 
                         OK
                     }
                     sys::STREAM_XPORT_OP_SHUTDOWN => OK,
+                    sys::STREAM_XPORT_OP_GET_NAME | sys::STREAM_XPORT_OP_GET_PEER_NAME => {
+                        let s = sock_of(stream);
+                        let name = if (*xp).op == sys::STREAM_XPORT_OP_GET_NAME { &(*s).local } else { &(*s).peer };
+                        if name.is_empty() {
+                            (*xp).outputs.returncode = -1;
+                            return OK;
+                        }
+                        if (*xp).want_textaddr() != 0 {
+                            let c = std::ffi::CString::new(name.as_str()).unwrap_or_default();
+                            (*xp).outputs.textaddr = sys::zend_strpprintf(0, c"%s".as_ptr(), c.as_ptr());
+                        }
+                        (*xp).outputs.returncode = 0;
+                        OK
+                    }
                     _ => NOTIMPL,
                 }
             }
@@ -367,7 +471,8 @@ static OPS: SyncStatic<sys::php_stream_ops> = SyncStatic(sys::php_stream_ops {
     read: Some(op_read),
     close: Some(op_close),
     flush: Some(op_flush),
-    label: c"ignis_tcp".as_ptr(),
+    // The stock label: code and tests check `stream_get_meta_data()['stream_type'] === 'tcp_socket'`.
+    label: c"tcp_socket".as_ptr(),
     seek: None,
     cast: Some(op_cast),
     stat: None,

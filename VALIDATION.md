@@ -670,7 +670,17 @@ exception: DomainException(boom from the worker, code 42) propagated as RemoteEx
 | exceptions | class/message/code/trace cross back as `RemoteException` |
 | shutdown | workers leave their PHP request before `php_embed_shutdown` (poison job + join); the first version aborted with `zend_mm_heap corrupted` at exit |
 
-Not yet: config-driven auto-routing of `curl_*`/`PDO`/`SQLite3`/`Redis` (proxies pinned to a worker, function-handler trampolines) and the pdo_pgsql/curl_exec tests — the libphp rebuild with `--with-pdo-pgsql --with-pgsql --with-curl --with-openssl` is running.
+Second run of the same script (03:30Z, load average 3.4, right before the E16 commit; source of the ranges quoted in HYPOTHESES/STATUS):
+
+```
+blocking calls: 100 x 200 ms through 8 workers: 2604 ms wall (bound = ceil(100/8) x 200 = 2600 ms); distinct worker threads used: 8; fiber thread ticked 229 times (10 ms sleeps) meanwhile
+copy overhead: 1KB args, 2000 sequential calls: 67.4 us per call round trip (serialized size 1597 B)
+blocking calls: 100 x 200 ms through 100 workers: 291 ms wall (bound = ceil(100/100) x 200 = 200 ms); distinct worker threads used: 100; fiber thread ticked 25 times (10 ms sleeps) meanwhile
+```
+
+So: 8 workers 2604–2608 ms, 100 workers 243–291 ms, 1 KB copy 27–67 µs across two runs on a loaded box.
+
+Auto-routing (`curl_*`/`PDO`/`SQLite3`) is in the V-24 addendum below.
 
 ## V-24 addendum — H24 (E16, part 2): config-driven auto-routing with no code changes (CONFIRMED)
 

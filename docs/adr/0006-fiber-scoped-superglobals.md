@@ -1,6 +1,6 @@
 # ADR-0006 — Superglobals are swapped per fiber by a fiber-switch observer; the container is a userland WeakMap
 
-Status: accepted (Cycle 5, 2026-09-16)
+Status: accepted (Cycle 5, 2026-09-16; accepted by V-11 — 0 mismatches in-process and over 200 concurrent requests at +100 ns per switch; V-11 addendum records the amortised cost that motivated the E13' lazy swap)
 
 ## Context
 E13: two interleaved requests must never observe each other's `$_SERVER`/`$_POST`;

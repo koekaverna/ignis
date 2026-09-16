@@ -33,6 +33,8 @@ pub enum Op {
     Connect { host: String, port: u16, tls: Option<TlsOpts> },
     /// STARTTLS: wrap an open connection in TLS in place. Completes with `Ready` or `Error`.
     Upgrade { conn: u64, tls: TlsOpts },
+    /// Adopt an already-connected socket (a dup'd fd from `stream_socket_accept`, E6''). Completes with `Connected`.
+    Adopt { fd: i32 },
     /// Read up to `max` bytes from `conn`. Completes with `Data` (empty = EOF).
     Read { conn: u64, max: usize },
     /// Write all of `data` to `conn`. Completes with `Written`.
@@ -56,6 +58,7 @@ impl std::fmt::Debug for Op {
             Op::Sleep { us } => write!(f, "Sleep({us}us)"),
             Op::Connect { host, port, tls } => write!(f, "Connect({host}:{port},tls={})", tls.is_some()),
             Op::Upgrade { conn, tls } => write!(f, "Upgrade({conn},{})", tls.server_name),
+            Op::Adopt { fd } => write!(f, "Adopt({fd})"),
             Op::Read { conn, max } => write!(f, "Read({conn},{max})"),
             Op::Write { conn, data } => write!(f, "Write({conn},{} bytes)", data.len()),
             Op::Close { conn } => write!(f, "Close({conn})"),
@@ -190,7 +193,9 @@ pub enum Outcome {
     Slept { late_us: u64 },
     /// A new HTTP request; PHP must eventually call `respond(id, ..)`.
     Request(HttpRequest),
-    Connected { conn: u64 },
+    /// `fd` is a dup of the socket for `stream_select()`/`socket_import_stream` (owned by PHP's stream,
+    /// closed with it); `local`/`peer` are "ip:port" for `stream_socket_get_name()`.
+    Connected { conn: u64, fd: i32, local: String, peer: String },
     /// Bytes read; empty means EOF.
     Data(Bytes),
     Written(usize),
@@ -240,6 +245,25 @@ pub struct Reactor {
 type ConnMap = Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<ConnCmd>>>>;
 
 /// One actor per TCP connection: owns the socket, serves commands in order.
+/// (dup'd fd for select, local "ip:port", peer "ip:port") of a connected socket.
+fn socket_meta(stream: &tokio::net::TcpStream) -> (i32, String, String) {
+    use std::os::fd::AsRawFd;
+    // SAFETY: dup of a valid descriptor; the PHP stream owns and closes the copy.
+    let fd = unsafe { libc::dup(stream.as_raw_fd()) };
+    let local = stream.local_addr().map(|a| a.to_string()).unwrap_or_default();
+    let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+    (fd, local, peer)
+}
+
+/// Register a connected stream with an actor and describe it to PHP.
+fn adopt(conns: &ConnMap, next_conn: &Arc<AtomicU64>, stream: BoxStream, meta: (i32, String, String), done: Sender<Completion>) -> Outcome {
+    let conn = next_conn.fetch_add(1, Ordering::Relaxed);
+    let (ctx, crx) = mpsc::unbounded_channel();
+    conns.lock().unwrap().insert(conn, ctx);
+    tokio::spawn(conn_actor(stream, crx, done));
+    Outcome::Connected { conn, fd: meta.0, local: meta.1, peer: meta.2 }
+}
+
 async fn conn_actor(stream: BoxStream, mut rx: mpsc::UnboundedReceiver<ConnCmd>, done: Sender<Completion>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = stream;
@@ -352,18 +376,13 @@ impl Reactor {
                             let outcome = match tokio::net::TcpStream::connect((host.as_str(), port)).await {
                                 Ok(stream) => {
                                     let _ = stream.set_nodelay(true);
+                                    let meta = socket_meta(&stream);
                                     let boxed: Result<BoxStream, String> = match &tls {
                                         Some(opts) => tls_wrap(Box::new(stream), opts).await,
                                         None => Ok(Box::new(stream)),
                                     };
                                     match boxed {
-                                        Ok(stream) => {
-                                            let conn = next_conn.fetch_add(1, Ordering::Relaxed);
-                                            let (ctx, crx) = mpsc::unbounded_channel();
-                                            conns.lock().unwrap().insert(conn, ctx);
-                                            tokio::spawn(conn_actor(stream, crx, done_tx.clone()));
-                                            Outcome::Connected { conn }
-                                        }
+                                        Ok(stream) => adopt(&conns, &next_conn, stream, meta, done_tx.clone()),
                                         Err(e) => Outcome::Error(format!("connect {host}:{port}: {e}")),
                                     }
                                 }
@@ -373,6 +392,19 @@ impl Reactor {
                         });
                     }
                     Op::Upgrade { conn, tls } => forward(&conns, conn, ConnCmd::Upgrade { id, tls }, id, &done_tx),
+                    Op::Adopt { fd } => {
+                        // SAFETY: the fd was dup'd by the PHP side for us; we own it from here.
+                        let std = unsafe { <std::net::TcpStream as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+                        let outcome = match std.set_nonblocking(true).and_then(|_| tokio::net::TcpStream::from_std(std)) {
+                            Ok(stream) => {
+                                let _ = stream.set_nodelay(true);
+                                let meta = socket_meta(&stream);
+                                adopt(&conns, &next_conn, Box::new(stream), meta, done_tx.clone())
+                            }
+                            Err(e) => Outcome::Error(format!("adopt fd {fd}: {e}")),
+                        };
+                        let _ = done_tx.send(Completion { id, outcome });
+                    }
                     Op::Custom(fut) => {
                         tokio::spawn(async move {
                             let outcome = fut.await;
@@ -644,7 +676,9 @@ mod tests {
             }
         };
         let id = r.submit(Op::Connect { host: "127.0.0.1".into(), port, tls: None });
-        let Outcome::Connected { conn } = wait(&r, id) else { panic!("connect failed") };
+        let Outcome::Connected { conn, fd, .. } = wait(&r, id) else { panic!("connect failed") };
+        assert!(fd >= 0);
+        unsafe { libc::close(fd) };
         let id = r.submit(Op::Write { conn, data: Bytes::from_static(b"ping") });
         assert!(matches!(wait(&r, id), Outcome::Written(4)));
         let id = r.submit(Op::Read { conn, max: 64 });

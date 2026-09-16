@@ -1,6 +1,6 @@
 # ADR-0004 — N PHP worker OS threads, one reactor each, round-robin HTTP dispatch
 
-Status: accepted (Cycle 3, 2026-09-16)
+Status: accepted (Cycle 3, 2026-09-16; accepted by V-9 — 3.7–3.98× in-process at 4 threads, 3.49× over HTTP — and amended by ADR-0010 after V-15)
 
 ## Context
 E5 needs multi-thread; E4' needs a fair 4-thread comparison. Research 03.

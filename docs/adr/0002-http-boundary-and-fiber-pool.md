@@ -1,6 +1,6 @@
 # ADR-0002 — Value-based HTTP request boundary and a userland fiber pool
 
-Status: accepted (Cycle 1, 2026-09-15)
+Status: accepted (Cycle 1, 2026-09-15; accepted by V-4 (warm pool: overhead 37–41 ms, 4.4–4.6 µs per job), V-5 (122–130k req/s over hyper) and V-6 (128k vs FrankenPHP 27.6k))
 
 ## Context
 
