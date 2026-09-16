@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T06:05Z, end of Cycle 11)
+# STATUS — Ignis (updated 2026-09-16T08:50Z, Cycle 13 in progress)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket. Every number below links to VALIDATION.md.
 
@@ -26,6 +26,7 @@
 | **E5'** least-inflight dispatch, `/cpu` at 4 threads | p99 **12.4–12.8 ms** (FrankenPHP@4: 15.6 ms) at 9.1–9.3k req/s; two multi-thread bugs found and fixed (bind race, forged refcount flag on immutable arrays) | V-15 |
 | **E8** symfony/skeleton in worker mode via a `symfony/runtime` class, fiber-scoped RequestStack, sessions on | 0/100 mismatches across suspensions; **7.2k req/s (1 thread) / 25.2k req/s (4 threads)** through the full kernel | V-16 |
 | **E12** fatal in one worker thread; CPU loop in one thread; supervisor respawn | fatal killed 1 of 4 workers, hello uninterrupted at 134k req/s, respawn within 50 ms, no opcache reset; spin stalled 1 thread, others 90k req/s p99 2.7 ms; recovery 96% | V-17 |
+| **E9 step 1** temporal-sdk-core (git) in a Rust binary against a locally built dev server | first activation polled and completed; run COMPLETED with the probe's payload | V-18 |
 
 ## REFUTED / INCONCLUSIVE and why
 
@@ -87,7 +88,7 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## Still open
 
-E9 (Temporal sdk-core), E10 (tonic gRPC), E14 (runtime-owned connection pool). Not started tonight: each is a multi-hour build with a new dependency tree (temporal sdk-core, tonic, tokio-postgres) and, for E9/E14, a server this VM does not have; the reactor's `Op`/`Outcome` seam and the C-park mechanism (ADR-0007) are the integration points for all three.
+E9 step 2 (workflows on fibers + replay: runtime written, `--features temporal` build in progress, see H20b), E10 (tonic gRPC), E14 (runtime-owned connection pool). E10/E14 not started: each is a multi-hour build with a new dependency tree (tonic, tokio-postgres) and E14 needs a PostgreSQL on the box; the reactor's `Op::Custom` seam (added for Temporal) is the integration point for both.
 
 ## Ranked recommendation for the next 3 cycles
 
