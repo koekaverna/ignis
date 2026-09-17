@@ -2555,7 +2555,9 @@ E7 (`| grep … || true`). Filed as an observation, not fixed here.
 **Deleted, not deprecated:** the retired `php/symfony/worker.php` shim is gone rather than kept as a
 migration note — owner's call, no back-compat before the first stable release.
 
-## V-62 — updates, local activities, queries and heartbeats on the core transport (CONFIRMED)
+## V-64 — updates, local activities, queries and heartbeats on the core transport (CONFIRMED)
+
+*(Written as V-62 by a parallel session and committed under that number in `84d445b`; renumbered here because V-62 was already taken by the package split. The content is untouched.)*
 
 Date: 2026-09-17T13:0xZ. The owner mapped a real workflow against the transport and named what it
 needs: `#[SignalMethod]` (already working), `#[UpdateMethod]` ×3, `#[LocalActivityInterface]`, and

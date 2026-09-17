@@ -83,7 +83,7 @@ Worse: we now depend on sdk-php's **internal** command model. `HostConnectionInt
 upstream promises they are stable. The mitigations are a pinned version, the conformance test as a
 gate, and offering the package upstream so the coupling becomes theirs to maintain.
 
-Scope, kept current (V-62 extended the first list): activities, timers, signals, **updates with
+Scope, kept current (V-64 extended the first list): activities, timers, signals, **updates with
 their validator**, **local activities**, **queries** and **activity heartbeats** are translated and
 tested; cancellation and child workflows are translated but not yet exercised end to end;
 `SideEffect`, `GetVersion` (patches), `ContinueAsNew`, Nexus and external-workflow signal/cancel are
