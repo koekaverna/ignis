@@ -161,3 +161,12 @@ deadlock refutes the hazard model and is itself a finding.
 
 **Kill criterion (owner):** any OpenSSL or libcurl test failing under `park` with a lock in the
 trace — the E15 suites and `bench/e6-ssl.sh` run with `IGNIS_PARK=libcurl,libcrypto,libssl`.
+
+## H37 (E19) — the boot-heap snapshot can undo a request's writes for under 100 µs
+
+**Statement.** A per-thread boot arena, write-barriered and restored at request end, costs < 100 µs per request at < 50 dirty pages (owner's acceptance).
+
+**REFUTED for the specified mechanism (research 34, 2026-09-17).** `mprotect` + `SIGSEGV` costs 7.1 µs per fault — 357 µs at 50 dirty pages, 3.5× the budget; the
+cost is signal delivery, not copying. Two cheaper mechanisms were measured in the same harness: a whole-arena memcpy (34 µs at 2 MiB, 678 µs at 16 MiB) and
+soft-dirty bits (70 µs, but `clear_refs` is process-wide and cannot be used from several PHP threads). At a framework-sized boot heap none of the three meets the
+budget. The hypothesis is open again only once E19-R2 measures a real boot heap's size and a real request's dirty-page count — the two numbers the budget assumes.
