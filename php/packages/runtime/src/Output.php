@@ -18,8 +18,8 @@ namespace Ignis;
  * responses swapped bodies. The lock is correct and costs serialisation; the native path costs
  * neither.
  *
- * Neither path streams: `ignis_respond()` takes a whole body and there is no chunked response op
- * yet (BACKLOG R-STREAM). What this decides is whose bytes they are, not when they leave.
+ * `capture()` collects; `captureChunked()` forwards to an `Ignis\Http\Stream` as it goes, which is
+ * how a Symfony `StreamedResponse` reaches the client while it is still being produced (V-74).
  */
 final class Output
 {
