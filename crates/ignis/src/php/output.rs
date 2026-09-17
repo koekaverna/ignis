@@ -175,6 +175,40 @@ pub unsafe extern "C" fn flush(_server_context: *mut std::ffi::c_void) {
     });
 }
 
+/// `ignis_stream_write(string $bytes): int` — send `$bytes` as a frame of the stream this fiber is
+/// bound to. Returns `0` if the runtime took it, an op id to await if the queue to the socket is
+/// full, and `-1` if this fiber is not streaming.
+///
+/// This is what a `StreamedResponse` callback calls instead of `echo` when it wants the client's
+/// back-pressure: `echo` can only ever `try_send` (`ub_write` runs where a fiber cannot suspend),
+/// while the op this returns is awaitable, so a slow client parks the producer.
+///
+/// # Safety
+/// VM frame on a PHP thread; the string argument is copied before anything is submitted.
+pub unsafe extern "C" fn zif_stream_write(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    unsafe {
+        let mut buf: *mut std::ffi::c_char = std::ptr::null_mut();
+        let mut len: usize = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"s".as_ptr(), &mut buf, &mut len) != sys::SUCCESS {
+            return;
+        }
+        let key = current();
+        // Anything `echo`ed before this call is still pending; it must go first or the response
+        // would be reordered.
+        let (id, mut out) = match BOUND.with(|b| {
+            b.borrow_mut().get_mut(&key).map(|(id, pending)| (*id, std::mem::take(pending)))
+        }) {
+            Some(v) => v,
+            None => {
+                zval::set_long(rv, -1);
+                return;
+            }
+        };
+        out.extend_from_slice(std::slice::from_raw_parts(buf as *const u8, len));
+        zval::set_long(rv, super::module::send_chunk(id, bytes::Bytes::from(out)));
+    }
+}
+
 /// `ignis_stream_bind(int $id): bool` — this fiber's output becomes frames of response `$id`.
 ///
 /// # Safety

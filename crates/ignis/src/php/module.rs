@@ -440,35 +440,32 @@ unsafe extern "C" fn zif_ignis_respond_chunk(ex: *mut sys::zend_execute_data, rv
             return;
         }
         let chunk = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(buf as *const u8, len));
-        let Some(tx) = reactor().stream_sender(id as u64) else {
-            zval::set_long(rv, -1);
-            return;
-        };
-        // The fast path is the common one: while the client keeps up there is room in the channel,
-        // and `try_send` puts the chunk there with no future, no task and no reactor round trip —
-        // the round trip costs ~93 µs even unloaded (reactor.rs). `0` tells PHP there is nothing to
-        // await. Ordering is safe because a slow-path write is awaited before the next one starts.
-        let chunk = match tx.try_send(chunk) {
-            Ok(()) => {
-                zval::set_long(rv, 0);
-                return;
-            }
-            Err(tokio::sync::mpsc::error::TrySendError::Full(c)) => c,
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                zval::set_long(rv, -1); // the client hung up
-                return;
-            }
-        };
-        // Full: now it is worth an op, because awaiting it is exactly the back-pressure.
-        let op = reactor().submit(crate::reactor::Op::Custom(Box::pin(async move {
-            match tx.send(chunk).await {
-                Ok(()) => crate::reactor::Outcome::Ready,
-                // The receiver is gone: the client hung up. The handler sees it and can stop.
-                Err(_) => crate::reactor::Outcome::Failed("client gone".into()),
-            }
-        })));
-        zval::set_long(rv, op as i64);
+        zval::set_long(rv, send_chunk(id as u64, chunk));
     }
+}
+
+/// Sends one frame of a streamed response. Returns `0` if the runtime took it outright, an op id to
+/// await if the queue to the socket was full, `-1` if the stream is gone.
+///
+/// The fast path is the common one: while the client keeps up there is room in the channel, and
+/// `try_send` puts the chunk there with no future, no task and no reactor round trip — the round trip
+/// costs ~93 µs even unloaded (`reactor.rs`). Ordering is safe because a slow-path write is awaited
+/// before the next one starts.
+pub(super) fn send_chunk(id: u64, chunk: bytes::Bytes) -> i64 {
+    let Some(tx) = reactor().stream_sender(id) else { return -1 };
+    let chunk = match tx.try_send(chunk) {
+        Ok(()) => return 0,
+        Err(tokio::sync::mpsc::error::TrySendError::Full(c)) => c,
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return -1, // the client hung up
+    };
+    // Full: now it is worth an op, because awaiting it is exactly the back-pressure.
+    reactor().submit(crate::reactor::Op::Custom(Box::pin(async move {
+        match tx.send(chunk).await {
+            Ok(()) => crate::reactor::Outcome::Ready,
+            // The receiver is gone: the client hung up. The handler sees it and can stop.
+            Err(_) => crate::reactor::Outcome::Failed("client gone".into()),
+        }
+    }))) as i64
 }
 
 /// `ignis_respond_end(int $id): bool` — no more chunks; the body is complete.
@@ -830,13 +827,14 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 37]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 38]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stream_write", super::output::zif_stream_write, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
@@ -872,7 +870,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 37]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 45]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 46]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -887,6 +885,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 45]> = SyncStatic([
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stream_write", super::output::zif_stream_write, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
@@ -920,13 +919,14 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 45]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 39]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stream_write", super::output::zif_stream_write, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),

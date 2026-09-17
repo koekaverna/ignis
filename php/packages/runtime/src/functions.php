@@ -40,6 +40,46 @@ function all(iterable $futures): array
 }
 
 /**
+ * Sends one frame of the response this fiber is streaming, and waits if the client is behind.
+ *
+ * Use it instead of `echo` inside a `StreamedResponse` callback. Symfony calls that callback with no
+ * arguments, so `echo` is the only channel it offers — and `echo` can only ever be taken
+ * optimistically, because the runtime's write hook runs where a fiber cannot suspend. This call
+ * can wait, so a slow client parks the producing fiber instead of filling memory:
+ *
+ *     return new StreamedResponse(function () use ($rows): void {
+ *         foreach ($rows as $row) {
+ *             Ignis\write($row . "\n");   // parks here when the client is behind
+ *         }
+ *     });
+ *
+ * Anything `echo`ed earlier is sent first, so the two can be mixed without reordering the response.
+ *
+ * @throws \RuntimeException if this fiber is not streaming, or the client has gone
+ */
+function write(string $chunk): void
+{
+    if ($chunk === '') {
+        return;
+    }
+    if (!\function_exists('ignis_stream_write')) {
+        echo $chunk;   // no runtime to frame it: the ordinary output path
+        return;
+    }
+    $op = \ignis_stream_write($chunk);
+    if ($op === 0) {
+        return;            // taken outright
+    }
+    if ($op < 0) {
+        throw new \RuntimeException('Ignis\\write(): this fiber is not streaming a response');
+    }
+    $r = Loop::awaitOp($op);
+    if (\is_array($r)) {
+        throw new \RuntimeException($r['message'] ?? 'stream write failed');
+    }
+}
+
+/**
  * Worker mode: serve HTTP forever, one pooled fiber per request.
  *
  * What the handler returns says how the request is answered, so the reader sees it in the

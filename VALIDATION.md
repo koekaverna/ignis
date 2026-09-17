@@ -3377,6 +3377,38 @@ raises the notice PHP raises under `output_buffering=0` — an application strea
 not need it, because an `echo` already leaves as a frame. And `Output::capture()`'s `ob_start` path
 survives only as the plain-php-cli fallback the unit suite runs on.
 
+### V-76 addendum — `Ignis\write()`, and one class fewer
+
+Asked whether `echo` in a `StreamedResponse` callback is a contract or a convention. Read from the
+installed source: a **contract**. `StreamedResponse::sendContent()` calls `($this->callback)()` with
+**no arguments**, so output is the only channel it gives a producer; even the newer
+`iterable<string>` form is wrapped into an `echo` loop by `setChunks()`, with `@ob_flush(); flush();`
+— and that `@` is why the missing PHP buffer raises no notice on the built-in path.
+
+I first answered this with an `Ignis\Symfony\StreamedResponse` subclass whose callback was handed a
+writer. The owner's reply was "don't overcomplicate", and he was right: the same thing is one
+function, and it works inside the **stock** `StreamedResponse` with nothing subclassed.
+
+```php
+return new StreamedResponse(function () use ($rows): void {
+    foreach ($rows as $row) {
+        Ignis\write($row . "\n");   // instead of echo — parks when the client is behind
+    }
+});
+```
+
+`ignis_stream_write()` sends a frame of whatever stream the calling fiber is bound to and returns an
+op when the queue is full, so `Ignis\write()` can await it — which `echo` can never do, because the
+write hook runs where a fiber cannot suspend. Anything `echo`ed earlier is flushed first, so the two
+mix without reordering: measured `echo 'A'; write('B'); echo 'C'; write('D')` → **`ABCD`**.
+
+Measured on the stock Symfony path, warmed: `ttfb=0.0031 s`, `total=0.907 s`,
+`transfer-encoding: chunked`, body `w1|w2|w3` — the same as the `echo` form, with the back-pressure
+guarantee the `echo` form cannot give.
+
+The subclass is deleted, and `send_chunk()` in `module.rs` is now the one place that decides
+`try_send` versus an op, used by both entry points.
+
 Gated: `bench/php/stream_isolation.php` is a fifth arm of `bench/e23-stream.sh` — one fiber streams,
 another echoes, and the streamed body must contain only its own bytes.
 
