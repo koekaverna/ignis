@@ -8,6 +8,7 @@ use Ignis\Loop;
 use Ignis\Pg\Lease;
 use Ignis\Pg\LeaseError;
 use Ignis\Pg\Pool;
+use Ignis\Pg\PoolError;
 use Ignis\Pg\QueryError;
 use Ignis\Scope;
 use Ignis\Tests\FakeReactor;
@@ -199,4 +200,29 @@ final class PoolTest extends TestCase
     {
         self::assertSame(['idle' => 4, 'leased' => 0], (new Pool('postgres://x'))->stats());
     }
+
+    /**
+     * Three failures, three classes. An operator reading a trace has to be able to tell "the
+     * database is unreachable" from "the query was wrong" from "you used the lease wrongly", and
+     * until 2026-09-18 the first arrived as QueryError -- named after a query that never ran.
+     */
+    public function testAnAcquireFailureIsAPoolErrorAndNotAQueryError(): void
+    {
+        $timedOut = ['kind' => 'error', 'message' => 'pg: acquire timed out after 5000 ms (IGNIS_PG_ACQUIRE_TIMEOUT_MS)'];
+
+        try {
+            Pool::orThrow($timedOut, PoolError::class);
+            self::fail('an error payload must throw');
+        } catch (PoolError $error) {
+            self::assertStringContainsString('acquire timed out', $error->getMessage());
+        }
+
+        self::assertInstanceOf(\RuntimeException::class, new PoolError(''), 'unreachable is a runtime condition');
+        self::assertInstanceOf(\LogicException::class, new LeaseError(''), 'misusing a lease is a programming mistake');
+
+        // The shared helper still defaults to QueryError for everything a query returns.
+        $this->expectException(QueryError::class);
+        Pool::result(['kind' => 'error', 'message' => 'syntax error at or near "slect"']);
+    }
+
 }

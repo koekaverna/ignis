@@ -16,6 +16,16 @@ final class LeaseError extends \LogicException {}
 
 final class QueryError extends \RuntimeException {}
 
+/**
+ * The pool could not hand out a connection: the wait hit `IGNIS_PG_ACQUIRE_TIMEOUT_MS`, or the
+ * breaker is open and we have stopped calling PostgreSQL for a cooldown.
+ *
+ * Separate from `QueryError` because no query happened, and separate from `LeaseError` because
+ * nothing was used wrongly -- this is the database being unreachable, which is a runtime condition
+ * an operator acts on, not a programming mistake. The message says which of the two it was.
+ */
+final class PoolError extends \RuntimeException {}
+
 /** A process-wide pool; `max` connections shared by every PHP thread and fiber. */
 final class Pool
 {
@@ -36,7 +46,7 @@ final class Pool
         $r = \ignis_pg_acquire($this->id);
         $leaseId = \is_array($r)
             ? (int) $r['lease'] // idle connection: no reactor hop
-            : (int) json_decode(self::result(Loop::awaitOp($r)), true, 8, JSON_THROW_ON_ERROR)['lease'];
+            : (int) json_decode(self::orThrow(Loop::awaitOp($r), PoolError::class), true, 8, JSON_THROW_ON_ERROR)['lease'];
         $lease = new Lease($leaseId, $key);
         Scope::set($key, $lease);
         return $lease;
@@ -99,9 +109,20 @@ final class Pool
     /** @internal */
     public static function result(mixed $payload): mixed
     {
+        return self::orThrow($payload, QueryError::class);
+    }
+
+    /**
+     * @param class-string<\Throwable> $error
+     *
+     * @internal
+     */
+    public static function orThrow(mixed $payload, string $error): mixed
+    {
         if (\is_array($payload) && ($payload['kind'] ?? '') === 'error') {
-            throw new QueryError((string) $payload['message']);
+            throw new $error((string) $payload['message']);
         }
+
         return $payload;
     }
 }
