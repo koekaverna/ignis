@@ -333,7 +333,7 @@ if (!function_exists('ignis_stream_bind')) {
     /**
      * ignis_stream_bind(int $id, int $status, array $headers): bool — this fiber's output becomes the body of response $id.
      *
-     * @param array<string, string> $headers
+     * @param array<string, string|list<string>> $headers
      */
     function ignis_stream_bind(int $id, int $status, array $headers): bool
     {

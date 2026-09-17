@@ -23,7 +23,7 @@ final class StreamedResponse extends Response
      * producer already gives one: a closure literal, or first-class callable syntax.
      *
      * @param \Closure(): mixed    $producer
-     * @param array<string,string> $headers
+     * @param array<string, string|list<string>> $headers
      */
     public function __construct(
         public readonly \Closure $producer,

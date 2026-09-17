@@ -376,6 +376,30 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
 ///
 /// # Safety
 /// `ht` must be a live hash table owned by the VM for the duration of the call.
+/// Appends one `(name, value)` pair per element of a list-valued header.
+///
+/// # Safety
+/// `values` must be a live `HashTable` on the PHP thread.
+unsafe fn push_each_value(headers: &mut Vec<(String, String)>, name: &str, values: *mut sys::HashTable, who: &str) {
+    // SAFETY: hash iteration through ZEND_API only; every value is copied before returning.
+    unsafe {
+        let mut pos: sys::HashPosition = 0;
+        sys::zend_hash_internal_pointer_reset_ex(values, &mut pos);
+        loop {
+            let element = sys::zend_hash_get_current_data_ex(values, &pos);
+            if element.is_null() {
+                break;
+            }
+            if zval::type_of(element) == sys::IS_STRING {
+                headers.push((name.to_string(), zval::zstr_to_string((*element).value.str_)));
+            } else {
+                tracing::warn!("{who}: every value of header {name} must be a string; skipped one");
+            }
+            sys::zend_hash_move_forward_ex(values, &mut pos);
+        }
+    }
+}
+
 pub(super) unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(String, String)> {
     let mut headers = Vec::new();
     // SAFETY: hash iteration through ZEND_API only; every value is copied before returning.
@@ -390,10 +414,18 @@ pub(super) unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(St
             let mut skey: *mut sys::zend_string = ptr::null_mut();
             let mut nkey: sys::zend_ulong = 0;
             let kt = sys::zend_hash_get_current_key_ex(ht, &mut skey, &mut nkey, &pos);
-            if kt == sys::HASH_KEY_IS_STRING && zval::type_of(v) == sys::IS_STRING {
-                headers.push((zval::zstr_to_string(skey), zval::zstr_to_string((*v).value.str_)));
+            if kt == sys::HASH_KEY_IS_STRING {
+                let name = zval::zstr_to_string(skey);
+                match zval::type_of(v) {
+                    sys::IS_STRING => headers.push((name, zval::zstr_to_string((*v).value.str_))),
+                    // A PHP array cannot hold the same string key twice, so a response with two
+                    // Set-Cookie lines has to arrive as a list under one key. The wire is already a
+                    // list of pairs, which is why only this side needed to learn about it.
+                    sys::IGNIS_IS_ARRAY_EX | sys::IS_ARRAY => push_each_value(&mut headers, &name, (*v).value.arr, who),
+                    _ => tracing::warn!("{who}: header {name} must be a string or a list of strings; skipped"),
+                }
             } else {
-                tracing::warn!("{who}: header entries must be string => string; skipped one");
+                tracing::warn!("{who}: header entries must be keyed by name; skipped one");
             }
             sys::zend_hash_move_forward_ex(ht, &mut pos);
         }

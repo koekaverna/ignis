@@ -65,18 +65,20 @@ final class IgnisWorkerRunner implements RunnerInterface
     }
 
     /**
-     * Symfony's header bag as the runtime's flat map.
+     * Symfony's header bag, as one list of values per name.
      *
-     * @return array<string,string>
+     * Every value is kept separately rather than comma-joined. RFC 7230 lets most list-valued
+     * headers be combined that way, but `Set-Cookie` is the standing exception and must go out as
+     * one line per cookie -- and until 2026-09-18 this method assigned `$headers['set-cookie']`
+     * inside a foreach, so a response with a session cookie and a CSRF cookie sent only the last.
+     *
+     * @return array<string, list<string>>
      */
     private static function headers(Response $response): array
     {
         $headers = [];
         foreach ($response->headers->allPreserveCase() as $name => $values) {
-            $headers[strtolower($name)] = implode(', ', $values);
-        }
-        foreach ($response->headers->getCookies() as $cookie) {
-            $headers['set-cookie'] = (string) $cookie;   // one cookie per response in this cycle (E8 caveat)
+            $headers[strtolower($name)] = $values;
         }
 
         return $headers;

@@ -264,11 +264,11 @@ namespace Swoole {
 
         public static function tick(int $ms, callable $fn, mixed ...$args): int
         {
-            return self::start($ms, $fn, $args, true);
+            return self::start($ms, $fn, \array_values($args), true);
         }
         public static function after(int $ms, callable $fn, mixed ...$args): int
         {
-            return self::start($ms, $fn, $args, false);
+            return self::start($ms, $fn, \array_values($args), false);
         }
         public static function clear(int $id): bool
         {
@@ -367,7 +367,7 @@ namespace Swoole\Coroutine {
                     \Ignis\sleep((int) ($timeout * 1000));
                     $i = \array_search($fiber, $this->waiters, true);
                     if ($i !== false) {
-                        unset($this->waiters[$i]);
+                        \array_splice($this->waiters, $i, 1);
                         \Ignis\Loop::markReady($fiber, 'timeout');
                     }
                 });

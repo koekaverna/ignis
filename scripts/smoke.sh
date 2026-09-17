@@ -141,6 +141,17 @@ awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || echo "  NOTE: over the 1
 echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 $T ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
 echo "== E13 (isolation)"; $T ./target/release/ignis bench/php/e13_isolation.php
 echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
+# R-HEADERS-MULTI: a response may repeat a header name, and Set-Cookie is the one RFC 7230 says must
+# not be comma-joined. The boundary was a flat map until 2026-09-18 and kept only the last value.
+echo "== multi-valued response headers (three Set-Cookie, two Vary)"
+COOKIE_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 7 ))
+IGNIS_LISTEN="$COOKIE_PORT" ./target/release/ignis bench/php/multi_cookie.php & ck=$!
+for _ in $(seq 1 50); do [ "$(curl -s -o /dev/null -w '%{http_code}' "http://$COOKIE_PORT/" 2>/dev/null)" = 200 ] && break; sleep 0.1; done
+cookies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^set-cookie:')
+varies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^vary:')
+kill $ck 2>/dev/null; wait $ck 2>/dev/null || true
+echo "  set-cookie=$cookies vary=$varies"
+[ "$cookies" = 3 ] && [ "$varies" = 2 ] || { echo "multi-valued headers FAILED (want 3 and 2)"; exit 1; }
 echo "== E13 (200 concurrent HTTP)"; timeout 120 bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 timeout 120 bench/e6-fetch.sh | tail -2
 if [ -d php/packages/revolt/vendor ]; then echo "== E7 (Revolt/AMPHP examples: IgnisDriver must match a stock event loop)"; timeout 180 bench/e7-revolt.sh > /tmp/ignis-e7.log 2>&1; e7rc=$?; grep -E "^(DIFFER|e7)" /tmp/ignis-e7.log || true; [ "$e7rc" = 0 ] || { echo "E7 FAILED (see /tmp/ignis-e7.log)"; exit 1; }; else echo "== E7 skipped (run: cd php/packages/revolt && composer install --prefer-source)"; fi

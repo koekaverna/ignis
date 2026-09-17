@@ -22,6 +22,7 @@ final class CoreHost implements HostConnectionInterface
 {
     private int $handled = 0;
 
+    /** @param ActivationSource::WORKFLOW|ActivationSource::ACTIVITY $kind */
     public function __construct(
         private readonly ActivationSource $source,
         private readonly CoreCodec $codec,

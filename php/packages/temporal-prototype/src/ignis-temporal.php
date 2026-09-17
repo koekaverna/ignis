@@ -80,7 +80,8 @@ final class Context
 
     private function await(int $seq): mixed
     {
-        $this->run->waiting[$seq] = \Fiber::getCurrent();
+        $this->run->waiting[$seq] = \Fiber::getCurrent()
+            ?? throw new \LogicException('a workflow can only await inside a fiber');
         return \Fiber::suspend();
     }
 }

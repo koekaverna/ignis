@@ -23,17 +23,22 @@ final class IgnisWorkerRunnerTest extends TestCase
 
         $headers = self::headers($response);
 
-        self::assertSame('text/html', $headers['content-type']);
-        self::assertSame('value', $headers['x-custom']);
+        self::assertSame(['text/html'], $headers['content-type']);
+        self::assertSame(['value'], $headers['x-custom']);
         self::assertArrayNotHasKey('X-Custom', $headers, 'hyper lower-cases names on the wire, so the map is lower-cased here');
     }
 
-    public function testARepeatedHeaderIsJoinedWithACommaAsHttpAllows(): void
+    /**
+     * Every value keeps its own line rather than being comma-joined. RFC 7230 permits the joined
+     * form for most list-valued headers, but not for Set-Cookie, and there is no reason to have two
+     * shapes when the boundary carries a list either way.
+     */
+    public function testARepeatedHeaderKeepsOneValuePerLine(): void
     {
         $response = new Response();
         $response->headers->set('X-Thing', ['first', 'second']);
 
-        self::assertSame('first, second', self::headers($response)['x-thing']);
+        self::assertSame(['first', 'second'], self::headers($response)['x-thing']);
     }
 
     public function testACookieBecomesASetCookieHeader(): void
@@ -43,34 +48,35 @@ final class IgnisWorkerRunnerTest extends TestCase
 
         $setCookie = self::headers($response)['set-cookie'];
 
-        self::assertStringStartsWith('session=abc123', $setCookie);
-        self::assertStringContainsString('httponly', $setCookie);
-        self::assertStringContainsString('samesite=lax', $setCookie);
+        self::assertCount(1, $setCookie);
+        self::assertStringStartsWith('session=abc123', $setCookie[0]);
+        self::assertStringContainsString('httponly', $setCookie[0]);
+        self::assertStringContainsString('samesite=lax', $setCookie[0]);
     }
 
     /**
-     * DEFECT (pinned, not fixed — the fix is Rust-side). `headers()` assigns
-     * `$headers['set-cookie']` inside a `foreach` over the response's cookies, so every cookie but
-     * the last is silently dropped. A framework that sets a session cookie and a remember-me cookie
-     * in the same response sends one of them.
+     * Until 2026-09-18 this kept only the last cookie: `headers()` assigned
+     * `$headers['set-cookie']` inside a `foreach`, and the boundary was a flat
+     * `array<string, string>` with nowhere to put a second line. `ignis_respond` now accepts a list
+     * per name, so every cookie survives -- which matters because a session cookie beside a CSRF or
+     * remember-me cookie is the most ordinary response a framework produces.
      *
-     * It cannot be fixed here: the runtime's response headers are a flat `array<string,string>`
-     * (`ignis_respond(int, int, array, string)`), so several `Set-Cookie` lines have nowhere to go.
-     * `Classic\Runner::parseHeaderLines()` works around the same limit with case variants of the
-     * name; the real fix is a shape change in `ignis_respond` — another agent's file.
+     * Comma-joining them would not do: RFC 7230 allows it for most list-valued headers and names
+     * `Set-Cookie` as the exception.
      */
-    public function testAllButTheLastCookieAreLostBug(): void
+    public function testEveryCookieSurvivesAsItsOwnSetCookieLine(): void
     {
         $response = new Response();
         $response->headers->setCookie(Cookie::create('session', 'abc123'));
         $response->headers->setCookie(Cookie::create('remember_me', 'token'));
         $response->headers->setCookie(Cookie::create('locale', 'en'));
 
-        $headers = self::headers($response);
+        $setCookie = self::headers($response)['set-cookie'];
 
-        self::assertCount(3, $response->headers->getCookies(), 'Symfony has all three');
-        self::assertStringStartsWith('locale=en', $headers['set-cookie'], 'and the flat map keeps only the last one');
-        self::assertSame(1, \count(array_filter(array_keys($headers), static fn(string $name): bool => str_contains($name, 'set-cookie'))));
+        self::assertCount(3, $setCookie);
+        self::assertStringStartsWith('session=abc123', $setCookie[0]);
+        self::assertStringStartsWith('remember_me=token', $setCookie[1]);
+        self::assertStringStartsWith('locale=en', $setCookie[2]);
     }
 
     public function testAResponseWithNoCookiesHasNoSetCookieHeader(): void
@@ -84,10 +90,11 @@ final class IgnisWorkerRunnerTest extends TestCase
         $response->setPublic();
         $response->setMaxAge(60);
 
-        self::assertSame('max-age=60, public', self::headers($response)['cache-control']);
+        // Symfony joins the cache-control directives itself, so this arrives as one value.
+        self::assertSame(['max-age=60, public'], self::headers($response)['cache-control']);
     }
 
-    /** @return array<string, string> */
+    /** @return array<string, list<string>> */
     private static function headers(Response $response): array
     {
         return (new \ReflectionMethod(IgnisWorkerRunner::class, 'headers'))->invoke(null, $response);
