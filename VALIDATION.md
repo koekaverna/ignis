@@ -3015,3 +3015,64 @@ One smoke run failed E1 at `wall_ms=1341.2` with E2 warm at 7.72 µs; `load aver
 again on a quiet box, same binary: **E1 1174.1 ms** (bar 1200) and **E2 warm 4.15 µs**. The split
 costs nothing — the owner rule "benchmarks one at a time, never beside a build" is what the first
 number was measuring, for the second time today.
+
+## V-71 — the multipart parser is now checked against PHP's own, and it was wrong in three ways (CONFIRMED)
+
+Date: 2026-09-17T17:1xZ. The owner's brief: put in Rust what belongs in Rust, polyfill in the runtime
+package what has to be per fiber, and cover it with tests so "the form did not parse" cannot happen
+again. This entry is the measurement half; the split is recorded below it.
+
+### There is an oracle, and we were not using it
+
+The embed SAPI has **no POST reader** — `php-src/sapi/embed/php_embed.c:145` is literally
+`NULL, /* read POST data */` — so `main/rfc1867.c` never runs and the runtime is the only parser in
+the process. But php-cli's **built-in server has one**, parses natively, and can be asked the same
+question. That makes PHP's own behaviour testable rather than guessable:
+
+```
+php -S 127.0.0.1:8197   →  $_POST from rfc1867          (the oracle)
+ignis bench/e22/server.php →  $_POST from our parser
+```
+
+`bench/e22/e22-multipart.sh` posts the same 28 raw bodies to both and diffs. Raw bodies on purpose:
+`curl -F` normalises exactly the cases that matter.
+
+### Three defects, found in the first run
+
+```
+DIFFER  value looks like boundary   php {"t":"x--BND-not-a-boundary"}   ignis {"t":"x"}
+DIFFER  lf line endings             php {"lf":"v"}                      ignis {"lf":""}
+DIFFER  single quoted name          php {"a":"1"}                       ignis []
+```
+
+1. `explode('--' . $boundary, …)` split on the boundary text **anywhere**, so a value containing it
+   was truncated. A boundary counts only at the start of a line.
+2. The header/body separator was `\r\n\r\n` only. PHP accepts LF-only bodies; we returned an empty
+   value — worse than skipping, because it looks like the user submitted nothing.
+3. `name=a` without quotes was not recognised at all and the field vanished.
+
+After the rewrite: **0 of 28 differ**. The three cases are also unit tests (`RequestTest`), because a
+unit test fails in milliseconds and needs no servers: the suite is now **35 tests, 53 assertions**.
+
+### What the oracle says the shape has to be, for the file half that is not built yet
+
+Recorded now so the next step starts from PHP's own semantics rather than from a guess:
+
+| case | `$_FILES` |
+|---|---|
+| `f[]` twice | `name` is a **list**, and there is a `full_path` key (8.1+) |
+| `u[doc]` | `name` is a **map**: `$_FILES['u']['name']['doc']` |
+| `filename=""` | the entry exists with `error: 4`, `name: ""`, `size: 0` |
+| a part with no `name` at all | still lands, under the **integer key 0** |
+| duplicate field name | last one wins |
+| empty field name | dropped |
+
+### E1's gate was lying, and that is fixed too
+
+Two smoke runs today failed E1 and both were the harness, not the code. Measured four consecutive
+runs on a quiet box (`load average: 2.58`): **1457.6, 1143.0, 1155.2, 1151.1 ms**. The first process
+after a build pays for the page cache and the freshly linked binary. `scripts/smoke.sh` now runs one
+discarded `N=100 MS=10` process before the measured one — only the process start is warmed; the
+measured run is still `ROUNDS=1`, so the fiber pool is cold and `fibers_created=10000` still appears.
+
+Gates: `scripts/smoke.sh` **GREEN** with E22 in it, php suite 35/53, `cargo nextest` 9/9.

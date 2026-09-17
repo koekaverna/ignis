@@ -93,25 +93,51 @@ final class Request
      * this encoding for any `FormData`, so without it `$_POST` is empty and every field falls back
      * to its default — which looks like bad input, not like a missing parser.
      *
+     * The embed SAPI has no `read_post` (`php-src/sapi/embed/php_embed.c:145`), so `main/rfc1867.c`
+     * never runs and this is the only parser in the process. PHP's own behaviour is therefore the
+     * specification, quirks included, and `bench/e22/e22-multipart.sh` checks case for case against
+     * it by posting the same bytes to `php -S`, which does have a `read_post`. Three of the rules
+     * below exist because that comparison failed:
+     *
+     * - a boundary counts only at the start of a line, so a value may contain `--BOUNDARY`;
+     * - the header/body separator and the line endings may be LF, not just CRLF;
+     * - `name=x` without quotes is as valid as `name="x"`.
+     *
      * File parts are skipped rather than half-supported: they belong in `$_FILES`, and that is not
      * one of the four fiber-scoped superglobals (ADR-0006), so one shared array would hand a
      * concurrent request someone else's upload.
      */
     private static function multipartQuery(string $body, string $boundary): string
     {
-        $pairs = [];
-        foreach (explode('--' . $boundary, $body) as $part) {
-            $part = ltrim($part, "\r\n");
-            if ($part === '' || str_starts_with($part, '--')) {
-                continue;
-            }
-            [$headers, $value] = array_pad(explode("\r\n\r\n", $part, 2), 2, '');
-            if (str_contains($headers, 'filename=') || preg_match('/\bname="([^"]*)"/', $headers, $m) !== 1) {
-                continue;
-            }
-            $pairs[] = rawurlencode($m[1]) . '=' . rawurlencode(rtrim($value, "\r\n"));
+        // Only at a line start (or the very beginning), which is what makes a value holding the
+        // boundary text survive.
+        $parts = \preg_split('#(?:\r\n|\n|^)--' . \preg_quote($boundary, '#') . '#', $body);
+        if ($parts === false) {
+            return '';
         }
 
-        return implode('&', $pairs);
+        $pairs = [];
+        foreach ($parts as $part) {
+            if ($part === '' || \str_starts_with($part, '--')) {   // the closing `--boundary--`
+                continue;
+            }
+            $part = \ltrim($part, "\r\n");
+            $split = \preg_split('#\r\n\r\n|\n\n#', $part, 2);
+            if ($split === false || \count($split) !== 2) {
+                continue;
+            }
+            [$headers, $value] = $split;
+            if (\str_contains($headers, 'filename=')) {
+                continue;
+            }
+            // `name="x"` or bare `name=x` up to a `;` or the end of the line.
+            if (\preg_match('#\bname=(?:"([^"]*)"|([^;\r\n]*))#i', $headers, $m) !== 1) {
+                continue;
+            }
+            $name = $m[1] !== '' ? $m[1] : ($m[2] ?? '');
+            $pairs[] = \rawurlencode($name) . '=' . \rawurlencode(\preg_replace('#\r\n$|\n$#', '', $value) ?? $value);
+        }
+
+        return \implode('&', $pairs);
     }
 }

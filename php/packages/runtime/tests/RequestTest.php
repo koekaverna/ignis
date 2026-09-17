@@ -118,6 +118,57 @@ final class RequestTest extends TestCase
         self::assertSame("line1\r\nline2", $post['text']);
     }
 
+    /**
+     * The three cases the differential test against PHP's own parser caught (E22, V-71). Kept here
+     * as well as there because a unit test fails in milliseconds and needs no servers.
+     */
+    public function testAValueMayContainTheBoundaryText(): void
+    {
+        $body = self::multipart([['name' => 't', 'value' => 'x--BNDRY-not-a-boundary']]);
+        [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
+        self::assertSame('x--BNDRY-not-a-boundary', $post['t'], 'a boundary counts only at the start of a line');
+    }
+
+    public function testLineFeedOnlyBodiesParse(): void
+    {
+        $body = \str_replace("\r\n", "\n", self::multipart([['name' => 'lf', 'value' => 'v']]));
+        [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
+        self::assertSame(['lf' => 'v'], $post, 'PHP accepts LF-only multipart, so we must too');
+    }
+
+    public function testAnUnquotedNameIsAName(): void
+    {
+        $body = "--BNDRY\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--BNDRY--\r\n";
+        [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
+        self::assertSame(['a' => '1'], $post);
+    }
+
+    public function testAPreambleAndAnEpilogueAreIgnored(): void
+    {
+        $body = "ignored preamble\r\n" . self::multipart([['name' => 'a', 'value' => '1']]) . "ignored junk\r\n";
+        [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
+        self::assertSame(['a' => '1'], $post);
+    }
+
+    public function testNestedAndListNamesFollowPhpsOwnGrammar(): void
+    {
+        $body = self::multipart([
+            ['name' => 'u[profile][name]', 'value' => 'ada'],
+            ['name' => 'n[3]', 'value' => 'three'],
+            ['name' => 'n[]', 'value' => 'next'],
+        ]);
+        [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
+        self::assertSame(['name' => 'ada'], $post['u']['profile']);
+        self::assertSame(['3' => 'three', '4' => 'next'], $post['n'], 'parse_str continues after the highest numeric key');
+    }
+
+    public function testAnEmptyNameIsDropped(): void
+    {
+        $body = self::multipart([['name' => '', 'value' => 'v'], ['name' => 'ok', 'value' => '1']]);
+        [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
+        self::assertSame(['ok' => '1'], $post);
+    }
+
     /** @param list<array{name:string,value:string,filename?:string}> $parts */
     private static function multipart(array $parts, string $boundary = 'BNDRY'): string
     {
