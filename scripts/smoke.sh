@@ -141,6 +141,23 @@ awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || echo "  NOTE: over the 1
 echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 $T ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
 echo "== E13 (isolation)"; $T ./target/release/ignis bench/php/e13_isolation.php
 echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
+# R-STREAM-CANCEL: a streaming handler must learn the client left. The cancel guard used to be
+# disarmed when the *headers* went out, and the Loop dropped the request's fiber mapping at the same
+# moment, so a hang-up mid-body reached nobody and the producer kept working for an absent client.
+echo "== a streaming producer is cancelled when the client leaves"
+SC_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 8 ))
+IGNIS_LISTEN="$SC_PORT" ./target/release/ignis --threads 1 bench/php/stream_cancel.php & sc=$!
+for _ in $(seq 1 50); do curl -sf -m 2 "http://$SC_PORT/state" >/dev/null 2>&1 && break; sleep 0.2; done
+# `|| true` because the timeout IS the test: curl exits 28 when it hangs up, and this script runs
+# under `set -e`.
+curl -s -m 0.6 "http://$SC_PORT/slow" >/dev/null 2>&1 || true
+sleep 1.2
+sc_state=$(curl -s -m 3 "http://$SC_PORT/state" || true)
+kill $sc 2>/dev/null; wait $sc 2>/dev/null || true
+echo "  $sc_state"
+grep -q '"cancelled":1' <<<"$sc_state" && grep -q '"finally_ran":1' <<<"$sc_state" \
+  || { echo "stream cancellation FAILED (the producer never learned the client left)"; exit 1; }
+
 # R-HEADERS-MULTI: a response may repeat a header name, and Set-Cookie is the one RFC 7230 says must
 # not be comma-joined. The boundary was a flat map until 2026-09-18 and kept only the last value.
 echo "== multi-valued response headers (three Set-Cookie, two Vary)"

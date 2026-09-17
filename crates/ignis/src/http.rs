@@ -340,6 +340,7 @@ struct CancelOnDrop {
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         if !self.answered {
+            tracing::debug!(id = self.id, "client left before the answer was complete; cancelling");
             self.reactor.cancel_request(self.id);
         }
     }
@@ -366,10 +367,18 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
     let (request_id, rx) = reactor.deliver_request_with_id(HttpRequest { method, uri, headers, body });
     let mut guard = CancelOnDrop { reactor: reactor.clone(), id: request_id, answered: false };
     let out = rx.await;
-    guard.answered = true;
     match out {
-        Ok(r) => Ok(php_response(r)),
-        Err(_) => Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n")),
+        // Disarmed here only for a whole-body answer. A streamed one hands the guard to the body,
+        // which is what stays alive while PHP is still producing.
+        Ok(r) => {
+            let streamed = matches!(r.body, crate::reactor::ResponseBody::Stream(_));
+            guard.answered = !streamed;
+            Ok(php_response(r, guard))
+        }
+        Err(_) => {
+            guard.answered = true;
+            Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n"))
+        }
     }
 }
 
@@ -391,14 +400,14 @@ async fn collect_body(body: Incoming) -> Result<Bytes, (StatusCode, &'static str
 
 /// Turns PHP's answer into hyper's. A streamed body (R-STREAM) starts writing now and is framed as
 /// the rest arrives, so the client gets the first bytes while PHP is still producing the last.
-fn php_response(r: crate::reactor::HttpResponse) -> Response<tonic::body::Body> {
+fn php_response(r: crate::reactor::HttpResponse, guard: CancelOnDrop) -> Response<tonic::body::Body> {
     let mut b = Response::builder().status(r.status);
     for (k, v) in r.headers {
         b = b.header(k, v);
     }
     let body = match r.body {
         crate::reactor::ResponseBody::Full(bytes) => crate::grpc::plain_body(bytes),
-        crate::reactor::ResponseBody::Stream(rx) => tonic::body::Body::new(ChannelBody { rx }),
+        crate::reactor::ResponseBody::Stream(rx) => tonic::body::Body::new(ChannelBody { rx, guard: Some(guard) }),
     };
     b.body(body).unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR, "bad response headers\n"))
 }
@@ -407,6 +416,10 @@ fn php_response(r: crate::reactor::HttpResponse) -> Response<tonic::body::Body> 
 /// when the runtime drops the sender, which `ignis_respond_end()` does.
 struct ChannelBody {
     rx: tokio::sync::mpsc::Receiver<Bytes>,
+    /// R-STREAM-CANCEL: for a streamed answer the oneshot resolves when the *headers* go out, so
+    /// disarming the guard there left the rest of the body uncancellable. It travels with the body
+    /// instead, and a client that leaves mid-stream still cancels the producing fiber.
+    guard: Option<CancelOnDrop>,
 }
 
 impl hyper::body::Body for ChannelBody {
@@ -417,7 +430,14 @@ impl hyper::body::Body for ChannelBody {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
-        self.rx.poll_recv(cx).map(|o| o.map(|b| Ok(hyper::body::Frame::data(b))))
+        let frame = self.rx.poll_recv(cx);
+        if matches!(frame, std::task::Poll::Ready(None))
+            && let Some(guard) = self.guard.as_mut()
+        {
+            guard.answered = true; // PHP ended the stream; nothing left to cancel
+        }
+
+        frame.map(|o| o.map(|b| Ok(hyper::body::Frame::data(b))))
     }
 }
 

@@ -604,7 +604,7 @@ final class Loop
             } catch (\Throwable $e) {
                 self::answerFailed($id, $e);
             } finally {
-                self::releaseRequest();
+                self::releaseRequest($id);
             }
         });
     }
@@ -651,7 +651,9 @@ final class Loop
         } catch (\Throwable $e) {
             return Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
         } finally {
-            unset(self::$requestFibers[$id], self::$children[$id]);
+            // The fiber stays mapped: a StreamedResponse is produced *after* this returns, and
+            // cancelling it needs to find this fiber. releaseRequest() drops the mapping once the
+            // answer is actually complete (R-STREAM-CANCEL).
             Scope::set('ignis.request', null);
         }
     }
@@ -687,8 +689,9 @@ final class Loop
      * V-68) — then releases the slot and admits the next waiting request from here, so the loop
      * needs no extra wait point for it.
      */
-    private static function releaseRequest(): void
+    private static function releaseRequest(int $id): void
     {
+        unset(self::$requestFibers[$id], self::$children[$id]);
         Scope::clear();
         Output::reset();
         --self::$inflightRequests;
