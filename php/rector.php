@@ -22,8 +22,7 @@ return RectorConfig::configure()
     ])
     ->withSkip([
         RecastingRemovalRector::class,
-        __DIR__ . '/vendor',
-        __DIR__ . '/packages/*/vendor',
+        '*/vendor/*',
     ])
     ->withAutoloadPaths([__DIR__ . '/packages/runtime/stubs/ignis.php'])
     ->withPhpVersion(PhpVersion::PHP_82)

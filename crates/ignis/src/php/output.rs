@@ -21,6 +21,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_char;
 
+use super::tsrm;
 use ignis_sys as sys;
 
 use super::zval;
@@ -88,10 +89,10 @@ fn frame_bytes() -> usize {
 /// # Safety
 /// Must be called on a PHP thread with an initialised TSRM cache.
 unsafe fn current() -> usize {
-    unsafe {
-        let eg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
-        (*eg).active_fiber as usize
-    }
+    // SAFETY: the caller upholds `# Safety` above. The fiber pointer is used only as an opaque key,
+    // never dereferenced, so a stale value can at worst collide -- and it cannot, because a context
+    // is only reused once its entries are gone (zif_capture_reset at request end, V-67).
+    unsafe { (*tsrm::executor_globals()).active_fiber as usize }
 }
 
 /// `sapi_module.ub_write`: append to the running fiber's buffer, or write through to stdout.
@@ -104,6 +105,8 @@ pub unsafe extern "C" fn ub_write(str_: *const c_char, str_length: usize) -> usi
     }
     // SAFETY: the SAPI contract is `str_length` readable bytes at `str_`.
     let bytes = unsafe { std::slice::from_raw_parts(str_ as *const u8, str_length) };
+    // SAFETY: a PHP thread, which is `current()`'s whole contract -- stated by this function's
+    // own `# Safety` above.
     let key = unsafe { current() };
 
     // Bound to a response stream: the bytes are frames, not a buffer to collect.
@@ -157,6 +160,8 @@ pub unsafe extern "C" fn ub_write(str_: *const c_char, str_length: usize) -> usi
 /// # Safety
 /// VM frame on a PHP thread.
 pub unsafe extern "C" fn zif_capture_start(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: a PHP thread, which is `current()`'s whole contract -- stated by this function's
+    // own `# Safety` above.
     let key = unsafe { current() };
     SINKS.with(|s| s.borrow_mut().entry(key).or_default().push(Vec::new()));
     // SAFETY: `rv` is the VM's return slot.
@@ -168,6 +173,8 @@ pub unsafe extern "C" fn zif_capture_start(_ex: *mut sys::zend_execute_data, rv:
 /// # Safety
 /// VM frame on a PHP thread.
 pub unsafe extern "C" fn zif_capture_take(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: a PHP thread, which is `current()`'s whole contract -- stated by this function's
+    // own `# Safety` above.
     let key = unsafe { current() };
     let taken = SINKS.with(|s| {
         let mut s = s.borrow_mut();
@@ -190,6 +197,8 @@ pub unsafe extern "C" fn zif_capture_take(_ex: *mut sys::zend_execute_data, rv: 
 /// # Safety
 /// Called by PHP on the PHP thread; the argument is the SAPI's opaque context and is not read.
 pub unsafe extern "C" fn flush(_server_context: *mut std::ffi::c_void) {
+    // SAFETY: a PHP thread, which is `current()`'s whole contract -- stated by this function's
+    // own `# Safety` above.
     let key = unsafe { current() };
     BOUND.with(|b| {
         let mut b = b.borrow_mut();
@@ -213,6 +222,9 @@ pub unsafe extern "C" fn flush(_server_context: *mut std::ffi::c_void) {
 /// # Safety
 /// VM frame on a PHP thread; the string argument is copied before anything is submitted.
 pub unsafe extern "C" fn zif_stream_write(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: the caller upholds `# Safety` above -- a VM frame on a PHP thread. zend_parse_parameters
+    // fills `buf`/`len` with a string the VM owns for the duration of the call, and the bytes are
+    // copied into an owned frame before any op is submitted, so the reactor never sees VM memory.
     unsafe {
         let mut buf: *mut c_char = std::ptr::null_mut();
         let mut len: usize = 0;
@@ -250,6 +262,8 @@ pub unsafe extern "C" fn zif_stream_write(ex: *mut sys::zend_execute_data, rv: *
 /// # Safety
 /// VM frame on a PHP thread; the arguments are copied into owned Rust data.
 pub unsafe extern "C" fn zif_stream_bind(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: the caller upholds `# Safety` above -- a VM frame on a PHP thread. Every argument is
+    // copied into owned Rust data before this returns, so nothing borrows VM memory afterwards.
     unsafe {
         let mut id: sys::zend_long = 0;
         let mut status: sys::zend_long = 200;
@@ -276,6 +290,8 @@ pub unsafe extern "C" fn zif_stream_bind(ex: *mut sys::zend_execute_data, rv: *m
 /// # Safety
 /// VM frame on a PHP thread.
 pub unsafe extern "C" fn zif_stream_unbind(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: a PHP thread, which is `current()`'s whole contract -- stated by this function's
+    // own `# Safety` above.
     let key = unsafe { current() };
     // Push whatever is pending first — opening the response if this is its first byte — so the tail
     // handed back is only what did not fit, which PHP can then await.
@@ -305,6 +321,8 @@ pub unsafe extern "C" fn zif_stream_unbind(_ex: *mut sys::zend_execute_data, rv:
 /// # Safety
 /// VM frame on a PHP thread.
 pub unsafe extern "C" fn zif_capture_reset(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: a PHP thread, which is `current()`'s whole contract -- stated by this function's
+    // own `# Safety` above.
     let key = unsafe { current() };
     let had = SINKS.with(|s| s.borrow_mut().remove(&key).is_some()) | BOUND.with(|b| b.borrow_mut().remove(&key).is_some());
     // SAFETY: `rv` is the VM's return slot.

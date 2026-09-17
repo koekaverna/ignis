@@ -13,14 +13,14 @@ use ignis_sys as sys;
 /// `return_value`) that currently holds no refcounted value we would leak.
 #[inline]
 pub unsafe fn set_long(zv: *mut sys::zval, v: i64) {
+    // SAFETY: the caller upholds `# Safety` above. Both fields are plain integers in the zval
+    // union, so writing them cannot leak or free anything.
     unsafe {
         (*zv).value.lval = v;
         (*zv).u1.type_info = sys::IS_LONG;
     }
 }
 
-/// `ZVAL_DOUBLE(zv, v)`.
-///
 #[allow(dead_code)]
 /// `ZVAL_NULL(zv)`.
 ///
@@ -28,6 +28,7 @@ pub unsafe fn set_long(zv: *mut sys::zval, v: i64) {
 /// Same as [`set_long`].
 #[inline]
 pub unsafe fn set_null(zv: *mut sys::zval) {
+    // SAFETY: the caller upholds `# Safety` above; only the type tag is written.
     unsafe { (*zv).u1.type_info = sys::IS_NULL }
 }
 
@@ -37,6 +38,7 @@ pub unsafe fn set_null(zv: *mut sys::zval) {
 /// Same as [`set_long`].
 #[inline]
 pub unsafe fn set_bool(zv: *mut sys::zval, b: bool) {
+    // SAFETY: as `set_null` -- the caller upholds `# Safety`, only the type tag is written.
     unsafe { (*zv).u1.type_info = if b { sys::IS_TRUE } else { sys::IS_FALSE } }
 }
 
@@ -49,6 +51,9 @@ pub unsafe fn set_bool(zv: *mut sys::zval, b: bool) {
 /// table is emalloc'd. Ownership of the table moves to `zv`.
 #[inline]
 pub unsafe fn set_new_array(zv: *mut sys::zval) -> *mut sys::HashTable {
+    // SAFETY: the caller upholds `# Safety` above, so a request is active and the emalloc'd table
+    // is valid until request shutdown. Ownership moves into `zv` in the same breath, so the table
+    // is never left unreferenced.
     unsafe {
         let ht = sys::_zend_new_array_0();
         (*zv).value.arr = ht;
@@ -63,6 +68,7 @@ pub unsafe fn set_new_array(zv: *mut sys::zval) -> *mut sys::HashTable {
 /// `zv` must point to an initialised zval.
 #[inline]
 pub unsafe fn type_of(zv: *const sys::zval) -> u32 {
+    // SAFETY: the caller guarantees an initialised zval; this only reads the tag byte.
     unsafe { (*zv).u1.type_info & 0xff }
 }
 
@@ -72,6 +78,8 @@ pub unsafe fn type_of(zv: *const sys::zval) -> u32 {
 /// `ex` must be the `execute_data` passed to a `zif_handler`.
 #[inline]
 pub unsafe fn num_args(ex: *const sys::zend_execute_data) -> u32 {
+    // SAFETY: the caller guarantees a live zif_handler frame, where This.u2.num_args is the
+    // argument count the VM wrote before the call.
     unsafe { (*ex).This.u2.num_args }
 }
 
@@ -82,6 +90,10 @@ pub unsafe fn num_args(ex: *const sys::zend_execute_data) -> u32 {
 /// The returned pointer is VM-owned; do not free or hold past the call.
 #[inline]
 pub unsafe fn arg(ex: *mut sys::zend_execute_data, n: u32) -> *mut sys::zval {
+    // SAFETY: the caller guarantees `n <= num_args(ex)`, so the offset stays inside the frame the
+    // VM allocated -- execute_data and its arguments are one allocation, which is what makes this
+    // pointer arithmetic (rather than a field access) correct. The frame-slot constant is asserted
+    // against the C header by the test below.
     unsafe { (ex as *mut sys::zval).add(sys::IGNIS_ZEND_CALL_FRAME_SLOT as usize + n as usize - 1) }
 }
 
@@ -93,6 +105,8 @@ pub unsafe fn arg(ex: *mut sys::zend_execute_data, n: u32) -> *mut sys::zval {
 /// Same as [`arg`].
 #[inline]
 pub unsafe fn arg_long(ex: *mut sys::zend_execute_data, n: u32) -> Option<i64> {
+    // SAFETY: the caller upholds `arg`'s contract; lval is only read once the tag says IS_LONG, so
+    // the union is read as what it holds.
     unsafe {
         let zv = arg(ex, n);
         if type_of(zv) == sys::IS_LONG { Some((*zv).value.lval) } else { None }
@@ -104,6 +118,8 @@ pub unsafe fn arg_long(ex: *mut sys::zend_execute_data, n: u32) -> Option<i64> {
 /// # Safety
 /// `zs` must point to a live `zend_string`.
 pub unsafe fn zstr_to_string(zs: *const sys::zend_string) -> String {
+    // SAFETY: the caller guarantees a live zend_string, whose `len` describes its own `val` buffer.
+    // The bytes are copied before returning, so the String never borrows VM memory.
     unsafe {
         let len = (*zs).len;
         let ptr = (*zs).val.as_ptr() as *const u8;
@@ -129,7 +145,11 @@ mod tests {
 
     #[test]
     fn set_and_read_scalar_zvals() {
+        // SAFETY: a zval is a union of integers and pointers with no niche, so all-zero is the
+        // valid IS_UNDEF representation.
         let mut zv: sys::zval = unsafe { std::mem::zeroed() };
+        // SAFETY: `zv` is this test's own stack storage, initialised above and holding no
+        // refcounted value -- exactly what the helpers' `# Safety` asks for.
         unsafe {
             set_long(&mut zv, 42);
             assert_eq!(type_of(&zv), sys::IS_LONG);
@@ -149,7 +169,11 @@ mod tests {
             ex: sys::zend_execute_data,
             args: [sys::zval; 2],
         }
+        // SAFETY: zeroed is a valid representation for both members, as above.
         let mut f: Frame = unsafe { std::mem::zeroed() };
+        // SAFETY: `f` is this test's own #[repr(C)] allocation laid out the way the VM lays out a
+        // frame -- execute_data followed by its argument zvals -- which is the layout `arg()`
+        // assumes.
         unsafe {
             set_long(&mut f.args[0], 7);
             set_long(&mut f.args[1], 9);
