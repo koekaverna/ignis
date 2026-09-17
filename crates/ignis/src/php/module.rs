@@ -29,7 +29,7 @@ thread_local! {
 }
 
 pub fn install_runtime(rt: tokio::runtime::Handle) {
-    RUNTIME.set(rt).ok().expect("runtime installed twice");
+    RUNTIME.set(rt).expect("runtime installed twice");
 }
 
 /// Binds `r` to the calling OS thread. Must precede any PHP execution on it.
@@ -301,11 +301,11 @@ unsafe extern "C" fn zif_ignis_publish_stats(ex: *mut sys::zend_execute_data, _r
         let mut pos: sys::HashPosition = 0;
         sys::zend_hash_internal_pointer_reset_ex(ht, &mut pos);
         while {
-            val = sys::zend_hash_get_current_data_ex(ht, &mut pos);
+            val = sys::zend_hash_get_current_data_ex(ht, &pos);
             !val.is_null()
         } {
             let mut idx: sys::zend_ulong = 0;
-            if sys::zend_hash_get_current_key_ex(ht, &mut key, &mut idx, &mut pos) == sys::HASH_KEY_IS_STRING
+            if sys::zend_hash_get_current_key_ex(ht, &mut key, &mut idx, &pos) == sys::HASH_KEY_IS_STRING
                 && !key.is_null()
                 && zval::type_of(val) == sys::IS_LONG
             {
@@ -1006,13 +1006,16 @@ mod tests {
 
     #[test]
     fn module_entry_matches_header_constants() {
-        // SAFETY: read-only access to a static in a single test thread.
-        let m = unsafe { &*(&raw const MODULE) };
-        assert_eq!(m.size as u64, size_of::<sys::zend_module_entry>() as u64);
-        assert_eq!(m.zts, 1, "must be built against a ZTS PHP");
-        let bid = unsafe { CStr::from_ptr(m.build_id) }.to_str().unwrap();
-        assert!(bid.ends_with(",TS"), "build id {bid} is not a TS build");
-        assert!(bid.starts_with(&format!("API{}", m.zend_api)));
+        let m = &raw const MODULE;
+        // SAFETY: read-only access to a static in a single test thread. The raw pointer is never
+        // turned into a reference, which is the whole point of `static_mut_refs`.
+        unsafe {
+            assert_eq!((*m).size as u64, size_of::<sys::zend_module_entry>() as u64);
+            assert_eq!((*m).zts, 1, "must be built against a ZTS PHP");
+            let bid = CStr::from_ptr((*m).build_id).to_str().unwrap();
+            assert!(bid.ends_with(",TS"), "build id {bid} is not a TS build");
+            assert!(bid.starts_with(&format!("API{}", (*m).zend_api)));
+        }
     }
 
     #[test]

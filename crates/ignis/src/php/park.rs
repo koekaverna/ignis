@@ -339,12 +339,10 @@ pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mu
         if let Some(_g) = may_park(ret, "read")
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-        {
-            if park_io(fd, false) == Wait::TimedOut {
+            && park_io(fd, false) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_read, fd, buf, n) as isize
     }
 }
@@ -355,12 +353,10 @@ pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *c
         if let Some(_g) = may_park(ret, "write")
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-        {
-            if park_io(fd, true) == Wait::TimedOut {
+            && park_io(fd, true) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_write, fd, buf, n) as isize
     }
 }
@@ -372,12 +368,10 @@ pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mu
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-        {
-            if park_io(fd, false) == Wait::TimedOut {
+            && park_io(fd, false) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, std::ptr::null_mut::<c_void>(), std::ptr::null_mut::<c_void>()) as isize
     }
 }
@@ -389,12 +383,10 @@ pub unsafe extern "C" fn ignis_park_send(ret: *const c_void, fd: c_int, buf: *co
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-        {
-            if park_io(fd, true) == Wait::TimedOut {
+            && park_io(fd, true) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_sendto, fd, buf, n, flags, std::ptr::null::<c_void>(), 0usize) as isize
     }
 }
@@ -406,12 +398,10 @@ pub unsafe extern "C" fn ignis_park_recvfrom(ret: *const c_void, fd: c_int, buf:
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-        {
-            if park_io(fd, false) == Wait::TimedOut {
+            && park_io(fd, false) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, addr, alen) as isize
     }
 }
@@ -423,12 +413,10 @@ pub unsafe extern "C" fn ignis_park_sendto(ret: *const c_void, fd: c_int, buf: *
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-        {
-            if park_io(fd, true) == Wait::TimedOut {
+            && park_io(fd, true) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_sendto, fd, buf, n, flags, addr, alen as usize) as isize
     }
 }
@@ -466,7 +454,7 @@ unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> Option<bool> 
 
 /// Milliseconds for a timespec timeout, rounded up so a short wait never becomes a spin.
 fn ms_ceil(ts: &libc::timespec) -> c_int {
-    (ts.tv_sec as i64 * 1000 + (ts.tv_nsec as i64 + 999_999) / 1_000_000).clamp(0, c_int::MAX as i64) as c_int
+    (ts.tv_sec * 1000 + (ts.tv_nsec + 999_999) / 1_000_000).clamp(0, c_int::MAX as i64) as c_int
 }
 
 unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: libc::nfds_t, timeout: c_int) -> c_int {
@@ -677,12 +665,10 @@ pub unsafe extern "C" fn ignis_park_accept4(ret: *const c_void, fd: c_int, addr:
         if let Some(_g) = may_park(ret, "accept")
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-        {
-            if park_io(fd, false) == Wait::TimedOut {
+            && park_io(fd, false) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_accept4, fd, addr, alen, flags) as c_int
     }
 }
@@ -694,12 +680,10 @@ pub unsafe extern "C" fn ignis_park_recvmsg(ret: *const c_void, fd: c_int, msg: 
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-        {
-            if park_io(fd, false) == Wait::TimedOut {
+            && park_io(fd, false) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_recvmsg, fd, msg, flags) as isize
     }
 }
@@ -711,12 +695,10 @@ pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: 
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-        {
-            if park_io(fd, true) == Wait::TimedOut {
+            && park_io(fd, true) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_sendmsg, fd, msg, flags) as isize
     }
 }
@@ -727,12 +709,10 @@ pub unsafe extern "C" fn ignis_park_readv(ret: *const c_void, fd: c_int, iov: *c
         if let Some(_g) = may_park(ret, "readv")
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-        {
-            if park_io(fd, false) == Wait::TimedOut {
+            && park_io(fd, false) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_readv, fd, iov, cnt) as isize
     }
 }
@@ -743,12 +723,10 @@ pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *
         if let Some(_g) = may_park(ret, "writev")
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-        {
-            if park_io(fd, true) == Wait::TimedOut {
+            && park_io(fd, true) == Wait::TimedOut {
                 *libc::__errno_location() = libc::EAGAIN;
                 return -1;
             }
-        }
         libc::syscall(libc::SYS_writev, fd, iov, cnt) as isize
     }
 }

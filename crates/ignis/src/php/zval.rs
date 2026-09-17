@@ -99,6 +99,18 @@ pub unsafe fn arg_long(ex: *mut sys::zend_execute_data, n: u32) -> Option<i64> {
     }
 }
 
+/// Copies a `zend_string` into an owned Rust `String` (lossy on invalid UTF-8).
+///
+/// # Safety
+/// `zs` must point to a live `zend_string`.
+pub unsafe fn zstr_to_string(zs: *const sys::zend_string) -> String {
+    unsafe {
+        let len = (*zs).len;
+        let ptr = (*zs).val.as_ptr() as *const u8;
+        String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).into_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! These tests need no PHP runtime: they check layout assumptions
@@ -111,7 +123,7 @@ mod tests {
     fn zval_is_16_bytes_and_frame_slot_matches_c() {
         assert_eq!(size_of::<sys::zval>(), 16);
         assert_eq!(align_of::<sys::zval>(), 8);
-        let slot = (size_of::<sys::zend_execute_data>() + size_of::<sys::zval>() - 1) / size_of::<sys::zval>();
+        let slot = size_of::<sys::zend_execute_data>().div_ceil(size_of::<sys::zval>());
         assert_eq!(slot as u32, sys::IGNIS_ZEND_CALL_FRAME_SLOT);
     }
 
@@ -151,17 +163,5 @@ mod tests {
             assert_eq!(arg_long(ex, 1), Some(7));
             assert_eq!(arg_long(ex, 2), Some(9));
         }
-    }
-}
-
-/// Copies a `zend_string` into an owned Rust `String` (lossy on invalid UTF-8).
-///
-/// # Safety
-/// `zs` must point to a live `zend_string`.
-pub unsafe fn zstr_to_string(zs: *const sys::zend_string) -> String {
-    unsafe {
-        let len = (*zs).len;
-        let ptr = (*zs).val.as_ptr() as *const u8;
-        String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).into_owned()
     }
 }

@@ -362,10 +362,10 @@ impl Reactor {
     pub fn fail_pending(&self) -> usize {
         // A half-written stream is dropped too: the client sees a truncated body rather than a
         // connection that never finishes.
-        let dropped = self.responders.lock().unwrap().drain().count()
+        
+        self.responders.lock().unwrap().drain().count()
             + self.streams.lock().unwrap().drain().count()
-            + self.stream_out.lock().unwrap().drain().count();
-        dropped
+            + self.stream_out.lock().unwrap().drain().count()
     }
 
     /// Marks the owning PHP thread as alive (watchdog, ADR-0012).

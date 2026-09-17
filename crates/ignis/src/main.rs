@@ -157,7 +157,7 @@ fn main() -> ExitCode {
 
     // Main thread = PHP thread 0 (php_embed_init runs here).
     // PHP's argv is `[script, args...]` (like php-cli), so `$argv[0]` is the script (E15 harnesses).
-    let php_args: Vec<String> = args.iter().cloned().collect();
+    let php_args: Vec<String> = args.to_vec();
     metrics::mark_start();
     let mut engine = match php::embed::Engine::init(&php_args) {
         Ok(e) => e,
@@ -260,8 +260,8 @@ fn main() -> ExitCode {
         }
     });
 
-    let worst;
-    if supervise {
+    
+    let worst = if supervise {
         // Supervisor: workers 1..=N, respawned when their script ends; thread 0 only supervises.
         let mut handles: Vec<(usize, std::thread::JoinHandle<i32>)> = (1..=threads).map(|i| (i, spawn_worker(i))).collect();
         let mut restarts_this_minute = 0u32;
@@ -293,7 +293,7 @@ fn main() -> ExitCode {
                 break;
             }
         }
-        worst = 1;
+        1
     } else {
         let handles: Vec<_> = (1..threads).map(spawn_worker).collect();
         let status = match engine.run_file(&script) {
@@ -307,8 +307,8 @@ fn main() -> ExitCode {
         for h in handles {
             w = w.max(h.join().unwrap_or(1));
         }
-        worst = w;
-    }
+        w
+    };
     // E16: offload workers leave their PHP requests before the engine shuts down.
     offload::shutdown();
     for h in offload_handles {

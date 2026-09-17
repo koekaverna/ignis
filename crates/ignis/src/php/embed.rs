@@ -75,7 +75,7 @@ impl Engine {
             }
             sys::php_embed_init(argc, argv_ptrs.as_mut_ptr())
         };
-        if rc != sys::SUCCESS as i32 {
+        if rc != sys::SUCCESS {
             bail!("php_embed_init failed ({rc})");
         }
         #[cfg(php_async_abi)]

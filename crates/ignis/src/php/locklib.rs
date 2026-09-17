@@ -176,7 +176,7 @@ static FUNCTIONS: Sync3<[sys::zend_function_entry; 5]> = Sync3([
     fe(c"ignis_locklib_feed", zif_feed, AI_FEED.0.as_ptr(), 3),
     fe(c"ignis_locklib_call", zif_call, AI_CALL.0.as_ptr(), 3),
     // zero terminator
-    fe(unsafe { CStr::from_bytes_with_nul_unchecked(b"\0") }, zif_pipe, std::ptr::null(), 0),
+    fe(c"", zif_pipe, std::ptr::null(), 0),
 ]);
 
 /// Registers the three functions at MINIT, but only when `IGNIS_LOCKLIB` is set.
