@@ -384,6 +384,37 @@ exactly which library made it impossible and why.
 
 ## Product hygiene (small, `agent`)
 
+### R-MAIN-RED `main` has been red since before the quality work, on two gates `main` `open — evidence 2026-09-17`
+**What.** Every one of the last six `ci.yml` runs on `main` failed, including runs that predate this
+body of work (35249027373 at 16:50, 35249914989, 35258827928, 35259213051). Three jobs were failing;
+`E15 revolt` recovered by itself once `unzip` reached the image and composer could install, leaving two.
+
+**E9 temporal — the negative control does not detect what it exists to detect.** The gate greps for
+`REPLAY_FAILED`, and the mutated replay prints `REPLAY_OK activations=3 eviction_errors=0` even
+though the same log carries `evicted: reason=NONDETERMINISM ... [TMPRL1100] Activity machine does not
+handle this event: HistoryEvent(id: 11, TimerStarted)`. So sdk-core *did* reject the mutated history
+and the harness counted zero eviction errors. Either the eviction is no longer surfaced the way the
+harness counts it, or the counter never covered this path. Until it is fixed, V-19's "mutated
+workflow FAILS" claim is not being re-verified by CI, whatever the run says.
+
+**E15 frankenphp — `passed=28` against a baseline of 29.** Five failures in the run:
+`server-variable.php` (REMOTE_HOST/ADDR/PORT/IDENT), `cookies.php` (four cookies absent),
+`autoloader.php`, `env/putenv.php` (`got 'test=8'` — a value leaking across requests), and
+`file-upload.php` (no `Upload OK`). One of those five is newer than the baseline. The window points
+at the stream/multipart refactors of 2026-09-17 16:50–18:26 (V-76/V-77 and the multipart work), which
+a parallel session landed.
+
+**Why it matters.** `main` is the branch of record, and a permanently red gate is a gate nobody
+reads. It also means the E15 per-test `check_set` regression detector is warning-only in CI
+(`scripts/ci-gate.sh`: `[ -n "${CI:-}" ] || fail=1`), so a swap of one passing test for another is
+invisible there.
+**Acceptance.** `scripts/ci-gate.sh frankenphp` and the E9 grep both pass on `main`, and the E9
+negative control is proven to fail when the history is mutated — assert on the eviction reason, not
+only on a counter.
+**Constraints.** Not this work's scope (it is the quality gate), and the frankenphp half overlaps a
+parallel session's files. Diagnose from `bench/results/e15-phpt/*.tsv` and the frankenphp runner
+rather than by re-running blind.
+
 ### R-LINT-GATE Blocking fmt/clippy/deny + real coverage, Rust side `main` `in progress`
 **What.** ADR-0041. `[workspace.lints]`, `rustfmt.toml` (140 cols, measured), `deny.toml`,
 `.config/nextest.toml`, `ignis-sys` narrowed to its bindgen module, the debt driven to zero, tests
