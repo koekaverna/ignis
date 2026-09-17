@@ -36,6 +36,11 @@ parameters:
         - */vendor/*
         - ../bench/e21/app
 
+    # php/tests is not analysed on purpose: the fake reactor declares ignis_serve() and
+    # ignis_cancel_parked_any() with bodies that return, and analysing them turns three calls in
+    # Loop.php into "result unused" errors that are an artefact of the fake, not debt in the loop.
+    # `composer lint` still parses the file and the suite still runs it.
+    #
     # Scanned, never bootstrapped. The stub bodies throw on purpose, and
     # packages/offload/src/ignis-offload.php guards on function_exists('ignis_route_enable') —
     # which a loaded stub satisfies — and then calls ignis_offload_stats(), which throws.

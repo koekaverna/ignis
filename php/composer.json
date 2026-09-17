@@ -37,10 +37,7 @@
     "autoload-dev": {
         "psr-4": {
             "Ignis\\Tests\\": "tests/"
-        },
-        "files": [
-            "packages/runtime/stubs/ignis.php"
-        ]
+        }
     },
     "minimum-stability": "dev",
     "prefer-stable": true,
@@ -54,11 +51,11 @@
     },
     "scripts": {
         "lint": "find packages tests ../examples ../bench ../scripts -name '*.php' -not -path '*/vendor/*' -not -path '*/var/cache/*' -exec php -l {} \\; | grep -v '^No syntax errors detected' ; test $? -eq 1",
-        "stan": "phpstan analyse --no-progress && phpstan analyse --no-progress -c packages/revolt/phpstan.neon",
-        "cs": "php-cs-fixer check --diff --show-progress=none",
-        "fix": "php-cs-fixer fix --show-progress=none",
-        "rector": "rector process --dry-run",
-        "test": "phpunit --colors=never",
+        "stan": ["@php vendor/bin/phpstan analyse --no-progress", "@php vendor/bin/phpstan analyse --no-progress -c packages/revolt/phpstan.neon"],
+        "cs": "@php vendor/bin/php-cs-fixer check --diff --show-progress=none",
+        "fix": "@php vendor/bin/php-cs-fixer fix --show-progress=none",
+        "rector": "@php vendor/bin/rector process --dry-run",
+        "test": "@php vendor/bin/phpunit --colors=never",
         "check": [
             "@lint",
             "@stan",

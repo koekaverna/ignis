@@ -14,6 +14,11 @@ declare(strict_types=1);
  * (or after packages/runtime/stubs/ignis.php) changes nothing. That is also why tests/bootstrap.php
  * requires it *before* the composer autoloader: the stubs are autoload-dev files whose bodies throw,
  * and whoever declares a name first wins.
+ *
+ * ignis_set_superglobals() and ignis_cancel_parked_any() are faked for that reason and no other:
+ * the runtime calls them behind function_exists(), the stub makes that guard true, and the stub
+ * body then throws inside a request fiber — where Loop::poolBody() rejects a Future nobody reads,
+ * so the request just disappears. Any stub function the runtime guards on has to be faked here.
  */
 
 namespace Ignis\Tests {
@@ -139,6 +144,24 @@ namespace {
         function ignis_serve(string $addr): bool
         {
             return true;
+        }
+    }
+
+    if (!function_exists('ignis_set_superglobals')) {
+        /**
+         * @param array<string, string> $server
+         * @param array<string, string> $get
+         * @param array<string, string> $post
+         * @param array<string, string> $cookie
+         */
+        function ignis_set_superglobals(array $server, array $get, array $post, array $cookie): void {}
+    }
+
+    if (!function_exists('ignis_cancel_parked_any')) {
+        /** @param \Fiber<mixed, mixed, mixed, mixed> $fiber */
+        function ignis_cancel_parked_any(\Fiber $fiber, \Throwable $exception): bool
+        {
+            return false;
         }
     }
 

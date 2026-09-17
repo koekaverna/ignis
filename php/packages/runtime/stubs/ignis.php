@@ -303,6 +303,100 @@ if (!function_exists('ignis_temporal_shutdown')) {
     }
 }
 
+// --- output capture and streamed responses (V-72, V-76, V-77) ---
+
+if (!function_exists('ignis_capture_start')) {
+    /** ignis_capture_start(): bool — this fiber's output goes to a fresh buffer until it is taken. */
+    function ignis_capture_start(): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_capture_take')) {
+    /** ignis_capture_take(): string — the bytes written since the matching start; stops capturing. */
+    function ignis_capture_take(): string
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_capture_reset')) {
+    /** ignis_capture_reset(): bool — drops whatever this fiber left behind, so a pooled fiber does not hand its bytes to the next request (V-67). */
+    function ignis_capture_reset(): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_stream_bind')) {
+    /**
+     * ignis_stream_bind(int $id, int $status, array $headers): bool — this fiber's output becomes the body of response $id.
+     *
+     * @param array<string, string> $headers
+     */
+    function ignis_stream_bind(int $id, int $status, array $headers): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_stream_unbind')) {
+    /**
+     * ignis_stream_unbind(): array — stops forwarding and reports [tail, started].
+     *
+     * @return array{0: string, 1: bool}
+     */
+    function ignis_stream_unbind(): array
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_stream_write')) {
+    /** ignis_stream_write(string $bytes): int — a frame of this fiber's response; 0 if the runtime took it, an op id to await if the queue is full, -1 if this fiber is not streaming. */
+    function ignis_stream_write(string $bytes): int
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_respond_chunk')) {
+    /** ignis_respond_chunk(int $id, string $bytes): int — one frame of a streamed response; returns an op to await. */
+    function ignis_respond_chunk(int $id, string $bytes): int
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_respond_end')) {
+    /** ignis_respond_end(int $id): bool — no more chunks; the body is complete. */
+    function ignis_respond_end(int $id): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_publish_stats')) {
+    /**
+     * ignis_publish_stats(array $stats): void — the PHP loop hands its own counters to the runtime for /_ignis/metrics (M4-4).
+     *
+     * @param array<string, int> $stats
+     */
+    function ignis_publish_stats(array $stats): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_temporal_heartbeat')) {
+    /** ignis_temporal_heartbeat(int $worker, string $json): bool — activity heartbeat (ADR-0013). */
+    function ignis_temporal_heartbeat(int $worker, string $json): bool
+    {
+        throw new \LogicException('stub: only the ignis binary (temporal feature) defines ' . __FUNCTION__);
+    }
+}
+
 // --- backend (b) async-ABI primitives (cfg(php_async_abi), ADR-0003) ---
 // Only present when built against the true-async fork (scripts/build-php-async.sh).
 
