@@ -2482,7 +2482,13 @@ our PHP build has no `ext-phar`, and only `vendor/` is needed).
 our own JSON payload boundary. Payload *objects* are still constructed, so the DataConverter keeps
 owning encode/decode — only the serialize/parse round trip is gone.
 
-**Conformance, `bench/e20-sdkphp.sh` → `php/temporal/core/selftest.php`.** A recorded script of
+**The adapter is a real package**, not a directory: `php/temporal/core/composer.json` declares
+`ignis/temporal-core-transport`, PSR-4 `Temporal\Worker\Transport\Core\` → `src/`, `temporal/sdk`
+^2.19 as its only dependency. `composer install` in that directory is what `bench/e20-sdkphp.sh`
+runs, and the generated `autoload_psr4.php` maps the namespace to the package's own `src/` — so the
+test below exercises the package as an installed library, not a pile of `require`s.
+
+**Conformance, `bench/e20-sdkphp.sh` → `php/temporal/core/tests/conformance.php`.** A recorded script of
 sdk-core activations is fed to a **stock** sdk-php worker (attributes, `Workflow::newActivityStub()`,
 `yield`, `Workflow::timer()` — `php/temporal/demo-sdk.php`, shared with the example so the two
 cannot drift):

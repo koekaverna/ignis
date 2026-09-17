@@ -134,9 +134,11 @@ CI, not silently rot here. PHP is also the only Temporal SDK that does not sit o
 Ruby and Python all do, which is what `temporalio-sdk-core-c-bridge` exists for — so a core
 transport is a missing piece of their architecture rather than a favour to us.
 
-Upstream acceptance cannot be waited on, so the code is written to be *movable* instead: everything
-lives in `php/temporal/core/` under `Temporal\Worker\Transport\Core`, depends on nothing from Ignis,
-and reaches its host through one interface with two methods:
+Upstream acceptance cannot be waited on, so the code is written to be *movable* instead: it is a
+composer package, `ignis/temporal-core-transport` in `php/temporal/core/` — its own `composer.json`,
+PSR-4 `Temporal\Worker\Transport\Core\` over `src/`, `temporal/sdk` as its only dependency, its own
+README and conformance test. It depends on nothing from Ignis and reaches its host through one
+interface with two methods:
 
 ```php
 public function poll(string $kind): ?string;             // JSON WorkflowActivation / ActivityTask

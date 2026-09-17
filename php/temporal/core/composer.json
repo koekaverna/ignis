@@ -1,0 +1,19 @@
+{
+    "name": "ignis/temporal-core-transport",
+    "description": "Runs temporalio/sdk-php on Temporal's own sdk-core instead of RoadRunner: a HostConnectionInterface and a CodecInterface that translate sdk-core workflow activations to sdk-php's command model. Host-agnostic — it needs an activation source, not a particular runtime. Written to be offered upstream.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["temporal", "workflow", "sdk-core", "transport"],
+    "require": {
+        "php": ">=8.2",
+        "temporal/sdk": "^2.19"
+    },
+    "autoload": {
+        "psr-4": {
+            "Temporal\\Worker\\Transport\\Core\\": "src/"
+        }
+    },
+    "config": {
+        "allow-plugins": false
+    }
+}

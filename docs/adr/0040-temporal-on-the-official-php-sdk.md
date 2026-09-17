@@ -36,9 +36,10 @@ tie to RoadRunner turns out to be a default argument.
 1. **The official SDK is the userland.** Workflows and activities are written with
    `temporalio/sdk-php`; Ignis supplies the host. `php/temporal/ignis-temporal.php` stays only as
    the reference the replay test was built on and is not developed further.
-2. **The adapter is a portable package, not Ignis glue.** `php/temporal/core/` holds
-   `Temporal\Worker\Transport\Core\{ActivationSource, CoreCodec, CoreHost, CoreWorkerFactory}` and
-   depends on nothing from this runtime. This is the owner's call and the important half of the
+2. **The adapter is a composer package, not Ignis glue.** `php/temporal/core/` is
+   `ignis/temporal-core-transport` — its own `composer.json`, PSR-4 `Temporal\Worker\Transport\Core\`
+   over `src/`, `temporal/sdk` as its only dependency, its conformance test in `tests/`, and no
+   dependency on this runtime at all. This is the owner's call and the important half of the
    decision: the code translates *sdk-php's own* command model, so sdk-php is its natural owner, and
    it is written so it can be offered upstream without being rewritten. PHP is the only Temporal SDK
    not sitting on sdk-core; this is the piece that is missing there.

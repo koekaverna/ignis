@@ -6,28 +6,30 @@
  * and the completions it produces are asserted. This is the test that has to pass before anything is
  * claimed about the real thing, and the one that would travel with the package if it is upstreamed.
  *
- *   ignis php/temporal/core/selftest.php           (or any PHP >= 8.2 with sdk-php installed)
+ *   composer install && php tests/conformance.php        (no Temporal server, no particular host)
  *
  * SDKPHP_VENDOR points at the composer vendor/ that holds temporal/sdk.
  */
 
 declare(strict_types=1);
 
-$vendor = \getenv('SDKPHP_VENDOR') ?: __DIR__ . '/vendor/autoload.php';
+$vendor = \getenv('SDKPHP_VENDOR') ?: \dirname(__DIR__) . '/vendor/autoload.php';
 if (!\is_file($vendor)) {
     \fwrite(\STDERR, "sdk-php not installed: set SDKPHP_VENDOR=/path/to/vendor/autoload.php\n");
     exit(2);
 }
 require $vendor;
-require __DIR__ . '/ActivationSource.php';
-require __DIR__ . '/CoreCodec.php';
-require __DIR__ . '/CoreHost.php';
-require __DIR__ . '/CoreWorkerFactory.php';
+if (!\interface_exists(\Temporal\Worker\Transport\Core\ActivationSource::class)) {
+    // installed without this package's own autoloader (e.g. SDKPHP_VENDOR points elsewhere)
+    foreach (['ActivationSource', 'CoreCodec', 'CoreHost', 'CoreWorkerFactory'] as $class) {
+        require \dirname(__DIR__) . "/src/{$class}.php";
+    }
+}
 
 use Temporal\Worker\Transport\Core\ActivationSource;
 use Temporal\Worker\Transport\Core\CoreWorkerFactory;
 
-require __DIR__ . '/../demo-sdk.php';
+require __DIR__ . '/workflow.php';
 
 /** Plays a recorded script; a host only ever gets the tasks of its own kind, in order. */
 final class RecordedSource implements ActivationSource

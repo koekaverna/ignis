@@ -21,7 +21,7 @@ if (!\is_file($vendor)) {
 }
 require $vendor;
 require __DIR__ . '/sdk.php';
-require __DIR__ . '/demo-sdk.php';
+require __DIR__ . '/core/tests/workflow.php';
 
 if (!\defined('STDERR')) {
     \define('STDERR', \fopen('php://stderr', 'w'));
