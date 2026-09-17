@@ -24,7 +24,7 @@ final class IgnisWorkerRunner implements RunnerInterface
     public function run(): int
     {
         $kernel = $this->kernel;
-        \Ignis\serve(static function (IgnisRequest $ignisRequest) use ($kernel): IgnisResponse {
+        \Ignis\serve(static function (IgnisRequest $ignisRequest) use ($kernel): IgnisResponse|Stream {
             $request = self::toSymfony($ignisRequest);
             $response = $kernel->handle($request);
             $headers = self::headers($response);
@@ -40,13 +40,9 @@ final class IgnisWorkerRunner implements RunnerInterface
                 // reaching the handler.
                 unset($headers['content-length']);   // no length yet; hyper frames it chunked
                 $out = Stream::open($ignisRequest, $response->getStatusCode(), $headers);
-                try {
-                    Output::captureChunked($out, static fn () => $response->sendContent());
-                } finally {
-                    $out->close();
-                }
+                Output::captureChunked($out, static fn () => $response->sendContent());
 
-                return IgnisResponse::detached();
+                return $out;   // the loop closes it, whether or not sendContent() threw
             } finally {
                 if ($kernel instanceof TerminableInterface) {
                     $kernel->terminate($request, $response);

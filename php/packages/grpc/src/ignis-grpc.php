@@ -106,7 +106,7 @@ function router(array $methods, ?callable $fallback = null): callable
         $handler = $methods[$call->method()] ?? null;
         if ($handler === null) {
             $call->end(Status::UNIMPLEMENTED, 'unknown method ' . $call->method());
-            return Response::detached();
+            return null;   // answered through the gRPC channel (ignis_grpc_send/end)
         }
         try {
             $reply = $handler($call);
@@ -121,7 +121,7 @@ function router(array $methods, ?callable $fallback = null): callable
         } catch (\Throwable $e) {
             $call->end(Status::INTERNAL, $e::class . ': ' . $e->getMessage());
         }
-        return Response::detached();
+        return null;   // answered through the gRPC channel (ignis_grpc_send/end)
     };
 }
 

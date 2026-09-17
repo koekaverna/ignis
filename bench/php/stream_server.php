@@ -15,7 +15,7 @@ use Ignis\Http\Request;
 use Ignis\Http\Response;
 use Ignis\Http\Stream;
 
-Ignis\serve(static function (Request $r): Response {
+Ignis\serve(static function (Request $r): Response|Stream {
     if ($r->path() === '/tick') {
         return Response::text("tick\n");
     }
@@ -30,9 +30,7 @@ Ignis\serve(static function (Request $r): Response {
         }
     } catch (\RuntimeException $e) {
         // the client hung up: stop producing, which is the point of back-pressure
-    } finally {
-        $out->close();
     }
 
-    return Response::detached();
+    return $out;   // returning it IS the answer; the loop ends the body
 }, getenv('IGNIS_LISTEN') ?: '127.0.0.1:8199');

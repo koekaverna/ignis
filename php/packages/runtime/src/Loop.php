@@ -472,22 +472,27 @@ final class Loop
                 \ignis_set_superglobals(...$request->superglobals());
             }
             try {
-                $response = $handler($request);
-                if (!$response instanceof Http\Response) {
-                    $response = Http\Response::text("handler must return Ignis\\Http\\Response\n", 500);
-                }
+                $answer = $handler($request);
             } catch (DeadlineExceededException $e) {
-                $response = Http\Response::text("504 deadline exceeded\n", 504);
+                $answer = Http\Response::text("504 deadline exceeded\n", 504);
             } catch (CancelledException $e) {
-                $response = Http\Response::text("499 cancelled\n", 499);
+                $answer = Http\Response::text("499 cancelled\n", 499);
             } catch (\Throwable $e) {
-                $response = Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
+                $answer = Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
             } finally {
                 unset(self::$requestFibers[$id], self::$children[$id]);
                 Scope::set('ignis.request', null);
             }
-            if ($response->status !== 0) { // 0 = detached: the handler answered through another channel (gRPC, E10)
-                \ignis_respond($id, $response->status, $response->headers, $response->body);
+            // What the handler returned IS the contract, so a reader sees it in the signature:
+            //   Response → the loop sends it
+            //   Stream   → the answer is already on its way; the loop only has to end it
+            //   null     → answered through another channel entirely (gRPC, E10)
+            if ($answer instanceof Http\Response) {
+                \ignis_respond($id, $answer->status, $answer->headers, $answer->body);
+            } elseif ($answer instanceof Http\Stream) {
+                $answer->close();   // idempotent, so a handler may close it itself
+            } elseif ($answer !== null) {
+                \ignis_respond($id, 500, ['content-type' => 'text/plain'], "handler must return Ignis\\Http\\Response, Ignis\\Http\\Stream or null\n");
             }
             } finally {
                 // The request is over: drop its fiber-scoped state before this fiber goes back to

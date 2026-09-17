@@ -3242,3 +3242,52 @@ buffering on; that is PHP's semantics, not ours.
 `bench/e23-stream.sh`, in `scripts/smoke.sh`: chunked framing with no `Content-Length`, `ttfb < 0.2 s`
 while `total > 0.8 s`, and three `/tick` requests answered while a stream is open. Smoke **GREEN**;
 `cargo nextest` 9/9; php suite 41 tests / 62 assertions.
+
+## V-75 — a graceful shutdown was cutting live streams; and the `detached` sentinel is gone (CONFIRMED)
+
+Date: 2026-09-17T20:0xZ. Two architecture reviews, one per side. The Rust review found a defect I had
+introduced the same day; the PHP review's first recommendation was the owner's own complaint.
+
+### The defect: streamed responses were invisible to the runtime
+
+`Reactor::pending_requests()` summed `responders` and `streams` and **not** `stream_out`, the map a
+streamed response lives in. Three things read that number, and all three were wrong while a stream
+was open: dispatch (`http::Registry::pick`), `ignis_requests_inflight`, and — the one that loses user
+data — `drain()`, which ends a graceful shutdown when it reaches zero.
+
+Measured: a 5-chunk stream, `SIGTERM` 400 ms in.
+
+```
+before:  chunks received: 2 of 5      ← the shutdown truncated a client's download
+after:   chunks received: 5 of 5
+```
+
+One line, and now gated: `bench/e23-stream.sh` has a fourth arm that starts a stream, sends `SIGTERM`
+mid-flight and requires all five chunks.
+
+### `Response::detached()` is deleted
+
+A handler that answered through another channel returned a `Response` with **status 0**, and the loop
+checked `if ($response->status !== 0)` before sending. The Rust review's verdict on it is the reason
+it could go without any runtime change: by the time the handler returns, `respond_start` has already
+taken the id out of `responders`, so `ignis_respond` on a detached request is a `HashMap::remove`
+that misses. The sentinel was PHP declining to make a call that was already a no-op — while making
+status `0` indistinguishable from a handler that built a `Response` wrong, which was then dropped in
+silence.
+
+What the handler returns is now the contract, and it is visible in the signature:
+
+| return | meaning |
+|---|---|
+| `Http\Response` | a whole body; the loop sends it |
+| `Http\Stream` | the answer is already flowing; **the loop ends it** |
+| `null` | answered through another channel (gRPC, E10) |
+| anything else | `500`, named, instead of a silent drop |
+
+Returning the `Stream` deletes the `try { … } finally { $out->close(); }` ritual from every streaming
+handler — both in-tree ones lost it. Six call sites migrated (gRPC ×2, `Classic\Runner`, the Symfony
+runner, the bench server, one unit test); `examples/` had none.
+
+Gates: `cargo nextest` 9/9, php suite **40 tests / 61 assertions** (one deleted with `detached()`),
+`bench/e21` GREEN (4 arms, controls still leak), `bench/e23` GREEN including the new shutdown arm,
+`scripts/smoke.sh` **GREEN**.

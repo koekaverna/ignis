@@ -37,5 +37,20 @@ wait $SLOW 2>/dev/null
 echo "  ticks answered during the stream: $ticks/3"
 [ "$ticks" = 3 ] || { echo "  the stream blocked the thread"; fail=1; }
 
+echo "== a graceful shutdown waits for a stream instead of cutting it"
+# Before V-75 the reactor did not count streamed responses as pending, so drain() saw an idle thread
+# and SIGTERM truncated a client's download — measured at 2 of 5 chunks.
+kill $S 2>/dev/null; wait $S 2>/dev/null
+IGNIS_LISTEN="127.0.0.1:$PORT" "$BIN" --threads 1 bench/php/stream_server.php >>/tmp/ignis-e23.log 2>&1 & S=$!
+for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$PORT/tick" >/dev/null 2>&1 && break; sleep 0.2; done
+curl -sN -m 10 "http://127.0.0.1:$PORT/?n=5&ms=200" > /tmp/ignis-e23-drain.txt & C=$!
+sleep 0.3
+kill -TERM $S
+wait $C 2>/dev/null
+got=$(wc -l < /tmp/ignis-e23-drain.txt)
+echo "  chunks delivered across the shutdown: $got/5"
+[ "$got" = 5 ] || { echo "  the shutdown cut a live stream"; fail=1; }
+wait $S 2>/dev/null
+
 [ "$fail" = 0 ] && echo "E23: GREEN" || echo "E23: FAILED"
 exit $fail

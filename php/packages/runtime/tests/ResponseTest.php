@@ -36,9 +36,4 @@ final class ResponseTest extends TestCase
         Response::json(["\xB1\x31"]);   // invalid UTF-8
     }
 
-    /** Status 0 is the contract for "answered through another channel" (gRPC, E10). */
-    public function testDetachedIsStatusZero(): void
-    {
-        self::assertSame(0, Response::detached()->status);
-    }
 }

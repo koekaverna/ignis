@@ -41,7 +41,15 @@ function all(iterable $futures): array
 
 /**
  * Worker mode: serve HTTP forever, one pooled fiber per request.
- * @param callable(Http\Request):Http\Response $handler
+ *
+ * What the handler returns says how the request is answered, so the reader sees it in the
+ * signature rather than in a comment:
+ *
+ * - `Http\Response` — a whole body; the loop sends it;
+ * - `Http\Stream` — the answer is already flowing (R-STREAM); the loop ends it;
+ * - `null` — answered through another channel entirely, such as a gRPC stream (E10).
+ *
+ * @param callable(Http\Request):(Http\Response|Http\Stream|null) $handler
  */
 function serve(callable $handler, string $addr = '127.0.0.1:8080'): void
 {

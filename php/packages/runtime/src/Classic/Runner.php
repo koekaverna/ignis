@@ -19,7 +19,7 @@ final class Runner
     public static $run;
     private static ?int $sent = null;
 
-    public static function handle(Request $req): Response
+    public static function handle(Request $req): ?Response
     {
         [$file, $script, $pathInfo] = self::resolve($req->path());
         if ($file === null) {
@@ -40,7 +40,7 @@ final class Runner
         self::sessionEnd($sid);
         $response = self::response();
         ob_clean();
-        return self::$sent === null ? $response : Response::detached();
+        return self::$sent === null ? $response : null;   // already written straight to the socket
     }
 
     /** @var list<array{0:int,1:array}> requests handed over by the loop, one at a time */

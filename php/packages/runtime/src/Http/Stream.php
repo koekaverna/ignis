@@ -22,19 +22,16 @@ use Ignis\Loop;
  * and memory stays at one chunk instead of the whole body. `IGNIS_STREAM_CHUNKS` (default 2) is how
  * many chunks may sit between the two.
  *
- * The handler must return `Response::detached()`, exactly as a gRPC handler does: the answer left
- * through another channel and the loop must not send a second one.
+ * **Return it.** The handler's return type is the contract: a `Response` is a body the loop sends,
+ * a `Stream` is an answer already on its way, and the loop ends it — so there is no `finally
+ * { close() }` to remember and no sentinel status to explain.
  *
- *     Ignis\serve(function (Request $r): Response {
+ *     Ignis\serve(function (Request $r): Response|Stream {
  *         $out = Stream::open($r, 200, ['content-type' => 'text/plain']);
- *         try {
- *             foreach ($rows as $row) {
- *                 $out->write($row . "\n");   // parks here when the client is slow
- *             }
- *         } finally {
- *             $out->close();
+ *         foreach ($rows as $row) {
+ *             $out->write($row . "\n");   // parks here when the client is slow
  *         }
- *         return Response::detached();
+ *         return $out;
  *     });
  */
 final class Stream

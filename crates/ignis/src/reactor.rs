@@ -386,8 +386,13 @@ impl Reactor {
     }
 
     /// Requests delivered to this thread's loop and not yet answered (ADR-0010).
+    /// Requests this thread owes an answer for. **Every** kind counts: a whole-body response not yet
+    /// sent, a gRPC stream, and a streamed HTTP response still being written. Leaving the last one
+    /// out made a live stream invisible to the three things that read this — dispatch
+    /// (`http::Registry::pick`), `ignis_requests_inflight`, and `drain()`, which then ended a
+    /// graceful shutdown while a client was still receiving (measured: 2 of 5 chunks, V-75).
     pub fn pending_requests(&self) -> usize {
-        self.responders.lock().unwrap().len() + self.streams.lock().unwrap().len()
+        self.responders.lock().unwrap().len() + self.streams.lock().unwrap().len() + self.stream_out.lock().unwrap().len()
     }
 
     pub fn server_started(&self) {

@@ -105,7 +105,7 @@ by `Ignis\Pg` (one lease per fiber per pool) and Symfony's `FiberRequestStack`.
 | `Response::__construct(string $body = '', int $status = 200, array $headers = [])` | Plain value object; all three properties are `public readonly`. |
 | `Response::text(string $body, int $status = 200): self` | `text/plain; charset=utf-8`. |
 | `Response::json(mixed $data, int $status = 200): self` | `application/json`, `JSON_THROW_ON_ERROR`. |
-| `Response::detached(): self` | Status `0` — tells the loop the handler already answered through another channel (a gRPC stream, E10) and to send nothing itself. |
+| *(removed)* `Response::detached()` | Was status `0` as a sentinel. A handler now says how it answered by what it **returns**: `Response` (the loop sends it), `Stream` (already flowing, the loop ends it), or `null` (answered through another channel, e.g. gRPC). |
 
 ## `namespace Ignis\Classic` (`php/packages/runtime/src/classic.php`)
 
