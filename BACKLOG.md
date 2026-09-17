@@ -384,6 +384,40 @@ exactly which library made it impossible and why.
 
 ## Product hygiene (small, `agent`)
 
+### R-LINT-GATE Blocking fmt/clippy/deny + real coverage, Rust side `main` `in progress`
+**What.** ADR-0041. `[workspace.lints]`, `rustfmt.toml` (140 cols, measured), `deny.toml`,
+`.config/nextest.toml`, `ignis-sys` narrowed to its bindgen module, the debt driven to zero, tests
+on the tokio-side modules, `cargo llvm-cov` reported as a number, and a blocking `lint` job in CI.
+**Why.** There was no linter of any kind in CI, on either side, and its absence had already cost two
+things nobody noticed: `--no-default-features` had stopped compiling although the manifest documents
+that configuration, and 92 `unsafe` blocks had no SAFETY comment while CLAUDE.md claimed every one
+of them did.
+**Acceptance.** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings` (in the CI image, it has
+protoc), `cargo check --workspace --no-default-features`, `cargo deny check` all clean;
+`cargo nextest run --workspace` green with the new tests; `scripts/smoke.sh` GREEN;
+`scripts/ci-gate.sh phpt` no drop; coverage recorded as a V-n.
+**Constraints.** The four allocation items in R-REVIEW-CHORES stay out: they are hot-path claims and
+need a before/after on a quiet box, which is `bencher` work and its own V-n.
+
+### R-PHP-GATE Blocking php -l/phpstan/cs-fixer + phpunit with coverage `agent` `in progress`
+**What.** The root `php/composer.json` gains dev tooling and scripts; `phpstan.neon` at level 6
+(plus a six-line override for `revolt`, whose 8.1 floor is a promise to AMPHP users);
+`.php-cs-fixer.dist.php` at @PER-CS; `rector.php` as a one-shot local tool, never a gate;
+`phpunit.xml`; a fake reactor so `Loop.php` is unit-testable; tests for the nine packages that have
+none; pcov-based line coverage; and `php-lint` + `php-unit` jobs in CI.
+**Why.** **The PHP unit tests had never executed in CI.** The image had no zip/unzip/7z, so
+`composer install` could not extract a dist archive; both composer steps ended in `|| echo`;
+`smoke.sh` then found neither vendor nor docker and printed `skipped`; the job went green. Fixed by
+building the extensions in (owner, DECISIONS 2026-09-17) and putting `unzip` in the image.
+**Acceptance.** `cd php && composer check` exits 0 with phpstan reporting 0 errors at its committed
+level, cs-fixer clean, the suite green, coverage above the committed floor,
+`git status --porcelain` empty after a test run (the bootstrap is no longer rewritten), and
+`scripts/smoke.sh` GREEN.
+**Constraints.** No `phpstan-baseline.neon` — it is the file that makes "debt to zero" optional. If
+the real error count exceeds 250, gate at level 4 and file level 6 separately (ADR-0041 §7).
+
+
 ### H-1 Remaining hardcoded `127.0.0.1:8080` in benches `agent` `done (validated by main: quoted grep clean, wrk-hello over IGNIS_LISTEN 24,884 req/s)`
 `bench/{e8-symfony,rss-1m,soak-threads,e10-grpc,e10-compare,e12-inflight,e16-offload,ab-sleep,compare,wrk-hello}.sh`
 and `examples/{classic_server,grpc_server}.php`, `php/packages/revolt/examples/amp-socket-client.php`: the
