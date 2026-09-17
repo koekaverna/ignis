@@ -67,6 +67,14 @@ PGHOST="${PGHOST:-127.0.0.1}"
 
 echo "== build (release)"; timeout 900 cargo build --release -q -p ignis
 echo "== unit tests";      timeout 900 cargo nextest run --workspace 2>&1 | tail -1
+echo "== php unit tests (Scope, Request parsing, Response, Future — no binary needed)"
+if [ -f php/packages/runtime/vendor/autoload.php ] || command -v docker >/dev/null 2>&1; then
+  timeout 900 scripts/test-php.sh 2>&1 | tail -1
+  # PIPESTATUS keeps the runner's own verdict, not tail's
+  [ "${PIPESTATUS[0]}" = 0 ] || { echo "php unit tests FAILED"; exit 1; }
+else
+  echo "skipped (no vendor and no docker to install phpunit)"
+fi
 echo "== hello";           $T ./target/release/ignis examples/hello.php
 # V-60: a CLI script overlaps its waits. 10 x sleep(1) in fibers is ~1 s; if park ever stops
 # reaching a plain sleep() from a CLI entry, this is 10 s and the gate says so.

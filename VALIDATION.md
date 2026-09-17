@@ -2941,3 +2941,58 @@ fiber, so connections are peak concurrent fibers × threads — the owner's `ign
 `threads = 4`, `fibers = 1024`, which is 4096 against a stock PostgreSQL `max_connections` of
 100–151. The fixture is SQLite and cannot measure it. Nothing here bounds it yet; the pool that would
 (a DBAL driver middleware leasing per statement) is designed in research 38 and not built.
+
+## V-70 — the runtime package is PSR-4, and the pure half of it now has tests (CONFIRMED)
+
+Date: 2026-09-17T16:4xZ. `ignis/runtime` was two files of 920 and 385 lines holding eleven classes
+between them. Split one class per file under `Ignis\` → `src/`, with the free functions (which PSR-4
+cannot autoload) in `src/functions.php` and `src/Classic/functions.php`, listed in composer's
+`autoload.files`.
+
+`src/ignis.php` and `src/classic.php` stay as bootstraps — dozens of examples, benches and entry
+scripts `require` them by path, and the embed SAPI has no autoloader until one is registered — but
+they now contain nothing except `require_once` lines in dependency order.
+
+**The split is proved by construction, not by eye.** A reflection dump of everything the engine sees
+— every `Ignis*` class, its methods and properties, and every `ignis*` function — taken before and
+after:
+
+```
+$ php surface.php <old single file>  > before.txt
+$ php surface.php <new bootstrap>    > after.txt
+$ diff before.txt after.txt      →   identical, 12 entries
+```
+
+For `classic.php` the diff shows only **additions**: the new bootstrap also requires `ignis.php`, so
+the core classes come with it. Nothing was lost — no `<` lines in either direction.
+
+### Tests
+
+`scripts/test-php.sh` runs PHPUnit 12.5.35 over the parts that need no binary and no server:
+`Ignis\Scope`, `Ignis\Http\Request` parsing, `Ignis\Http\Response`, and the settling half of
+`Ignis\Future` (`await()` needs the reactor, which the E-suites measure against the real binary).
+
+```
+OK (29 tests, 46 assertions)
+```
+
+`vendor/bin/phpunit` refuses to start without ext-dom/libxml/xmlwriter, which this build does not
+have; entering through `PHPUnit\TextUI\Application` skips that gate — the workaround
+`bench/e15-revolt.sh` already used, and the reason there is no `phpunit.xml` (reading one *would*
+need ext-dom).
+
+**The tests were checked against mutations, because a test that cannot fail is decoration.** Two
+deliberate breakages of `Request::multipartQuery()` — stop skipping file parts, and drop support for
+a quoted boundary — each produced `Tests: 29, Assertions: 46, Failures: 1`, and restoring gave `OK`
+again. That parser had **no** coverage until now; it reached main untested (JOURNAL 13:4x).
+
+### Gates
+
+`scripts/smoke.sh` now runs the PHP suite as a gate right after the Rust unit tests, and CI installs
+its dev dependencies next to the Revolt ones. Full run after the split: **GREEN**, E7 `differing=0`,
+E13 0 mismatches, hello 50,636 rps.
+
+One smoke run failed E1 at `wall_ms=1341.2` with E2 warm at 7.72 µs; `load average: 10.31`. Measured
+again on a quiet box, same binary: **E1 1174.1 ms** (bar 1200) and **E2 warm 4.15 µs**. The split
+costs nothing — the owner rule "benchmarks one at a time, never beside a build" is what the first
+number was measuring, for the second time today.

@@ -79,6 +79,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: composer install (E7 Revolt/AMPHP examples)
         run: cd php/packages/revolt && timeout 600 composer install --prefer-source --no-interaction --quiet || echo "composer failed; E7 will be skipped"
+      - name: composer install (PHP unit tests)
+        run: cd php/packages/runtime && timeout 600 composer update --no-scripts --no-interaction --quiet || echo "composer failed; the PHP unit tests will be skipped"
       - name: smoke (every step under timeout)
         run: PGHOST=postgres timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
       - uses: actions/upload-artifact@v4

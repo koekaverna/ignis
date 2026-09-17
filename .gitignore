@@ -23,3 +23,5 @@ bench/.*.sh
 /bench/e21/app/vendor/
 /bench/e21/app/var/
 /bench/e21/app/composer.lock
+/php/packages/runtime/vendor/
+/php/packages/runtime/composer.lock
