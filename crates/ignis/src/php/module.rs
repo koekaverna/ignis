@@ -830,11 +830,13 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 37]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
@@ -870,7 +872,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 45]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -883,6 +885,8 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),
@@ -916,11 +920,13 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 37]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 39]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
     fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
     fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_ONE.0.as_ptr(), 1),

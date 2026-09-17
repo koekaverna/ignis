@@ -3319,3 +3319,66 @@ other tunable instead of hitting the environment per streamed response.
 
 Gates: `cargo nextest` 9/9, php suite 40/61, `bench/e23` GREEN (all four arms), `scripts/smoke.sh`
 **GREEN**.
+
+## V-76 — `ob_start` in a streaming handler leaked one request's output into another's body (CONFIRMED)
+
+Date: 2026-09-17T21:2xZ. Asked what `ob_start`/`ob_end_flush` in `captureChunked()` do to other
+fibers and whether they block. Both answers are worse than expected, and one of them was a
+disclosure.
+
+### It affects other fibers, and the lock does not stop it
+
+The lock (V-73) stops another fiber from *capturing*. It does not stop one from **echoing**: PHP's
+buffer stack is per thread, so a bare `echo` anywhere on that thread lands in whatever buffer is open
+— and `captureChunked()` forwards that buffer to a client. Measured with two requests, one streaming
+and one that merely echoes:
+
+```
+before:  body of A: A-1 | NOISE-FROM-B | A-2      ← request B's echo, framed into A's response
+after:   body of A: A-1 | A-2            B's echo → the server's stdout, where it always belonged
+```
+
+**A first attempt to fix it inside the callback failed, and the reason is the point.** Checking
+`Fiber::getCurrent()` against the fiber that opened the buffer does nothing: the callback runs when
+the buffer is *flushed*, not when the `echo` happens, so by then A's and B's bytes are one string
+with no way to tell them apart. The ob path cannot be made safe — only replaced.
+
+### The replacement
+
+`sapi_module.ub_write` is ours (V-73), and it runs **at the moment of the write**, where the fiber is
+still known. So `ignis_stream_bind($id)` marks a fiber's output as frames of a response, and
+`ub_write` pushes them with `try_send` — which since V-75's addendum costs 0.11 µs. No PHP buffer, so
+no thread-wide state, so no lock either: two streamed responses on one thread no longer serialise.
+
+`sapi_module.flush` is ours too, and had to be: without it a handler echoing a few bytes per row
+batches until the 8 KiB frame threshold. `flush()` is what every CGI-era script and
+`StreamedResponse` call to mean "send this now", and that hook is the only place the request can be
+honoured.
+
+Measured on the Symfony path, warmed:
+
+```
+16.808  chunk1      ttfb=0.0019 s
+17.112  chunk2      total=0.907 s
+17.414  chunk3      transfer-encoding: chunked
+```
+
+### The trade, stated
+
+`ub_write` runs inside an internal frame where a fiber cannot suspend, so it can only `try_send`.
+While the client keeps up that is the whole story. When it falls behind, bytes accumulate in the
+fiber's pending buffer and go out at `close()`, where awaiting is legal again — so this path bounds
+memory only as well as the producer's own pauses do. `Stream::write()` used directly still awaits
+every chunk and its back-pressure is exact; that is the one to reach for when a producer can outrun a
+slow client without ever returning.
+
+Two consequences worth knowing: there is now **no PHP output buffer** on this path, so `ob_flush()`
+raises the notice PHP raises under `output_buffering=0` — an application streaming through Ignis does
+not need it, because an `echo` already leaves as a frame. And `Output::capture()`'s `ob_start` path
+survives only as the plain-php-cli fallback the unit suite runs on.
+
+Gated: `bench/php/stream_isolation.php` is a fifth arm of `bench/e23-stream.sh` — one fiber streams,
+another echoes, and the streamed body must contain only its own bytes.
+
+Gates: `cargo nextest` 9/9, php suite 40/61, `bench/e21` GREEN, `bench/e23` GREEN (five arms),
+`scripts/smoke.sh` **GREEN**.

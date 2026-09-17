@@ -28,6 +28,21 @@ use super::zval;
 thread_local! {
     /// Fiber context pointer (0 = `{main}`) → the stack of buffers that fiber is filling.
     static SINKS: RefCell<HashMap<usize, Vec<Vec<u8>>>> = RefCell::new(HashMap::new());
+    /// Fibers whose output goes straight out as response chunks: fiber → (request id, pending bytes).
+    ///
+    /// This exists because PHP's own `ob_start()` cannot do it safely. Its buffer stack is per
+    /// **thread**, so a fiber that merely echoes while another is streaming writes into that other
+    /// buffer, and by the time the handler runs the bytes are already mixed and unattributable —
+    /// measured, a second request's `echo` was framed into the first one's body (V-76). `ub_write`
+    /// runs at the moment of the write and knows whose it is, which is the only place the question
+    /// can still be answered.
+    static BOUND: RefCell<HashMap<usize, (u64, Vec<u8>)>> = RefCell::new(HashMap::new());
+}
+
+/// Bytes a bound fiber may accumulate before a frame is pushed out.
+fn frame_bytes() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("IGNIS_STREAM_FRAME_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(8192usize))
 }
 
 /// Which fiber is running, as an opaque key. `{main}` is 0.
@@ -52,6 +67,30 @@ pub unsafe extern "C" fn ub_write(str_: *const c_char, str_length: usize) -> usi
     // SAFETY: the SAPI contract is `str_length` readable bytes at `str_`.
     let bytes = unsafe { std::slice::from_raw_parts(str_ as *const u8, str_length) };
     let key = unsafe { current() };
+
+    // Bound to a response stream: the bytes are frames, not a buffer to collect.
+    let streamed = BOUND.with(|b| {
+        let mut b = b.borrow_mut();
+        let Some((id, pending)) = b.get_mut(&key) else { return false };
+        pending.extend_from_slice(bytes);
+        if pending.len() >= frame_bytes() {
+            let id = *id;
+            let frame = std::mem::take(pending);
+            // `try_send` only: this runs on the PHP thread inside an internal frame, so it can
+            // neither block the thread nor suspend the fiber. A full channel means the client is
+            // behind, and the bytes stay here until `Stream::close()` drains them from PHP, where
+            // awaiting is legal.
+            if let Some(tx) = crate::php::module::reactor().stream_sender(id) {
+                if let Err(tokio::sync::mpsc::error::TrySendError::Full(back)) = tx.try_send(bytes::Bytes::from(frame)) {
+                    *pending = back.to_vec();
+                }
+            }
+        }
+        true
+    });
+    if streamed {
+        return str_length;
+    }
 
     let captured = SINKS.with(|s| {
         let mut s = s.borrow_mut();
@@ -110,6 +149,61 @@ pub unsafe extern "C" fn zif_capture_take(_ex: *mut sys::zend_execute_data, rv: 
     unsafe { *rv = super::route::string_zval(&taken.unwrap_or_default()) };
 }
 
+/// `sapi_module.flush`: PHP's `flush()` — push whatever this fiber has pending as a frame now.
+///
+/// Without it a bound fiber's output only leaves at the frame threshold, so a handler echoing a few
+/// bytes per row would batch its whole response. `flush()` is what `StreamedResponse` and every CGI
+/// -era script call to say "send this now", and this is the only place that request can be honoured.
+///
+/// # Safety
+/// Called by PHP on the PHP thread; the argument is the SAPI's opaque context and is not read.
+pub unsafe extern "C" fn flush(_server_context: *mut std::ffi::c_void) {
+    let key = unsafe { current() };
+    BOUND.with(|b| {
+        let mut b = b.borrow_mut();
+        let Some((id, pending)) = b.get_mut(&key) else { return };
+        if pending.is_empty() {
+            return;
+        }
+        let id = *id;
+        let frame = std::mem::take(pending);
+        if let Some(tx) = crate::php::module::reactor().stream_sender(id) {
+            if let Err(tokio::sync::mpsc::error::TrySendError::Full(back)) = tx.try_send(bytes::Bytes::from(frame)) {
+                *pending = back.to_vec();   // the client is behind; it goes out at close()
+            }
+        }
+    });
+}
+
+/// `ignis_stream_bind(int $id): bool` — this fiber's output becomes frames of response `$id`.
+///
+/// # Safety
+/// VM frame on a PHP thread.
+pub unsafe extern "C" fn zif_stream_bind(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: one integer argument; nothing Zend-owned is retained.
+    unsafe {
+        let mut id: sys::zend_long = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut id) != sys::SUCCESS {
+            return;
+        }
+        let key = current();
+        BOUND.with(|b| b.borrow_mut().insert(key, (id as u64, Vec::new())));
+        zval::set_bool(rv, true);
+    }
+}
+
+/// `ignis_stream_unbind(): string` — stops forwarding and hands back whatever has not gone out yet,
+/// so PHP can send it through `Stream::write()`, where awaiting the runtime is legal.
+///
+/// # Safety
+/// VM frame on a PHP thread.
+pub unsafe extern "C" fn zif_stream_unbind(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    let key = unsafe { current() };
+    let tail = BOUND.with(|b| b.borrow_mut().remove(&key).map(|(_, pending)| pending).unwrap_or_default());
+    // SAFETY: `rv` is the VM's return slot; `string_zval` hands back an owned string zval.
+    unsafe { *rv = super::route::string_zval(&tail) };
+}
+
 /// `ignis_capture_reset(): bool` — drops whatever this fiber left behind. Called when a request
 /// ends, so a fiber that died inside a capture does not hand its bytes to the next request that
 /// reuses it (fibers are pooled, V-67).
@@ -118,7 +212,7 @@ pub unsafe extern "C" fn zif_capture_take(_ex: *mut sys::zend_execute_data, rv: 
 /// VM frame on a PHP thread.
 pub unsafe extern "C" fn zif_capture_reset(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     let key = unsafe { current() };
-    let had = SINKS.with(|s| s.borrow_mut().remove(&key).is_some());
+    let had = SINKS.with(|s| s.borrow_mut().remove(&key).is_some()) | BOUND.with(|b| b.borrow_mut().remove(&key).is_some());
     // SAFETY: `rv` is the VM's return slot.
     unsafe { zval::set_bool(rv, had) };
 }

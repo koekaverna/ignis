@@ -83,21 +83,49 @@ final class Output
     }
 
     /**
-     * Runs `$emit` and forwards its output to a stream in chunks instead of collecting it.
+     * Runs `$emit` and forwards its output to a stream as it is written, instead of collecting it.
      *
-     * This is the one place `ob_start()` is still the right tool: only PHP's own buffer layer has a
-     * **callback**, and a callback is what turns "output" into "a chunk to send now". Measured
-     * (V-72): a fiber can suspend inside that callback, so `$out->write()` awaits the reactor there
-     * and the producer feels the client's back-pressure.
+     * The runtime does the forwarding: `ignis_stream_bind()` binds **this fiber's** output to the
+     * response, and `sapi_module.ub_write` frames it. That matters because PHP's own `ob_start()`
+     * cannot do it safely — its buffer stack is per **thread**, so a fiber that merely echoes while
+     * another is streaming writes into that other buffer, and by the time the handler runs the bytes
+     * are already mixed and unattributable. Measured: a second request's `echo` was delivered inside
+     * the first one's streamed body (V-76). `ub_write` runs at the moment of the write and knows
+     * whose it is, which is the only place the question can still be answered.
      *
-     * The price is the lock. `ob_start()` is a thread resource whatever sits under it, so while one
-     * fiber streams this way another must wait — streamed responses on one thread serialise. Ordinary
-     * responses are untouched, and `Stream` used directly (no `ob`) does not serialise at all.
+     * It also needs no lock, so two streamed responses on one thread no longer serialise.
+     *
+     * **The trade, stated plainly.** `ub_write` runs inside an internal frame, where a fiber cannot
+     * suspend, so it can only `try_send`. While the client keeps up that is the whole story; when it
+     * falls behind the bytes accumulate in this fiber's pending buffer and go out at `close()`,
+     * where awaiting is legal again. So this path bounds *nothing* if a producer outruns a slow
+     * client without ever returning — use `Stream::write()` directly for that, where every write
+     * awaits and the back-pressure is exact.
+     *
+     * **There is no PHP output buffer on this path**, on purpose — that is what closes the hazard.
+     * So `ob_flush()` has nothing to flush and raises the notice PHP raises under
+     * `output_buffering=0`; an application streaming through Ignis does not need it, because an
+     * `echo` already leaves as a frame. `flush()` is harmless and also unnecessary.
      *
      * @param callable():void $emit
      */
     public static function captureChunked(\Ignis\Http\Stream $out, callable $emit, int $chunk = 8192): void
     {
+        if (\function_exists('ignis_stream_bind')) {
+            \ignis_stream_bind($out->id());
+            try {
+                $emit();
+            } finally {
+                $tail = \ignis_stream_unbind();
+                if ($tail !== '') {
+                    $out->write($tail);
+                }
+            }
+
+            return;
+        }
+
+        // Plain php-cli: no runtime to bind to, so PHP's own buffer layer and the lock it needs.
         while (self::$busy !== null && self::$holder !== \Fiber::getCurrent()) {
             self::$busy->await();
         }
@@ -106,7 +134,7 @@ final class Output
         try {
             \ob_start(static function (string $buf) use ($out): string {
                 if ($buf !== '') {
-                    $out->write($buf);      // awaits: this is where a slow client parks the producer
+                    $out->write($buf);
                 }
 
                 return '';
@@ -121,6 +149,15 @@ final class Output
             self::$holder = null;
             $done->resolve(null);
         }
+    }
+
+    /** @var resource|null */
+    private static $stdout = null;
+
+    /** Where output goes when no fiber is capturing it. Opened once. */
+    private static function stdout(): mixed
+    {
+        return self::$stdout ??= (\defined('STDOUT') ? \STDOUT : \fopen('php://stdout', 'w'));
     }
 
     /** True while some fiber on this thread holds the **fallback** buffer. For tests. */

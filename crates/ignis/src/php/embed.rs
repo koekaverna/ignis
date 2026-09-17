@@ -62,6 +62,9 @@ impl Engine {
             // fiber's, not the thread's (V-72: two responses swapped bodies through `ob_start`).
             // With no capture active it falls through to stdout exactly as the embed SAPI did.
             sys::php_embed_module.ub_write = Some(super::output::ub_write);
+            // `flush()` must be able to push a frame out of a streaming handler; without it a
+            // response built from small echoes batches until the frame threshold (V-76).
+            sys::php_embed_module.flush = Some(super::output::flush);
             if let Some(exe) = exe {
                 let leaked: &'static CString = Box::leak(Box::new(exe));
                 sys::php_embed_module.executable_location = leaked.as_ptr() as *mut c_char;

@@ -101,6 +101,12 @@ final class Stream
         \ignis_respond_end($this->id);
     }
 
+    /** The request this stream answers; `Output::captureChunked()` binds a fiber's output to it. */
+    public function id(): int
+    {
+        return $this->id;
+    }
+
     public function isClosed(): bool
     {
         return $this->closed;

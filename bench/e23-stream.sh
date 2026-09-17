@@ -37,6 +37,19 @@ wait $SLOW 2>/dev/null
 echo "  ticks answered during the stream: $ticks/3"
 [ "$ticks" = 3 ] || { echo "  the stream blocked the thread"; fail=1; }
 
+echo "== another fiber's echo must not land in the stream"
+kill $S 2>/dev/null; wait $S 2>/dev/null
+IGNIS_LISTEN="127.0.0.1:$PORT" "$BIN" --threads 1 bench/php/stream_isolation.php >/tmp/ignis-e23-iso.log 2>&1 & S=$!
+for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$PORT/noise" >/dev/null 2>&1 && break; sleep 0.2; done
+curl -sN -m 10 "http://127.0.0.1:$PORT/stream" > /tmp/ignis-e23-iso.txt & C=$!
+sleep 0.2
+curl -s -m 5 "http://127.0.0.1:$PORT/noise" >/dev/null
+wait $C 2>/dev/null
+body=$(tr -d '\n' < /tmp/ignis-e23-iso.txt)
+echo "  streamed body: $body"
+case "$body" in *NOISE*) echo "  another request's echo was framed into this response"; fail=1;; *) echo "  only its own bytes  ok";; esac
+kill $S 2>/dev/null; wait $S 2>/dev/null
+
 echo "== a graceful shutdown waits for a stream instead of cutting it"
 # Before V-75 the reactor did not count streamed responses as pending, so drain() saw an idle thread
 # and SIGTERM truncated a client's download — measured at 2 of 5 chunks.
