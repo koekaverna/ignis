@@ -2242,3 +2242,61 @@ a comparison that says "not measured" wherever no V-n exists, and a reference co
 keys, 21 environment variables, 27 public PHP functions and every CLI flag and exit code.
 `mkdocs build --strict` passes; the 10 warnings the first build produced were links to repo-root
 files that would have been **broken in the published site**, now absolute GitHub URLs.
+
+## V-57 — the first release is published and the runtime holds under a ten-minute soak (CONFIRMED)
+
+Date: 2026-09-17T05:44:02Z.
+
+### A3 soak, current binary (the recorded criterion, V-35's shape)
+
+`bench/a3-soak.sh`, 4 threads, 4 offload workers, 200 connections, 30 s chunks:
+
+| requests | RSS kB | fibers | idle | restarts | stalled |
+|---:|---:|---:|---:|---:|---:|
+| 1,735,813 | 56,624 | 41 | 40 | 0 | 0 |
+| 2,881,668 | 69,756 | 183 | 182 | 0 | 0 |
+| 4,638,191 | 64,952 | 169 | 168 | 0 | 0 |
+| 5,747,243 | 65,384 | 183 | 182 | 0 | 0 |
+| 7,491,428 | 64,960 | 180 | 179 | 0 | 0 |
+| 8,629,072 | 66,060 | 184 | 183 | 0 | 0 |
+| **10,330,892** | **66,224** | 180 | 179 | **0** | **0** |
+
+No monotonic trend past 5M (the band is 65–70 MB after warm-up), 0 errors, watchdog silent —
+acceptance met on the three-mechanism binary, i.e. today's deletions cost nothing in stability.
+
+### Ten-minute soak of the owner's Symfony app
+
+Same binary, `APP_ENV=test` on :8197, 4 threads, `wrk -t4 -c200 -d60s` × 10:
+
+| chunk | req/s | p99 | RSS kB | non-2xx |
+|---:|---:|---:|---:|---:|
+| 1 | 22,645 | 109 ms | 297,196 | 0 |
+| 5 | 22,367 | 123 ms | 296,320 | 0 |
+| 10 | 21,161 | 131 ms | 297,292 | 0 |
+
+**13,150,180 requests**, RSS 297.2 → 297.3 MB (band 296.3–298.7, no trend), **0 non-2xx**, and at
+the end `{"status":"ok"}` with `ignis_threads_stalled 0`, `ignis_thread_restarts_total 0`,
+`ignis_park_failed_total 0`, `ignis_requests_rejected_total 0`. p99 grows 109 → 131 ms across the
+run: that is queueing at saturation with 200 connections against 4 threads, not degradation — RSS
+and the counters are flat. Throughput drifts down ~6 % over ten minutes on a box that was also
+running a release build; treat 21–22 k req/s as a floor.
+
+### The first release, and what the tag proved that no audit could
+
+`v0.1.0-rc.1` — image `ghcr.io/koekaverna/ignis:v0.1.0-rc.1` (62 MB), tarball
+`ignis-v0.1.0-rc.1-linux-x86_64.tar.gz` (29,795,977 B: `ignis`, `libphp.so`, `README.txt`),
+GitHub Release marked prerelease. Verified as a user: `docker run … --version` → `ignis 0.1.0-rc.1`;
+`gh release download` → extract → `./ignis --version` → `ignis 0.1.0-rc.1`.
+
+**The first tag failed** (run 35186470045) at *extract runtime binaries*:
+`tar -C /tmp/release -czf "$dir.tar.gz" "$dir"` writes the archive into the **workspace** — `-C`
+changes where tar reads, not where it writes — and the `mv "/tmp/release/$dir.tar.gz" .` that
+followed had nothing to move. Everything before it had already succeeded: the image was built,
+pushed, smoke-tested and its `--version` checked against the tag. `docs/release.md` listed exactly
+this step under "what is still unproven", and the audit could not have caught it by reading.
+
+Two process notes, both mine: the repo has a documented "dry-run first" path and I went straight
+to a real tag; after fixing, the dispatch dry run (run 35186677545) passed every step including the
+one that had failed, and proved the audit's other fix — a dispatch publishes no image and creates
+no release. And the session git proxy, recorded in 8ffd758 as refusing tag pushes, accepted this
+one; that constraint no longer holds.
