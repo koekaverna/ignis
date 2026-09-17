@@ -29,9 +29,7 @@ use Symfony\Contracts\Service\ResetInterface;
  */
 final class FiberTokenStorage implements TokenStorageInterface, ResetInterface
 {
-    public function __construct(private readonly string $key = 'security.token')
-    {
-    }
+    public function __construct(private readonly string $key = 'security.token') {}
 
     public function getToken(): ?TokenInterface
     {

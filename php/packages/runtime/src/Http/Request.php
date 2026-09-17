@@ -16,8 +16,7 @@ final class Request
         public readonly string $body,
         /** Reactor request id (E10: gRPC handlers answer through it; 0 outside a served request). */
         public readonly int $id = 0,
-    ) {
-    }
+    ) {}
 
     public function path(): string
     {

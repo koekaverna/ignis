@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Offload worker loop (E16, ADR-0016). Runs on a synchronous PHP thread with its own TSRM context;
  * embedded into the ignis binary and evaluated on every offload thread. IGNIS_OFFLOAD_PRELUDE
@@ -11,9 +12,7 @@ namespace Ignis\Offload;
 /** Serializable stand-in for a caller-side closure; the worker turns it into a stub that calls back. */
 final class CallbackRef
 {
-    public function __construct(public readonly int $id)
-    {
-    }
+    public function __construct(public readonly int $id) {}
 }
 
 final class RemoteException extends \RuntimeException

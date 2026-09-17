@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Ignis Temporal runtime (E9, ADR-0013): workflows run as Fibers; every await records a
  * command and suspends; a run's fiber is resumed only by activation jobs, which makes
@@ -45,17 +46,13 @@ final class WorkflowRun
     public bool $done = false;
     public ?\Throwable $error = null;
 
-    public function __construct(public readonly string $runId, public readonly string $type)
-    {
-    }
+    public function __construct(public readonly string $runId, public readonly string $type) {}
 }
 
 /** What workflow code sees. All waits go through here; nothing else may suspend a workflow fiber. */
 final class Context
 {
-    public function __construct(private readonly WorkflowRun $run, private readonly string $taskQueue)
-    {
-    }
+    public function __construct(private readonly WorkflowRun $run, private readonly string $taskQueue) {}
 
     public function activity(string $type, array $args = [], int $startToCloseSec = 30): mixed
     {
@@ -96,9 +93,7 @@ final class Worker
      * @param array<string, callable(Context, mixed...): mixed> $workflows
      * @param array<string, callable(mixed...): mixed> $activities
      */
-    public function __construct(private readonly int $worker, private readonly string $taskQueue, private readonly array $workflows, private readonly array $activities)
-    {
-    }
+    public function __construct(private readonly int $worker, private readonly string $taskQueue, private readonly array $workflows, private readonly array $activities) {}
 
     /** @return mixed payload string (JSON) or throws on error */
     private static function call(int $opId): string
@@ -124,9 +119,9 @@ final class Worker
     /** Runs the workflow-task loop and (unless replaying) the activity loop until the worker shuts down. */
     public function run(bool $replay = false): void
     {
-        $wf = \Ignis\async(fn () => $this->workflowLoop());
+        $wf = \Ignis\async(fn() => $this->workflowLoop());
         if (!$replay) {
-            \Ignis\async(fn () => $this->activityLoop());
+            \Ignis\async(fn() => $this->activityLoop());
         }
         Loop::run();
         $wf->await();
@@ -142,7 +137,7 @@ final class Worker
                 return;
             }
             ++self::$activations;
-            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(static fn ($j) => (string) array_key_first($j), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
+            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(static fn($j) => (string) array_key_first($j), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
             try {
                 $completion = $this->handleActivation($act);
                 self::call(\ignis_temporal_complete($this->worker, json_encode($completion, JSON_THROW_ON_ERROR)));

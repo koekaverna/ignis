@@ -54,7 +54,7 @@ final class Future
         if (!$this->done) {
             $fiber = \Fiber::getCurrent();
             if ($fiber === null) {
-                Loop::runUntil(fn () => $this->done);
+                Loop::runUntil(fn() => $this->done);
                 if (!$this->done) {
                     // The loop went idle (nothing in flight, nothing waiting) with this future unsettled:
                     // a fiber is stuck on something the loop does not know about. Say so instead of returning null.

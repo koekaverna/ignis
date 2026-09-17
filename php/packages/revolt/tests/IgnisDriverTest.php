@@ -1,4 +1,5 @@
 <?php
+
 /**
  * E15b / H22b — Revolt's abstract driver suite run against Ignis\Revolt\IgnisDriver.
  *
@@ -33,18 +34,12 @@ trait DataProviderCompat
     /** Static copy of DriverTest::provideRegistrationArgs() (PHPUnit 12 requires static providers). */
     public static function registrationArgs(): iterable
     {
-        yield 'defer' => ['defer', [static function (): void {
-        }]];
-        yield 'delay' => ['delay', [0.005, static function (): void {
-        }]];
-        yield 'repeat' => ['repeat', [0.005, static function (): void {
-        }]];
-        yield 'onWritable' => ['onWritable', [\STDOUT, static function (): void {
-        }]];
-        yield 'onReadable' => ['onReadable', [\STDIN, static function (): void {
-        }]];
-        yield 'onSignal' => ['onSignal', [\SIGUSR1, static function (): void {
-        }]];
+        yield 'defer' => ['defer', [static function (): void {}]];
+        yield 'delay' => ['delay', [0.005, static function (): void {}]];
+        yield 'repeat' => ['repeat', [0.005, static function (): void {}]];
+        yield 'onWritable' => ['onWritable', [\STDOUT, static function (): void {}]];
+        yield 'onReadable' => ['onReadable', [\STDIN, static function (): void {}]];
+        yield 'onSignal' => ['onSignal', [\SIGUSR1, static function (): void {}]];
     }
 
     #[DataProvider('registrationArgs')]
@@ -72,7 +67,7 @@ final class IgnisDriverTest extends DriverTest
 
     public function getFactory(): callable
     {
-        return static fn (): IgnisDriver => new IgnisDriver();
+        return static fn(): IgnisDriver => new IgnisDriver();
     }
 
     public function testHandle(): void

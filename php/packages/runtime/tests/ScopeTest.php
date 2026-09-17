@@ -53,7 +53,7 @@ final class ScopeTest extends TestCase
     {
         Scope::set('k', 'main');
 
-        $f = new \Fiber(static fn (): mixed => Scope::get('k'));
+        $f = new \Fiber(static fn(): mixed => Scope::get('k'));
         $f->start();
 
         self::assertNull($f->getReturn());

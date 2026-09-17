@@ -20,6 +20,12 @@ if (!function_exists('getallheaders')) {
         }
         return $h;
     }
-    function apache_request_headers(): array { return getallheaders(); }
-    function apache_response_headers(): array { return \Ignis\Classic\Runner::headerMap(); }
+    function apache_request_headers(): array
+    {
+        return getallheaders();
+    }
+    function apache_response_headers(): array
+    {
+        return \Ignis\Classic\Runner::headerMap();
+    }
 }

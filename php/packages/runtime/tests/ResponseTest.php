@@ -33,7 +33,9 @@ final class ResponseTest extends TestCase
     /** The two shapes are two types, so the loop dispatches on one and a reader sees which at a glance. */
     public function testAStreamedResponseIsAResponseAndCarriesItsProducer(): void
     {
-        $r = new \Ignis\Http\StreamedResponse(static function (): void { \Ignis\write('x'); }, 202, ['content-type' => 'text/plain']);
+        $r = new \Ignis\Http\StreamedResponse(static function (): void {
+            \Ignis\write('x');
+        }, 202, ['content-type' => 'text/plain']);
 
         self::assertInstanceOf(Response::class, $r, 'serve()\'s contract stays Response|null');
         self::assertInstanceOf(\Closure::class, $r->producer);

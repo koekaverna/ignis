@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Revolt event-loop driver over the Ignis reactor (ADR-0008, E7).
  *

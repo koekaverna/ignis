@@ -12,8 +12,7 @@ class Response
         public readonly string $body = '',
         public readonly int $status = 200,
         public readonly array $headers = [],
-    ) {
-    }
+    ) {}
 
     public static function text(string $body, int $status = 200): self
     {

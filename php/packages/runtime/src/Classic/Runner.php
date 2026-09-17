@@ -58,7 +58,7 @@ final class Runner
     public static function accept(): ?string
     {
         while (true) {
-            \Ignis\Loop::runUntil(static fn (): bool => self::$inbox !== []);
+            \Ignis\Loop::runUntil(static fn(): bool => self::$inbox !== []);
             $next = array_shift(self::$inbox);
             if ($next === null) {
                 return null; // the loop stopped and nothing is pending
@@ -159,7 +159,8 @@ final class Runner
         if (ob_get_level() === 0) { // permanent and non-removable, so a script's `while (ob_end_flush())` loop stops here
             ob_start(null, 0, PHP_OUTPUT_HANDLER_CLEANABLE);
         }
-        while (ob_get_level() > 1 && @ob_end_clean()) {}
+        while (ob_get_level() > 1 && @ob_end_clean()) {
+        }
         ob_clean();
         header_remove();
         header('X-Ignis: reset', true, 599); // a code change is the only userland path that frees a header('HTTP/…') status line
@@ -172,7 +173,8 @@ final class Runner
     /** Always a string body: classic mode writes through output and cannot stream. */
     private static function response(): Response
     {
-        while (ob_get_level() > 1 && @ob_end_flush()) {}
+        while (ob_get_level() > 1 && @ob_end_flush()) {
+        }
         $headers = self::headerMap();
         if (!isset(array_change_key_case($headers)['content-type'])) {
             $headers['Content-Type'] = ini_get('default_mimetype') . '; charset=' . ini_get('default_charset');

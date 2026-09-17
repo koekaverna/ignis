@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Ignis gRPC runtime (E10, ADR-0014). Server handlers and the client are plain PHP over four
  * module functions:
@@ -44,9 +45,7 @@ final class Call
     public bool $ended = false;
     public int $sent = 0;
 
-    public function __construct(public readonly Request $request)
-    {
-    }
+    public function __construct(public readonly Request $request) {}
 
     /** `/package.Service/Method` */
     public function method(): string
@@ -128,9 +127,7 @@ function router(array $methods, ?callable $fallback = null): callable
 /** gRPC client over the runtime's h2 channels; every call parks the current fiber. */
 final class Client
 {
-    public function __construct(private readonly string $url)
-    {
-    }
+    public function __construct(private readonly string $url) {}
 
     public function unary(string $method, string $message): string
     {

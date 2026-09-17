@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Ignis\Symfony;
@@ -16,9 +17,7 @@ use Symfony\Component\Runtime\RunnerInterface;
 /** Boots the kernel once; every HTTP request runs in its own fiber via Ignis\serve(). */
 final class IgnisWorkerRunner implements RunnerInterface
 {
-    public function __construct(private readonly HttpKernelInterface $kernel, private readonly string $listen)
-    {
-    }
+    public function __construct(private readonly HttpKernelInterface $kernel, private readonly string $listen) {}
 
     public function run(): int
     {

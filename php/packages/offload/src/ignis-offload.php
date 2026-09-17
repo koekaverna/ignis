@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Caller side of the offload pool (E16, ADR-0016): Ignis\offload(fn, ...args) runs a NAMED function
  * on a synchronous worker thread; scalar/array arguments are copied in (serialize), the result is
@@ -13,9 +14,7 @@ namespace Ignis\Offload {
     if (!class_exists(CallbackRef::class, false)) {
         final class CallbackRef
         {
-            public function __construct(public readonly int $id)
-            {
-            }
+            public function __construct(public readonly int $id) {}
         }
     }
     if (!class_exists(RemoteException::class, false)) {
@@ -170,10 +169,10 @@ namespace Ignis\Offload {
         private static function typeString(\ReflectionType $t, string $class): string
         {
             if ($t instanceof \ReflectionUnionType) {
-                return implode('|', array_map(static fn ($x) => self::typeString($x, $class), $t->getTypes()));
+                return implode('|', array_map(static fn($x) => self::typeString($x, $class), $t->getTypes()));
             }
             if ($t instanceof \ReflectionIntersectionType) {
-                return implode('&', array_map(static fn ($x) => self::typeString($x, $class), $t->getTypes()));
+                return implode('&', array_map(static fn($x) => self::typeString($x, $class), $t->getTypes()));
             }
             /** @var \ReflectionNamedType $t */
             $n = $t->getName();
@@ -227,9 +226,7 @@ namespace Ignis\Offload {
     {
         private bool $released = false;
 
-        public function __construct(public readonly int $worker, public readonly int $id, public readonly string $class)
-        {
-        }
+        public function __construct(public readonly int $worker, public readonly int $id, public readonly string $class) {}
 
         /** Method calls on a handle of a final class (no proxy subclass possible) forward as well. */
         public function __call(string $method, array $args): mixed

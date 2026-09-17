@@ -11,7 +11,10 @@ use Ignis\Http\Request;
 use Ignis\Http\Response;
 
 /** Ends the current script now (the classic-mode replacement for exit()). */
-function finish(): never { throw new Finished(); }
+function finish(): never
+{
+    throw new Finished();
+}
 
 /**
  * The top-level worker loop: the only shape in which an entry script's top-level variables become
@@ -43,7 +46,9 @@ function listen(string $docroot, string $addr, ?string $index = 'index.php', arr
     Runner::$index = $index;
     Runner::$extra = $server;
     Runner::$env = getenv();
-    Runner::$run = static function (string $file): void { include $file; };
+    Runner::$run = static function (string $file): void {
+        include $file;
+    };
     stream_wrapper_unregister('php');
     stream_wrapper_register('php', InputStream::class);
     \Ignis\Loop::$rawRequestHandler = Runner::queue(...);
@@ -67,7 +72,10 @@ function respond(): void
 }
 
 /** Sends the response now and lets the script go on (fastcgi_finish_request() analogue); later output is dropped. */
-function finish_request(): bool { return Runner::finishRequest(); }
+function finish_request(): bool
+{
+    return Runner::finishRequest();
+}
 
 /**
  * @param array<string,string> $server extra $_SERVER entries (like FrankenPHP's `env` subdirective)
@@ -79,7 +87,9 @@ function serve(string $docroot, string $addr, ?string $index = 'index.php', arra
     Runner::$index = $index;
     Runner::$extra = $server;
     Runner::$env = getenv();
-    Runner::$run = $run ?? static function (string $file): void { include $file; };
+    Runner::$run = $run ?? static function (string $file): void {
+        include $file;
+    };
     stream_wrapper_unregister('php');
     stream_wrapper_register('php', InputStream::class);
     \Ignis\serve(Runner::handle(...), $addr);

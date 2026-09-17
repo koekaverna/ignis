@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Ignis PostgreSQL client (E14, ADR-0015): connections belong to the runtime; PHP holds leases.
  * Module functions: ignis_pg_open(dsn, max): int; ignis_pg_acquire(pool): op; ignis_pg_query(lease, sql, paramsJson): op;
@@ -11,13 +12,9 @@ namespace Ignis\Pg;
 use Ignis\Loop;
 use Ignis\Scope;
 
-final class LeaseError extends \LogicException
-{
-}
+final class LeaseError extends \LogicException {}
 
-final class QueryError extends \RuntimeException
-{
-}
+final class QueryError extends \RuntimeException {}
 
 /** A process-wide pool; `max` connections shared by every PHP thread and fiber. */
 final class Pool
@@ -77,7 +74,10 @@ final class Pool
                 $l->exec('COMMIT');
                 return $r;
             } catch (\Throwable $e) {
-                try { $l->exec('ROLLBACK'); } catch (\Throwable) { /* reset on release rolls back anyway */ }
+                try {
+                    $l->exec('ROLLBACK');
+                } catch (\Throwable) { /* reset on release rolls back anyway */
+                }
                 throw $e;
             }
         } finally {
@@ -106,9 +106,7 @@ final class Lease
     private bool $released = false;
 
     /** @internal */
-    public function __construct(private readonly Pool $pool, public readonly int $id, private readonly string $scopeKey)
-    {
-    }
+    public function __construct(private readonly Pool $pool, public readonly int $id, private readonly string $scopeKey) {}
 
     /** @return list<array<string,mixed>> */
     public function query(string $sql, array $params = []): array

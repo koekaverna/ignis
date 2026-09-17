@@ -32,7 +32,9 @@ final class OutputTest extends TestCase
 
     public function testNobodyHoldsItAfterwards(): void
     {
-        Output::capture(static function (): void { echo 'x'; });
+        Output::capture(static function (): void {
+            echo 'x';
+        });
         self::assertFalse(Output::isHeld());
     }
 
@@ -52,7 +54,9 @@ final class OutputTest extends TestCase
 
         self::assertFalse(Output::isHeld(), 'a leaked lock parks every later response for ever');
         self::assertSame($level, \ob_get_level(), 'and a leaked buffer swallows everything after it');
-        self::assertSame('after', Output::capture(static function (): void { echo 'after'; }));
+        self::assertSame('after', Output::capture(static function (): void {
+            echo 'after';
+        }));
     }
 
     /** A fiber cannot interleave with itself, so nesting must not wait for the lock it holds. */
@@ -60,7 +64,9 @@ final class OutputTest extends TestCase
     {
         $out = Output::capture(static function (): void {
             echo 'outer(';
-            $inner = Output::capture(static function (): void { echo 'inner'; });
+            $inner = Output::capture(static function (): void {
+                echo 'inner';
+            });
             echo $inner, ')';
         });
 
@@ -70,7 +76,9 @@ final class OutputTest extends TestCase
     public function testOutputIsNotAlsoWrittenThrough(): void
     {
         $level = \ob_get_level();
-        Output::capture(static function (): void { echo 'swallowed'; });
+        Output::capture(static function (): void {
+            echo 'swallowed';
+        });
         self::assertSame($level, \ob_get_level());
     }
 }

@@ -146,8 +146,8 @@ final class CoreCodec implements CodecInterface
                     }
                     break;
 
-                // Local activities resolve through this job too, with `is_local` set; the seq map
-                // does not care which kind it was.
+                    // Local activities resolve through this job too, with `is_local` set; the seq map
+                    // does not care which kind it was.
                 case 'resolveActivity':
                     $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
                     if ($id !== null) {
@@ -237,8 +237,8 @@ final class CoreCodec implements CodecInterface
                     );
                     break;
 
-                // UpdateRandomSeed / NotifyHasPatch carry nothing sdk-php acts on through this
-                // transport; Nexus is out of scope.
+                    // UpdateRandomSeed / NotifyHasPatch carry nothing sdk-php acts on through this
+                    // transport; Nexus is out of scope.
             }
         }
 

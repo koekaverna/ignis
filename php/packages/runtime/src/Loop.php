@@ -72,7 +72,7 @@ final class Loop
             });
             $f->start();
             self::$waiting[$id] = $f;
-            self::runUntil(fn () => $done);
+            self::runUntil(fn() => $done);
             return $result;
         }
         if (!self::$chaosInit) {
@@ -159,7 +159,7 @@ final class Loop
     /** Run until no fiber is waiting on anything (and no server is listening). */
     public static function run(): void
     {
-        self::runUntil(static fn () => false);
+        self::runUntil(static fn() => false);
     }
 
     /** @param callable():bool $stop */
@@ -256,7 +256,7 @@ final class Loop
                         if (($payload['kind'] ?? null) === 'cancel') {
                             self::cancelRequest($id, new CancelledException('client disconnected'), (int) $payload['age_us']);
                         } elseif (($payload['kind'] ?? null) === 'offload_cb') {
-                            (self::$offloadCallbackHandler ?? static fn () => null)($payload); // E16
+                            (self::$offloadCallbackHandler ?? static fn() => null)($payload); // E16
                         } elseif (isset($payload['method'])) {
                             self::dispatchRequest($id, $payload);
                         }
@@ -465,35 +465,35 @@ final class Loop
         $request = new Http\Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body'], $id);
         self::spawn(static function () use ($handler, $request, $id): void {
             try {
-            self::$requestFibers[$id] = \Fiber::getCurrent();
-            Scope::set('ignis.request', $id);
-            // E13: this fiber gets its own $_SERVER/$_GET/$_POST/$_COOKIE (ADR-0006).
-            if (\function_exists('ignis_set_superglobals')) {
-                \ignis_set_superglobals(...$request->superglobals());
-            }
-            try {
-                $answer = $handler($request);
-            } catch (DeadlineExceededException $e) {
-                $answer = Http\Response::text("504 deadline exceeded\n", 504);
-            } catch (CancelledException $e) {
-                $answer = Http\Response::text("499 cancelled\n", 499);
-            } catch (\Throwable $e) {
-                $answer = Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
-            } finally {
-                unset(self::$requestFibers[$id], self::$children[$id]);
-                Scope::set('ignis.request', null);
-            }
-            // What the handler returned IS the contract, and a reader sees it in the signature:
-            //   StreamedResponse → the loop drives its producer and ends the body
-            //   Response         → the loop sends it
-            //   null             → answered through another channel (gRPC, E10)
-            if ($answer instanceof Http\StreamedResponse) {
-                self::produce($id, $answer);
-            } elseif ($answer instanceof Http\Response) {
-                \ignis_respond($id, $answer->status, $answer->headers, $answer->body);
-            } elseif ($answer !== null) {
-                \ignis_respond($id, 500, ['content-type' => 'text/plain'], "handler must return Ignis\\Http\\Response or null\n");
-            }
+                self::$requestFibers[$id] = \Fiber::getCurrent();
+                Scope::set('ignis.request', $id);
+                // E13: this fiber gets its own $_SERVER/$_GET/$_POST/$_COOKIE (ADR-0006).
+                if (\function_exists('ignis_set_superglobals')) {
+                    \ignis_set_superglobals(...$request->superglobals());
+                }
+                try {
+                    $answer = $handler($request);
+                } catch (DeadlineExceededException $e) {
+                    $answer = Http\Response::text("504 deadline exceeded\n", 504);
+                } catch (CancelledException $e) {
+                    $answer = Http\Response::text("499 cancelled\n", 499);
+                } catch (\Throwable $e) {
+                    $answer = Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
+                } finally {
+                    unset(self::$requestFibers[$id], self::$children[$id]);
+                    Scope::set('ignis.request', null);
+                }
+                // What the handler returned IS the contract, and a reader sees it in the signature:
+                //   StreamedResponse → the loop drives its producer and ends the body
+                //   Response         → the loop sends it
+                //   null             → answered through another channel (gRPC, E10)
+                if ($answer instanceof Http\StreamedResponse) {
+                    self::produce($id, $answer);
+                } elseif ($answer instanceof Http\Response) {
+                    \ignis_respond($id, $answer->status, $answer->headers, $answer->body);
+                } elseif ($answer !== null) {
+                    \ignis_respond($id, 500, ['content-type' => 'text/plain'], "handler must return Ignis\\Http\\Response or null\n");
+                }
             } finally {
                 // The request is over: drop its fiber-scoped state before this fiber goes back to
                 // the pool. Without it the next request on the same fiber inherits the last one's

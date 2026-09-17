@@ -75,9 +75,15 @@ final class RecordedSource implements ActivationSource, \Temporal\Worker\Transpo
         return [];
     }
 
-    public function taskQueue(): string { return 'ignis'; }
+    public function taskQueue(): string
+    {
+        return 'ignis';
+    }
 
-    public function namespace(): string { return 'default'; }
+    public function namespace(): string
+    {
+        return 'default';
+    }
 }
 
 function payload(mixed $value): array
