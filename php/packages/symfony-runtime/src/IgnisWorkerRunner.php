@@ -34,9 +34,13 @@ final class IgnisWorkerRunner implements RunnerInterface
             }
             $response = $kernel->handle($request);
             if ($response instanceof StreamedResponse) {
-                ob_start();
-                $response->sendContent();
-                $content = (string) ob_get_clean();
+                // The output-buffer stack is per THREAD, and `sendContent()` almost always parks on
+                // I/O, so a plain `ob_start()` here collects whatever every other fiber echoes in the
+                // meantime — one response's body inside another's (V-72). `Output::capture()` makes
+                // the buffer exclusive: other fibers wanting it park instead of writing into ours.
+                // This still collects the whole body in memory; real streaming needs a chunked
+                // response op on the Rust side, which does not exist yet (BACKLOG R-STREAM).
+                $content = \Ignis\Output::capture(static fn () => $response->sendContent());
             } else {
                 $content = (string) $response->getContent();
             }

@@ -3076,3 +3076,67 @@ discarded `N=100 MS=10` process before the measured one — only the process sta
 measured run is still `ROUNDS=1`, so the fiber pool is cold and `fibers_created=10000` still appears.
 
 Gates: `scripts/smoke.sh` **GREEN** with E22 in it, php suite 35/53, `cargo nextest` 9/9.
+
+## V-72 — one response's body could collect another's; output capture is now exclusive (CONFIRMED)
+
+Date: 2026-09-17T17:4xZ. The owner pointed at `ob_start(); $response->sendContent(); ob_get_clean();`
+in `IgnisWorkerRunner` and said it was ugly. It is worse than ugly, and the probe says so in one
+line.
+
+### PHP's output-buffer stack is per thread, not per fiber
+
+Two probes under `target/release/ignis`, both kept (`bench/php/output_isolation.php`):
+
+**A fiber can suspend inside an `ob_start()` handler.** `handler got 20 bytes, suspending… / driver
+saw: chunk:20 / handler resumed`. That is the good news and it is what makes real streaming possible
+later (BACKLOG R-STREAM).
+
+**The buffer stack is shared.** A second fiber's `echo` went into the first fiber's buffer and came
+back out of its `ob_get_clean()`: `A sees: 'from-Afrom-B'`.
+
+And the sharp case is not even that one. Nested buffers behave only if they close **last-in-first
+out**, and interleaved fibers do not close in that order. Two requests, A parking 10 ms and B
+parking 120 ms, both capturing:
+
+```
+control, plain ob_start():   A='B-startA-end'   B='A-startB-end'   leaked=yes
+with Ignis\Output::capture:  A='A-startA-end'   B='B-startB-end'   leaked=no
+```
+
+**The bodies swapped.** A's `ob_get_clean()` popped B's buffer, because B's was on top. In a server
+that is one user's response body inside another user's — the same family as V-68 (token) and V-69
+(identity map), except the leak goes out over the wire.
+
+### The fix
+
+`Ignis\Output::capture()` makes the buffer exclusive to one fiber: another fiber that wants it
+**parks** on a `Future` until it is free. Nesting inside the same fiber is allowed and does not wait
+(a fiber cannot interleave with itself, so its own buffers do close LIFO). The lock is released in a
+`finally`, because a leaked lock would park every later response for ever — that is one of the unit
+tests.
+
+The cost is honest and small: two streamed responses on one thread serialise. What it does **not**
+do is make the response stream — `ignis_respond()` takes a whole body and there is no chunked op
+(R-STREAM), so the body is still collected. It just makes the collected body *this request's*.
+
+`php/packages/runtime/src/classic.php` already carried the rule in prose ("a classic script must not
+suspend"); this supplies the enforcement.
+
+### Gates
+
+- Unit suite **41 tests, 62 assertions** — `OutputTest` covers the single-fiber semantics, including
+  that a throwing emitter still releases the lock and closes the buffer.
+- `scripts/smoke.sh` runs the two-fiber probe with its **control**: the plain-`ob_start()` arm must
+  exit 1, and the run fails if it stops leaking, because a control that no longer reproduces the
+  defect means the probe stopped measuring.
+
+### E1's gate, fixed properly this time
+
+Four false failures in one day. The bar (10k fibers × 1000 ms under 1200 ms) has no margin against
+this box's noise: a quiet sample reads 1143 ms, a busy one 1231, and the first process after a build
+1457. Measured spread at `load average: 8.83`: **1183.2, 1230.9, 1180.3, 1195.2, 1214.0**.
+
+`scripts/smoke.sh` now discards one tiny warm-up process, then takes **three measured samples, prints
+all three, and gates on the best**. The minimum is the right estimator for a floor with additive
+noise, and printing every sample means nothing hides behind it. The measured runs stay `ROUNDS=1`, so
+the fiber pool is still cold and `fibers_created=10000` still has to appear.
