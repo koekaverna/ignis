@@ -55,7 +55,7 @@ SKIPPED	/home/koe/php-src/ext/standard/tests/streams/bug75776.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug76136.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug76857.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug76859.phpt
-SKIPPED	/home/koe/php-src/ext/standard/tests/streams/bug76943.phpt
+PASSED	/home/koe/php-src/ext/standard/tests/streams/bug76943.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug77069.phpt
 PASSED	/home/koe/php-src/ext/standard/tests/streams/bug77080.phpt
 FAILED	/home/koe/php-src/ext/standard/tests/streams/bug77664.phpt
