@@ -25,7 +25,7 @@ final class RouterTest extends TestCase
     protected function setUp(): void
     {
         FakeOffload::reset();
-        (new \ReflectionProperty(Router::class, 'rr'))->setValue(null, 0);
+        (new \ReflectionProperty(Router::class, 'roundRobin'))->setValue(null, 0);
     }
 
     public function testUnwrapPacksHandlesAndProxiesIntoRefsAtAnyDepth(): void
@@ -65,8 +65,11 @@ final class RouterTest extends TestCase
 
         self::assertInstanceOf(\IgnisOffloadProxySubject::class, $proxy, 'instanceof and the class constants come from the parent for free');
         self::assertSame('Ignis\Offload\Proxy\IgnisOffloadProxySubject', $proxy::class);
-        self::assertSame(42, $proxy->__ignisHandle->id);
         self::assertSame('subject', $proxy::TAG);
+
+        $handle = (new \ReflectionProperty($proxy, '__ignisHandle'))->getValue($proxy);
+        self::assertInstanceOf(Handle::class, $handle);
+        self::assertSame(42, $handle->id);
     }
 
     public function testWrapRecursesAndLeavesAnythingThatIsNotARefAlone(): void
@@ -128,7 +131,10 @@ final class RouterTest extends TestCase
     public function testProxyClassGeneratesAnLspCompatibleOverridePerPublicMethod(): void
     {
         Router::proxyClass(\IgnisOffloadProxySubject::class);
-        $proxy = new \ReflectionClass('Ignis\Offload\Proxy\IgnisOffloadProxySubject');
+        $instance = self::call('wrap', ['__ref' => [1, 1, 'IgnisOffloadProxySubject']]);
+        self::assertInstanceOf(\IgnisOffloadProxySubject::class, $instance);
+        $proxy = new \ReflectionClass($instance);
+        self::assertSame('Ignis\Offload\Proxy\IgnisOffloadProxySubject', $proxy->getName());
 
         $declared = array_map(
             static fn(\ReflectionMethod $m): string => $m->getName(),
@@ -177,23 +183,20 @@ final class RouterTest extends TestCase
     }
 
     /**
-     * DEFECT (minor, pinned). `Router::release()` does not mark the handle released, and a proxy
-     * holds the `Handle` it was built from. So a proxy going out of scope frees the remote object
-     * twice: once from the generated `Proxy\<Class>::__destruct()`, then again from
-     * `Handle::__destruct()`, which still sees `$released === false`. `WorkerRuntime::routed('free')`
-     * is an `unset()`, so nothing breaks — every proxied object just costs two offload submissions
-     * to let go of instead of one.
+     * A proxy going out of scope runs two destructors over one remote object: the generated
+     * `Proxy\<Class>::__destruct()`, and then `Handle::__destruct()` on the handle it held. Only
+     * the first may free it — the second free would be an `unset()` of an id the worker has already
+     * dropped, and a second offload submission per proxied object for nothing.
      */
-    public function testAProxyReleasesItsRemoteObjectTwiceBug(): void
+    public function testAProxyAndTheHandleItHoldsFreeTheRemoteObjectOnce(): void
     {
         $proxy = self::call('wrap', ['__ref' => [1, 88, 'IgnisOffloadProxySubject']]);
         FakeOffload::reset();
 
         unset($proxy);
 
-        self::assertCount(2, FakeOffload::$submitted, 'one free from the proxy destructor, one from the handle it still holds');
         self::assertSame(
-            [['free', [['__ref' => [1, 88, 'IgnisOffloadProxySubject']]]], ['free', [['__ref' => [1, 88, 'IgnisOffloadProxySubject']]]]],
+            [['free', [['__ref' => [1, 88, 'IgnisOffloadProxySubject']]]]],
             array_map(static fn(array $job): mixed => unserialize($job['args']), FakeOffload::$submitted),
         );
     }

@@ -71,6 +71,9 @@ final class WorkerRuntime
     /**
      * Auto-routed call from a fiber thread: "fn:name" / "new:Class" / "method:name" / "free".
      *
+     * The name is data that arrived from another thread, so `fn:` and `new:` are answered only for
+     * the names the runtime itself routes — anything else reaching this channel is a bug or worse.
+     *
      * @param array<int|string, mixed> $args
      */
     public static function routed(string $what, array $args): mixed
@@ -82,12 +85,42 @@ final class WorkerRuntime
         $args = self::resolveRefs($args);
         [$kind, $name] = explode(':', $what, 2);
         $result = match ($kind) {
-            'fn' => $name(...$args),
-            'new' => new $name(...$args),
+            'fn' => self::callFunction($name, $args),
+            'new' => self::construct($name, $args),
             'method' => self::callMethod(array_shift($args), $name, $args),
             default => throw new \InvalidArgumentException("bad routed call $what"),
         };
         return self::registerObjects($result);
+    }
+
+    /** @param array<int|string, mixed> $args */
+    private static function callFunction(string $function, array $args): mixed
+    {
+        if (!\in_array($function, self::routedNames('IGNIS_OFFLOAD_FUNCTIONS', ''), true) || !\is_callable($function)) {
+            throw new \InvalidArgumentException("offload: $function is not a routed function");
+        }
+        return $function(...$args);
+    }
+
+    /** @param array<int|string, mixed> $args */
+    private static function construct(string $class, array $args): object
+    {
+        if (!\in_array($class, self::routedNames('IGNIS_OFFLOAD_CLASSES', 'SQLite3'), true) || !class_exists($class)) {
+            throw new \InvalidArgumentException("offload: $class is not a routed class");
+        }
+        return new $class(...$args);
+    }
+
+    /**
+     * What `route.rs` installed its trampolines for: same variables, same defaults, read here so a
+     * worker accepts exactly the names the runtime is configured to send it.
+     *
+     * @return list<string>
+     */
+    private static function routedNames(string $variable, string $fallback): array
+    {
+        $configured = getenv($variable);
+        return array_values(array_filter(array_map('trim', explode(',', $configured ?: $fallback))));
     }
 
     /** @param array<int|string, mixed> $args */

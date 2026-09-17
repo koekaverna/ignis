@@ -35,7 +35,7 @@ namespace Ignis\Offload {
      */
     final class Router
     {
-        private static int $rr = 0;
+        private static int $roundRobin = 0;
         private static bool $enabled = false;
         public static int $routed = 0;
 
@@ -99,16 +99,24 @@ namespace Ignis\Offload {
             return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['method:' . $method, self::unwrap(array_merge([$handle], $args))], $handle->worker));
         }
 
-        /** Fire-and-forget: nobody waits for the release, and the loop drops its completion. */
+        /**
+         * Fire-and-forget: nobody waits for the release, and the loop drops its completion. A proxy
+         * and the `Handle` it holds are two destructors over one remote object, so the handle is
+         * marked here — every caller goes through this method, and the second one is a no-op.
+         */
         public static function release(Handle $handle): void
         {
+            if ($handle->released) {
+                return;
+            }
+            $handle->released = true;
             \ignis_offload_submit('Ignis\Offload\WorkerRuntime::routed', serialize(['free', [['__ref' => [$handle->worker, $handle->id, $handle->class]]]]), $handle->worker);
         }
 
         private static function pick(): int
         {
             $workers = max(1, (int) (\ignis_offload_stats()['workers'] ?? 1));
-            return self::$rr++ % $workers;
+            return self::$roundRobin++ % $workers;
         }
 
         /**
@@ -236,7 +244,8 @@ namespace Ignis\Offload {
 
     final class Handle
     {
-        private bool $released = false;
+        /** @internal owned by `Router::release()`, which is the only thing that may set it. */
+        public bool $released = false;
 
         public function __construct(public readonly int $worker, public readonly int $id, public readonly string $class) {}
 
@@ -251,39 +260,43 @@ namespace Ignis\Offload {
 
         public function __destruct()
         {
-            if (!$this->released) {
-                $this->released = true;
-                Router::release($this);
-            }
+            Router::release($this);
         }
     }
 
     final class Client
     {
-        /** @var array<int, array<int, \Closure>> job id => callback id => closure */
-        private static array $callbacks = [];
-        private static int $nextCb = 1;
+        /** @var array<int, \Closure> callback id => closure, for the calls that are in flight */
+        private static array $pending = [];
+        private static int $nextCallbackId = 1;
         private static bool $hooked = false;
         public static int $callbacksRun = 0;
 
         /**
          * Runs a named function on a worker and parks this fiber until its answer comes back.
-         * @param list<mixed> $args
+         *
+         * A variadic `Ignis\offload()` call carries named arguments through as string keys, which
+         * is why this is not a list.
+         *
+         * @param array<int|string, mixed> $args
          */
         public static function call(string $function, array $args, ?int $affinity = null): mixed
         {
             self::hook();
             $callbacks = [];
             $args = self::extractCallbacks($args, $callbacks);
-            $op = \ignis_offload_submit($function, serialize($args), $affinity ?? -1);
-            if (!\is_int($op)) {
+            $opId = \ignis_offload_submit($function, serialize($args), $affinity ?? -1);
+            if (!\is_int($opId)) {
                 throw new \RuntimeException('offload: no pool (start ignis with --offload N)');
             }
-            if ($callbacks !== []) {
-                self::$callbacks[$op] = $callbacks;
+            self::$pending += $callbacks;
+            try {
+                $answer = Loop::awaitOp($opId);
+            } finally {
+                foreach (array_keys($callbacks) as $id) {
+                    unset(self::$pending[$id]);
+                }
             }
-            $answer = Loop::awaitOp($op);
-            unset(self::$callbacks[$op]);
             if (\is_array($answer) && ($answer['kind'] ?? '') === 'error') {
                 throw new \RuntimeException('offload: ' . $answer['message']);
             }
@@ -295,15 +308,14 @@ namespace Ignis\Offload {
         }
 
         /**
-         * Closures anywhere in $args become CallbackRef; the closures are kept per call.
+         * Closures anywhere in $args become CallbackRef; `call()` owns how long the real ones live.
          * @param array<int, \Closure> $callbacks
          */
         private static function extractCallbacks(mixed $value, array &$callbacks): mixed
         {
             if ($value instanceof \Closure) {
-                $id = self::$nextCb++;
+                $id = self::$nextCallbackId++;
                 $callbacks[$id] = $value;
-                self::$pending[$id] = $value;
                 return new CallbackRef($id);
             }
             if (\is_array($value)) {
@@ -313,9 +325,6 @@ namespace Ignis\Offload {
             }
             return $value;
         }
-
-        /** @var array<int, \Closure> callback id => closure (ids are unique per process) */
-        private static array $pending = [];
 
         private static function hook(): void
         {

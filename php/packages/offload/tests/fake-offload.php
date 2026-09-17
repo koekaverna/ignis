@@ -22,9 +22,13 @@ namespace Ignis\Tests\Offload {
         public static array $callbacks = [];
         /** @var list<array{job: int, seq: int, result: string}> */
         public static array $callbackResults = [];
+        /** @var list<array{job: int, result: string}> answers the worker loop handed back */
+        public static array $done = [];
         /** Serialized payload the next ignis_offload_callback() hands back. */
         public static string $callbackAnswer = 'b:1;';
         public static bool $callbackFails = false;
+        /** No `--offload N` behind the runtime: every submission is refused. */
+        public static bool $noPool = false;
         public static ?bool $routing = null;
         public static int $passed = 0;
 
@@ -35,8 +39,10 @@ namespace Ignis\Tests\Offload {
             self::$submitted = [];
             self::$callbacks = [];
             self::$callbackResults = [];
+            self::$done = [];
             self::$callbackAnswer = serialize(['ok' => null]);
             self::$callbackFails = false;
+            self::$noPool = false;
             self::$routing = null;
             self::$passed = 0;
         }
@@ -57,7 +63,7 @@ namespace {
     if (!function_exists('ignis_offload_submit')) {
         function ignis_offload_submit(string $fn, string $serializedArgs, int $affinity = -1): int|false
         {
-            return FakeOffload::submit($fn, $serializedArgs, $affinity);
+            return FakeOffload::$noPool ? false : FakeOffload::submit($fn, $serializedArgs, $affinity);
         }
     }
 
@@ -90,6 +96,8 @@ namespace {
     if (!function_exists('ignis_offload_done')) {
         function ignis_offload_done(int $job, string $serializedResult): bool
         {
+            FakeOffload::$done[] = ['job' => $job, 'result' => $serializedResult];
+
             return true;
         }
     }

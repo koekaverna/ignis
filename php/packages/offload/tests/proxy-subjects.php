@@ -33,6 +33,10 @@ if (!class_exists('IgnisOffloadProxySubject', false)) {
             return $value;
         }
 
+        /**
+         * @param  Countable&ArrayAccess<mixed, mixed> $bag
+         * @return Countable&ArrayAccess<mixed, mixed>
+         */
         public function intersection(Countable&ArrayAccess $bag): Countable&ArrayAccess
         {
             return $bag;
@@ -48,8 +52,13 @@ if (!class_exists('IgnisOffloadProxySubject', false)) {
             return $this;
         }
 
+        /** @param array<int|string, mixed> $rows */
         public function byReference(array &$rows, int ...$rest): void {}
 
+        /**
+         * @param  mixed $anything
+         * @return mixed
+         */
         public function untyped($anything)
         {
             return $anything;

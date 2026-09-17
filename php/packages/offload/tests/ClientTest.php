@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ignis\Tests\Offload;
 
+use Ignis\Loop;
 use Ignis\Offload\CallbackRef;
 use Ignis\Offload\Client;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -12,9 +13,9 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/fake-offload.php';
 
 /**
- * The caller side of an offload job. `Client::call()` itself parks the fiber, which belongs to
- * E16 against the real binary; what is unit-testable is how it prepares the arguments — the
- * closures it lifts out of them, and where those closures are then kept.
+ * The caller side of an offload job: the closures `Client::call()` lifts out of the arguments, and
+ * how long it keeps them. A call parks on one op, so a plain `Fiber` started and resumed by the
+ * test is the whole scheduler this needs — the pool behind the op is E16's against the real binary.
  */
 #[CoversClass(Client::class)]
 final class ClientTest extends TestCase
@@ -23,14 +24,14 @@ final class ClientTest extends TestCase
     {
         FakeOffload::reset();
         self::set('pending', []);
-        self::set('callbacks', []);
-        self::set('nextCb', 1);
+        self::set('nextCallbackId', 1);
+        self::skipLoopBoot();
     }
 
     protected function tearDown(): void
     {
         self::set('pending', []);
-        self::set('callbacks', []);
+        self::resetLoop();
     }
 
     public function testEveryClosureAmongTheArgumentsBecomesACallbackRef(): void
@@ -46,7 +47,7 @@ final class ClientTest extends TestCase
         self::assertInstanceOf(CallbackRef::class, $sent[1]['on']['end']);
         self::assertSame([1, 2], [$sent[1]['on']['row']->id, $sent[1]['on']['end']->id], 'ids are handed out in traversal order');
         self::assertSame([1 => $onRow, 2 => $onEnd], $callbacks, 'and the caller keeps the real closures for the run of this job');
-        self::assertIsString(serialize($sent), 'whatever comes back has to survive serialize()');
+        self::assertEquals($sent, unserialize(serialize($sent)), 'whatever comes back has to survive the round trip to the worker');
     }
 
     public function testArgumentsWithNoClosureInThemAreHandedOverUnchanged(): void
@@ -58,25 +59,48 @@ final class ClientTest extends TestCase
     }
 
     /**
-     * DEFECT (pinned). `extractCallbacks()` writes each closure into **two** maps:
-     * `Client::$callbacks[$op]`, which `call()` unsets when the job returns, and `Client::$pending`,
-     * which nothing ever prunes. `$pending` is the one the callback handler reads, so it is the map
-     * that has to exist — and it grows by one closure, with everything that closure captures, for
-     * every offload call that takes one. `$callbacks` is the opposite: written, unset, never read.
-     *
-     * The fix is to key `$pending` by op the way `$callbacks` is and let `call()`'s existing
-     * `unset()` free it — which also deletes `$callbacks` outright.
+     * A closure handed to a worker has to stay reachable exactly as long as the job that may call
+     * it. `Client::$pending` is the map the callback handler reads, so it is where holding on too
+     * long would be invisible — one closure, plus everything it captured, per offload call, for the
+     * life of the process, against a runtime whose claim (E3/V-10) is flat RSS.
      */
-    public function testTheClosureMapGrowsForEverAndTheOtherOneIsNeverReadBug(): void
+    public function testAFinishedCallKeepsNoneOfTheClosuresItLiftedOut(): void
     {
-        for ($call = 0; $call < 3; $call++) {
-            $payload = str_repeat('x', 1024);
-            self::extract([static fn(): string => $payload], $callbacks);
+        $payload = str_repeat('x', 1024);
+        $job = new \Fiber(static fn(): mixed => Client::call('work', [static fn(): string => $payload]));
+        $job->start();
+
+        self::assertCount(1, self::get('pending'), 'the worker may call back for as long as the job runs');
+
+        $job->resume(serialize(['ok' => 'done']));
+
+        self::assertSame('done', $job->getReturn());
+        self::assertSame([], self::get('pending'), 'and the closure goes the moment the answer is in');
+    }
+
+    public function testAFailedCallDropsItsClosuresToo(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', [static fn(): string => 'row']));
+        $job->start();
+
+        try {
+            $job->throw(new \RuntimeException('client went away'));
+            self::fail('the throw has to come out of Client::call()');
+        } catch (\RuntimeException $e) {
+            self::assertSame('client went away', $e->getMessage());
         }
 
-        self::assertCount(3, self::get('pending'), 'one closure per offload call, kept for the life of the process');
-        self::assertSame([1, 2, 3], array_keys(self::get('pending')), 'keyed by a process-wide counter, so nothing can ever match them back to a finished job');
-        self::assertSame([], self::get('callbacks'), 'the per-job map the closures are also written into is never the one that is read');
+        self::assertSame([], self::get('pending'));
+    }
+
+    public function testACallWithNoWorkerPoolBehindItSaysWhatToDo(): void
+    {
+        FakeOffload::$noPool = true;
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: no pool (start ignis with --offload N)');
+
+        Client::call('work', []);
     }
 
     public function testStatsComeStraightFromTheRuntime(): void
@@ -95,6 +119,25 @@ final class ClientTest extends TestCase
     private static function set(string $property, mixed $value): void
     {
         (new \ReflectionProperty(Client::class, $property))->setValue(null, $value);
+    }
+
+    /**
+     * `Client::call()` parks on `Ignis\Loop`, which is static state in another package. Marking it
+     * booted keeps `Loop::boot()` — and the process-wide `gc_disable()` in its GC init — out of
+     * this suite; the declared defaults go back afterwards, so the next test file starts where it
+     * would have without this one.
+     */
+    private static function skipLoopBoot(): void
+    {
+        (new \ReflectionProperty(Loop::class, 'booted'))->setValue(null, true);
+    }
+
+    private static function resetLoop(): void
+    {
+        $loop = new \ReflectionClass(Loop::class);
+        foreach ($loop->getDefaultProperties() as $name => $default) {
+            $loop->getProperty($name)->setValue(null, $default);
+        }
     }
 
     private static function get(string $property): mixed

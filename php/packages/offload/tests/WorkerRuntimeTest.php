@@ -34,6 +34,12 @@ final class WorkerRuntimeTest extends TestCase
         WorkerRuntime::$worker = 3;
     }
 
+    protected function tearDown(): void
+    {
+        putenv('IGNIS_OFFLOAD_FUNCTIONS');
+        putenv('IGNIS_OFFLOAD_CLASSES');
+    }
+
     public function testRequiringTheWorkerDidNotStartItsJobLoop(): void
     {
         self::assertFalse(\function_exists('ignis_offload_next'), 'the guard is only honest while the job channel is genuinely absent');
@@ -116,6 +122,9 @@ final class WorkerRuntimeTest extends TestCase
 
     public function testRoutedRunsAFunctionAConstructorAMethodAndAFree(): void
     {
+        putenv('IGNIS_OFFLOAD_FUNCTIONS=strtoupper');
+        putenv('IGNIS_OFFLOAD_CLASSES=ArrayObject');
+
         self::assertSame('ABC', WorkerRuntime::routed('fn:strtoupper', ['abc']));
 
         $made = WorkerRuntime::routed('new:ArrayObject', [[1, 2, 3]]);
@@ -125,6 +134,43 @@ final class WorkerRuntimeTest extends TestCase
         self::set('handles', [5 => new \ArrayObject()]);
         self::assertNull(WorkerRuntime::routed('free', [['__ref' => [3, 5, 'ArrayObject']]]));
         self::assertSame([], self::get('handles'), 'a free drops the object even though the ref cannot be resolved any more');
+    }
+
+    /**
+     * The function name reaches this thread as data on the job channel, so the worker is what has
+     * to decide whether it may be invoked at all. The answer is the list `route.rs` installed its
+     * trampolines from: nothing else can legitimately arrive as `fn:`.
+     */
+    public function testAFunctionTheRuntimeDoesNotRouteIsRefused(): void
+    {
+        putenv('IGNIS_OFFLOAD_FUNCTIONS=strtoupper');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('offload: passthru is not a routed function');
+
+        WorkerRuntime::routed('fn:passthru', ['id']);
+    }
+
+    /** Unset is the shipped state: `route.rs` has routed no function by default since V-59. */
+    public function testWithNoRoutedFunctionsConfiguredNoFunctionRunsHere(): void
+    {
+        putenv('IGNIS_OFFLOAD_FUNCTIONS');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('offload: strtoupper is not a routed function');
+
+        WorkerRuntime::routed('fn:strtoupper', ['abc']);
+    }
+
+    /** Unset is the shipped state again: the default class list is `SQLite3` and nothing else. */
+    public function testAClassTheRuntimeDoesNotRouteIsRefused(): void
+    {
+        putenv('IGNIS_OFFLOAD_CLASSES');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('offload: ArrayObject is not a routed class');
+
+        WorkerRuntime::routed('new:ArrayObject', [[1, 2, 3]]);
     }
 
     public function testAnUnknownRoutedKindIsRejected(): void
