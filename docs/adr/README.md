@@ -43,5 +43,6 @@ the main agent sets "accepted". Numbers in an ADR cite a V-n or say "unmeasured"
 | [0035](0035-security-posture.md) | Security posture | proposed | unprivileged by default (built); limits, slowloris timeouts, per-IP caps, io_uring off, signed releases (unbuilt) |
 | [0036](0036-naming.md) | Naming | proposed (owner's decision) | `ignis` is taken on crates.io; alternatives recorded; rename cost grows after the first public push |
 | [0037](0037-three-mechanisms.md) | Consolidation to three mechanisms: park, offload, context, one table | proposed (accepted under its §7) | seven wait mechanisms → three plus a policy table; measured deletion 1,458 Rust / 55 `unsafe {`; gates: on/off re-measurement, libphp audit (research 30), one hook per cycle, rustls last |
+| [0038](0038-locks-across-a-fiber-boundary.md) | A lock a fiber can hold across a yield must not live on a file | accepted for the rule (V-58); the session backend proposed | a blocking `flock` held across a yield deadlocks the thread permanently — park widens the window, so "held briefly" is no defence; non-blocking + `usleep` polling is fine (Symfony's cache, measured safe *because* of park); sessions move to a socket-backed handler and the runtime refuses `session.save_handler=files` |
 
 Research notes that ADRs rest on live in `docs/research/`; the numbers in `VALIDATION.md`.

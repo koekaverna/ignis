@@ -23,6 +23,8 @@ VALIDATION.md entry that measured it. Nothing here is a claim without a number b
 | a script that declares a function at top level without a guard | **fatals on the second request** (`Cannot redeclare`, uncatchable; the thread is respawned). Use `require_once` or `function_exists()` — the rule in every worker runtime | V-53, V-54 |
 | PHP 8.5.10 ZTS + embed SAPI build itself | builds and links here, all target extensions present | V-0, V-1 |
 | a hostname lookup (`fsockopen('tcp://host:port')`, `gethostbyname()`, libpq connecting by name) | **blocks the OS thread** for the whole resolve — `getaddrinfo()` has no fd to park on. `curl_*` is unaffected (threaded resolver). Run a local caching resolver; tracked as R-DNS | research 26, 27, 31 |
+| `session.save_handler = files` (PHP's and Symfony's default) | **do not use** — the handler holds a blocking `flock` for the whole request, and held across an await that deadlocks the thread. Use PostgreSQL/Redis/PDO | V-58, ADR-0038 |
+| Symfony's cache (`LockRegistry` stampede protection) | works, and only because `usleep` parks: non-blocking `flock` + a 100 ms poll, thread stays free | V-58 |
 
 ## Hook-off controls
 

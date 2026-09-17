@@ -159,6 +159,12 @@ fix would cost the worker model's own bootstrap saving.
 - **`memory_limit` is per thread, not per fiber or per request.** One fiber's OOM ends the whole
   thread's script, taking every other in-flight fiber on that thread with it (ADR-0025); there is
   no per-fiber memory accounting.
+- **Never hold a file lock across an await.** A blocking `flock` that another fiber on the same
+  thread wants **deadlocks that thread permanently** — the holder cannot be resumed to release it
+  (V-58, ADR-0038). This is why `session.save_handler=files` must not be used: PHP's own handler
+  holds the session lock for the whole request. Use a socket-backed handler (PostgreSQL via
+  `Ignis\Pg`, Redis) or `PdoSessionHandler`. Symfony's *cache* lock is safe — it is non-blocking
+  plus a `usleep` poll, which parks.
 - **Name resolution blocks a thread.** `getaddrinfo()` has no file descriptor, so nothing can park
   it: every hostname lookup holds its OS thread for the whole resolve. Against a warm cache that is
   microseconds; against a sick or unreachable resolver it is seconds, and with N threads that is N

@@ -69,3 +69,11 @@ microseconds, which is the practical answer and needs no code. Ignis will not sh
 reproducing `nsswitch.conf`, `/etc/hosts`, `resolv.conf`'s search list and `ndots`, the `AI_*` flags
 and RFC 6724 address sorting is a surface where being almost right means connecting to the wrong
 address or failing to resolve a Kubernetes service — a worse failure than a slow one.
+
+## Locks on files are not fiber-safe
+
+A blocking `flock()` held across an await deadlocks the OS thread: the waiter cannot park (a regular
+file is not epoll-able), so the holder can never be resumed to release it. PHP's default session
+handler does exactly this, so it must not be used — put the session on PostgreSQL or Redis, where
+the wait is a socket and parks. Non-blocking locks with a `usleep` poll are fine, and are what
+Symfony's cache already does. The rule and the measurements are [ADR-0038](../adr/0038-locks-across-a-fiber-boundary.md).
