@@ -51,16 +51,31 @@ function fetchDashboard(int $userId): array
 //    factory is replaced by Ignis (ADR-0007). PDO sqlite does its own file I/O in-process
 //    and still blocks the thread (V-12) — use it for short queries only for now.
 // ---------------------------------------------------------------------------
-/** @return list<array<string, mixed>> */
+/**
+ * PDO's own stub promises no more than `array` for fetchAll(), so that is what this claims. Saying
+ * `list<array<string, mixed>>` would be a promise nothing here can keep.
+ *
+ * @return array<array-key, mixed>
+ */
 function usersFromDb(\PDO $pdo): array
 {
-    return $pdo->query('SELECT id, name FROM users ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
+    $rows = $pdo->query('SELECT id, name FROM users ORDER BY id');
+    if ($rows === false) {
+        throw new \RuntimeException('users query failed: ' . implode(' ', $pdo->errorInfo()));
+    }
+
+    return $rows->fetchAll(\PDO::FETCH_ASSOC);
 }
 
 /** @return array<string, mixed> */
 function upstreamJson(string $url): array
 {
-    return json_decode(file_get_contents($url), true, 512, JSON_THROW_ON_ERROR);
+    $body = file_get_contents($url);
+    if ($body === false) {
+        throw new \RuntimeException("upstream {$url} could not be read");
+    }
+
+    return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
 }
 
 // ---------------------------------------------------------------------------

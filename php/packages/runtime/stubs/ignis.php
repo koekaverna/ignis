@@ -15,6 +15,18 @@ declare(strict_types=1);
 
 // --- core reactor primitives (ADR-0001/ADR-0002) ---
 
+/**
+ * The shapes `ignis_poll()` can return, as PHPStan types rather than prose.
+ *
+ * They are declared once here so every reader of a completion narrows on `kind` instead of
+ * indexing a `mixed`. There is no class and no runtime cost: these are type aliases the analyser
+ * resolves and the engine never sees.
+ *
+ * @phpstan-type IgnisCompletion array{kind: 'error', message: string}|array{kind: 'cancel', age_us: int}|array{kind: 'offload_cb', job: int, seq: int, cb: int, args: string}
+ * @phpstan-type IgnisRequest array{method: string, uri: string, headers: array<string, string>, body: string}
+ */
+
+
 if (!function_exists('ignis_submit_sleep')) {
     /** ignis_submit_sleep(int $ms): int — op id for a timer completion (V-2, V-3). */
     function ignis_submit_sleep(int $ms): int
@@ -24,7 +36,25 @@ if (!function_exists('ignis_submit_sleep')) {
 }
 
 if (!function_exists('ignis_poll')) {
-    /** ignis_poll(int $timeout_ms): array — id => payload; the runtime's single wait point (V-33). */
+    /**
+     * ignis_poll(int $timeout_ms): array — id => payload; the runtime's single wait point (V-33).
+     *
+     * The payload is a tagged union with a closed set of shapes, written out here because the
+     * alternative is `mixed` and every read of it becoming an unchecked offset access. With the
+     * shapes declared, `match ($payload['kind'] ?? null)` narrows in the analyser at no runtime
+     * cost, which is what the truncated-protobuf class of defect comes from not having.
+     *
+     * The Rust side of each arm is `Outcome` in `crates/ignis/src/reactor.rs`:
+     *   int                                                    Slept (late µs) or Ready (1)
+     *   string                                                 Json, or a Blob with a body
+     *   null                                                   a Blob with none
+     *   array{kind:'error', message:string}                    Failed
+     *   array{kind:'cancel', age_us:int}                       Cancelled (ADR-0009)
+     *   array{kind:'offload_cb', job:int, seq:int, cb:int, args:string}   OffloadCallback (E16)
+     *   array{method:string, uri:string, headers:array<string,string>, body:string}   Request
+     *
+     * @return array<int, int|string|null|IgnisCompletion|IgnisRequest>
+     */
     function ignis_poll(int $timeout_ms): array
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);

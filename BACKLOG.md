@@ -549,7 +549,7 @@ or a recorded conclusion that the drop is the box.
 ### S3-LIMITS `[limits]` in `ignis.toml` `agent` `open`
 Already filed as R-LIMITS-CONFIG; it is the config half of S1-CAP and lands with it.
 
-### S3-STAN8 PHPStan level 8 `agent` `open`
+### S3-STAN8 PHPStan level 8 `agent` `done 2026-09-18 — level: 8 in php/phpstan.neon, both configs clean`
 **What.** Measured 2026-09-18 with level 6 at zero: level 7 = 36, **level 8 = 39**, level 9 = 349,
 level 10 = 399. The 39 are worth taking and four are bug-shaped — `$pdo->query(...)->fetchAll()` on
 a `PDOStatement|false` in `examples/app.php`, a string invoked without a callable check in the
@@ -585,9 +585,28 @@ is the better route. Two steps, and the first must be tried before the second:
    is a measured trade, not an obvious win. Same fork on the Rust side: `serde_json::Value` versus
    typed structs.
 
+**Step 1 is done and measured (2026-09-18).** The completion union is declared in
+`stubs/ignis.php` as a `@phpstan-type` with a literal `kind` discriminator, and `ignis_poll()`'s
+`@return` names it. Level 9 went **349 -> 307**, level 10 **399 -> 356**: 42 findings, a tenth, at
+zero runtime cost.
+
+**And it answered the question about step 2: don't.** The remaining 307 are concentrated, not
+diffuse --
+
+| file | findings |
+|---|---|
+| `temporal-core-transport/src/CoreCodec.php` | 108 |
+| `temporal-prototype/src/ignis-temporal.php` | 59 |
+| `temporal-core-transport/tests/conformance.php` | 27 |
+| `offload/src/ignis-offload.php` + `worker.php` | 40 |
+| `runtime/src/Loop.php` | 13 |
+
+-- and the top two are the protojson decoders, i.e. documents off the network indexed without
+being checked. That is validation work in two files, not a reason to pay allocation per completion
+on the hottest path in the system. Step 2 stays unbuilt unless something else argues for it.
+
 **Acceptance.** Level 9 clean with zero added casts whose only purpose is silence; every new throw
-covered by a test that feeds the malformed input; and the count after step 1 recorded, so the case
-for or against step 2 rests on a number.
+covered by a test that feeds the malformed input.
 
 ### S4-ANSWER-MAP One `HashMap<u64, Answer>` instead of three `main` `open`
 Already filed as R-ANSWER-MAP. Owner included it in this cycle. Lands with S2-STREAM-CANCEL and the

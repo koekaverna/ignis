@@ -150,6 +150,22 @@ final class Runner
         return $value !== '' ? $value : $fallback;
     }
 
+    /**
+     * `session.cookie_samesite` is a free-form ini string, while setcookie() accepts three values.
+     * Anything else is the configuration being wrong, and silently sending it would let the browser
+     * decide -- so an unrecognised value falls back to the default rather than travelling.
+     *
+     * @return 'Lax'|'None'|'Strict'
+     */
+    private static function sameSite(string $configured): string
+    {
+        return match (strtolower($configured)) {
+            'none' => 'None',
+            'strict' => 'Strict',
+            default => 'Lax',
+        };
+    }
+
     /** @return array<string, string> */
     private static function server(Request $req, string $file, string $script, string $pathInfo): array
     {
@@ -249,12 +265,13 @@ final class Runner
         }
         $sid = session_id();
         session_write_close();
-        if ($sid !== $cookieSid) {
+        $name = session_name();
+        if ($sid !== false && $name !== false && $sid !== $cookieSid) {
             $p = session_get_cookie_params();
-            setcookie(session_name(), $sid, [
+            setcookie($name, $sid, [
                 'path' => self::orFallback($p['path'], '/'),
                 'httponly' => $p['httponly'],
-                'samesite' => self::orFallback($p['samesite'], 'Lax'),
+                'samesite' => self::sameSite($p['samesite']),
             ]);
         }
     }

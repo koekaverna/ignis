@@ -11,7 +11,12 @@
 # There is deliberately no phpstan-baseline.neon. The debt is being driven to zero; a baseline is
 # the file that would make that optional.
 parameters:
-    level: 6
+    # Raised 6 -> 8 on 2026-09-18 (S3-STAN8). Measured with 6 clean: 7 = 36, 8 = 39, 9 = 349,
+    # 10 = 399. The 39 were worth taking and four were bug-shaped -- a PDOStatement|false
+    # dereferenced, a string invoked without a callable check on the offload job channel, protobuf
+    # methods on a bare object. Level 9 is S4-MIXED, filed under its real name: it is 300-odd
+    # unchecked accesses on `mixed` at the network boundary, not a number to raise.
+    level: 8
 
     phpVersion:
         min: 80200
