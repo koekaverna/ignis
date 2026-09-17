@@ -31,6 +31,8 @@ pub struct Config {
     pub log: Option<String>,
     #[serde(default)]
     pub budget: Budget,
+    #[serde(default)]
+    pub limits: Limits,
     /// Path prefixes admitted regardless of the budget (ADR-0019 §5). Default `["/_ignis/"]`.
     pub exempt: Option<Vec<String>>,
 }
@@ -46,6 +48,24 @@ pub struct Budget {
     pub fibers: Option<usize>,
     /// Default 4096; past it the answer is 503 + `retry-after`. 0 = unbounded.
     pub queue: Option<usize>,
+}
+
+/// The front door's bounds. Each was an environment variable with no key in this file, promised by a
+/// `// Future ignis.toml key:` comment in `http.rs` that nobody tracked (R-LIMITS-CONFIG).
+#[derive(Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// Largest request body accepted, in bytes. Default 8 MiB; a bigger one is answered 413.
+    pub max_body_bytes: Option<usize>,
+    /// Connections held at once. Default 8192. ADR-0025: V-37 measured ~33 kB of RSS per held
+    /// connection, so this is what bounds memory under load — a fiber budget cannot.
+    pub max_connections: Option<usize>,
+    /// How long a connection may take to send its request head. Default 10 s (slowloris).
+    pub header_timeout_ms: Option<u64>,
+    /// How long an idle keep-alive connection is kept. Default 60 s.
+    pub idle_timeout_ms: Option<u64>,
+    /// How long in-flight requests get after SIGTERM before the process exits. Default 10 s.
+    pub drain_timeout_ms: Option<u64>,
 }
 
 impl Config {
@@ -125,6 +145,21 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
         default_env("IGNIS_BUDGET_EXEMPT", &v.join(","));
     }
     default_env("IGNIS_BUDGET_EXEMPT", "/_ignis/");
+    if let Some(v) = cfg.limits.max_body_bytes {
+        default_env("IGNIS_MAX_BODY_BYTES", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.max_connections {
+        default_env("IGNIS_MAX_CONNECTIONS", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.header_timeout_ms {
+        default_env("IGNIS_HEADER_TIMEOUT_MS", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.idle_timeout_ms {
+        default_env("IGNIS_IDLE_TIMEOUT_MS", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.drain_timeout_ms {
+        default_env("IGNIS_DRAIN_TIMEOUT_MS", &v.to_string());
+    }
 
     let mut out = Vec::new();
     if cfg.supervise.unwrap_or(true) {
@@ -210,6 +245,35 @@ mod tests {
         assert_eq!(on.first().unwrap(), "--supervise");
         let off = serve_with(&format!("supervise = false\nentry = {EXISTING_FILE:?}\n"), &[]);
         assert_ne!(off.first().unwrap(), "--supervise");
+    }
+
+    #[test]
+    fn the_limits_table_reaches_the_front_door() {
+        serve_with(
+            &format!(
+                "entry = {EXISTING_FILE:?}\n[limits]\nmax_connections = 512\nmax_body_bytes = 1048576\nheader_timeout_ms = 3000\nidle_timeout_ms = 15000\ndrain_timeout_ms = 2000\n"
+            ),
+            &[],
+        );
+        assert_eq!(std::env::var("IGNIS_MAX_CONNECTIONS").unwrap(), "512");
+        assert_eq!(std::env::var("IGNIS_MAX_BODY_BYTES").unwrap(), "1048576");
+        assert_eq!(std::env::var("IGNIS_HEADER_TIMEOUT_MS").unwrap(), "3000");
+        assert_eq!(std::env::var("IGNIS_IDLE_TIMEOUT_MS").unwrap(), "15000");
+        assert_eq!(std::env::var("IGNIS_DRAIN_TIMEOUT_MS").unwrap(), "2000");
+    }
+
+    #[test]
+    fn the_environment_still_beats_the_limits_table() {
+        // SAFETY: nextest gives this test its own process and no thread has been spawned in it.
+        unsafe { std::env::set_var("IGNIS_MAX_CONNECTIONS", "99") };
+        serve_with(&format!("entry = {EXISTING_FILE:?}\n[limits]\nmax_connections = 512\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_MAX_CONNECTIONS").unwrap(), "99");
+    }
+
+    #[test]
+    fn a_misspelled_limits_key_fails_loudly() {
+        let err = Config::parse("[limits]\nmax_connection = 1\n").unwrap_err().to_string();
+        assert!(err.contains("max_connection"), "the error must name the key: {err}");
     }
 
     #[test]

@@ -36,3 +36,19 @@ listen = "127.0.0.1:8080"
 fibers = 1024
 # Waiting requests before the answer is 503 + retry-after. 0 = unbounded. Default 4096.
 queue = 4096
+
+[limits]
+# The front door's bounds. Each is also an IGNIS_* environment variable, and the environment wins.
+#
+# Connections held at once; over this the listener refuses rather than queueing. ADR-0025: V-37
+# measured ~33 kB of RSS per held connection, so this is what bounds memory under load — the fiber
+# budget above cannot, because a connection costs memory before it becomes a request.
+max_connections = 8192
+# Largest request body accepted; a bigger one is answered 413.
+max_body_bytes = 8388608
+# How long a connection may take to send its request head (slowloris).
+header_timeout_ms = 10000
+# How long an idle keep-alive connection is kept.
+idle_timeout_ms = 60000
+# How long in-flight requests get after SIGTERM before the process exits (V-56).
+drain_timeout_ms = 10000
