@@ -14,6 +14,11 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_UNIVERSAL_PARK").is_some() {
         println!("cargo:rerun-if-changed=csrc/park.c");
         cc::Build::new().file("csrc/park.c").opt_level(2).flag("-fno-builtin").compile("ignispark");
+        // Stage 1, then stage 2 (ADR-0037 cycle 2) from "accept" on.
+        // NEVER add `fcntl` here: research 30 group (d) found the one lock-held blocking call
+        // in libphp is `fcntl(F_SETLKW)` inside opcache's `zend_shared_alloc_lock()`, taken
+        // with the TSRM mutex `zts_lock` held, on every cache-miss compile. Parking there
+        // deadlocks the thread. It is safe today only because the symbol is not interposed.
         for s in [
             "read",
             "write",
@@ -26,7 +31,6 @@ fn main() {
             "nanosleep",
             "usleep",
             "sleep",
-            // stage 2 (ADR-0037 cycle 2)
             "accept",
             "accept4",
             "select",
@@ -36,10 +40,6 @@ fn main() {
             "sendmsg",
             "readv",
             "writev",
-            // NEVER add `fcntl` here: research 30 group (d) found the one lock-held blocking call
-            // in libphp is `fcntl(F_SETLKW)` inside opcache's `zend_shared_alloc_lock()`, taken
-            // with the TSRM mutex `zts_lock` held, on every cache-miss compile. Parking there
-            // deadlocks the thread. It is safe today only because the symbol is not interposed.
         ] {
             println!("cargo:rustc-link-arg=-Wl,-u,{s}");
             println!("cargo:rustc-link-arg=-Wl,--export-dynamic-symbol={s}");

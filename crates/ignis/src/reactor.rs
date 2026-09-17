@@ -370,10 +370,9 @@ impl Reactor {
     /// The owning PHP thread is going away (script ended, fatal): every request it has not
     /// answered gets its responder dropped, so hyper answers 500 / tonic answers an error now
     /// instead of holding the connection until the client gives up (E12').
+    /// A half-written stream is dropped with the rest: the client sees a truncated body rather than
+    /// a connection that never finishes.
     pub fn fail_pending(&self) -> usize {
-        // A half-written stream is dropped too: the client sees a truncated body rather than a
-        // connection that never finishes.
-
         self.responders.lock().unwrap().drain().count()
             + self.streams.lock().unwrap().drain().count()
             + self.stream_out.lock().unwrap().drain().count()
@@ -516,5 +515,120 @@ mod tests {
         assert!(!r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
         let resp = rt.block_on(rx).unwrap();
         assert_eq!(resp.status, 204);
+    }
+
+    fn a_request() -> HttpRequest {
+        HttpRequest { method: "GET".into(), uri: "/".into(), headers: vec![], body: Bytes::new() }
+    }
+
+    /// V-75: `pending_requests` counted two of the three maps, so a streamed answer was invisible
+    /// to dispatch, to `ignis_requests_inflight` and to `drain()` -- which ended a graceful
+    /// shutdown while a client was still receiving, at 2 of 5 chunks.
+    #[test]
+    fn a_streamed_answer_is_still_a_pending_request() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (id, _rx) = r.deliver_request_with_id(a_request());
+        assert_eq!(r.pending_requests(), 1, "delivered but unanswered");
+        assert!(r.respond_start(id, 200, vec![], 4));
+        assert_eq!(r.pending_requests(), 1, "a stream that has sent headers still owes a body");
+        assert!(r.respond_end(id));
+        assert_eq!(r.pending_requests(), 0);
+    }
+
+    #[test]
+    fn cancelling_a_request_completes_it_once_and_forgets_it() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (id, _rx) = r.deliver_request_with_id(a_request());
+        // The loop takes delivery first, exactly as a PHP thread would; the cancellation is a
+        // second completion on the same id, not a replacement for the first.
+        let delivered = r.poll(Some(Duration::from_secs(1)));
+        assert_eq!(delivered.len(), 1);
+        assert!(matches!(delivered[0].outcome, Outcome::Request(_)));
+
+        r.cancel_request(id);
+        let got = r.poll(Some(Duration::from_secs(1)));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, id);
+        assert!(matches!(got[0].outcome, Outcome::Cancelled { .. }));
+        assert_eq!(r.pending_requests(), 0);
+        assert!(!r.respond(id, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
+        r.cancel_request(id);
+        assert!(r.poll(Some(Duration::from_millis(10))).is_empty(), "an unknown id must not complete again");
+    }
+
+    #[test]
+    fn fail_pending_drains_every_kind_of_owed_answer() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (whole, _a) = r.deliver_request_with_id(a_request());
+        let (streaming, _b) = r.deliver_request_with_id(a_request());
+        let (_grpc, _c) = r.deliver_stream_request(a_request());
+        assert!(r.respond_start(streaming, 200, vec![], 4));
+        assert_eq!(r.pending_requests(), 3);
+        assert_eq!(r.fail_pending(), 3, "one whole-body, one streamed, one gRPC");
+        assert_eq!(r.pending_requests(), 0);
+        assert!(!r.respond(whole, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
+    }
+
+    /// E15b: a cancelled watch leaked the descriptor the reactor had dup'd. Both ops must complete.
+    #[test]
+    fn a_cancelled_watch_completes_both_ops() {
+        use std::os::fd::AsRawFd;
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let watch = r.submit(Op::Watch { fd: listener.as_raw_fd(), write: false });
+        let cancel = r.submit(Op::CancelWatch { target: watch });
+        let mut seen = Vec::new();
+        while seen.len() < 2 {
+            seen.extend(r.poll(Some(Duration::from_secs(2))).into_iter().map(|c| c.id));
+        }
+        seen.sort();
+        let mut expected = vec![watch, cancel];
+        expected.sort();
+        assert_eq!(seen, expected);
+        assert_eq!(r.inflight(), 0);
+    }
+
+    #[test]
+    fn stream_calls_for_an_unknown_id_are_refused() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        assert!(!r.stream_send(4242, Bytes::from_static(b"x")));
+        assert!(!r.stream_end(4242, 0, String::new()));
+        assert!(!r.respond_start(4242, 200, vec![], 4));
+        assert!(!r.respond_end(4242));
+        assert!(r.stream_sender(4242).is_none());
+    }
+
+    /// H28: a zero sleep is answered inline rather than going through the timer wheel.
+    #[test]
+    fn a_zero_sleep_still_completes() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let id = r.submit(Op::Sleep { us: 0 });
+        let got = r.poll(Some(Duration::from_secs(1)));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, id);
+        assert!(matches!(got[0].outcome, Outcome::Slept { .. }));
+    }
+
+    #[test]
+    fn injected_outcomes_get_their_own_ids() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let first = r.inject(Outcome::Ready);
+        let second = r.inject(Outcome::Ready);
+        assert_ne!(first, second);
+        let mut seen = Vec::new();
+        while seen.len() < 2 {
+            seen.extend(r.poll(Some(Duration::from_secs(1))).into_iter().map(|c| c.id));
+        }
+        seen.sort();
+        let mut expected = vec![first, second];
+        expected.sort();
+        assert_eq!(seen, expected);
     }
 }

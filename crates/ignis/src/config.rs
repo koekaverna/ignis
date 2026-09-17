@@ -51,7 +51,13 @@ pub struct Budget {
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Config> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+        Self::parse(&text).with_context(|| format!("parsing {}", path.display()))
+    }
+
+    /// Reading the file and understanding it are separate jobs; this is the second, so the
+    /// `deny_unknown_fields` contract can be tested without one.
+    pub fn parse(text: &str) -> anyhow::Result<Config> {
+        Ok(toml::from_str(text)?)
     }
 }
 
@@ -127,4 +133,88 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
     out.push(entry.to_string_lossy().into_owned());
     out.extend(args.into_iter().skip(1)); // anything after the entry goes to `$argv`
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    //! These mutate the process environment, so they rely on nextest giving each test its own
+    //! process. Under `cargo test` they would fight each other (DECISIONS, 2026-09-17).
+    use super::*;
+
+    /// A path that certainly exists, so `serve_to_legacy_args`'s `is_file` check passes without a
+    /// fixture. The function only ever asks whether the entry exists.
+    const EXISTING_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+
+    fn config_file(body: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("ignis-config-test-{}.toml", std::process::id()));
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    fn serve_with(config_body: &str, extra: &[&str]) -> Vec<String> {
+        let path = config_file(config_body);
+        let mut args = vec!["--config".to_string(), path.to_string_lossy().into_owned()];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let out = serve_to_legacy_args(args).unwrap();
+        std::fs::remove_file(&path).ok();
+        out
+    }
+
+    #[test]
+    fn a_misspelled_key_fails_loudly() {
+        let err = Config::parse("threads = 2\nthredas = 4\n").unwrap_err().to_string();
+        assert!(err.contains("thredas"), "the error must name the key: {err}");
+    }
+
+    #[test]
+    fn an_empty_config_is_all_defaults() {
+        let parsed = Config::parse("").unwrap();
+        assert!(parsed.entry.is_none() && parsed.threads.is_none());
+        assert!(parsed.budget.fibers.is_none() && parsed.budget.queue.is_none());
+    }
+
+    #[test]
+    fn the_environment_beats_the_file() {
+        // SAFETY: nextest gives this test its own process and no thread has been spawned in it.
+        unsafe { std::env::set_var("IGNIS_THREADS", "8") };
+        serve_with(&format!("threads = 2\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_THREADS").unwrap(), "8");
+    }
+
+    #[test]
+    fn the_file_beats_the_default() {
+        serve_with(&format!("threads = 2\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_THREADS").unwrap(), "2");
+        assert_eq!(std::env::var("IGNIS_FIBER_BUDGET").unwrap(), "1024");
+        assert_eq!(std::env::var("IGNIS_QUEUE_DEPTH").unwrap(), "4096");
+        assert_eq!(std::env::var("IGNIS_BUDGET_EXEMPT").unwrap(), "/_ignis/");
+    }
+
+    #[test]
+    fn a_positional_entry_beats_the_files_entry() {
+        let out = serve_with("entry = \"/nonexistent/from-the-file.php\"\n", &[EXISTING_FILE]);
+        assert!(out.last().unwrap().ends_with("Cargo.toml"), "{out:?}");
+    }
+
+    #[test]
+    fn without_an_entry_anywhere_it_says_so() {
+        let path = config_file("threads = 1\n");
+        let err = serve_to_legacy_args(vec!["--config".into(), path.to_string_lossy().into_owned()]).unwrap_err().to_string();
+        std::fs::remove_file(&path).ok();
+        assert!(err.contains("serve needs an entry script"), "{err}");
+    }
+
+    #[test]
+    fn supervise_is_on_by_default_and_can_be_turned_off() {
+        let on = serve_with(&format!("entry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(on.first().unwrap(), "--supervise");
+        let off = serve_with(&format!("supervise = false\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_ne!(off.first().unwrap(), "--supervise");
+    }
+
+    #[test]
+    fn arguments_after_the_entry_reach_argv() {
+        let out = serve_with("", &[EXISTING_FILE, "--verbose", "seven"]);
+        assert_eq!(&out[out.len() - 2..], &["--verbose".to_string(), "seven".to_string()]);
+    }
 }
