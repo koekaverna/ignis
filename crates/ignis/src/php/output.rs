@@ -219,7 +219,7 @@ pub unsafe extern "C" fn zif_stream_write(ex: *mut sys::zend_execute_data, rv: *
         // would be reordered. `push` opens the response if this is its first byte.
         let leftover = BOUND.with(|b| {
             let mut b = b.borrow_mut();
-            let Some(bound) = b.get_mut(&key) else { return None };
+            let bound = b.get_mut(&key)?;
             bound.pending.extend_from_slice(std::slice::from_raw_parts(buf as *const u8, len));
             let frame = std::mem::take(&mut bound.pending);
             let back = bound.push(bytes::Bytes::from(frame));

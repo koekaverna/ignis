@@ -22,7 +22,10 @@ type CreateObject = unsafe extern "C" fn(*mut sys::zend_class_entry) -> *mut sys
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static ORIG_FN: OnceLock<Mutex<HashMap<String, Handler>>> = OnceLock::new();
-static ORIG_CREATE: OnceLock<Mutex<HashMap<usize, (Option<CreateObject>, String)>>> = OnceLock::new();
+/// A class's original `create_object` handler and its name, kept so routing can be undone.
+type OriginalCreateObject = (Option<CreateObject>, String);
+
+static ORIG_CREATE: OnceLock<Mutex<HashMap<usize, OriginalCreateObject>>> = OnceLock::new();
 
 thread_local! {
     /// Set by `ignis_route_pass()` from the router: "run the original handler for this call".

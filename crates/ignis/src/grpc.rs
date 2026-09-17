@@ -149,7 +149,10 @@ pub fn plain_body(bytes: Bytes) -> tonic::body::Body {
 // ---------------------------------------------------------------- client side
 
 static CHANNELS: OnceLock<Mutex<HashMap<String, Channel>>> = OnceLock::new();
-static STREAMS: OnceLock<Mutex<HashMap<u64, Arc<tokio::sync::Mutex<Streaming<Bytes>>>>>> = OnceLock::new();
+/// A server-streaming call in flight, shared with the fiber reading it.
+type OpenStream = Arc<tokio::sync::Mutex<Streaming<Bytes>>>;
+
+static STREAMS: OnceLock<Mutex<HashMap<u64, OpenStream>>> = OnceLock::new();
 static NEXT_STREAM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn channel(url: &str) -> Result<Channel, Status> {

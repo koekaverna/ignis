@@ -38,12 +38,15 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 /// (job id, callback seq) → worker waiting for the caller's answer.
 static CALLBACKS: OnceLock<Mutex<HashMap<(u64, u64), PendingCallback>>> = OnceLock::new();
 /// Jobs in flight, by id (for `done` to find the caller).
-static JOBS: OnceLock<Mutex<HashMap<u64, (Arc<Reactor>, u64)>>> = OnceLock::new();
+/// The reactor that submitted a job, and the op id to complete on it.
+type JobCaller = (Arc<Reactor>, u64);
+
+static JOBS: OnceLock<Mutex<HashMap<u64, JobCaller>>> = OnceLock::new();
 
 fn callbacks() -> &'static Mutex<HashMap<(u64, u64), PendingCallback>> {
     CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
-fn jobs() -> &'static Mutex<HashMap<u64, (Arc<Reactor>, u64)>> {
+fn jobs() -> &'static Mutex<HashMap<u64, JobCaller>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

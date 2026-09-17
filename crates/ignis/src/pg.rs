@@ -56,7 +56,10 @@ const STMT_CACHE_MAX: usize = 256;
 type Fut = Pin<Box<dyn Future<Output = Outcome> + Send>>;
 
 static POOLS: OnceLock<Mutex<HashMap<u64, Arc<Pool>>>> = OnceLock::new();
-static LEASES: OnceLock<Mutex<HashMap<u64, Arc<AsyncMutex<Option<Lease>>>>>> = OnceLock::new();
+/// A lease slot: `None` once released, so a late query fails instead of touching a reused lease.
+type LeaseSlot = Arc<AsyncMutex<Option<Lease>>>;
+
+static LEASES: OnceLock<Mutex<HashMap<u64, LeaseSlot>>> = OnceLock::new();
 /// M4-11: lease id → the reactor (thread) that acquired it, kept outside the lease's async mutex
 /// so a dying thread's leases can be found without waiting on a query in flight (V-42).
 static OWNERS: OnceLock<Mutex<HashMap<u64, usize>>> = OnceLock::new();
