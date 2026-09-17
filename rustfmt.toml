@@ -1,0 +1,8 @@
+# The tree is hand-formatted wide. Measured 2026-09-17: at the 100-column default rustfmt rewrites
+# 377 lines in 297 places; at 120 with Max heuristics, 130 lines in 111. The heuristics matter more
+# than the width — they alone take 297 to 235 — because they lift fn_call_width/array_width/
+# chain_width off 60 and stop rustfmt exploding packed argument lists and single-line call chains.
+max_width = 120
+use_small_heuristics = "Max"
+style_edition = "2024"
+newline_style = "Unix"
