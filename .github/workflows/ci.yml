@@ -25,6 +25,39 @@ env:
   PHP_CONFIG: /opt/php85-zts/bin/php-config
   LD_LIBRARY_PATH: /opt/php85-zts/lib
 jobs:
+  lint:
+    name: fmt + clippy + deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned rather than @stable: with `-D warnings` blocking, a six-week Rust release can turn
+      # main red with no commit to blame. Pinning here rather than in a rust-toolchain.toml keeps it
+      # to this one job instead of making all seven fetch a second toolchain (ADR-0041 section 7).
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lint
+      # Cheapest first: a formatting mistake should cost ten seconds, not four minutes.
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy (default features)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # crates/ignis/Cargo.toml documents this as the off build for the H35 overhead bench, and it
+      # had silently stopped compiling.
+      - name: the off build still compiles
+        run: cargo check --workspace --no-default-features --locked
+      - uses: taiki-e/install-action@cargo-deny
+      - name: deny (advisories, licences, sources)
+        run: cargo deny check
+
   unit:
     name: nextest + miri
     runs-on: ubuntu-latest
@@ -48,6 +81,21 @@ jobs:
         run: |
           cargo +nightly miri setup
           timeout 1200 cargo +nightly miri test -p ignis -- php::zval php::module 2>&1 | tee /tmp/miri.log
+      # Reported, not gated (ADR-0041 section 6). bindings.rs is 17,944 lines and ~244 instrumentable
+      # functions no test calls, so leaving it in the denominator would make the number meaningless.
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: coverage
+        run: |
+          cargo llvm-cov nextest --workspace --lcov --output-path lcov.info \
+            --ignore-filename-regex '(bindings\.rs|/build\.rs|/rustc/)'
+          cargo llvm-cov report --summary-only \
+            --ignore-filename-regex '(bindings\.rs|/build\.rs|/rustc/)' | tee /tmp/coverage.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            lcov.info
+            /tmp/coverage.txt
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -77,10 +125,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+      # Both of these used to end in `|| echo`, and smoke.sh then printed "skipped" into a green
+      # run -- which is why the PHP unit suite had never actually executed in CI. They fail hard now.
+      # --prefer-source stays for revolt only: its DriverTest needs vendor/revolt/event-loop/test/,
+      # which the dist archive does not carry.
       - name: composer install (E7 Revolt/AMPHP examples)
-        run: cd php/packages/revolt && timeout 600 composer install --prefer-source --no-interaction --quiet || echo "composer failed; E7 will be skipped"
-      - name: composer install (PHP unit tests)
-        run: cd php/packages/runtime && timeout 600 composer update --no-scripts --no-interaction --quiet || echo "composer failed; the PHP unit tests will be skipped"
+        run: cd php/packages/revolt && timeout 600 composer install --prefer-source --no-interaction --quiet
+      - name: composer install (the php/ monorepo and its dev tooling)
+        run: cd php && timeout 900 composer install --no-interaction --quiet
       - name: smoke (every step under timeout)
         run: PGHOST=postgres timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
       - uses: actions/upload-artifact@v4
@@ -90,6 +142,61 @@ jobs:
           path: |
             /tmp/*.log
             bench/results/
+
+  php-lint:
+    name: php -l + phpstan + cs-fixer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: composer install
+        run: cd php && timeout 900 composer install --no-interaction --no-progress
+      # php -l runs under the 8.5.10 ZTS build, the engine that actually runs this code. The vendor
+      # tools run under the image's stock php: php-cs-fixer refuses to start above its supported max.
+      # `find`, not `git ls-files` -- the latter fails in a container with "dubious ownership".
+      - name: php -l (every tracked PHP file, on the production engine)
+        run: |
+          find php/packages php/tests examples bench/php bench/e22 -name '*.php' \
+               -not -path '*/vendor/*' -not -path '*/var/cache/*' -print0 \
+            | xargs -0 -n1 -P4 /opt/php85-zts/bin/php -l > /dev/null
+      - name: phpstan
+        run: cd php && vendor/bin/phpstan analyse --no-progress --error-format=github
+      # revolt promises php 8.1 to AMPHP users, so it is analysed against that floor, not the tree's.
+      - name: phpstan (revolt, the 8.1 floor)
+        run: cd php && vendor/bin/phpstan analyse -c packages/revolt/phpstan.neon --no-progress --error-format=github
+      - name: php-cs-fixer (check only)
+        run: cd php && vendor/bin/php-cs-fixer check --diff --show-progress=none
+
+  php-unit:
+    name: phpunit + coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: composer install
+        run: cd php && timeout 900 composer install --no-interaction --no-progress
+      # Two hosts on purpose, and they are not redundant: the stock 8.3.6 proves the suite is
+      # host-agnostic and that phpunit.xml is honoured, and the 8.5.10 ZTS build is the engine we
+      # ship on, where the coverage number is therefore taken.
+      - name: phpunit (stock php)
+        run: cd php && vendor/bin/phpunit --colors=never
+      - name: phpunit + line coverage (PHP 8.5.10 ZTS + pcov)
+        run: timeout 900 scripts/test-php.sh --coverage 2>&1 | tee /tmp/php-coverage.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: php-unit-logs
+          path: /tmp/*.log
 
   e9-temporal:
     name: E9 temporal (sdk-core in-process, replay + negative control)
@@ -103,6 +210,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           key: temporal
@@ -114,6 +222,14 @@ jobs:
           # for a reason that had nothing to do with the commit.
           curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" -o /tmp/temporal.tar.gz
           tar -xzf /tmp/temporal.tar.gz -C /usr/local/bin temporal && temporal --version
+      # backend/temporal.rs and completion_json.rs are linted nowhere else: --all-features needs
+      # protoc, which only this image has, and only this job already caches the sdk-core graph.
+      - name: clippy with every feature
+        run: timeout 1800 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # The three completion_json tests are gated on `feature = "temporal"`, so the default nextest
+      # run in the unit job has never executed them.
+      - name: nextest with every feature
+        run: timeout 900 cargo nextest run --workspace --all-features
       - name: build with the temporal feature
         run: timeout 2400 cargo build --release -p ignis --features temporal
       - name: live workflow + replay + mutated replay must fail

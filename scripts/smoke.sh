@@ -67,14 +67,16 @@ PGHOST="${PGHOST:-127.0.0.1}"
 
 echo "== build (release)"; timeout 900 cargo build --release -q -p ignis
 echo "== unit tests";      timeout 900 cargo nextest run --workspace 2>&1 | tail -1
-echo "== php unit tests (Scope, Request parsing, Response, Future — no binary needed)"
-if [ -f php/packages/runtime/vendor/autoload.php ] || command -v docker >/dev/null 2>&1; then
-  timeout 900 scripts/test-php.sh 2>&1 | tail -1
-  # PIPESTATUS keeps the runner's own verdict, not tail's
-  [ "${PIPESTATUS[0]}" = 0 ] || { echo "php unit tests FAILED"; exit 1; }
-else
-  echo "skipped (no vendor and no docker to install phpunit)"
-fi
+echo "== php unit tests (no binary needed)"
+# This used to skip when php/vendor was absent, and that skip is how the suite went unnoticed in CI
+# for its whole life: the image could not extract a composer dist archive, both install steps ended
+# in `|| echo`, and this branch then printed "skipped" into a green run. A missing vendor is now a
+# failure with the command that fixes it, never a silent pass.
+[ -f php/vendor/autoload.php ] || {
+  echo "php unit tests: php/vendor is missing — run (cd php && composer install)"; exit 1; }
+timeout 900 scripts/test-php.sh 2>&1 | tail -3
+# PIPESTATUS keeps the runner's own verdict, not tail's
+[ "${PIPESTATUS[0]}" = 0 ] || { echo "php unit tests FAILED"; exit 1; }
 echo "== output isolation (a fiber's body must not collect another fiber's echo)"
 # The control uses a plain ob_start() and MUST leak; if it stops leaking the probe stopped
 # measuring. `if !` rather than `[ $? = 1 ]` because `set -e` would kill the run on the failure we
