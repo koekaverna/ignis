@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-16T22:15Z — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
+# STATUS — Ignis (updated 2026-09-18, branch `night-2` — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
 
 **Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket/TLS session. Every number below links to a VALIDATION.md entry; anything without one says "not measured".
 
@@ -10,8 +10,8 @@
 | M2 Install — image, serving in <2 min, no PHP build | **DONE** (V-39 + addendum; `image.yml` green on `574b231`) |
 | M3 Symfony — untouched skeleton through `ignis/runtime` | **DONE** (V-40 + addendum; V-41 for the package-route bench, dev-mode 404 — not V-16's prod 200, that caveat is the point of V-41) |
 | M3 Laravel | re-scoped (research 25): M3-5a classic mode with `budget.fibers = 1` (Octane's own one-request-per-worker model, guaranteed by ADR-0019), M3-5b fiber-scoped `Container::$instance`/Facade caches (needs an ADR) — both open |
-| M4 Operate — `/_ignis/metrics`, graceful reload, bulkhead, connection cap | **not started**; the only adjacent work is the log floor already at `warn` (M1) and H-10 (fixed a clean `exit()` misread as a fatal in the log) |
-| M5 Ship — release + nightly workflows | **written** (M5-1, M5-4), dry-run clean; **not yet exercised by a real `v*` tag push or schedule dispatch** — the tag push is refused by the session git proxy and is the owner's action |
+| M4 Operate — `/_ignis/metrics`, graceful drain, bulkhead, connection cap | **partly done**: metrics (M4-4, V-55: 22 metrics, promtool clean, 1.9–5.5 ms under `wrk -c200`), lease hold-time (M4-1, V-44), and V-56's front-door limits + two-phase `SIGTERM`/`SIGINT` drain (M4-5's drain half). **Open**: bulkhead + breaker (M4-2), delayed-accept connection cap (M4-3), `SIGHUP` reload without restart |
+| M5 Ship — release + nightly workflows | **release exercised by a real tag** (V-57): `v0.1.0-rc.1` published — image 62 MB + 29,795,977 B tarball, both verified by pulling and running `--version`; the first tag failed on the tarball step and was fixed. The **nightly schedule dispatch has still not run** (M5-4, no V-n) |
 
 ## CONFIRMED (numbers)
 
@@ -20,7 +20,7 @@
 | base: PHP 8.5.10 ZTS+embed+opcache builds here; Rust host links libphp, registers a module, runs a script | `PHP_ZTS=1`, 7/7 extensions; 16 ms startup+script | V-0, V-1 |
 | **E1** 10,000 fibers × `Ignis\sleep(1000)`, one PHP thread | 1168–1178 ms cold; **1037–1041 ms warm pool** (idle box) | V-2, V-4 |
 | **E2** `Ignis\all()` of 3 × 200 ms; per-fiber overhead | 201–202 ms; 21.6–24.2 µs cold → **4.4–4.6 µs warm** (observer off) | V-3, V-4 |
-| **E3** RSS in worker mode | 26.9 → **26.2 MB over 1.5M** hello (4.6M total), PHP heap flat to the byte; `/sleep?ms=1` at 500 conns = 131k req/s | V-10 |
+| **E3** RSS in worker mode | 26.9 → **26.2 MB over 1.5M** hello (4.6M total), PHP heap flat to the byte; `/sleep?ms=1` at 500 conns = 131k req/s — **the absolute is stale**: the toolchain extensions built in on 2026-09-17 cost +2.9 MB RSS (DECISIONS.md, commit `2667192`), so V-10 needs a re-run before the number is quoted again; the flatness claim is unaffected | V-10 |
 | **E4** hello vs FrankenPHP worker vs php-fpm+nginx, same libphp, 1 thread | **128k vs 27.6k vs 9.9k req/s**; p99 1.11 / 6.42 / 8.68 ms | V-6 |
 | **E4'** raised: 4 PHP threads vs FrankenPHP@4 workers, superglobals+streams+cancel active | **112.5k vs 16.6k req/s**, p99 2.41 ms | V-15 |
 | **E5** CPU-bound scaling, 4 threads (box has 4 vCPU → target 3.25×) | **3.7–3.98×** in-process, 3.49× over HTTP (`/cpu` 9.3k vs 2.7k req/s) | V-9 |
@@ -72,9 +72,24 @@ Zend allocates and frees a fresh mmap'd C stack per fiber; in a multi-threaded p
 
 Owner sign-off still needed on four points from Phase A — DECISIONS.md "Owner decisions outstanding".
 
-## Run everything (5 commands)
+## Quality gate (ADR-0041, proposed — accepted when its gate is green on `main`)
+
+Until this cycle there was **no linter of any kind in CI, on either side, and no coverage number** (ADR-0041 §1). `cargo fmt`, `clippy -D warnings`, `cargo check --no-default-features`, `cargo deny`, `php -l`, PHPStan level 6, php-cs-fixer @PER-CS and PHPUnit now all block a merge.
+
+| | before | after | entry |
+|---|---|---|---|
+| Rust tests / line coverage | 9 / **7.67 %** | 54 / **29.95 %** | V-78 |
+| PHP tests / line coverage | 42 / **5.61 %** | 187 / **31.94 %** | V-79 for the before; the after is in commit `8613a4a` only, **not yet a V-n** |
+| undocumented `unsafe` blocks | 92 | **0** | commit `17fc0ad` (no V-n) |
+| PHPStan level 6 errors | 123 | **0** | commit `8613a4a` (no V-n) |
+
+What those percentages do not cover, from the entries themselves: `csrc/park.c` is **not instrumented at all** (`cc` reads `CFLAGS`, not `RUSTFLAGS`, and every line needs a live engine, V-78); `crates/ignis/src/php/**` is ~2 % because every line needs `php_embed_init` on the calling thread, so the 29.95 % is carried by the tokio side at 55.8 % (V-78); `packages/revolt/src` has no line coverage because its suite only runs inside the ignis binary (V-79). Those paths are held by pass/fail suites (E1/E2/E5/E6/E7/E11/E13, E15, E18), not by line counters. Rust coverage is **reported, not gated**; the PHP side gets a fixed floor of `achieved − 5` (ADR-0041 §6).
+
+## Run everything
 
 ```
+cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo deny check   # Rust half of the gate (ADR-0041)
+cd php && composer check                               # php -l, PHPStan level 6, php-cs-fixer, PHPUnit; scripts/test-php.sh --coverage for V-79's number
 scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (session, iconv, openssl, curl, pdo_pgsql) → /opt/php85-zts (idempotent, ~7 min)
 cargo build --release -p ignis && cargo nextest run     # binary + unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
 scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7, E11, E12
@@ -108,14 +123,16 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 
 ## CI / blocked downloads
 
-`ci.yml` (nextest+miri, `smoke.sh`, E9, the E15 matrix gated against `bench/results/e15-baseline.txt`), `php-image.yml` (builder image) and `image.yml` (runtime image, V-39 addendum) run today; `release.yml`/`nightly.yml` exist (M5-1, M5-4) but have not run against a real tag/schedule. Network allowlist blocks `www.php.net`, `pecl.php.net` (403 — grpc C-core built from the git clone instead), `ppa.launchpadcontent.net`, `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works), composer dist downloads (`--prefer-source` used). Name collision (owner addendum): crates.io taken (unrelated `ignis` 0.1.0), Packagist free, GitHub three unrelated — nothing renamed.
+**`main` is red, and was red before this work** — evidence in BACKLOG `R-MAIN-RED`: six consecutive failed `ci.yml` runs on `main`, three of them predating the first commit of the quality work. Two gates are still failing. **E9 temporal**: the negative control prints `REPLAY_OK activations=3 eviction_errors=0` while the same log shows sdk-core evicting the mutated history (`TMPRL1100`, `NONDETERMINISM`) — so V-19's "mutated workflow FAILS" is not being re-verified by CI, whatever the run says. **E15 frankenphp**: `passed=28` against a baseline of 29. The third, **E15 revolt**, is fixed — `bench/e15-revolt.sh` pointed at `php/packages/revolt/test/`, which the package split (V-62) renamed to `tests/`, so every run exited 2 and the gate had been measuring nothing; `revolt.pass=80 >= baseline 80` after commit `97debdc`.
+
+`ci.yml` has seven jobs (`lint`, `unit` with nextest+miri and coverage, `smoke`, `php-lint`, `php-unit`, `e9-temporal` which also runs the `--all-features` clippy and nextest, `e15` gated against `bench/results/e15-baseline.txt`); `php-image.yml` (builder image) and `image.yml` (runtime image, V-39 addendum) run today; `release.yml` has now run against a real tag (V-57), `nightly.yml`'s schedule dispatch has not. Network allowlist blocks `www.php.net`, `pecl.php.net` (403 — grpc C-core built from the git clone instead), `ppa.launchpadcontent.net`, `github.com` over plain HTTPS (git protocol works), `crates.io` web (sparse index works), composer dist downloads (`--prefer-source` used). Name collision (owner addendum): crates.io taken (unrelated `ignis` 0.1.0), Packagist free, GitHub three unrelated — nothing renamed.
 
 ## Still open
 
-M4 Operate: metrics (M4-4), graceful reload (M4-5), hold-time on leases (M4-1), per-dependency bulkhead + breaker (M4-2/B2 — pain-map PHP-FPM 2, still NOT STARTED), connection cap at the listener (M4-3/B8 — the RSS half of B1's acceptance a fiber budget alone cannot meet, V-37). M5's real tag push and nightly dispatch are the owner's. M3: Laravel (M3-5a/M3-5b), Packagist publication (M3-6), the prod-mode Symfony bench leg (M3-8). R&D backlog deferred from the product (DECISIONS.md): in-process Table (B3), native MySQL/Redis (B4), allocator-level leak detector (B5), static binary (M5-5/B6), TLS read-ahead via `op_cast`-owned eventfd (B7).
+M4 Operate: per-dependency bulkhead + breaker (M4-2/B2 — pain-map PHP-FPM 2, still NOT STARTED), the delayed-accept connection cap (M4-3/B8 — the RSS half of B1's acceptance a fiber budget alone cannot meet, V-37; `IGNIS_MAX_CONNECTIONS` exists and is measured, V-56, but it accepts-then-refuses rather than delaying accept), `SIGHUP` reload without restart (M4-5's other half), offload/PG cancellation on disconnect (M4-9), `IGNIS_LOOP_GC` measured (M4-10), the watchdog naming the fiber (M4-7). The four listener limits are env-only with no `ignis.toml` key (`R-LIMITS-CONFIG`). Red gates on `main` (`R-MAIN-RED`). M5's nightly schedule dispatch is unrun. M3: Laravel (M3-5a/M3-5b), Packagist publication (M3-6), the prod-mode Symfony bench leg (M3-8). R&D backlog deferred from the product (DECISIONS.md): in-process Table (B3), native MySQL/Redis (B4), allocator-level leak detector (B5), static binary (M5-5/B6), TLS read-ahead via `op_cast`-owned eventfd (B7).
 
 ## Ranked recommendation
 
-1. **M4-3 (cap connections at the listener, B8)** — closes the RSS half of B1's acceptance a fiber budget alone cannot meet (V-37: ~33 kB per held connection), and the fix pain-map PHP-FPM 6 / FrankenPHP 3 still need; then **M4-2 (per-dependency bulkhead + breaker, B2)** — pain-map PHP-FPM 2, still NOT STARTED, `pg::acquire` waits unboundedly today.
-2. **M3-5a (Laravel, classic mode, `budget.fibers = 1`)** — a second real framework on the existing ADR-0019 mechanism, no FFI change, `agent` lane.
-3. **M5's real tag push** — the release and nightly workflows (M5-1, M5-4) are written and dry-run clean; only a `v*` tag push and a schedule dispatch are missing to close M5.
+1. **`R-MAIN-RED`** — a gate nobody can merge through proves nothing, and one of the two is a negative control that no longer detects what it exists to detect (E9 temporal prints `REPLAY_OK` while sdk-core evicts the mutated history), so V-19 is currently unverified by CI; the other is E15 frankenphp at `passed=28` against baseline 29.
+2. **M4-3 (cap connections at the listener, B8)** — closes the RSS half of B1's acceptance a fiber budget alone cannot meet (V-37: ~33 kB per held connection), and the fix pain-map PHP-FPM 6 / FrankenPHP 3 still need; then **M4-2 (per-dependency bulkhead + breaker, B2)** — pain-map PHP-FPM 2, still NOT STARTED, `pg::acquire` waits unboundedly today.
+3. **M3-5a (Laravel, classic mode, `budget.fibers = 1`)** — a second real framework on the existing ADR-0019 mechanism, no FFI change, `agent` lane.

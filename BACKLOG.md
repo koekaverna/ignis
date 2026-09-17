@@ -429,7 +429,7 @@ only on a counter.
 parallel session's files. Diagnose from `bench/results/e15-phpt/*.tsv` and the frankenphp runner
 rather than by re-running blind.
 
-### R-LINT-GATE Blocking fmt/clippy/deny + real coverage, Rust side `main` `in progress`
+### R-LINT-GATE Blocking fmt/clippy/deny + real coverage, Rust side `main` `done (V-78)`
 **What.** ADR-0041. `[workspace.lints]`, `rustfmt.toml` (140 cols, measured), `deny.toml`,
 `.config/nextest.toml`, `ignis-sys` narrowed to its bindgen module, the debt driven to zero, tests
 on the tokio-side modules, `cargo llvm-cov` reported as a number, and a blocking `lint` job in CI.
@@ -445,7 +445,7 @@ protoc), `cargo check --workspace --no-default-features`, `cargo deny check` all
 **Constraints.** The four allocation items in R-REVIEW-CHORES stay out: they are hot-path claims and
 need a before/after on a quiet box, which is `bencher` work and its own V-n.
 
-### R-PHP-GATE Blocking php -l/phpstan/cs-fixer + phpunit with coverage `agent` `in progress`
+### R-PHP-GATE Blocking php -l/phpstan/cs-fixer + phpunit with coverage `agent` `done (V-79)`
 **What.** The root `php/composer.json` gains dev tooling and scripts; `phpstan.neon` at level 6
 (plus a six-line override for `revolt`, whose 8.1 floor is a promise to AMPHP users);
 `.php-cs-fixer.dist.php` at @PER-CS; `rector.php` as a one-shot local tool, never a gate;

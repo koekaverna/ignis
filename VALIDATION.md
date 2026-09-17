@@ -3631,3 +3631,46 @@ universal-park paths are E18. Those are pass/fail gates, not line counters.
 **Gated, unlike the Rust side**: the PHP library's unit-testable surface is most of the library, so a
 fixed floor of `achieved − 5` is meaningful here. It is set once the test waves land, never as a
 "must not decrease" ratchet — that reddens every time somebody adds a file.
+
+### V-79 addendum — the number after the tests, and the PHPStan count it sits next to
+
+Date: 2026-09-18T00:0xZ, same box, same command (`scripts/test-php.sh --coverage`, PHP 8.5.10 ZTS
++ PCOV 1.0.12). The entry above recorded only the baseline, because the tests had not been written
+yet; STATUS.md would otherwise cite an after-number with no V-n behind it.
+
+| | tests | assertions | lines | **covered** |
+|---|---|---|---|---|
+| baseline (V-79) | 41 → 42 | 66 → 69 | 106 / 1,889 | **5.61 %** |
+| after | **187** | **474** | **636 / 1,991** | **31.94 %** |
+
+The denominator moved 1,889 → 1,991 because the same work added source: `WorkerRuntime`'s guards,
+`Loop`'s extracted methods, `Runner::parseHeaderLines`, `Classic\configureRunner`.
+
+Per class, the ones that went from nothing: `Grpc\Proto` 100 %, `Pg\Pool` 100 %,
+`Symfony\FiberRequestStack` 100 %, `Temporal\Payloads` 100 %, `Pg\Lease` 94 %, `WorkerRuntime` 78 %,
+`Offload\Router` 76 %, **`Loop` 68 % from 0 %** — the scheduler had no unit test at all before this.
+
+### Static analysis, in the same run
+
+| | PHPStan level 6 |
+|---|---|
+| before any of this work | **123** (the agent's own first run; my re-run after the stub file was fixed read **124** — the difference is the 10 stubs landing between the two, and neither number is adjusted here) |
+| after | **0**, on both the root config and revolt's 8.1-floor override |
+
+One `ignoreErrors` entry survives, with `identifier`, `path` and `count: 1`: an invariance conflict
+between `Persistence\Mapping\ClassMetadataFactory` and ORM's narrowing that no annotation satisfies.
+It is not a baseline — the proof it is upstream is that Doctrine's own `EntityManagerDecorator`
+reports the identical error when analysed.
+
+`php-cs-fixer check` at @PER-CS: **0 of 125 files**. The adoption cost was two format-only commits,
+80 files / +854−364 under `php/` and 43 files / +432−163 under `bench/php` and `examples/`, the
+second proved token-identical bar trailing commas and control-structure braces.
+
+### Rust, for the same reason
+
+`crates/**` had **92 `unsafe` blocks with no SAFETY comment** against CLAUDE.md's claim that every
+one of them states why it is sound. After: **0**, verified by
+`cargo clippy --workspace --all-targets -- -D warnings` with
+`clippy::undocumented_unsafe_blocks` enabled. Seven copies of the TSRM accessor became one
+(`php/tsrm.rs`) along the way, which removed three of the 92 by deleting the code rather than
+documenting it three times.
