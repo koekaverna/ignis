@@ -26,6 +26,7 @@ thread_local! {
     static RESULTS: RefCell<HashMap<u64, Outcome>> = RefCell::new(HashMap::new());
 }
 
+#[cfg(feature = "universal-park")]
 unsafe fn eg() -> *mut sys::zend_executor_globals {
     unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
 }
@@ -35,6 +36,7 @@ unsafe fn eg() -> *mut sys::zend_executor_globals {
 ///
 /// # Safety
 /// PHP thread, inside an internal call on the current fiber's stack.
+#[cfg(feature = "universal-park")]
 pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
     unsafe {
         let fiber = (*eg()).active_fiber;
@@ -61,6 +63,7 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
 ///
 /// # Safety
 /// PHP thread, inside an internal call on the current fiber's stack.
+#[cfg(feature = "universal-park")]
 pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
     unsafe {
         let fiber = (*eg()).active_fiber;
