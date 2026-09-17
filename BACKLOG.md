@@ -414,9 +414,14 @@ workflow FAILS" claim is not being re-verified by CI, whatever the run says.
 **E15 frankenphp — `passed=28` against a baseline of 29.** Five failures in the run:
 `server-variable.php` (REMOTE_HOST/ADDR/PORT/IDENT), `cookies.php` (four cookies absent),
 `autoloader.php`, `env/putenv.php` (`got 'test=8'` — a value leaking across requests), and
-`file-upload.php` (no `Upload OK`). One of those five is newer than the baseline. The window points
-at the stream/multipart refactors of 2026-09-17 16:50–18:26 (V-76/V-77 and the multipart work), which
-a parallel session landed.
+`file-upload.php` (no `Upload OK`). The counts say exactly one of the five is newer than the
+baseline: 28 + 5 + 33 skipped = 66, and 29 + 4 + 33 is the same 66. The window is the
+stream/multipart work of 2026-09-17 16:50–18:26 (V-76/V-77 and E22).
+
+**Correction, 2026-09-18 (owner):** an earlier version of this entry, and a JOURNAL line before it,
+attributed those commits to "a parallel session working in this repository". There is no parallel
+session and there never was; `git log --format=%an` over that window is one author. Nothing here is
+anyone else's territory, and the frankenphp half is ours to diagnose like any other regression.
 
 **Why it matters.** `main` is the branch of record, and a permanently red gate is a gate nobody
 reads. It also means the E15 per-test `check_set` regression detector is warning-only in CI
