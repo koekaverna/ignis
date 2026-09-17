@@ -2607,3 +2607,50 @@ server on this box). Cancellation and child workflows are translated but not exe
 `SideEffect` and `GetVersion` are not translated and are not simple arms — core-based SDKs have no
 `SideEffect`, and `GetVersion` must be answered inside the same activation from `NotifyHasPatch`
 plus `SetPatchMarker`.
+
+## V-63 — E7 was measuring nothing, and fixing it found a real park defect (CONFIRMED)
+
+Date: 2026-09-17T14:2xZ. `bench/e7-revolt.sh` reported `differing=6` of 8. Smoke piped it through
+`| grep … || true`, so it had not been a gate and the rot was invisible. Three separate causes, in
+the order they were peeled off:
+
+**1. The examples never ran at all.** Revolt's own examples do
+`require __DIR__ . '/../vendor/autoload.php'` — the layout of a source checkout *of* revolt.
+Installed as a dependency there is no nested `vendor/`, and `composer install --prefer-source` does
+not make one, so all six fataled. The comparison was between two identical fatal errors. Fixed by
+writing that one autoload shim (it points at the outer autoloader, which has revolt and amphp) in
+the bench script.
+
+**2. The runtime's own log made two identical runs unequal.** Without `RUST_LOG=error` the fatal is
+followed by a `tracing` WARN carrying a timestamp, so no two runs ever compared equal. That
+timestamp is what `differing=6` was actually measuring.
+
+**3. With the examples finally running, a real defect appeared.** The control arm — the stock
+`StreamSelectDriver` — died where ours worked:
+
+```
+select: 1: Initializing...|2: Initializing...|Fatal error: Uncaught Error: Event loop terminated
+        without resuming the current suspension (…fiber deadlock…)
+ignis : 1: Initializing...|2: Initializing...|2: Done.|1: Done.
+IGNIS_NO_UNIVERSAL_PARK=1, select: 1: Initializing...|2: Initializing...|2: Done.|1: Done.
+```
+
+**Universal park breaks a foreign fiber scheduler.** `park.rs`'s gate is "we are in a fiber":
+`on_switch` sets it to 1 for any context that is not `EG(main_fiber_context)`. A fiber that
+*Revolt's* driver started therefore parks into our reactor, and in that program nothing calls
+`ignis_poll()`, so it is never resumed — Revolt notices and says so. Filed as **R-FOREIGN-FIBER**
+with the proposed fix (park only in fibers the runtime owns) and the two things to settle first:
+the lifetime of the owned-context set, and the cost on the switch path (E2 warm, 3.83 µs).
+
+**What the suite measures now.** Byte equality was the wrong bar and is the reason the suite was
+flaky enough to ignore: under the load of eight programs plus a server, the select control loses its
+last line (`3: Done.`) because its loop exits before the delay fires — our driver printed it. The
+rule is now "every line the control printed appears in our output, in order"; printing *more* than a
+truncated control is the control being flaky, printing less or different still fails. Three
+consecutive runs: `differing=0`, rc=0, with the truncation showing up once as `SAME+`.
+
+`scripts/smoke.sh` now **gates** on E7's exit code instead of grepping it away.
+
+The control arm runs with `IGNIS_NO_UNIVERSAL_PARK=1`, stated in the script next to the reason: a
+control's job is to say what the program does on a stock event loop, and until R-FOREIGN-FIBER is
+fixed park has no business in it.
