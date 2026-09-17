@@ -131,11 +131,7 @@ impl ServerStreamingService<Bytes> for PhpGrpc {
 /// Serve one gRPC request (unary or server-streaming: PHP decides how many messages to send).
 pub async fn serve(reactor: Arc<Reactor>, req: http::Request<hyper::body::Incoming>) -> http::Response<tonic::body::Body> {
     let uri = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
-    let headers = req
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
-        .collect();
+    let headers = req.headers().iter().map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
     let svc = PhpGrpc { reactor, uri, headers };
     let mut grpc = tonic::server::Grpc::new(RawCodec);
     grpc.server_streaming(svc, req).await

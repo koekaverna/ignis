@@ -92,12 +92,23 @@ pub fn open(dsn: String, max: usize) -> u64 {
         if let Some(p) = pools().lock().unwrap().get(&id)
             && p.max != max.max(1)
         {
-            tracing::warn!(pool = id, first = p.max, requested = max, "ignis_pg_open: same DSN opened with a different max; the first opener's applies");
+            tracing::warn!(
+                pool = id,
+                first = p.max,
+                requested = max,
+                "ignis_pg_open: same DSN opened with a different max; the first opener's applies"
+            );
         }
         return id;
     }
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    let pool = Arc::new(Pool { dsn: dsn.clone(), idle: Mutex::new(Vec::new()), sem: Arc::new(Semaphore::new(max.max(1))), created: AtomicU64::new(0), max: max.max(1) });
+    let pool = Arc::new(Pool {
+        dsn: dsn.clone(),
+        idle: Mutex::new(Vec::new()),
+        sem: Arc::new(Semaphore::new(max.max(1))),
+        created: AtomicU64::new(0),
+        max: max.max(1),
+    });
     by_dsn().lock().unwrap().insert(dsn, id);
     pools().lock().unwrap().insert(id, pool);
     id
@@ -132,7 +143,10 @@ pub fn acquire(pool_id: u64, owner: usize) -> Fut {
             },
         };
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
+        leases()
+            .lock()
+            .unwrap()
+            .insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
         owners().lock().unwrap().insert(id, owner);
         Outcome::Json(format!("{{\"lease\":{id}}}"))
     })
@@ -153,8 +167,11 @@ pub fn try_acquire(pool_id: u64, owner: usize) -> Option<u64> {
         }
     };
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
-        owners().lock().unwrap().insert(id, owner);
+    leases()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
+    owners().lock().unwrap().insert(id, owner);
     Some(id)
 }
 
@@ -241,7 +258,11 @@ pub fn release(lease_id: u64, reset: bool) -> Fut {
 
 /// `ignis_pg_stats(pool)`: `(idle, created, available permits)` for VALIDATION tables.
 pub fn stats(pool_id: u64) -> Option<(usize, u64, usize)> {
-    pools().lock().unwrap().get(&pool_id).map(|p| (p.idle.lock().unwrap().len(), p.created.load(Ordering::Relaxed), p.sem.available_permits()))
+    pools()
+        .lock()
+        .unwrap()
+        .get(&pool_id)
+        .map(|p| (p.idle.lock().unwrap().len(), p.created.load(Ordering::Relaxed), p.sem.available_permits()))
 }
 
 /// M4-1: (age of the oldest live lease in ms, live leases held ≥ `IGNIS_PG_LEASE_WARN_MS`) for a
@@ -304,7 +325,9 @@ fn bind(v: &Value, ty: &Type) -> Result<Box<dyn ToSql + Sync + Send>, String> {
                 return Ok(Box::new(None::<$t>));
             }
             let n: $t = match v {
-                Value::Number(n) => n.as_i64().and_then(|x| <$t>::try_from(x).ok()).or_else(|| n.as_f64().map(|f| f as $t)).ok_or("number out of range")?,
+                Value::Number(n) => {
+                    n.as_i64().and_then(|x| <$t>::try_from(x).ok()).or_else(|| n.as_f64().map(|f| f as $t)).ok_or("number out of range")?
+                }
                 Value::String(s) => s.parse::<$t>().map_err(|_| format!("'{s}' is not a {}", ty.name()))?,
                 Value::Bool(b) => (*b as i64) as $t,
                 _ => return Err(format!("cannot bind {v} as {}", ty.name())),

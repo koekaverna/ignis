@@ -22,10 +22,10 @@ use std::ffi::{c_char, c_int};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ignis_sys as sys;
-use temporalio_client::{Connection, ConnectionOptions};
-use temporalio_common::worker::WorkerTaskTypes;
 use prost::Message;
 use prost_reflect::{DescriptorPool, DeserializeOptions, DynamicMessage, SerializeOptions};
+use temporalio_client::{Connection, ConnectionOptions};
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use temporalio_protos::coresdk::{ActivityHeartbeat, ActivityTaskCompletion};
 use temporalio_protos::temporal::api::common::v1::WorkflowExecution;
@@ -116,7 +116,9 @@ pub unsafe extern "C" fn zif_connect(ex: *mut sys::zend_execute_data, rv: *mut s
     unsafe {
         let (mut a, mut al, mut b, mut bl, mut c, mut cl): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
             (std::ptr::null_mut(), 0, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0);
-        if sys::zend_parse_parameters(zval::num_args(ex), c"sss".as_ptr(), &mut a, &mut al, &mut b, &mut bl, &mut c, &mut cl) != sys::SUCCESS {
+        if sys::zend_parse_parameters(zval::num_args(ex), c"sss".as_ptr(), &mut a, &mut al, &mut b, &mut bl, &mut c, &mut cl)
+            != sys::SUCCESS
+        {
             return;
         }
         let (url, ns, tq) = (arg_str(a, al), arg_str(b, bl), arg_str(c, cl));
@@ -146,7 +148,9 @@ pub unsafe extern "C" fn zif_replay(ex: *mut sys::zend_execute_data, rv: *mut sy
     unsafe {
         let (mut a, mut al, mut b, mut bl, mut c, mut cl): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
             (std::ptr::null_mut(), 0, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0);
-        if sys::zend_parse_parameters(zval::num_args(ex), c"sss".as_ptr(), &mut a, &mut al, &mut b, &mut bl, &mut c, &mut cl) != sys::SUCCESS {
+        if sys::zend_parse_parameters(zval::num_args(ex), c"sss".as_ptr(), &mut a, &mut al, &mut b, &mut bl, &mut c, &mut cl)
+            != sys::SUCCESS
+        {
             return;
         }
         let (url, wid, tq) = (arg_str(a, al), arg_str(b, bl), arg_str(c, cl));
@@ -169,7 +173,8 @@ pub unsafe extern "C" fn zif_replay(ex: *mut sys::zend_execute_data, rv: *mut sy
                     .into_inner();
                 let history = resp.history.ok_or_else(|| anyhow::anyhow!("no history returned"))?;
                 let _ = core();
-                let input = ReplayWorkerInput::new(config("default", &tq)?, futures::stream::iter(vec![HistoryForReplay::new(history, wid)]));
+                let input =
+                    ReplayWorkerInput::new(config("default", &tq)?, futures::stream::iter(vec![HistoryForReplay::new(history, wid)]));
                 let w = init_replay_worker(input)?;
                 anyhow::Ok(register(w))
             };
@@ -223,11 +228,11 @@ pub unsafe extern "C" fn zif_complete_activation(ex: *mut sys::zend_execute_data
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
-            let comp: WorkflowActivationCompletion =
-                match from_protojson("coresdk.workflow_completion.WorkflowActivationCompletion", &json) {
-                    Ok(c) => c,
-                    Err(e) => return Outcome::Failed(format!("completion json: {e}")),
-                };
+            let comp: WorkflowActivationCompletion = match from_protojson("coresdk.workflow_completion.WorkflowActivationCompletion", &json)
+            {
+                Ok(c) => c,
+                Err(e) => return Outcome::Failed(format!("completion json: {e}")),
+            };
             match w.complete_workflow_activation(comp).await {
                 Ok(()) => Outcome::Json("\"ok\"".into()),
                 Err(e) => Outcome::Failed(format!("complete: {e}")),
@@ -259,11 +264,10 @@ pub unsafe extern "C" fn zif_complete_activity(ex: *mut sys::zend_execute_data, 
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
-            let comp: ActivityTaskCompletion =
-                match from_protojson("coresdk.ActivityTaskCompletion", &json) {
-                    Ok(c) => c,
-                    Err(e) => return Outcome::Failed(format!("activity completion json: {e}")),
-                };
+            let comp: ActivityTaskCompletion = match from_protojson("coresdk.ActivityTaskCompletion", &json) {
+                Ok(c) => c,
+                Err(e) => return Outcome::Failed(format!("activity completion json: {e}")),
+            };
             match w.complete_activity_task(comp).await {
                 Ok(()) => Outcome::Json("\"ok\"".into()),
                 Err(e) => Outcome::Failed(format!("complete activity: {e}")),

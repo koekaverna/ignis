@@ -83,23 +83,59 @@ pub fn render() -> String {
     let _ = writeln!(out, "# TYPE ignis_build_info gauge");
     let _ = writeln!(out, "ignis_build_info{{version=\"{}\"}} 1", env!("CARGO_PKG_VERSION"));
 
-    metric(&mut out, "ignis_uptime_seconds", "gauge", "Seconds since the runtime started.", START.get().map_or(0, |t| t.elapsed().as_secs()));
+    metric(
+        &mut out,
+        "ignis_uptime_seconds",
+        "gauge",
+        "Seconds since the runtime started.",
+        START.get().map_or(0, |t| t.elapsed().as_secs()),
+    );
 
     let (stalled, threads) = crate::http::stalled_threads(std::time::Duration::from_secs(1));
     metric(&mut out, "ignis_threads", "gauge", "PHP worker threads registered for dispatch.", threads);
     metric(&mut out, "ignis_threads_stalled", "gauge", "Threads with pending requests that have not entered the reactor for 1 s.", stalled);
-    metric(&mut out, "ignis_thread_restarts_total", "counter", "Worker threads respawned by the supervisor (ADR-0012).", crate::RESTARTS.load(Ordering::Relaxed));
-    metric(&mut out, "ignis_park_failed_total", "counter", "Calls whose policy says park that could not park and blocked the thread (ADR-0037 §4).", PARK_FAILED.load(Ordering::Relaxed));
+    metric(
+        &mut out,
+        "ignis_thread_restarts_total",
+        "counter",
+        "Worker threads respawned by the supervisor (ADR-0012).",
+        crate::RESTARTS.load(Ordering::Relaxed),
+    );
+    metric(
+        &mut out,
+        "ignis_park_failed_total",
+        "counter",
+        "Calls whose policy says park that could not park and blocked the thread (ADR-0037 §4).",
+        PARK_FAILED.load(Ordering::Relaxed),
+    );
 
     let t = crate::http::totals();
     metric(&mut out, "ignis_requests_inflight", "gauge", "Requests dispatched to a PHP thread and not yet answered.", t.pending);
     metric(&mut out, "ignis_ops_inflight", "gauge", "Reactor operations submitted and not yet completed.", t.ops);
-    metric(&mut out, "ignis_stats_published_age_seconds", "gauge", "Age of the oldest PHP loop's published numbers; grows without bound while a loop is wedged.", t.oldest_publish_age_ms as f64 / 1000.0);
+    metric(
+        &mut out,
+        "ignis_stats_published_age_seconds",
+        "gauge",
+        "Age of the oldest PHP loop's published numbers; grows without bound while a loop is wedged.",
+        t.oldest_publish_age_ms as f64 / 1000.0,
+    );
     metric(&mut out, "ignis_fiber_budget", "gauge", "Concurrent request fibers allowed per thread (ADR-0019); 0 = unlimited.", t.budget);
-    metric(&mut out, "ignis_queue_depth_limit", "gauge", "Waiting requests allowed past the budget before a 503, per thread.", t.queue_depth);
+    metric(
+        &mut out,
+        "ignis_queue_depth_limit",
+        "gauge",
+        "Waiting requests allowed past the budget before a 503, per thread.",
+        t.queue_depth,
+    );
     metric(&mut out, "ignis_requests_queued", "gauge", "Requests waiting for a fiber right now.", t.queued);
     metric(&mut out, "ignis_requests_queued_peak", "gauge", "High-water mark of the wait queue, summed over threads.", t.queued_peak);
-    metric(&mut out, "ignis_requests_queued_admitted_total", "counter", "Requests that waited in the queue and were then admitted.", t.queued_admitted);
+    metric(
+        &mut out,
+        "ignis_requests_queued_admitted_total",
+        "counter",
+        "Requests that waited in the queue and were then admitted.",
+        t.queued_admitted,
+    );
     metric(&mut out, "ignis_requests_rejected_total", "counter", "Requests answered 503 because the queue was full.", t.rejected);
     metric(&mut out, "ignis_requests_handled_total", "counter", "Requests the PHP side has finished answering.", t.handled);
     metric(&mut out, "ignis_fibers_idle", "gauge", "Parked fibers in the pool, reusable without allocation (V-4).", t.fibers_idle);
@@ -108,7 +144,13 @@ pub fn render() -> String {
 
     let (oldest_ms, over_warn, leases) = crate::pg::lease_metrics();
     metric(&mut out, "ignis_pg_leases", "gauge", "PostgreSQL connections leased to a fiber right now (ADR-0015).", leases);
-    metric(&mut out, "ignis_pg_lease_age_seconds_max", "gauge", "Age of the oldest live lease; older than IGNIS_PG_LEASE_WARN_MS means a held connection.", oldest_ms as f64 / 1000.0);
+    metric(
+        &mut out,
+        "ignis_pg_lease_age_seconds_max",
+        "gauge",
+        "Age of the oldest live lease; older than IGNIS_PG_LEASE_WARN_MS means a held connection.",
+        oldest_ms as f64 / 1000.0,
+    );
     metric(&mut out, "ignis_pg_leases_over_warn", "gauge", "Live leases older than IGNIS_PG_LEASE_WARN_MS.", over_warn);
 
     out

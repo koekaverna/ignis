@@ -58,8 +58,7 @@ fn main() -> ExitCode {
     // raising the floor without that cost fibers main 108 -> 72 before it was caught.
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -105,12 +104,10 @@ fn main() -> ExitCode {
         None
     };
 
-    let Some(script) = inline
-        .as_ref()
-        .map(|(_, name)| PathBuf::from(name))
-        .or_else(|| args.first().map(PathBuf::from))
-    else {
-        eprintln!("usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version");
+    let Some(script) = inline.as_ref().map(|(_, name)| PathBuf::from(name)).or_else(|| args.first().map(PathBuf::from)) else {
+        eprintln!(
+            "usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version"
+        );
         return ExitCode::from(2);
     };
     let threads = threads.max(1);
@@ -147,7 +144,12 @@ fn main() -> ExitCode {
         if pending == 0 {
             tracing::info!(signal = sig, took_ms = took.as_millis() as u64, "drained; exiting");
         } else {
-            tracing::warn!(signal = sig, took_ms = took.as_millis() as u64, pending, "drain timed out; exiting with requests still in flight");
+            tracing::warn!(
+                signal = sig,
+                took_ms = took.as_millis() as u64,
+                pending,
+                "drain timed out; exiting with requests still in flight"
+            );
         }
         // The PHP threads own their engines and cannot be unwound from here (ADR-0012); once no
         // request is in flight, leaving is the honest end of the process.
@@ -205,22 +207,24 @@ fn main() -> ExitCode {
     if offload > 0 {
         offload::init(offload);
         for i in 0..offload {
-            offload_handles.push(std::thread::Builder::new()
-                .name(format!("ignis-offload-{i}"))
-                .spawn(move || {
-                    php::module::OFFLOAD_WORKER.with(|c| c.set(Some(i)));
-                    let mut w = match php::embed::WorkerThread::attach() {
-                        Ok(w) => w,
-                        Err(e) => {
+            offload_handles.push(
+                std::thread::Builder::new()
+                    .name(format!("ignis-offload-{i}"))
+                    .spawn(move || {
+                        php::module::OFFLOAD_WORKER.with(|c| c.set(Some(i)));
+                        let mut w = match php::embed::WorkerThread::attach() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("offload thread {i}: {e:#}");
+                                return;
+                            }
+                        };
+                        if let Err(e) = w.eval(include_str!("../../../php/packages/offload/src/worker.php"), "ignis-offload-worker") {
                             eprintln!("offload thread {i}: {e:#}");
-                            return;
                         }
-                    };
-                    if let Err(e) = w.eval(include_str!("../../../php/packages/offload/src/worker.php"), "ignis-offload-worker") {
-                        eprintln!("offload thread {i}: {e:#}");
-                    }
-                })
-                .expect("spawn offload thread"));
+                    })
+                    .expect("spawn offload thread"),
+            );
         }
     }
 
@@ -260,7 +264,6 @@ fn main() -> ExitCode {
         }
     });
 
-    
     let worst = if supervise {
         // Supervisor: workers 1..=N, respawned when their script ends; thread 0 only supervises.
         let mut handles: Vec<(usize, std::thread::JoinHandle<i32>)> = (1..=threads).map(|i| (i, spawn_worker(i))).collect();

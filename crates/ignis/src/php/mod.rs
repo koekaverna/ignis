@@ -19,8 +19,8 @@ pub mod locklib;
 pub mod module;
 pub mod output;
 pub mod route;
-pub mod wait;
 pub mod superglobals;
+pub mod wait;
 pub mod zval;
 
 /// Removes the calling thread's reactor from HTTP dispatch (ADR-0010 follow-up:

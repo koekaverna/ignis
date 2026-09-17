@@ -74,13 +74,17 @@ pub enum ResponseBody {
 #[derive(Debug)]
 pub enum Outcome {
     /// Sleep finished (payload: how many µs late the timer fired, for tuning).
-    Slept { late_us: u64 },
+    Slept {
+        late_us: u64,
+    },
     /// A new HTTP request; PHP must eventually call `respond(id, ..)`.
     Request(HttpRequest),
     /// The watched fd is ready.
     Ready,
     /// The client of request `id` went away (ADR-0009); `dropped_at` is when hyper dropped it.
-    Cancelled { dropped_at: std::time::Instant },
+    Cancelled {
+        dropped_at: std::time::Instant,
+    },
     /// PHP-facing result of a `Custom` op: a JSON document (delivered as a string payload).
     Json(String),
     /// PHP-facing failure of a `Custom` op: `['kind' => 'error', 'message' => ..]`.
@@ -88,7 +92,12 @@ pub enum Outcome {
     /// PHP-facing binary result of a `Custom` op (E10 gRPC): a string, or null for end-of-stream.
     Blob(Option<Bytes>),
     /// E16: an offload worker asks this thread to run callback `cb` of job `job` with serialized `args`.
-    OffloadCallback { job: u64, seq: u64, cb: u64, args: Bytes },
+    OffloadCallback {
+        job: u64,
+        seq: u64,
+        cb: u64,
+        args: Bytes,
+    },
     Error(String),
 }
 
@@ -362,7 +371,7 @@ impl Reactor {
     pub fn fail_pending(&self) -> usize {
         // A half-written stream is dropped too: the client sees a truncated body rather than a
         // connection that never finishes.
-        
+
         self.responders.lock().unwrap().drain().count()
             + self.streams.lock().unwrap().drain().count()
             + self.stream_out.lock().unwrap().drain().count()

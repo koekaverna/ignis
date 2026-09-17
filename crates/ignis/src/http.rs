@@ -322,11 +322,7 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
             return Ok(simple(StatusCode::BAD_REQUEST, "bad request body\n"));
         }
     };
-    let headers = parts
-        .headers
-        .iter()
-        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
-        .collect();
+    let headers = parts.headers.iter().map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
     let uri = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
     let (request_id, rx) = reactor.deliver_request_with_id(HttpRequest { method: parts.method.as_str().to_string(), uri, headers, body });
     // If this future is dropped (client disconnect, ADR-0009) before PHP
@@ -382,7 +378,6 @@ impl hyper::body::Body for ChannelBody {
         self.rx.poll_recv(cx).map(|o| o.map(|b| Ok(hyper::body::Frame::data(b))))
     }
 }
-
 
 fn simple(status: StatusCode, msg: &'static str) -> Response<tonic::body::Body> {
     Response::builder()

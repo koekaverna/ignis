@@ -75,30 +75,23 @@ const fn arg_info_head(required: usize) -> sys::zend_internal_arg_info {
 
 static ARGINFO_ONE: SyncStatic<[sys::zend_internal_arg_info; 2]> = SyncStatic([arg_info_head(1), arg_info(c"value")]);
 static ARGINFO_NONE: SyncStatic<[sys::zend_internal_arg_info; 1]> = SyncStatic([arg_info_head(0)]);
-static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
-    arg_info_head(4),
-    arg_info(c"server"),
-    arg_info(c"get"),
-    arg_info(c"post"),
-    arg_info(c"cookie"),
-]);
-static ARGINFO_CANCEL: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"fiber"), arg_info(c"exception")]);
+static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> =
+    SyncStatic([arg_info_head(4), arg_info(c"server"), arg_info(c"get"), arg_info(c"post"), arg_info(c"cookie")]);
+static ARGINFO_CANCEL: SyncStatic<[sys::zend_internal_arg_info; 3]> =
+    SyncStatic([arg_info_head(2), arg_info(c"fiber"), arg_info(c"exception")]);
 #[allow(dead_code)]
 static ARGINFO_T2: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"worker"), arg_info(c"json")]);
 #[allow(dead_code)]
-static ARGINFO_T3: SyncStatic<[sys::zend_internal_arg_info; 4]> = SyncStatic([arg_info_head(3), arg_info(c"a"), arg_info(c"b"), arg_info(c"c")]);
+static ARGINFO_T3: SyncStatic<[sys::zend_internal_arg_info; 4]> =
+    SyncStatic([arg_info_head(3), arg_info(c"a"), arg_info(c"b"), arg_info(c"c")]);
 static ARGINFO_GRPC2: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"id"), arg_info(c"message")]);
-static ARGINFO_GRPC3: SyncStatic<[sys::zend_internal_arg_info; 4]> = SyncStatic([arg_info_head(3), arg_info(c"id"), arg_info(c"code"), arg_info(c"message")]);
+static ARGINFO_GRPC3: SyncStatic<[sys::zend_internal_arg_info; 4]> =
+    SyncStatic([arg_info_head(3), arg_info(c"id"), arg_info(c"code"), arg_info(c"message")]);
 static ARGINFO_GRPC4: SyncStatic<[sys::zend_internal_arg_info; 5]> =
     SyncStatic([arg_info_head(4), arg_info(c"url"), arg_info(c"path"), arg_info(c"message"), arg_info(c"streaming")]);
 static ARGINFO_WATCH: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"stream"), arg_info(c"mode")]);
-static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
-    arg_info_head(4),
-    arg_info(c"id"),
-    arg_info(c"status"),
-    arg_info(c"headers"),
-    arg_info(c"body"),
-]);
+static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> =
+    SyncStatic([arg_info_head(4), arg_info(c"id"), arg_info(c"status"), arg_info(c"headers"), arg_info(c"body")]);
 
 unsafe extern "C" fn zif_ignis_submit_sleep(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: called by the Zend VM on a PHP thread with a valid frame.
@@ -365,7 +358,10 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
         }
         let headers = header_pairs(ht, "ignis_respond");
         let body = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(body as *const u8, body_len));
-        let ok = reactor().respond(id as u64, HttpResponse { status: status.clamp(100, 599) as u16, headers, body: crate::reactor::ResponseBody::Full(body) });
+        let ok = reactor().respond(
+            id as u64,
+            HttpResponse { status: status.clamp(100, 599) as u16, headers, body: crate::reactor::ResponseBody::Full(body) },
+        );
         zval::set_bool(rv, ok);
     }
 }
@@ -518,8 +514,17 @@ unsafe extern "C" fn zif_ignis_grpc_call(ex: *mut sys::zend_execute_data, rv: *m
         let (mut u, mut ul, mut p, mut pl, mut m, mut ml): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
             (ptr::null_mut(), 0, ptr::null_mut(), 0, ptr::null_mut(), 0);
         let mut streaming: bool = false;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"sssb".as_ptr(), &mut u, &mut ul, &mut p, &mut pl, &mut m, &mut ml, &mut streaming)
-            != sys::SUCCESS
+        if sys::zend_parse_parameters(
+            zval::num_args(ex),
+            c"sssb".as_ptr(),
+            &mut u,
+            &mut ul,
+            &mut p,
+            &mut pl,
+            &mut m,
+            &mut ml,
+            &mut streaming,
+        ) != sys::SUCCESS
         {
             return;
         }
@@ -550,7 +555,9 @@ unsafe extern "C" fn rinit(_type: c_int, module_number: c_int) -> sys::zend_resu
     // SAFETY: request startup on the calling thread; streams and constants are request-scoped
     // (non-persistent), exactly like sapi/cli's php_cli_register_file_handles().
     unsafe {
-        for (name, path, mode) in [(c"STDIN", c"php://stdin", c"rb"), (c"STDOUT", c"php://stdout", c"wb"), (c"STDERR", c"php://stderr", c"wb")] {
+        for (name, path, mode) in
+            [(c"STDIN", c"php://stdin", c"rb"), (c"STDOUT", c"php://stdout", c"wb"), (c"STDERR", c"php://stderr", c"wb")]
+        {
             let stream = sys::_php_stream_open_wrapper_ex(path.as_ptr(), mode.as_ptr(), 0, ptr::null_mut(), ptr::null_mut());
             if stream.is_null() {
                 continue;
@@ -1022,11 +1029,33 @@ mod tests {
     fn function_table_is_terminated() {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
-        let names: Vec<String> = FUNCTIONS.0.iter().filter(|f| !f.fname.is_null()).map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string()).collect();
-        for n in ["ignis_stats", "ignis_set_superglobals", "ignis_respond", "ignis_poll", "ignis_grpc_send", "ignis_grpc_end", "ignis_grpc_call", "ignis_grpc_recv", "ignis_pg_open", "ignis_pg_query", "ignis_offload_submit", "ignis_offload_next"] {
+        let names: Vec<String> = FUNCTIONS
+            .0
+            .iter()
+            .filter(|f| !f.fname.is_null())
+            .map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string())
+            .collect();
+        for n in [
+            "ignis_stats",
+            "ignis_set_superglobals",
+            "ignis_respond",
+            "ignis_poll",
+            "ignis_grpc_send",
+            "ignis_grpc_end",
+            "ignis_grpc_call",
+            "ignis_grpc_recv",
+            "ignis_pg_open",
+            "ignis_pg_query",
+            "ignis_offload_submit",
+            "ignis_offload_next",
+        ] {
             assert!(names.contains(&n.to_string()), "{n} missing");
         }
-        let sg = FUNCTIONS.0.iter().find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals").unwrap();
+        let sg = FUNCTIONS
+            .0
+            .iter()
+            .find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals")
+            .unwrap();
         assert_eq!(sg.num_args, 4);
     }
 }

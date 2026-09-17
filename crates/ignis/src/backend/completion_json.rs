@@ -103,21 +103,34 @@ fn the_php_transport_produces_documents_core_accepts() {
     use temporalio_protos::coresdk::workflow_completion::workflow_activation_completion::Status;
 
     let workflow = [
-        (r#"{"runId":"run-1","successful":{"commands":[{"scheduleActivity":{"seq":1,"activityId":"1","activityType":"greet","taskQueue":"ignis","arguments":[{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"IkFkYSI="}],"startToCloseTimeout":"5s"}}]}}"#, 1),
+        (
+            r#"{"runId":"run-1","successful":{"commands":[{"scheduleActivity":{"seq":1,"activityId":"1","activityType":"greet","taskQueue":"ignis","arguments":[{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"IkFkYSI="}],"startToCloseTimeout":"5s"}}]}}"#,
+            1,
+        ),
         (r#"{"runId":"run-1","successful":{"commands":[{"startTimer":{"seq":2,"startToFireTimeout":"1s"}}]}}"#, 1),
-        (r#"{"runId":"run-1","successful":{"commands":[{"completeWorkflowExecution":{"result":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"IkhFTExPLCBBREEhIg=="}}}]}}"#, 1),
+        (
+            r#"{"runId":"run-1","successful":{"commands":[{"completeWorkflowExecution":{"result":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"IkhFTExPLCBBREEhIg=="}}}]}}"#,
+            1,
+        ),
         (r#"{"runId":"run-1","successful":{"commands":[]}}"#, 0),
-        (r#"{"runId":"run-2","successful":{"commands":[{"updateResponse":{"protocolInstanceId":"pi-1","accepted":{}}},{"scheduleLocalActivity":{"seq":1,"activityId":"1","activityType":"projection.jobStarted","arguments":[{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Ingi"}],"startToCloseTimeout":"5s"}}]}}"#, 2),
-        (r#"{"runId":"run-2","successful":{"commands":[{"respondToQuery":{"queryId":"q-1","succeeded":{"response":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im5ldyI="}}}}]}}"#, 1),
-        (r#"{"runId":"run-2","successful":{"commands":[{"updateResponse":{"protocolInstanceId":"pi-1","completed":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im9rOngi"}}},{"completeWorkflowExecution":{"result":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im9rOngi"}}}]}}"#, 2),
+        (
+            r#"{"runId":"run-2","successful":{"commands":[{"updateResponse":{"protocolInstanceId":"pi-1","accepted":{}}},{"scheduleLocalActivity":{"seq":1,"activityId":"1","activityType":"projection.jobStarted","arguments":[{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Ingi"}],"startToCloseTimeout":"5s"}}]}}"#,
+            2,
+        ),
+        (
+            r#"{"runId":"run-2","successful":{"commands":[{"respondToQuery":{"queryId":"q-1","succeeded":{"response":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im5ldyI="}}}}]}}"#,
+            1,
+        ),
+        (
+            r#"{"runId":"run-2","successful":{"commands":[{"updateResponse":{"protocolInstanceId":"pi-1","completed":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im9rOngi"}}},{"completeWorkflowExecution":{"result":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im9rOngi"}}}]}}"#,
+            2,
+        ),
     ];
 
     for (json, expected) in workflow {
-        let c: WorkflowActivationCompletion = crate::backend::temporal::from_protojson(
-            "coresdk.workflow_completion.WorkflowActivationCompletion",
-            json,
-        )
-        .unwrap_or_else(|e| panic!("core refused a completion the transport produced: {e}\n{json}"));
+        let c: WorkflowActivationCompletion =
+            crate::backend::temporal::from_protojson("coresdk.workflow_completion.WorkflowActivationCompletion", json)
+                .unwrap_or_else(|e| panic!("core refused a completion the transport produced: {e}\n{json}"));
 
         let commands = match c.status {
             Some(Status::Successful(s)) => s.commands,
@@ -131,9 +144,8 @@ fn the_php_transport_produces_documents_core_accepts() {
         r#"{"taskToken":"dG9rLTE=","result":{"completed":{"result":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"IkhlbGxvLCBBZGEhIg=="}}}}"#,
         r#"{"taskToken":"dG9rLWJlYXQ=","result":{"completed":{"result":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"IndvcmtlZDpiZWF0Ig=="}}}}"#,
     ] {
-        let c: ActivityTaskCompletion =
-            crate::backend::temporal::from_protojson("coresdk.ActivityTaskCompletion", json)
-                .unwrap_or_else(|e| panic!("core refused an activity completion: {e}\n{json}"));
+        let c: ActivityTaskCompletion = crate::backend::temporal::from_protojson("coresdk.ActivityTaskCompletion", json)
+            .unwrap_or_else(|e| panic!("core refused an activity completion: {e}\n{json}"));
         assert!(!c.task_token.is_empty());
         assert!(c.result.and_then(|r| r.status).is_some());
     }

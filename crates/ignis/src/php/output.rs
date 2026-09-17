@@ -57,7 +57,12 @@ impl Bound {
     /// did not fit, which happens only when the client is behind.
     fn push(&mut self, frame: bytes::Bytes) -> Vec<u8> {
         if !self.started {
-            if !crate::php::module::reactor().respond_start(self.id, self.status, std::mem::take(&mut self.headers), super::module::stream_chunks()) {
+            if !crate::php::module::reactor().respond_start(
+                self.id,
+                self.status,
+                std::mem::take(&mut self.headers),
+                super::module::stream_chunks(),
+            ) {
                 return Vec::new(); // the client is already gone
             }
             self.started = true;
@@ -255,13 +260,8 @@ pub unsafe extern "C" fn zif_stream_bind(ex: *mut sys::zend_execute_data, rv: *m
         let headers = super::module::header_pairs(ht, "ignis_stream_bind");
         let key = current();
         BOUND.with(|b| {
-            b.borrow_mut().insert(key, Bound {
-                id: id as u64,
-                status: status.clamp(100, 599) as u16,
-                headers,
-                pending: Vec::new(),
-                started: false,
-            })
+            b.borrow_mut()
+                .insert(key, Bound { id: id as u64, status: status.clamp(100, 599) as u16, headers, pending: Vec::new(), started: false })
         });
         zval::set_bool(rv, true);
     }

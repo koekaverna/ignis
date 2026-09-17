@@ -31,7 +31,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
+use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -281,7 +281,10 @@ unsafe fn ready_now(fd: c_int, events: i16) -> bool {
 /// Park until `fd` is ready in `dir`. `false` = could not park (no fiber/reactor, switching
 /// blocked, unwound by a cancellation) — the caller then makes the blocking call as before.
 unsafe fn park_on(fd: c_int, write: bool) -> bool {
-    let Some(r) = super::module::try_reactor() else { park_failed("park_on: no reactor"); return false };
+    let Some(r) = super::module::try_reactor() else {
+        park_failed("park_on: no reactor");
+        return false;
+    };
     let id = r.submit(Op::Watch { fd, write });
     trace(&format!("park_on fd={fd} write={write} op={id}"));
     let ok = unsafe { await_any(&[id]).is_some() };
@@ -326,7 +329,10 @@ unsafe fn park_io(fd: c_int, write: bool) -> Wait {
 }
 
 unsafe fn park_sleep(us: u64) -> bool {
-    let Some(r) = super::module::try_reactor() else { park_failed("park_sleep: no reactor"); return false };
+    let Some(r) = super::module::try_reactor() else {
+        park_failed("park_sleep: no reactor");
+        return false;
+    };
     let id = r.submit(Op::Sleep { us });
     unsafe { matches!(await_op(id), Some(Outcome::Slept { .. })) }
 }
@@ -339,10 +345,11 @@ pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mu
         if let Some(_g) = may_park(ret, "read")
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, false) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_read, fd, buf, n) as isize
     }
 }
@@ -353,10 +360,11 @@ pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *c
         if let Some(_g) = may_park(ret, "write")
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, true) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_write, fd, buf, n) as isize
     }
 }
@@ -368,10 +376,11 @@ pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mu
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, false) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, std::ptr::null_mut::<c_void>(), std::ptr::null_mut::<c_void>()) as isize
     }
 }
@@ -383,40 +392,59 @@ pub unsafe extern "C" fn ignis_park_send(ret: *const c_void, fd: c_int, buf: *co
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, true) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_sendto, fd, buf, n, flags, std::ptr::null::<c_void>(), 0usize) as isize
     }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ignis_park_recvfrom(ret: *const c_void, fd: c_int, buf: *mut c_void, n: usize, flags: c_int, addr: *mut c_void, alen: *mut c_uint) -> isize {
+pub unsafe extern "C" fn ignis_park_recvfrom(
+    ret: *const c_void,
+    fd: c_int,
+    buf: *mut c_void,
+    n: usize,
+    flags: c_int,
+    addr: *mut c_void,
+    alen: *mut c_uint,
+) -> isize {
     unsafe {
         if let Some(_g) = may_park(ret, "recvfrom")
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, false) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, addr, alen) as isize
     }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ignis_park_sendto(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize, flags: c_int, addr: *const c_void, alen: c_uint) -> isize {
+pub unsafe extern "C" fn ignis_park_sendto(
+    ret: *const c_void,
+    fd: c_int,
+    buf: *const c_void,
+    n: usize,
+    flags: c_int,
+    addr: *const c_void,
+    alen: c_uint,
+) -> isize {
     unsafe {
         if let Some(_g) = may_park(ret, "sendto")
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, true) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_sendto, fd, buf, n, flags, addr, alen as usize) as isize
     }
 }
@@ -425,7 +453,10 @@ pub unsafe extern "C" fn ignis_park_sendto(ret: *const c_void, fd: c_int, buf: *
 /// timer in the same race. `None` = could not park (the caller makes the blocking call itself);
 /// `Some(true)` = an fd woke us; `Some(false)` = the timer won.
 unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> Option<bool> {
-    let Some(reactor) = super::module::try_reactor() else { park_failed("park_pollfds: no reactor"); return None };
+    let Some(reactor) = super::module::try_reactor() else {
+        park_failed("park_pollfds: no reactor");
+        return None;
+    };
     let mut ids = Vec::with_capacity(fds.len() * 2 + 1);
     for p in fds {
         if p.fd < 0 {
@@ -490,7 +521,13 @@ pub unsafe extern "C" fn ignis_park_poll(ret: *const c_void, fds: *mut libc::pol
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ignis_park_ppoll(ret: *const c_void, fds: *mut libc::pollfd, n: libc::nfds_t, ts: *const libc::timespec, mask: *const libc::sigset_t) -> c_int {
+pub unsafe extern "C" fn ignis_park_ppoll(
+    ret: *const c_void,
+    fds: *mut libc::pollfd,
+    n: libc::nfds_t,
+    ts: *const libc::timespec,
+    mask: *const libc::sigset_t,
+) -> c_int {
     unsafe {
         // A signal mask changes what the wait observes; that wait stays the kernel's.
         if !mask.is_null() {
@@ -505,7 +542,14 @@ pub unsafe extern "C" fn ignis_park_ppoll(ret: *const c_void, fds: *mut libc::po
 /// probe runs on copies; the caller's sets are read for interests and filled by the final call.
 /// An fd wanted only for exceptions has no watch here — such a call is forwarded as it was.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ignis_park_select(ret: *const c_void, n: c_int, r: *mut libc::fd_set, w: *mut libc::fd_set, e: *mut libc::fd_set, tv: *mut libc::timeval) -> c_int {
+pub unsafe extern "C" fn ignis_park_select(
+    ret: *const c_void,
+    n: c_int,
+    r: *mut libc::fd_set,
+    w: *mut libc::fd_set,
+    e: *mut libc::fd_set,
+    tv: *mut libc::timeval,
+) -> c_int {
     unsafe {
         // pselect6 is the one select syscall every Linux arch has; a NULL sigmask makes it select.
         let sel = |r: *mut libc::fd_set, w: *mut libc::fd_set, e: *mut libc::fd_set, ts: *const libc::timespec| {
@@ -665,10 +709,11 @@ pub unsafe extern "C" fn ignis_park_accept4(ret: *const c_void, fd: c_int, addr:
         if let Some(_g) = may_park(ret, "accept")
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, false) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_accept4, fd, addr, alen, flags) as c_int
     }
 }
@@ -680,10 +725,11 @@ pub unsafe extern "C" fn ignis_park_recvmsg(ret: *const c_void, fd: c_int, msg: 
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, false) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_recvmsg, fd, msg, flags) as isize
     }
 }
@@ -695,10 +741,11 @@ pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: 
             && flags & libc::MSG_DONTWAIT == 0
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, true) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_sendmsg, fd, msg, flags) as isize
     }
 }
@@ -709,10 +756,11 @@ pub unsafe extern "C" fn ignis_park_readv(ret: *const c_void, fd: c_int, iov: *c
         if let Some(_g) = may_park(ret, "readv")
             && would_block(fd)
             && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, false) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_readv, fd, iov, cnt) as isize
     }
 }
@@ -723,10 +771,11 @@ pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *
         if let Some(_g) = may_park(ret, "writev")
             && would_block(fd)
             && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut {
-                *libc::__errno_location() = libc::EAGAIN;
-                return -1;
-            }
+            && park_io(fd, true) == Wait::TimedOut
+        {
+            *libc::__errno_location() = libc::EAGAIN;
+            return -1;
+        }
         libc::syscall(libc::SYS_writev, fd, iov, cnt) as isize
     }
 }
@@ -792,11 +841,7 @@ pub fn selfcheck() -> Result<(), String> {
     PROBING.store(false, Ordering::Relaxed);
     let hits = PROBE_HITS.lock().unwrap().clone();
 
-    let missed: Vec<&str> = probed
-        .iter()
-        .copied()
-        .filter(|name| !hits.iter().any(|h| h.starts_with(name)))
-        .collect();
+    let missed: Vec<&str> = probed.iter().copied().filter(|name| !hits.iter().any(|h| h.starts_with(name))).collect();
     if missed.is_empty() {
         tracing::info!(probed = ?probed, hits = hits.len(), "park self-check ok");
         return Ok(());
@@ -818,8 +863,10 @@ pub fn selfcheck() -> Result<(), String> {
 unsafe fn probe_libcurl(h: *mut c_void) {
     unsafe {
         let init: Option<unsafe extern "C" fn() -> *mut c_void> = std::mem::transmute(libc::dlsym(h, c"curl_easy_init".as_ptr()));
-        let setopt: Option<unsafe extern "C" fn(*mut c_void, c_int, ...) -> c_int> = std::mem::transmute(libc::dlsym(h, c"curl_easy_setopt".as_ptr()));
-        let perform: Option<unsafe extern "C" fn(*mut c_void) -> c_int> = std::mem::transmute(libc::dlsym(h, c"curl_easy_perform".as_ptr()));
+        let setopt: Option<unsafe extern "C" fn(*mut c_void, c_int, ...) -> c_int> =
+            std::mem::transmute(libc::dlsym(h, c"curl_easy_setopt".as_ptr()));
+        let perform: Option<unsafe extern "C" fn(*mut c_void) -> c_int> =
+            std::mem::transmute(libc::dlsym(h, c"curl_easy_perform".as_ptr()));
         let cleanup: Option<unsafe extern "C" fn(*mut c_void)> = std::mem::transmute(libc::dlsym(h, c"curl_easy_cleanup".as_ptr()));
         let (Some(init), Some(setopt), Some(perform), Some(cleanup)) = (init, setopt, perform, cleanup) else {
             tracing::warn!("park self-check: libcurl loaded but its API is not resolvable; not probed");
@@ -845,7 +892,8 @@ unsafe fn probe_libcurl(h: *mut c_void) {
 /// Make libpq's own code call `connect(2)`, same shape.
 unsafe fn probe_libpq(h: *mut c_void) {
     unsafe {
-        let connectdb: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void> = std::mem::transmute(libc::dlsym(h, c"PQconnectdb".as_ptr()));
+        let connectdb: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void> =
+            std::mem::transmute(libc::dlsym(h, c"PQconnectdb".as_ptr()));
         let finish: Option<unsafe extern "C" fn(*mut c_void)> = std::mem::transmute(libc::dlsym(h, c"PQfinish".as_ptr()));
         let (Some(connectdb), Some(finish)) = (connectdb, finish) else {
             tracing::warn!("park self-check: libpq loaded but its API is not resolvable; not probed");

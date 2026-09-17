@@ -1,8 +1,11 @@
-# The tree is hand-formatted wide. Measured 2026-09-17: at the 100-column default rustfmt rewrites
-# 377 lines in 297 places; at 120 with Max heuristics, 130 lines in 111. The heuristics matter more
-# than the width — they alone take 297 to 235 — because they lift fn_call_width/array_width/
-# chain_width off 60 and stop rustfmt exploding packed argument lists and single-line call chains.
-max_width = 120
+# The tree is hand-formatted wide: 137 non-comment lines exceed 120 columns today. Adoption diff
+# measured 2026-09-17 across the workspace, at use_small_heuristics=Max:
+#   max_width=100  241 hunks      max_width=140  +357/-181 in 14 files
+#   max_width=120  +763/-254      max_width=160  +271/-221 in 15 files
+# 140 halves 120's diff and, unlike 160, does not start re-joining lines somebody split on purpose
+# (160 deletes 221 lines to 140's 181). The heuristics matter as much as the width: they lift
+# fn_call_width/array_width/chain_width off 60, which is what was exploding packed argument lists.
+max_width = 140
 use_small_heuristics = "Max"
 style_edition = "2024"
 newline_style = "Unix"
