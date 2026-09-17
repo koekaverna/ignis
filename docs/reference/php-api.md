@@ -179,7 +179,7 @@ $result = Ignis\offload('some_slow_c_extension_call', $arg1, $arg2);
 ```
 
 With auto-routing on (the default whenever `--offload N > 0`), ordinary code is unaffected —
-`curl_exec()`/`new PDO(...)` calls made *inside a fiber* run on an offload worker without any
+`new SQLite3(...)`/`new PDO(...)` calls made *inside a fiber* run on an offload worker without any
 source change; the same calls made outside a fiber (worker thread 0, or an offload worker itself)
 run exactly as stock PHP.
 

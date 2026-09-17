@@ -71,7 +71,7 @@ alongside `threads - 1` additional worker threads, and the process exits once al
 |---|---|---|---|
 | `--config PATH` | `ignis serve` only | `./ignis.toml` if present, else built-in defaults | Explicit `ignis.toml` path; must be the first two tokens after `serve`. |
 | `--threads N` | raw `ignis <script>` form | `IGNIS_THREADS` env if set, else `1` (floored at `1` either way) | PHP worker OS threads. Parsed with `.parse().unwrap_or(1)` — a non-numeric `N` silently becomes `1`, not an error. |
-| `--offload N` | raw `ignis <script>` form | `IGNIS_OFFLOAD` env if set, else `0` | Synchronous offload worker threads (E16: `curl_*`/`PDO`/`SQLite3`). `.parse().unwrap_or(0)` — same silent-fallback behavior as `--threads`. |
+| `--offload N` | raw `ignis <script>` form | `IGNIS_OFFLOAD` env if set, else `0` | Synchronous offload worker threads for what cannot park (E16: `SQLite3`, file-backed `PDO`, CPU-bound work; `curl_*` parks — V-59). `.parse().unwrap_or(0)` — same silent-fallback behavior as `--threads`. |
 | `--supervise` | raw `ignis <script>` form | off (present only if passed, or added by `serve`'s rewrite) | Enables the respawn supervisor described above. |
 | `-r <code>` | raw `ignis <script>` form | — | Runs `<code>` as PHP on the main thread only, like `php -r`, then exits with its status. |
 | `--` | raw `ignis <script>` form | — | Reads the script from stdin, like `php --`, runs it on the main thread only. |

@@ -4,7 +4,9 @@ An application server for PHP. One Rust process embeds PHP 8.5 (ZTS) and runs ma
 OS thread on native Fibers; every wait — a timer, a socket, TLS, a PostgreSQL query — is owned by
 tokio, so the thread serves other requests meanwhile. **Unmodified synchronous PHP becomes
 non-blocking**: `file_get_contents('http://…')`, `fsockopen`, `ssl://`, `ext/sockets`, `sleep()`
-park the fiber instead of the thread. What cannot be parked (`curl_*`, `PDO`, `SQLite3`) is routed
+park the fiber instead of the thread — `curl_*` included, libcurl's own blocking calls are
+interposed, so there is no worker thread and no copy (V-59). What genuinely cannot be parked
+(`SQLite3`, a file-backed `PDO`: `epoll` refuses regular files) is routed
 to a pool of synchronous worker threads with no code change.
 
 It replaces php-fpm, FrankenPHP or RoadRunner in front of a Symfony or Laravel app. Numbers, all

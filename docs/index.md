@@ -4,8 +4,10 @@ Ignis is an application server for PHP. One Rust process embeds PHP 8.5 (ZTS) an
 requests per OS thread on native Fibers. Every wait — a timer, a socket, TLS, a PostgreSQL query —
 is owned by a tokio reactor, so the thread serves other requests while one is stuck waiting.
 Unmodified synchronous PHP becomes non-blocking: `file_get_contents`, `fsockopen`, `sleep()` and
-`ext/sockets` park the fiber instead of the thread, and what cannot be parked (`curl_*`, `PDO`,
-`SQLite3`) is routed to a pool of synchronous worker threads with no code change. It replaces
+`ext/sockets` and `curl_*` park the fiber instead of the thread — libcurl's own blocking calls are
+interposed too, so there is no worker thread and no copy. What genuinely cannot be parked
+(`SQLite3`, a file-backed `PDO` — `epoll` refuses regular files) is routed to a pool of synchronous
+worker threads with no code change. It replaces
 php-fpm, FrankenPHP or RoadRunner in front of a Symfony or Laravel app.
 
 ## The pitch
