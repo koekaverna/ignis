@@ -4,3 +4,6 @@
 pub mod async_core;
 #[cfg(feature = "temporal")]
 pub mod temporal;
+
+#[cfg(all(test, feature = "temporal"))]
+mod completion_json;

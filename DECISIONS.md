@@ -264,3 +264,28 @@ the first stable release there is no back-compat to preserve, and a file that ex
 
 History files (JOURNAL, VALIDATION, DECISIONS, HYPOTHESES) keep the old paths: they record what was
 true when they were written.
+
+## 2026-09-17 — the Rust side of the Temporal boundary speaks core's vocabulary, not sdk-php's
+
+Owner's question: are we dragging sdk-php's contracts into our Rust? Checked: no. `PhpCommand` in
+`backend/temporal.rs` carries **core's** names and fields — `ScheduleActivity`, `StartTimer`,
+`RespondToQuery`, `seq`, `protocol_instance_id`, `query_id`. None of sdk-php's vocabulary
+(`ExecuteActivity`, `NewTimer`, `Panic`, `GetChildWorkflowExecution`) appears there; all of it lives
+in the PHP package, which is what ADR-0040 §2 requires.
+
+The real defect the question exposes is different: we invented a **third schema**. Core has one,
+sdk-php has one, and `PhpCommand` is neither — so every feature costs an arm on both sides, and the
+schema is lossy (`start_to_close_sec: u64` in place of a `Duration`, and no retry policy, no
+`schedule_to_close`, no cancellation type, no headers). The read direction already has no such
+schema: `ignis_temporal_poll` hands PHP core's own activation JSON verbatim.
+
+Measured why the write direction is not symmetric (`backend/completion_json.rs`, a test that pins
+it): **prost's serde derive is not protojson.** It ignores unknown keys — a typo would silently
+produce an empty completion — it wants durations in canonical form, and it has no default for enum
+fields, so a partial document fails on the first one (`missing field cancellation_type`).
+
+Decision for now: keep the small schema, and treat the loss as the thing to fix first — the fields a
+real workflow needs (retry policy, the other timeouts, cancellation type, headers) belong in the
+existing arms. The structural fix, when it is worth doing, is protojson proper via `prost-reflect`
+over the descriptor pool the build already emits, after which Rust is a dumb pipe in both directions
+and no Temporal feature needs a Rust change again.
