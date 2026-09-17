@@ -60,7 +60,8 @@ Ordinary, unmodified PHP keeps working — no code change to adopt Ignis:
 - `file_get_contents`, `fsockopen`, `stream_socket_client` over `tcp://`/`ssl://`/`tls://`/`unix://`,
   `ext/sockets` — park the fiber, STARTTLS supported (V-12, V-25, V-29).
 - `curl_*` — parks the fiber, no worker and no copy, the write callback stays in the calling fiber (V-45, V-59);
-- `SQLite3` and file-backed `PDO` — auto-routed to a synchronous offload worker pool with no code change (a regular file cannot be parked);
+- `PDO` on `pgsql` — parks the fiber (V-45, V-59);
+- `SQLite3` — auto-routed to a synchronous offload worker pool with no code change (a regular file cannot be parked); `pdo_sqlite` blocks the thread unless you add `PDO` to `IGNIS_OFFLOAD_CLASSES`;
   proxies keep `instanceof` and class constants correct (V-24 addendum).
 - PostgreSQL — a runtime-owned connection pool with a lease per fiber and a one-round-trip session
   reset on release (V-21).

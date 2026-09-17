@@ -46,8 +46,14 @@ namespace Ignis\Offload {
                 return;
             }
             self::$enabled = true;
-            self::proxyClass('PDO');
-            self::proxyClass('SQLite3');
+            // Mirror the runtime's IGNIS_OFFLOAD_CLASSES (route.rs): proxy only what it routes,
+            // or a `new PDO('pgsql:…')` would become a proxy for a class the runtime lets through.
+            foreach (explode(',', getenv('IGNIS_OFFLOAD_CLASSES') ?: 'SQLite3') as $class) {
+                $class = trim($class);
+                if ($class !== '' && class_exists($class, false)) {
+                    self::proxyClass($class);
+                }
+            }
             \ignis_route_enable(true);
         }
 

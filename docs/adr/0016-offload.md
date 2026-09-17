@@ -68,4 +68,8 @@ the old behaviour.
 
 What this ADR is still the answer for is unchanged and is now the whole of it: calls that **cannot**
 park — `SQLite3` and a file-backed `PDO`, because `epoll` refuses regular files (ADR-0024) — and
-CPU-bound work, which no readiness wait can help. `DEFAULT_CLASSES` stays `PDO,SQLite3`.
+CPU-bound work, which no readiness wait can help. `DEFAULT_CLASSES` is now **`SQLite3`** alone:
+routing by class name sent every `PDO` driver to a worker, and `pgsql` parks 9× faster than it
+routes (303 ms against 2,753 ms for 100 × 200 ms). The driver lives in the DSN and `create_object`
+runs before the constructor's arguments exist, so the runtime cannot decide per driver; a
+`pdo_sqlite` application sets `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` and gets the pool back.

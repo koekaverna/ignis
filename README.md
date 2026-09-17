@@ -176,8 +176,9 @@ LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis serve examples/hello_s
 | `sleep()`, `usleep()` | park the fiber | V-22 |
 | `stream_select()` on hooked streams | answered without blocking | V-26 (TLS read-ahead: open, B7) |
 | `curl_*` (including `CURLOPT_WRITEFUNCTION` and `curl_multi_*`) | **parks the fiber** — libcurl's own blocking calls are interposed, no worker thread and no copy, and the write callback runs in the calling fiber | V-45, V-59 |
-| `PDO` on a socket-backed driver (`pgsql`, `mysql`) | parks the fiber | V-45 |
-| `SQLite3`, `PDO` on a file-backed driver | routed to the offload pool, the fiber sleeps — a regular file cannot be parked (ADR-0024), so offload is the only mechanism it has | V-24 |
+| `PDO` on a socket-backed driver (`pgsql`; `mysql` is not compiled into this build) | **parks the fiber** — 303 ms for 100 × 200 ms queries on one thread, against 2,753 ms through an 8-worker offload pool | V-45, V-59 |
+| `SQLite3` | routed to the offload pool, the fiber sleeps — a regular file cannot be parked (ADR-0024), so offload is the only mechanism it has | V-24 |
+| `PDO` on `sqlite:` | **blocks the OS thread** for the length of the file access, like every other regular-file call (ADR-0024). Routing is by class name and the driver is in the DSN, which the runtime cannot see when it decides — set `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to send every `PDO` to the pool instead | V-59 addendum |
 | PostgreSQL | runtime-owned pool with per-fiber leases (`Ignis\Pg`), or `ext/pgsql` async over the same reactor | V-21, research 24 |
 | `$_SERVER`, `$_GET`, `$_POST`, `$_COOKIE` | fiber-scoped; two interleaved requests never see each other's | V-11 |
 | a client disconnect | cancels the request fiber and its children within 1 ms; `Ignis\deadline()` per request | V-14, V-30 |

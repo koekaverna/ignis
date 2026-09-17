@@ -2392,3 +2392,45 @@ exposed it. The table above is from a script that loads the router.
 Gates: `cargo nextest` 9/9, `bench/app-check.sh` 7/7 against the owner's Symfony app,
 `scripts/smoke.sh` exit 0 (its `/offload` route still works — it drives the pool explicitly through
 `Ignis\offload()`, not through curl auto-routing).
+
+### V-59 addendum — `PDO` leaves the default routing too; only `SQLite3` stays
+
+Date: 2026-09-17T06:31:09Z. The owner asked what happens to `pdo_pgsql` and `pdo_mysql`. `pdo_mysql` is **not
+compiled into this build** (`PDO`, `pdo_pgsql`, `pdo_sqlite`, `pgsql`, `sqlite3` are), so the
+question is pgsql against sqlite — and `pdo_pgsql` had the same defect curl had, one level less
+visible: routing is by **class name**, so every `PDO` went to a worker, including the socket-backed
+driver that parks perfectly well.
+
+100 concurrent `new PDO(pgsql…)` + `SELECT pg_sleep(0.2)` on one thread, router loaded, `--offload 8`:
+
+| path | wall |
+|---|---|
+| **park** (`PDO` out of the routed list) | **303 ms** |
+| offload, 8 workers | **2,753 ms** |
+| neither (control, n=20 scaled) | ~20,550 ms |
+
+`DEFAULT_CLASSES` is now `SQLite3`; after the change the default reads **310 ms**, and
+`IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` restores routing at **2,756 ms**. Behaviour verified both ways:
+
+    default                        SQLite3: class=Ignis\Offload\Proxy\SQLite3 value=42
+                                   PDO sqlite: class=PDO value=7
+    IGNIS_OFFLOAD_CLASSES=PDO,…    SQLite3: class=Ignis\Offload\Proxy\SQLite3 value=42
+                                   PDO sqlite: class=Ignis\Offload\Proxy\PDO value=7
+
+**Why not decide per driver automatically:** the driver is in the DSN, and `create_object` runs when
+the VM executes `NEW` — before the constructor's arguments exist. The runtime cannot see
+`pgsql:` versus `sqlite:` at the only moment it gets to choose. Routing the class that is *always*
+file-backed is the honest default.
+
+**The price, stated plainly:** `new PDO('sqlite:…')` now blocks the OS thread for the length of the
+file access. That is the rule already in force for `file_get_contents`, opcache and sessions
+(ADR-0024 — a regular file is not epoll-able); PDO used to be exempt by accident and is not any
+more. One environment variable restores it, and the compatibility table, the configuration
+reference, `ignis.toml.example` and `docs/migrate.md` all say so.
+
+**Also fixed:** `php/offload/ignis-offload.php` proxied a hard-coded `PDO,SQLite3` of its own, so a
+`new PDO('pgsql:…')` would have become a proxy for a class the runtime no longer routes. It now
+reads the same `IGNIS_OFFLOAD_CLASSES`.
+
+Gates: `cargo nextest` 9/9, `bench/app-check.sh` 7/7, `scripts/smoke.sh` exit 0, phpt counts and
+per-test sets ≥ baseline (gate exit 0), `mkdocs build --strict` clean.

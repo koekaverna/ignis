@@ -38,10 +38,18 @@ thread_local! {
 /// `IGNIS_OFFLOAD_FUNCTIONS=curl_init,curl_exec,...` if a build ever has a libcurl that must not
 /// park (research 27 cleared this one).
 const DEFAULT_FUNCTIONS: &str = "";
-/// `SQLite3` and `PDO` stay: SQLite talks to a **regular file**, which epoll refuses, so park can
-/// never apply to it (ADR-0024) — offload is the only mechanism it has. `PDO` covers that case too;
-/// a PDO driver that is socket-backed (pgsql, mysql) parks anyway once the route declines.
-const DEFAULT_CLASSES: &str = "PDO,SQLite3";
+/// `SQLite3` only, since 2026-09-17 (V-59 addendum). `PDO` used to be here as well, and that sent
+/// **every** driver to a worker — including `pgsql` and `mysql`, which talk over a socket and park
+/// perfectly well: measured at 100 × 200 ms on one thread, `pdo_pgsql` is **303 ms parked against
+/// 2,753 ms through an 8-worker pool**. The routing is by class name and the driver is in the DSN,
+/// which `create_object` cannot see (the VM calls it before the constructor's arguments exist), so
+/// the honest default is to route only the class that is always file-backed.
+///
+/// A `pdo_sqlite` user therefore blocks the thread for the length of a local file read — the same
+/// rule that already governs `file_get_contents`, opcache and sessions (ADR-0024: a regular file is
+/// not epoll-able and no mechanism here makes it asynchronous). Set
+/// `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to get the old behaviour back for it.
+const DEFAULT_CLASSES: &str = "SQLite3";
 
 unsafe fn cg() -> *mut sys::zend_compiler_globals {
     unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::compiler_globals_offset) as *mut sys::zend_compiler_globals }

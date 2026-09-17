@@ -194,7 +194,7 @@ not a silently ignored one).
 | `entry` | — (positional arg to `ignis serve`) | none, required | PHP entry script every worker thread runs |
 | `listen` | `IGNIS_LISTEN` | `127.0.0.1:8080` | listener address |
 | `threads` | `IGNIS_THREADS` | available parallelism (cores) | PHP worker threads |
-| `offload` | `IGNIS_OFFLOAD` | `0` | synchronous workers for what cannot park — `SQLite3`, file-backed `PDO`, CPU-bound work; `curl_*` parks (V-59) |
+| `offload` | `IGNIS_OFFLOAD` | `0` | synchronous workers for what cannot park — `SQLite3` and CPU-bound work; `curl_*` and socket-backed `PDO` park (V-59) |
 | `supervise` | — (bridged to the `--supervise` CLI flag, no env var) | `true` | respawn a worker whose script ends |
 | `php_ini` | `IGNIS_PHP_INI` | none | extra php.ini (the embed SAPI has no `-c`/`-d`) |
 | `log` | `RUST_LOG` | `warn` | log filter (`tracing_subscriber::EnvFilter` syntax) |
