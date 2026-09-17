@@ -209,3 +209,19 @@ The answer for applications that are not worker-safe stays what it already was: 
 worker-safe (`require_once`, no state in statics, a socket-backed session), which README, the
 compatibility table and the runbook document. The three measuring instruments are kept under
 `bench/e19/` so a future attempt starts from numbers.
+
+## 2026-09-17 — no CLI mode; a command-line script opts into concurrency itself
+
+Owner asked whether the CLI should be made asynchronous. Measured first (V-60): it already is —
+`Ignis\async()`/`Ignis\all()` plus universal park turn ten unmodified `sleep(1)` calls into 1.00 s
+instead of 10.00 s, and twenty `file_get_contents()` of a 200 ms endpoint into 0.21 s instead of
+4.07 s, on one thread. So nothing is built: no CLI mode, no flag, no fourth mechanism.
+
+The top level of a script stays blocking, and that is the decision rather than an omission. It runs
+in `{main}` with no fiber, so park is off there; a single wait has nothing to overlap with, and an
+implicit scheduler around every script would be one more thing to understand when a command hangs.
+Concurrency begins exactly where the script says there is a second thing to do.
+
+Shipped: `examples/cli.php` (the measurement, runnable, with its hook-off arm) and
+`docs/getting-started/cli.md` — including what it does *not* give: parallel CPU, and concurrent DNS
+while R-DNS is open.

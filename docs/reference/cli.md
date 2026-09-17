@@ -5,6 +5,10 @@ Source: `crates/ignis/src/main.rs` (argument parsing, thread/offload spawn, exit
 two front ends that share everything past argument parsing: `ignis serve` (product mode, reads
 `ignis.toml`) and the lower-level `ignis <script.php>` form serve rewrites itself into.
 
+Writing a command-line script rather than looking up a flag? See
+[Command-line scripts](../getting-started/cli.md) — what parks, what does not, and when it is worth
+using fibers in a console command at all.
+
 ## Forms
 
 ```

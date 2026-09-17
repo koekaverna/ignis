@@ -56,6 +56,7 @@ nav:
       - Quickstart: getting-started/quickstart.md
       - Symfony: getting-started/symfony.md
       - Legacy apps: getting-started/legacy.md
+      - Command-line scripts: getting-started/cli.md
   - Reference:
       - Configuration: reference/configuration.md
       - PHP API: reference/php-api.md

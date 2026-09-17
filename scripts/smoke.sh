@@ -68,6 +68,12 @@ PGHOST="${PGHOST:-127.0.0.1}"
 echo "== build (release)"; timeout 900 cargo build --release -q -p ignis
 echo "== unit tests";      timeout 900 cargo nextest run --workspace 2>&1 | tail -1
 echo "== hello";           $T ./target/release/ignis examples/hello.php
+# V-60: a CLI script overlaps its waits. 10 x sleep(1) in fibers is ~1 s; if park ever stops
+# reaching a plain sleep() from a CLI entry, this is 10 s and the gate says so.
+echo "== cli (examples/cli.php: 10 x sleep(1) in fibers, must be < 3 s)"
+cli_s=$($T ./target/release/ignis examples/cli.php | sed -nE 's/.*: ([0-9.]+) s/\1/p')
+echo "cli: ${cli_s:-none} s"
+awk -v s="${cli_s:-99}" 'BEGIN{exit !(s+0 < 3)}' || { echo "cli.php did not overlap its waits (${cli_s:-no output} s)"; exit 1; }
 echo "== app.php (API spec: served in the background, routes curled)"
 # One address for the server and every curl below. Override with IGNIS_LISTEN when :8080 is taken —
 # before this, a stranger on :8080 was curled instead and its answers were reported as ours.

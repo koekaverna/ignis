@@ -2434,3 +2434,32 @@ reads the same `IGNIS_OFFLOAD_CLASSES`.
 
 Gates: `cargo nextest` 9/9, `bench/app-check.sh` 7/7, `scripts/smoke.sh` exit 0, phpt counts and
 per-test sets ≥ baseline (gate exit 0), `mkdocs build --strict` clean.
+
+## V-60 — a command-line script overlaps its waits without an async client (CONFIRMED)
+
+Date: 2026-09-17T09:52Z. Owner asked whether the CLI should be made asynchronous. It already is, and
+the measurement is the answer: no CLI mode, no flag and no fourth mechanism were needed — the script
+opts in with `Ignis\async()`/`Ignis\all()` and universal park does the rest.
+
+Binary `target/release/ignis` (38.4 MB, built 09:27), one PHP thread, `examples/cli.php` and a
+20-request I/O arm against `examples/hello_server.php` on `127.0.0.1:8187` (`--threads 2`):
+
+| program | sequential | `Ignis\all()` | `IGNIS_NO_UNIVERSAL_PARK=1` |
+|---|---|---|---|
+| 10 × `sleep(1)` | 10.00 s | **1.00 s** | 10.00 s |
+| 20 × `file_get_contents()` of a 200 ms endpoint (by IP) | 4.07 s | **0.21 s** | — |
+
+Both calls are PHP's own blocking ones; nothing in the script is an async client. The hook-off arm
+is the control required of every park claim: with the interposer disabled the same program takes the
+sequential time, so the win is parking and not scheduling luck.
+
+**The top level of a CLI script deliberately blocks.** It runs in `{main}`, not a fiber, so the gate
+in `park.rs` is 0 and the call is forwarded — measured above as the 10.00 s sequential arm. That is
+the correct answer rather than a gap: a single wait has nothing to overlap with, and wrapping every
+script in an implicit fiber would add a scheduler to reason about with no measured benefit.
+
+Limits, stated because the docs page now states them: the fibers share one thread, so CPU-bound work
+does not parallelize (`--offload`/`--threads`); and `getaddrinfo` is not interposed (BACKLOG R-DNS),
+so a fan-out to a *hostname* resolves serially — the I/O arm above uses an IP for that reason.
+
+Commands: `ignis examples/cli.php [seq]`, and the I/O arm in this entry's scratch script.
