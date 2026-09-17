@@ -117,8 +117,12 @@ jobs:
           You also need the PHP userland tree (php/ and examples/ from the repo) and an
           ignis.toml — see docker/ignis.toml and docs/operate.md.
           EOF
+          # -C changes where tar READS from, not where it writes: the archive already lands in the
+          # workspace (the step's cwd), so the `mv` that used to follow looked for it in
+          # /tmp/release and failed. Found by the first real tag (v0.1.0-rc.1, run 35186470045) —
+          # everything before this step had already succeeded, image included.
           tar -C /tmp/release -czf "$dir.tar.gz" "$dir"
-          mv "/tmp/release/$dir.tar.gz" .
+          ls -l "$dir.tar.gz"
 
       - name: release notes since previous tag
         id: notes
