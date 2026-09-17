@@ -403,7 +403,7 @@ pub(super) unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(St
 /// How many chunks may sit between PHP and the socket. Read once: it cannot change, and
 /// `respond_start` runs per streamed response.
 pub(super) fn stream_chunks() -> usize {
-    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    static V: OnceLock<usize> = OnceLock::new();
     *V.get_or_init(|| std::env::var("IGNIS_STREAM_CHUNKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2usize))
 }
 
@@ -459,11 +459,11 @@ pub(super) fn send_chunk(id: u64, chunk: bytes::Bytes) -> i64 {
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return -1, // the client hung up
     };
     // Full: now it is worth an op, because awaiting it is exactly the back-pressure.
-    reactor().submit(crate::reactor::Op::Custom(Box::pin(async move {
+    reactor().submit(Op::Custom(Box::pin(async move {
         match tx.send(chunk).await {
-            Ok(()) => crate::reactor::Outcome::Ready,
+            Ok(()) => Outcome::Ready,
             // The receiver is gone: the client hung up. The handler sees it and can stop.
-            Err(_) => crate::reactor::Outcome::Failed("client gone".into()),
+            Err(_) => Outcome::Failed("client gone".into()),
         }
     }))) as i64
 }
@@ -1008,7 +1008,7 @@ mod tests {
     fn module_entry_matches_header_constants() {
         // SAFETY: read-only access to a static in a single test thread.
         let m = unsafe { &*(&raw const MODULE) };
-        assert_eq!(m.size as u64, std::mem::size_of::<sys::zend_module_entry>() as u64);
+        assert_eq!(m.size as u64, size_of::<sys::zend_module_entry>() as u64);
         assert_eq!(m.zts, 1, "must be built against a ZTS PHP");
         let bid = unsafe { CStr::from_ptr(m.build_id) }.to_str().unwrap();
         assert!(bid.ends_with(",TS"), "build id {bid} is not a TS build");

@@ -239,7 +239,7 @@ unsafe fn would_block(fd: c_int) -> bool {
 
 unsafe fn getsockopt_int(fd: c_int, opt: c_int) -> Option<c_int> {
     let mut v: c_int = 0;
-    let mut l = std::mem::size_of::<c_int>() as libc::socklen_t;
+    let mut l = size_of::<c_int>() as libc::socklen_t;
     // SAFETY: getsockopt only writes `l` bytes into `v`, which is a live local of that size.
     let rc = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut v as *mut c_int as *mut c_void, &mut l) };
     if rc == 0 { Some(v) } else { None }
@@ -248,7 +248,7 @@ unsafe fn getsockopt_int(fd: c_int, opt: c_int) -> Option<c_int> {
 /// Has a peer (`getpeername` succeeds) — i.e. the socket is connected.
 unsafe fn is_connected(fd: c_int) -> bool {
     let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
-    let mut l = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    let mut l = size_of::<libc::sockaddr_storage>() as libc::socklen_t;
     // SAFETY: getpeername writes at most `l` bytes into `ss`, a live local of that size.
     unsafe { libc::getpeername(fd, &raw mut ss as *mut libc::sockaddr, &mut l) == 0 }
 }
@@ -259,7 +259,7 @@ unsafe fn is_bound(fd: c_int) -> bool {
     // SAFETY: as `is_connected`; the family tag decides which member of the union is read.
     unsafe {
         let mut ss: libc::sockaddr_storage = std::mem::zeroed();
-        let mut l = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        let mut l = size_of::<libc::sockaddr_storage>() as libc::socklen_t;
         if libc::getsockname(fd, &raw mut ss as *mut libc::sockaddr, &mut l) != 0 {
             return false;
         }
@@ -296,7 +296,7 @@ unsafe fn park_on(fd: c_int, write: bool) -> bool {
 /// 0 = none, and 0 for anything that is not a socket (a pipe has no such option).
 unsafe fn sock_timeout_ms(fd: c_int, write: bool) -> c_int {
     let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
-    let mut len = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+    let mut len = size_of::<libc::timeval>() as libc::socklen_t;
     let opt = if write { libc::SO_SNDTIMEO } else { libc::SO_RCVTIMEO };
     if unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut tv as *mut libc::timeval as *mut c_void, &mut len) } != 0 {
         return 0;
@@ -506,7 +506,7 @@ pub unsafe extern "C" fn ignis_park_ppoll(ret: *const c_void, fds: *mut libc::po
     unsafe {
         // A signal mask changes what the wait observes; that wait stays the kernel's.
         if !mask.is_null() {
-            return libc::syscall(libc::SYS_ppoll, fds, n as usize, ts, mask, std::mem::size_of::<libc::sigset_t>()) as c_int;
+            return libc::syscall(libc::SYS_ppoll, fds, n as usize, ts, mask, size_of::<libc::sigset_t>()) as c_int;
         }
         let timeout = if ts.is_null() { -1 } else { ms_ceil(&*ts) };
         poll_impl(ret, "ppoll", fds, n, timeout)
@@ -608,7 +608,7 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
             libc::syscall(libc::SYS_poll, &mut p as *mut libc::pollfd, 1usize, -1);
         }
         let mut so_err: c_int = 0;
-        let mut len = std::mem::size_of::<c_int>() as libc::socklen_t;
+        let mut len = size_of::<c_int>() as libc::socklen_t;
         if libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_ERROR, &mut so_err as *mut c_int as *mut c_void, &mut len) < 0 {
             return -1;
         }

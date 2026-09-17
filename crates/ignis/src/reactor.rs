@@ -67,7 +67,7 @@ pub enum ResponseBody {
     /// Chunks as PHP produces them. The channel is small on purpose: a full channel is what makes
     /// `ignis_respond_chunk()` park its fiber, which is back-pressure from the client's TCP window
     /// all the way into the handler.
-    Stream(tokio::sync::mpsc::Receiver<Bytes>),
+    Stream(mpsc::Receiver<Bytes>),
 }
 
 /// Result of an op. Plain data only.
@@ -114,7 +114,7 @@ pub struct Reactor {
     responders: Mutex<HashMap<u64, oneshot::Sender<HttpResponse>>>,
     /// R-STREAM: for a response PHP is still producing, the end hyper is draining. Present only
     /// between `respond_start` and `respond_end`; dropping the sender is what ends the body.
-    stream_out: Mutex<HashMap<u64, tokio::sync::mpsc::Sender<Bytes>>>,
+    stream_out: Mutex<HashMap<u64, mpsc::Sender<Bytes>>>,
     /// gRPC response streams PHP is still filling (E10, ADR-0014).
     streams: Mutex<HashMap<u64, mpsc::UnboundedSender<GrpcMsg>>>,
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
@@ -333,7 +333,7 @@ impl Reactor {
     /// follows chunk by chunk. `cap` is the number of chunks that may sit between PHP and the
     /// socket — small, because that queue is the back-pressure.
     pub fn respond_start(&self, id: u64, status: u16, headers: Vec<(String, String)>, cap: usize) -> bool {
-        let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(cap.max(1));
+        let (tx, rx) = mpsc::channel::<Bytes>(cap.max(1));
         match self.responders.lock().unwrap().remove(&id) {
             Some(responder) => {
                 if responder.send(HttpResponse { status, headers, body: ResponseBody::Stream(rx) }).is_err() {
@@ -347,7 +347,7 @@ impl Reactor {
     }
 
     /// The sending end of a streamed answer, if one is open.
-    pub fn stream_sender(&self, id: u64) -> Option<tokio::sync::mpsc::Sender<Bytes>> {
+    pub fn stream_sender(&self, id: u64) -> Option<mpsc::Sender<Bytes>> {
         self.stream_out.lock().unwrap().get(&id).cloned()
     }
 

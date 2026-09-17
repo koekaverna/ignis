@@ -75,7 +75,7 @@ impl Registry {
 
 /// Number of registered PHP threads that have not polled for longer than `limit`
 /// (a thread busy in PHP code for that long), and the total registered.
-pub fn stalled_threads(limit: std::time::Duration) -> (usize, usize) {
+pub fn stalled_threads(limit: Duration) -> (usize, usize) {
     match REGISTRY.get() {
         Some(r) => {
             let rs = r.reactors.lock().unwrap();
@@ -109,7 +109,7 @@ pub fn is_draining() -> bool {
 
 /// Starts the drain: stop accepting, then wait until no request is in flight, bounded by
 /// `IGNIS_DRAIN_TIMEOUT_MS` (default 10 s). Returns how long it took and what was still pending.
-pub async fn drain() -> (std::time::Duration, usize) {
+pub async fn drain() -> (Duration, usize) {
     // Two phases, because a load balancer needs to be told before the socket goes away:
     // 1. health answers "draining" (503) while the listener is STILL accepting, for
     //    `IGNIS_DRAIN_DELAY_MS` — set it to a little more than the balancer's check interval and a
@@ -124,13 +124,13 @@ pub async fn drain() -> (std::time::Duration, usize) {
     LISTENER_STOP.store(true, Ordering::Relaxed);
     SHUTDOWN.notify_waiters();
     let limit = env_ms("IGNIS_DRAIN_TIMEOUT_MS", 10_000);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     loop {
         let pending = totals().pending;
         if pending == 0 || started.elapsed() >= limit {
             return (started.elapsed(), pending);
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -270,8 +270,8 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
 /// thread is registered and not every one of them is stalled; 503 otherwise — so a load balancer
 /// stops sending to a process whose workers are all wedged, which `/` from PHP could never report.
 fn health() -> Response<tonic::body::Body> {
-    let (stalled, total) = stalled_threads(std::time::Duration::from_secs(1));
-    let restarts = crate::RESTARTS.load(std::sync::atomic::Ordering::Relaxed);
+    let (stalled, total) = stalled_threads(Duration::from_secs(1));
+    let restarts = crate::RESTARTS.load(Ordering::Relaxed);
     let ok = total > 0 && stalled < total && !is_draining();
     let body = format!(
         "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts}}}\n",

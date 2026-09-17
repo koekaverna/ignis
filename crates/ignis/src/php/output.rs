@@ -209,7 +209,7 @@ pub unsafe extern "C" fn flush(_server_context: *mut std::ffi::c_void) {
 /// VM frame on a PHP thread; the string argument is copied before anything is submitted.
 pub unsafe extern "C" fn zif_stream_write(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     unsafe {
-        let mut buf: *mut std::ffi::c_char = std::ptr::null_mut();
+        let mut buf: *mut c_char = std::ptr::null_mut();
         let mut len: usize = 0;
         if sys::zend_parse_parameters(zval::num_args(ex), c"s".as_ptr(), &mut buf, &mut len) != sys::SUCCESS {
             return;
@@ -293,7 +293,7 @@ pub unsafe extern "C" fn zif_stream_unbind(_ex: *mut sys::zend_execute_data, rv:
     // SAFETY: `rv` is the VM's return slot; the string zval is owned by the caller.
     unsafe {
         zval::set_new_array(rv);
-        sys::add_next_index_stringl(rv, tail.as_ptr() as *const std::ffi::c_char, tail.len());
+        sys::add_next_index_stringl(rv, tail.as_ptr() as *const c_char, tail.len());
         sys::add_next_index_bool(rv, started);
     }
 }

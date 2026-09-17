@@ -149,7 +149,7 @@ unsafe extern "C" fn trampoline(ex: *mut sys::zend_execute_data, rv: *mut sys::z
         }
         // Build [name, [args...]] and call Ignis\Offload\Router::dispatch.
         let n = (*ex).This.u2.num_args as usize;
-        let slot = std::mem::size_of::<sys::zend_execute_data>() / std::mem::size_of::<sys::zval>();
+        let slot = size_of::<sys::zend_execute_data>() / size_of::<sys::zval>();
         let mut args: sys::zval = std::mem::zeroed();
         zval::set_new_array(&mut args);
         for i in 0..n {
