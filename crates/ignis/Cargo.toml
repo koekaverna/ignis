@@ -27,6 +27,10 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 base64 = "0.22"
 prost-wkt-types = { version = "0.7", optional = true }
+# ADR-0040: protojson, so the completion boundary carries core's own documents rather than a
+# third schema of ours. prost's serde derive is not protojson (backend/completion_json.rs).
+prost-reflect = { version = "0.16", features = ["serde"], optional = true }
+prost = { version = "0.14", optional = true }
 
 hyper = { version = "1", features = ["http1", "http2", "server"] }
 http-body-util = "0.1"
@@ -51,4 +55,4 @@ cc = "1"
 # overhead bench (H35), `IGNIS_NO_UNIVERSAL_PARK=1` the runtime off switch.
 default = ["universal-park"]
 universal-park = []
-temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-wkt-types"]
+temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-wkt-types", "dep:prost-reflect", "dep:prost"]

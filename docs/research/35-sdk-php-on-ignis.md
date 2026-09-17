@@ -169,3 +169,22 @@ nobody documents: `StartWorkflow`'s `options['info']` must carry the `#[Marshal]
 `Temporal\Workflow\WorkflowInfo` with nanosecond timeouts; and sdk-php builds its own responses with
 `EncodedValues::fromValues()` and **no** data converter, so `toPayloads()` throws unless the
 transport calls `setDataConverter()` first.
+
+## 8. The boundary carries core's documents (2026-09-17, V-65)
+
+§4 above said the MVP needed no Rust change because a small hand-written schema already accepted the
+four commands it emitted. That schema is now deleted. The owner asked whether sdk-php's contracts
+were leaking into our Rust; they were not — the vocabulary there was core's — but the question
+exposed that a **third** schema sat between core and sdk-php: an arm per feature, and lossy enough
+that an activity could not carry a retry policy.
+
+The obvious fix, passing core's own completion JSON through, fails with `temporalio-protos`' serde
+derive, and `backend/completion_json.rs` now pins why: the derive ignores unknown keys (a typo would
+silently yield an empty completion), wants canonical durations, and has **no default for enum
+fields**, so partial documents die one message at a time. protojson proper — `prost-reflect` over
+the descriptor pool the crate publishes through its `links` key — accepts partial documents *and*
+rejects unknown fields.
+
+`backend/temporal.rs` went 441 -> 311 lines, and the Rust side now costs nothing per Temporal
+feature. The loop is closed without a server: the completions the PHP transport really produces are
+decoded in a Rust test by the same function the runtime uses.

@@ -52,7 +52,16 @@ tie to RoadRunner turns out to be a default argument.
    workflow factory (workflow code never waits on real I/O) and N activity factories, each in its
    own fiber. This is RoadRunner's worker pool with fibers instead of processes — an activity that
    waits on a database costs a parked fiber here and a whole OS process there.
-5. **An untranslated command is an exception, never a silent drop.** `CoreCodec::encode()` throws
+5. **The Rust boundary carries core's own documents, in protojson, both ways** (added 2026-09-17,
+   V-65). There is no schema of ours between core and sdk-php: an activation is serialised straight
+   out of the proto, a completion is parsed straight into it, through `prost-reflect` over the
+   descriptor pool `temporalio-protos` publishes. Not prost's serde derive, for two measured reasons
+   kept as a test in `backend/completion_json.rs` — it has no default for enum fields, so partial
+   documents die one message at a time, and it ignores unknown keys, so a typo would silently
+   produce an empty completion. The consequence that matters: **a new Temporal feature costs nothing
+   on the Rust side**, only in the PHP package, which is where decision 2 says all the knowledge
+   belongs.
+6. **An untranslated command is an exception, never a silent drop.** `CoreCodec::encode()` throws
    by name for anything outside the translated set, because a dropped command is a workflow that
    hangs until its task timeout — a far worse bug to find.
 

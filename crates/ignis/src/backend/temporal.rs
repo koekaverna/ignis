@@ -1,7 +1,18 @@
-//! Temporal (E9, ADR-0013): sdk-core workers on the shared tokio runtime,
-//! driven from PHP through `Op::Custom` futures. Only JSON crosses the
-//! boundary (`serde_serialize` feature of `temporalio-protos`), mirroring
-//! sdk-python's "poll returns bytes, complete takes bytes".
+//! Temporal (E9, ADR-0013; ADR-0040): sdk-core workers on the shared tokio runtime, driven from
+//! PHP through `Op::Custom` futures, mirroring sdk-python's "poll returns bytes, complete takes
+//! bytes".
+//!
+//! **The boundary carries core's own documents, in protojson, in both directions.** There is no
+//! schema of ours in between: an activation is serialised straight out of the proto, a completion
+//! is parsed straight into it. Every field core has is therefore expressible — retry policies,
+//! cancellation types, headers, memo, search attributes — and a new Temporal feature costs nothing
+//! here, only in the PHP package that speaks sdk-php's model (ADR-0040 §2).
+//!
+//! protojson and not prost's serde derive, for two measured reasons pinned in
+//! `backend/completion_json.rs`: the derive has no default for enum fields, so partial documents
+//! die one message at a time; and it ignores unknown keys, so a typo would silently produce an
+//! empty completion. `prost-reflect` over the descriptor pool `temporalio-protos` publishes gets
+//! both right, and rejects unknown fields on request.
 //!
 //! FFI contract: the zif functions parse their arguments into owned Rust data
 //! and submit a future; nothing Zend-owned is captured. Workers live in a
@@ -13,17 +24,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use ignis_sys as sys;
 use temporalio_client::{Connection, ConnectionOptions};
 use temporalio_common::worker::WorkerTaskTypes;
-use temporalio_protos::coresdk::activity_result::{ActivityExecutionResult, Success, activity_execution_result};
-use temporalio_protos::coresdk::workflow_commands::{
-    CancelChildWorkflowExecution, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution, QueryResult,
-    QuerySuccess, RequestCancelActivity, RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity,
-    StartChildWorkflowExecution, StartTimer, UpdateResponse, query_result, update_response, workflow_command,
-};
-use temporalio_protos::coresdk::ActivityHeartbeat;
+use prost::Message;
+use prost_reflect::{DescriptorPool, DeserializeOptions, DynamicMessage, SerializeOptions};
 use temporalio_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
-use temporalio_protos::coresdk::ActivityTaskCompletion;
-use temporalio_protos::temporal::api::common::v1::{Payload, WorkflowExecution};
-use temporalio_protos::temporal::api::failure::v1::Failure;
+use temporalio_protos::coresdk::{ActivityHeartbeat, ActivityTaskCompletion};
+use temporalio_protos::temporal::api::common::v1::WorkflowExecution;
 use temporalio_protos::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryRequest;
 use temporalio_sdk_core::replay::{HistoryForReplay, ReplayWorkerInput};
 use temporalio_sdk_core::{CoreRuntime, Worker, WorkerConfig, WorkerVersioningStrategy, init_replay_worker, init_worker};
@@ -36,165 +41,33 @@ static RUNTIME: OnceLock<CoreRuntime> = OnceLock::new();
 static WORKERS: Mutex<Option<HashMap<u64, Arc<Worker>>>> = Mutex::new(None);
 static NEXT: Mutex<u64> = Mutex::new(1);
 
-/// The command schema PHP emits (ADR-0013): small, defaulted, independent of prost's
-/// serde field requirements. Payloads are `{"metadata": {..}, "data": base64}` like the wire.
-#[derive(serde::Deserialize)]
-struct PhpPayload {
-    #[serde(default)]
-    metadata: HashMap<String, String>,
-    #[serde(default)]
-    data: String,
+/// The descriptor pool `temporalio-protos` publishes through its `links` key, loaded once.
+fn pool() -> &'static DescriptorPool {
+    static POOL: OnceLock<DescriptorPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let bytes = std::fs::read(env!("IGNIS_TEMPORAL_DESCRIPTORS")).expect("temporal descriptor set");
+        DescriptorPool::decode(bytes.as_slice()).expect("temporal descriptor pool")
+    })
 }
 
-impl PhpPayload {
-    fn into_proto(self) -> anyhow::Result<Payload> {
-        use base64::Engine;
-        let e = base64::engine::general_purpose::STANDARD;
-        let metadata = self.metadata.into_iter().map(|(k, v)| Ok((k, e.decode(v)?))).collect::<anyhow::Result<_>>()?;
-        Ok(Payload { metadata, data: e.decode(self.data)?, ..Default::default() })
-    }
+/// protojson -> proto. Unknown fields are refused: silently dropping half a completion is how a
+/// workflow ends up hanging to its task timeout with nothing in the log.
+pub(crate) fn from_protojson<T: Message + Default>(name: &str, json: &str) -> anyhow::Result<T> {
+    let md = pool().get_message_by_name(name).ok_or_else(|| anyhow::anyhow!("{name} is not in the descriptor pool"))?;
+    let mut de = serde_json::Deserializer::from_str(json);
+    let dm = DynamicMessage::deserialize_with_options(md, &mut de, &DeserializeOptions::new().deny_unknown_fields(true))?;
+    de.end()?;
+    Ok(T::decode(dm.encode_to_vec().as_slice())?)
 }
 
-/// One arm per sdk-php request the transport translates (ADR-0040). Adding a workflow feature to
-/// the PHP side means adding an arm here, and nothing else on the Rust side.
-#[derive(serde::Deserialize)]
-#[serde(tag = "cmd")]
-enum PhpCommand {
-    StartTimer { seq: u32, ms: u64 },
-    CancelTimer { seq: u32 },
-    ScheduleActivity { seq: u32, activity_type: String, task_queue: String, #[serde(default)] args: Vec<PhpPayload>, #[serde(default = "thirty")] start_to_close_sec: u64 },
-    CancelActivity { seq: u32 },
-    /// Local activities are scheduled by core and delivered on the *activity* task stream with
-    /// `is_local`, so the only new thing here is the command.
-    ScheduleLocalActivity { seq: u32, activity_type: String, #[serde(default)] args: Vec<PhpPayload>, #[serde(default = "thirty")] start_to_close_sec: u64 },
-    CancelLocalActivity { seq: u32 },
-    /// `protocol_instance_id`, not the update id: the id sdk-php knows is `DoUpdate.id`, and the
-    /// transport keeps the mapping (research 35 §3).
-    UpdateAccepted { protocol_instance_id: String },
-    UpdateRejected { protocol_instance_id: String, message: String },
-    UpdateCompleted { protocol_instance_id: String, result: Option<PhpPayload> },
-    RespondToQuery { query_id: String, #[serde(default)] result: Option<PhpPayload>, #[serde(default)] failure: Option<String> },
-    StartChildWorkflow { seq: u32, workflow_type: String, workflow_id: String, task_queue: String, #[serde(default)] args: Vec<PhpPayload> },
-    CancelChildWorkflow { seq: u32, #[serde(default)] reason: String },
-    CompleteWorkflow { result: Option<PhpPayload> },
-    FailWorkflow { message: String },
-    CancelWorkflow {},
-}
-
-fn thirty() -> u64 {
-    30
-}
-
-#[derive(serde::Deserialize)]
-struct PhpCompletion {
-    run_id: String,
-    #[serde(default)]
-    commands: Vec<PhpCommand>,
-}
-
-#[derive(serde::Deserialize)]
-struct PhpActivityCompletion {
-    task_token: Vec<u8>,
-    result: Option<PhpPayload>,
-    #[serde(default)]
-    failure: Option<String>,
-}
-
-fn dur(secs: u64, ms: u64) -> prost_wkt_types::Duration {
-    prost_wkt_types::Duration { seconds: secs as i64 + (ms / 1000) as i64, nanos: ((ms % 1000) * 1_000_000) as i32 }
-}
-
-fn translate_completion(json: &str) -> anyhow::Result<WorkflowActivationCompletion> {
-    let c: PhpCompletion = serde_json::from_str(json)?;
-    let mut cmds = Vec::new();
-    for cmd in c.commands {
-        cmds.push(match cmd {
-            PhpCommand::StartTimer { seq, ms } => workflow_command::Variant::StartTimer(StartTimer { seq, start_to_fire_timeout: Some(dur(0, ms)) }),
-            PhpCommand::ScheduleActivity { seq, activity_type, task_queue, args, start_to_close_sec } => {
-                workflow_command::Variant::ScheduleActivity(ScheduleActivity {
-                    seq,
-                    activity_id: seq.to_string(),
-                    activity_type,
-                    task_queue,
-                    arguments: args.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
-                    start_to_close_timeout: Some(dur(start_to_close_sec, 0)),
-                    ..Default::default()
-                })
-            }
-            PhpCommand::CancelTimer { seq } => workflow_command::Variant::CancelTimer(CancelTimer { seq }),
-            PhpCommand::CancelActivity { seq } => workflow_command::Variant::RequestCancelActivity(RequestCancelActivity { seq }),
-            PhpCommand::CancelLocalActivity { seq } => workflow_command::Variant::RequestCancelLocalActivity(RequestCancelLocalActivity { seq }),
-            PhpCommand::ScheduleLocalActivity { seq, activity_type, args, start_to_close_sec } => {
-                workflow_command::Variant::ScheduleLocalActivity(ScheduleLocalActivity {
-                    seq,
-                    activity_id: seq.to_string(),
-                    activity_type,
-                    arguments: args.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
-                    start_to_close_timeout: Some(dur(start_to_close_sec, 0)),
-                    ..Default::default()
-                })
-            }
-            PhpCommand::UpdateAccepted { protocol_instance_id } => {
-                workflow_command::Variant::UpdateResponse(UpdateResponse {
-                    protocol_instance_id,
-                    response: Some(update_response::Response::Accepted(())),
-                })
-            }
-            PhpCommand::UpdateRejected { protocol_instance_id, message } => {
-                workflow_command::Variant::UpdateResponse(UpdateResponse {
-                    protocol_instance_id,
-                    response: Some(update_response::Response::Rejected(Failure { message, ..Default::default() })),
-                })
-            }
-            PhpCommand::UpdateCompleted { protocol_instance_id, result } => {
-                workflow_command::Variant::UpdateResponse(UpdateResponse {
-                    protocol_instance_id,
-                    response: Some(update_response::Response::Completed(result.map(PhpPayload::into_proto).transpose()?.unwrap_or_default())),
-                })
-            }
-            PhpCommand::RespondToQuery { query_id, result, failure } => {
-                let variant = match failure {
-                    Some(message) => query_result::Variant::Failed(Failure { message, ..Default::default() }),
-                    None => query_result::Variant::Succeeded(QuerySuccess { response: result.map(PhpPayload::into_proto).transpose()? }),
-                };
-                workflow_command::Variant::RespondToQuery(QueryResult { query_id, variant: Some(variant) })
-            }
-            PhpCommand::StartChildWorkflow { seq, workflow_type, workflow_id, task_queue, args } => {
-                workflow_command::Variant::StartChildWorkflowExecution(StartChildWorkflowExecution {
-                    seq,
-                    workflow_id,
-                    workflow_type,
-                    task_queue,
-                    input: args.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
-                    ..Default::default()
-                })
-            }
-            PhpCommand::CancelChildWorkflow { seq, reason } => {
-                workflow_command::Variant::CancelChildWorkflowExecution(CancelChildWorkflowExecution { child_workflow_seq: seq, reason })
-            }
-            PhpCommand::CancelWorkflow {} => {
-                workflow_command::Variant::CancelWorkflowExecution(CancelWorkflowExecution { ..Default::default() })
-            }
-            PhpCommand::CompleteWorkflow { result } => {
-                workflow_command::Variant::CompleteWorkflowExecution(CompleteWorkflowExecution { result: result.map(PhpPayload::into_proto).transpose()? })
-            }
-            PhpCommand::FailWorkflow { message } => {
-                workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution { failure: Some(Failure { message, ..Default::default() }) })
-            }
-        });
-    }
-    Ok(WorkflowActivationCompletion::from_cmds(c.run_id, cmds))
-}
-
-fn translate_activity_completion(json: &str) -> anyhow::Result<ActivityTaskCompletion> {
-    let c: PhpActivityCompletion = serde_json::from_str(json)?;
-    let status = match (c.failure, c.result) {
-        (Some(message), _) => activity_execution_result::Status::Failed(temporalio_protos::coresdk::activity_result::Failure {
-            failure: Some(Failure { message, ..Default::default() }), ..Default::default()
-        }),
-        (None, result) => activity_execution_result::Status::Completed(Success { result: result.map(PhpPayload::into_proto).transpose()? }),
-    };
-    Ok(ActivityTaskCompletion { task_token: c.task_token, result: Some(ActivityExecutionResult { status: Some(status) }) })
+/// proto -> protojson. `stringify_64_bit_integers` stays off: PHP reads these as numbers.
+fn to_protojson<T: Message>(name: &str, msg: &T) -> anyhow::Result<String> {
+    let md = pool().get_message_by_name(name).ok_or_else(|| anyhow::anyhow!("{name} is not in the descriptor pool"))?;
+    let dm = DynamicMessage::decode(md, msg.encode_to_vec().as_slice())?;
+    let mut out = Vec::new();
+    let mut ser = serde_json::Serializer::new(&mut out);
+    dm.serialize_with_options(&mut ser, &SerializeOptions::new().stringify_64_bit_integers(false))?;
+    Ok(String::from_utf8(out)?)
 }
 
 fn core() -> &'static CoreRuntime {
@@ -334,7 +207,10 @@ pub unsafe extern "C" fn zif_poll_activation(ex: *mut sys::zend_execute_data, rv
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             match w.poll_workflow_activation().await {
-                Ok(act) => Outcome::Json(serde_json::to_string(&act).unwrap_or_default()),
+                Ok(act) => match to_protojson("coresdk.workflow_activation.WorkflowActivation", &act) {
+                    Ok(json) => Outcome::Json(json),
+                    Err(e) => Outcome::Failed(format!("activation json: {e}")),
+                },
                 Err(e) => Outcome::Failed(format!("poll: {e}")),
             }
         });
@@ -347,10 +223,11 @@ pub unsafe extern "C" fn zif_complete_activation(ex: *mut sys::zend_execute_data
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
-            let comp: WorkflowActivationCompletion = match translate_completion(&json) {
-                Ok(c) => c,
-                Err(e) => return Outcome::Failed(format!("completion json: {e}")),
-            };
+            let comp: WorkflowActivationCompletion =
+                match from_protojson("coresdk.workflow_completion.WorkflowActivationCompletion", &json) {
+                    Ok(c) => c,
+                    Err(e) => return Outcome::Failed(format!("completion json: {e}")),
+                };
             match w.complete_workflow_activation(comp).await {
                 Ok(()) => Outcome::Json("\"ok\"".into()),
                 Err(e) => Outcome::Failed(format!("complete: {e}")),
@@ -366,7 +243,10 @@ pub unsafe extern "C" fn zif_poll_activity(ex: *mut sys::zend_execute_data, rv: 
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             match w.poll_activity_task().await {
-                Ok(t) => Outcome::Json(serde_json::to_string(&t).unwrap_or_default()),
+                Ok(t) => match to_protojson("coresdk.activity_task.ActivityTask", &t) {
+                    Ok(json) => Outcome::Json(json),
+                    Err(e) => Outcome::Failed(format!("activity task json: {e}")),
+                },
                 Err(e) => Outcome::Failed(format!("poll activity: {e}")),
             }
         });
@@ -379,23 +259,17 @@ pub unsafe extern "C" fn zif_complete_activity(ex: *mut sys::zend_execute_data, 
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
-            let comp: ActivityTaskCompletion = match translate_activity_completion(&json) {
-                Ok(c) => c,
-                Err(e) => return Outcome::Failed(format!("activity completion json: {e}")),
-            };
+            let comp: ActivityTaskCompletion =
+                match from_protojson("coresdk.ActivityTaskCompletion", &json) {
+                    Ok(c) => c,
+                    Err(e) => return Outcome::Failed(format!("activity completion json: {e}")),
+                };
             match w.complete_activity_task(comp).await {
                 Ok(()) => Outcome::Json("\"ok\"".into()),
                 Err(e) => Outcome::Failed(format!("complete activity: {e}")),
             }
         });
     }
-}
-
-#[derive(serde::Deserialize)]
-struct PhpHeartbeat {
-    task_token: Vec<u8>,
-    #[serde(default)]
-    details: Vec<PhpPayload>,
 }
 
 /// `ignis_temporal_heartbeat(int $worker, string $json): bool`
@@ -411,11 +285,7 @@ pub unsafe extern "C" fn zif_heartbeat(ex: *mut sys::zend_execute_data, rv: *mut
             return;
         };
         let ok = (|| -> anyhow::Result<()> {
-            let hb: PhpHeartbeat = serde_json::from_str(&json)?;
-            w.record_activity_heartbeat(ActivityHeartbeat {
-                task_token: hb.task_token,
-                details: hb.details.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
-            });
+            w.record_activity_heartbeat(from_protojson::<ActivityHeartbeat>("coresdk.ActivityHeartbeat", &json)?);
             Ok(())
         })();
         if let Err(e) = &ok {

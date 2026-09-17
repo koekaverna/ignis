@@ -69,6 +69,14 @@ composer install
 php tests/conformance.php
 ```
 
+## The wire
+
+**protojson — core's own documents.** The host hands over a `WorkflowActivation` exactly as core
+produced it and takes back a `WorkflowActivationCompletion` exactly as core expects it. There is no
+intermediate schema, so every field core has is reachable (retry policies, cancellation types,
+headers, memo, search attributes) and a host needs no per-feature code. Oneofs are their flattened
+field name, durations are `"5s"`, timestamps RFC3339, bytes base64.
+
 ## Notes
 
 Payloads never round-trip through protobuf wire bytes — `Payload` objects are built with setters, so

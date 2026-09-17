@@ -2670,3 +2670,51 @@ E1  wall_ms=1165.1  overhead_ms=165.1  completed=10000  resumes=20000  peak_rss_
 Both inside their bars, and E2 warm is 3.62 µs against the 3.83 µs of the last quiet run. Recorded
 because the owner rule is "benchmarks one at a time, never beside a build" and this is what breaking
 it looks like from the inside.
+
+## V-65 — the Temporal boundary carries core's own documents; the third schema is deleted (CONFIRMED)
+
+Date: 2026-09-17T14:2xZ. Owner's question — are we pulling sdk-php's contracts into our Rust? We were
+not (the vocabulary there was core's), but the question exposed the real defect: a **third schema**
+between core and sdk-php, needing an arm per feature and lossy (`start_to_close_sec: u64` in place
+of a `Duration`, and therefore no retry policy, no `schedule_to_close`, no cancellation type).
+
+**Why the obvious fix did not work, pinned as a test** (`backend/completion_json.rs`): prost's serde
+derive is not protojson. It ignores unknown keys — a typo would silently produce an empty completion
+— wants durations in canonical form, and has **no default for enum fields**, so a partial document
+dies on the first one (`missing field cancellation_type`).
+
+**The fix**: protojson proper, `prost-reflect` over the descriptor pool `temporalio-protos` already
+publishes (it declares `links`, so `cargo:descriptor_path` reaches our `build.rs` as
+`DEP_TEMPORALIO_PROTOS_DESCRIPTOR_PATH`). Measured to accept partial documents *and* reject unknown
+fields, which is strictly better than both alternatives.
+
+| | before | after |
+|---|---|---|
+| `crates/ignis/src/backend/temporal.rs` | 441 lines | **311** (−191/+61) |
+| schema between core and sdk-php | `PhpCommand` + `PhpPayload` + `PhpCompletion` + `PhpActivityCompletion` | **none** |
+| Rust work per new Temporal feature | one enum arm + a rebuild with `--features temporal` | **zero** |
+| expressible fields | the handful the enum named | every field core has |
+| direction symmetry | reads passed core's JSON through, writes were translated | both directions are core's documents |
+
+**Closed the loop without a server.** `bench/e20-sdkphp.sh` still runs 23/23 green under the ignis
+binary and under stock PHP; the exact completions it produces (dumped with `CORE_DUMP_RAW=1`) are
+then decoded in `the_php_transport_produces_documents_core_accepts` by **the same `from_protojson`
+the runtime uses**. So the PHP side and the Rust side are checked against each other, not just each
+against a fixture:
+
+```
+{"runId":"run-2","successful":{"commands":[
+  {"updateResponse":{"protocolInstanceId":"pi-1","accepted":{}}},
+  {"scheduleLocalActivity":{"seq":1,"activityId":"1","activityType":"projection.jobStarted",
+   "arguments":[{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Ingi"}],"startToCloseTimeout":"5s"}}]}}
+```
+
+Activity options now pass through in full — `startToCloseTimeout`, `scheduleToCloseTimeout`,
+`scheduleToStartTimeout`, `heartbeatTimeout` and `retryPolicy` are mapped from sdk-php's marshalled
+`ActivityOptions`, which the old schema could not carry at all.
+
+**Not verified, and stated plainly:** `php/packages/temporal-prototype` (ADR-0013's runtime,
+superseded by ADR-0040 and kept for the replay test) was converted to the same dialect without a
+live run — there is no Temporal dev server on this box, so `bench/e9-temporal.sh` in CI is its first
+real exercise. Gates run here: `cargo nextest` 9/9, `cargo test --features temporal completion_json`
+3/3, `bench/e20-sdkphp.sh` green in both hosts.

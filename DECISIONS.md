@@ -289,3 +289,19 @@ real workflow needs (retry policy, the other timeouts, cancellation type, header
 existing arms. The structural fix, when it is worth doing, is protojson proper via `prost-reflect`
 over the descriptor pool the build already emits, after which Rust is a dumb pipe in both directions
 and no Temporal feature needs a Rust change again.
+
+## 2026-09-17 — the third schema on the Temporal boundary is deleted (supersedes the entry above)
+
+The entry above kept the hand-written `PhpCommand` and called protojson the structural fix "when it
+is worth doing". It was worth doing immediately: the descriptor pool was already published by
+`temporalio-protos` (it declares `links`), so `prost-reflect` needed a build-script line and two
+helper functions.
+
+Result (V-65): `backend/temporal.rs` 441 -> 311 lines, `PhpCommand`/`PhpPayload`/`PhpCompletion`/
+`PhpActivityCompletion` gone, both directions carry core's own documents, and a new Temporal feature
+now costs zero Rust. Activity retry policies and the remaining timeouts reach core for the first
+time — the old schema could not express them.
+
+The PHP-side prototype runtime (`php/packages/temporal-prototype`, ADR-0013, superseded) was moved to
+the same dialect. It has no local test — CI's `bench/e9-temporal.sh` is its first real exercise, and
+that is stated in V-65 rather than glossed.

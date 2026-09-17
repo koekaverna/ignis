@@ -41,6 +41,8 @@ final class RecordedSource implements ActivationSource, \Temporal\Worker\Transpo
     private array $script;
     /** @var list<array{0:string,1:array}> */
     public array $completions = [];
+    /** @var list<string> exactly what went to the host — what the Rust side has to accept */
+    public array $raw = [];
 
     public function __construct(array $script)
     {
@@ -60,6 +62,7 @@ final class RecordedSource implements ActivationSource, \Temporal\Worker\Transpo
 
     public function complete(string $kind, string $json): void
     {
+        $this->raw[] = $json;
         $this->completions[] = [$kind, \json_decode($json, true, 512, \JSON_THROW_ON_ERROR)];
     }
 
@@ -83,38 +86,45 @@ function payload(mixed $value): array
     ];
 }
 
+/** protojson flattens a oneof to its field name, so a job is just `{fieldName: {...}}`. */
 function job(string $name, array $data): array
 {
-    return ['variant' => [$name => $data]];
+    return [$name => $data];
+}
+
+/** The command name of a protojson command, and its body. */
+function cmdName(array $command): string
+{
+    return (string) \array_key_first($command);
 }
 
 $runId = 'run-1';
-$activation = static fn(array $jobs, array $extra = []): array => ['run_id' => $runId, 'is_replaying' => false, 'history_length' => 1, 'jobs' => $jobs] + $extra;
+$activation = static fn(array $jobs, array $extra = []): array => ['runId' => $runId, 'isReplaying' => false, 'historyLength' => 1, 'jobs' => $jobs] + $extra;
 
 $source = new RecordedSource([
-    [ActivationSource::WORKFLOW, $activation([job('InitializeWorkflow', [
-        'workflow_type' => 'GreetWorkflow',
-        'workflow_id' => 'wf-1',
+    [ActivationSource::WORKFLOW, $activation([job('initializeWorkflow', [
+        'workflowType' => 'GreetWorkflow',
+        'workflowId' => 'wf-1',
         'arguments' => [payload('Ada')],
         'attempt' => 1,
     ])])],
     [ActivationSource::ACTIVITY, [
-        'task_token' => [1, 2, 3],
-        'variant' => ['Start' => [
-            'activity_type' => 'greet',
-            'activity_id' => '1',
+        'taskToken' => \base64_encode('tok-1'),
+        'start' => [
+            'activityType' => 'greet',
+            'activityId' => '1',
             'input' => [payload('Ada')],
-            'workflow_execution' => ['workflow_id' => 'wf-1', 'run_id' => $runId],
-            'workflow_type' => 'GreetWorkflow',
+            'workflowExecution' => ['workflowId' => 'wf-1', 'runId' => $runId],
+            'workflowType' => 'GreetWorkflow',
             'attempt' => 1,
-        ]],
+        ],
     ]],
-    [ActivationSource::WORKFLOW, $activation([job('ResolveActivity', [
+    [ActivationSource::WORKFLOW, $activation([job('resolveActivity', [
         'seq' => 1,
-        'result' => ['status' => ['Completed' => ['result' => payload('Hello, Ada!')]]],
+        'result' => ['completed' => ['result' => payload('Hello, Ada!')]],
     ])])],
-    [ActivationSource::WORKFLOW, $activation([job('FireTimer', ['seq' => 2])])],
-    [ActivationSource::WORKFLOW, $activation([job('RemoveFromCache', ['reason' => 'WorkflowExecutionEnded'])])],
+    [ActivationSource::WORKFLOW, $activation([job('fireTimer', ['seq' => 2])])],
+    [ActivationSource::WORKFLOW, $activation([job('removeFromCache', ['reason' => 'WorkflowExecutionEnded'])])],
 ]);
 
 $factory = CoreWorkerFactory::forSource($source);
@@ -142,74 +152,77 @@ function check(string $what, mixed $got, mixed $want): void
 $c = $source->completions;
 \printf("completions: %d\n", \count($c));
 foreach ($c as $i => [$kind, $body]) {
-    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($body['commands'] ?? $body));
+    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($body['successful']['commands'] ?? $body));
 }
 
-check('1. start -> one ScheduleActivity', \array_column($c[0][1]['commands'] ?? [], 'cmd'), ['ScheduleActivity']);
-check('   activity type reaches core', $c[0][1]['commands'][0]['activity_type'] ?? null, 'greet');
-check('   StartToCloseTimeout survives', $c[0][1]['commands'][0]['start_to_close_sec'] ?? null, 5);
-check('   argument survives the DataConverter', \json_decode(\base64_decode($c[0][1]['commands'][0]['args'][0]['data'] ?? ''), true), 'Ada');
-check('2. activity ran, token echoed', $c[1][1]['task_token'] ?? null, [1, 2, 3]);
-check('   activity result', \json_decode(\base64_decode($c[1][1]['result']['data'] ?? ''), true), 'Hello, Ada!');
-check('3. resolve -> StartTimer', \array_column($c[2][1]['commands'] ?? [], 'cmd'), ['StartTimer']);
-check('   timer interval in ms', $c[2][1]['commands'][0]['ms'] ?? null, 1000);
-check('4. fire -> CompleteWorkflow', \array_column($c[3][1]['commands'] ?? [], 'cmd'), ['CompleteWorkflow']);
-check('   workflow return value', \json_decode(\base64_decode($c[3][1]['commands'][0]['result']['data'] ?? ''), true), 'HELLO, ADA!');
-check('5. eviction -> no commands', $c[4][1]['commands'] ?? null, []);
+$names1 = static fn(int $i): array => \array_map(cmdName(...), $c[$i][1]['successful']['commands'] ?? []);
+$body1 = static fn(int $i, int $j): array => \array_values($c[$i][1]['successful']['commands'][$j] ?? [[]])[0];
+
+check('1. start -> one scheduleActivity', $names1(0), ['scheduleActivity']);
+check('   activity type reaches core', $body1(0, 0)['activityType'] ?? null, 'greet');
+check('   StartToCloseTimeout as a protojson duration', $body1(0, 0)['startToCloseTimeout'] ?? null, '5s');
+check('   argument survives the DataConverter', \json_decode(\base64_decode($body1(0, 0)['arguments'][0]['data'] ?? ''), true), 'Ada');
+check('2. activity ran, token echoed', $c[1][1]['taskToken'] ?? null, \base64_encode('tok-1'));
+check('   activity result', \json_decode(\base64_decode($c[1][1]['result']['completed']['result']['data'] ?? ''), true), 'Hello, Ada!');
+check('3. resolve -> startTimer', $names1(2), ['startTimer']);
+check('   timer interval as a duration', $body1(2, 0)['startToFireTimeout'] ?? null, '1s');
+check('4. fire -> completeWorkflowExecution', $names1(3), ['completeWorkflowExecution']);
+check('   workflow return value', \json_decode(\base64_decode($body1(3, 0)['result']['data'] ?? ''), true), 'HELLO, ADA!');
+check('5. eviction -> no commands', $names1(4), []);
 
 // ---------------------------------------------------------------------------------------------
 // Scenario 2: an update with a validator, a local activity, a query, and an activity heartbeat —
 // the features a real workflow reaches for once activities and timers are not enough.
 
 $runId2 = 'run-2';
-$activation2 = static fn(array $jobs): array => ['run_id' => $runId2, 'is_replaying' => false, 'history_length' => 1, 'jobs' => $jobs];
+$activation2 = static fn(array $jobs): array => ['runId' => $runId2, 'isReplaying' => false, 'historyLength' => 1, 'jobs' => $jobs];
 
 $source2 = new RecordedSource([
-    [ActivationSource::WORKFLOW, $activation2([job('InitializeWorkflow', [
-        'workflow_type' => 'FeatureWorkflow',
-        'workflow_id' => 'wf-2',
+    [ActivationSource::WORKFLOW, $activation2([job('initializeWorkflow', [
+        'workflowType' => 'FeatureWorkflow',
+        'workflowId' => 'wf-2',
         'arguments' => [],
         'attempt' => 1,
     ])])],
-    [ActivationSource::WORKFLOW, $activation2([job('DoUpdate', [
+    [ActivationSource::WORKFLOW, $activation2([job('doUpdate', [
         'id' => 'u-1',
-        'protocol_instance_id' => 'pi-1',
+        'protocolInstanceId' => 'pi-1',
         'name' => 'submit',
         'input' => [payload('x')],
-        'run_validator' => true,
+        'runValidator' => true,
     ])])],
-    [ActivationSource::WORKFLOW, $activation2([job('QueryWorkflow', [
-        'query_id' => 'q-1',
-        'query_type' => 'state',
+    [ActivationSource::WORKFLOW, $activation2([job('queryWorkflow', [
+        'queryId' => 'q-1',
+        'queryType' => 'state',
         'arguments' => [],
     ])])],
     [ActivationSource::ACTIVITY, [
-        'task_token' => [9, 9],
-        'variant' => ['Start' => [
-            'activity_type' => 'projection.jobStarted',
-            'activity_id' => '1',
+        'taskToken' => \base64_encode('tok-local'),
+        'start' => [
+            'activityType' => 'projection.jobStarted',
+            'activityId' => '1',
             'input' => [payload('x')],
-            'is_local' => true,
-            'workflow_execution' => ['workflow_id' => 'wf-2', 'run_id' => $runId2],
-            'workflow_type' => 'FeatureWorkflow',
+            'isLocal' => true,
+            'workflowExecution' => ['workflowId' => 'wf-2', 'runId' => $runId2],
+            'workflowType' => 'FeatureWorkflow',
             'attempt' => 1,
-        ]],
+        ],
     ]],
-    [ActivationSource::WORKFLOW, $activation2([job('ResolveActivity', [
+    [ActivationSource::WORKFLOW, $activation2([job('resolveActivity', [
         'seq' => 1,
-        'is_local' => true,
-        'result' => ['status' => ['Completed' => ['result' => payload('started:x')]]],
+        'isLocal' => true,
+        'result' => ['completed' => ['result' => payload('started:x')]],
     ])])],
     [ActivationSource::ACTIVITY, [
-        'task_token' => [7],
-        'variant' => ['Start' => [
-            'activity_type' => 'work',
-            'activity_id' => '2',
+        'taskToken' => \base64_encode('tok-beat'),
+        'start' => [
+            'activityType' => 'work',
+            'activityId' => '2',
             'input' => [payload('beat')],
-            'workflow_execution' => ['workflow_id' => 'wf-2', 'run_id' => $runId2],
-            'workflow_type' => 'FeatureWorkflow',
+            'workflowExecution' => ['workflowId' => 'wf-2', 'runId' => $runId2],
+            'workflowType' => 'FeatureWorkflow',
             'attempt' => 1,
-        ]],
+        ],
     ]],
 ]);
 
@@ -229,24 +242,32 @@ $factory2->run($act2);  // the heartbeating activity
 $d = $source2->completions;
 \printf("\ncompletions (scenario 2): %d\n", \count($d));
 foreach ($d as $i => [$kind, $body]) {
-    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($body['commands'] ?? $body));
+    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($body['successful']['commands'] ?? $body));
 }
 
-$cmds = static fn(int $i): array => \array_column($d[$i][1]['commands'] ?? [], 'cmd');
-$cmd = static fn(int $i, int $j): array => $d[$i][1]['commands'][$j] ?? [];
+$cmds = static fn(int $i): array => \array_map(cmdName(...), $d[$i][1]['successful']['commands'] ?? []);
+$cmd = static fn(int $i, int $j): array => \array_values($d[$i][1]['successful']['commands'][$j] ?? [[]])[0];
 
 check('6. start -> workflow awaits, no commands', $cmds(0), []);
-check('7. update -> accepted, then a LOCAL activity', $cmds(1), ['UpdateAccepted', 'ScheduleLocalActivity']);
-check('   the validator ran and passed', $cmd(1, 0)['protocol_instance_id'] ?? null, 'pi-1');
-check('   prefix from #[LocalActivityInterface]', $cmd(1, 1)['activity_type'] ?? null, 'projection.jobStarted');
-check('8. query -> RespondToQuery by its own id', $cmds(2), ['RespondToQuery']);
-check('   query answered from workflow state', \json_decode(\base64_decode($cmd(2, 0)['result']['data'] ?? ''), true), 'new');
-check('9. local activity ran on the activity stream', \json_decode(\base64_decode($d[3][1]['result']['data'] ?? ''), true), 'started:x');
-check('10. resolve -> update completes, then workflow', $cmds(4), ['UpdateCompleted', 'CompleteWorkflow']);
-check('    update result reaches core', \json_decode(\base64_decode($cmd(4, 0)['result']['data'] ?? ''), true), 'ok:x');
-check('    protocol_instance_id, not the update id', $cmd(4, 0)['protocol_instance_id'] ?? null, 'pi-1');
+check('7. update -> accepted, then a LOCAL activity', $cmds(1), ['updateResponse', 'scheduleLocalActivity']);
+check('   the validator ran and passed', $cmd(1, 0)['protocolInstanceId'] ?? null, 'pi-1');
+check('   accepted, not rejected', \array_key_exists('accepted', $cmd(1, 0)), true);
+check('   prefix from #[LocalActivityInterface]', $cmd(1, 1)['activityType'] ?? null, 'projection.jobStarted');
+check('8. query -> respondToQuery by its own id', $cmds(2), ['respondToQuery']);
+check('   query answered from workflow state', \json_decode(\base64_decode($cmd(2, 0)['succeeded']['response']['data'] ?? ''), true), 'new');
+check('9. local activity ran on the activity stream', \json_decode(\base64_decode($d[3][1]['result']['completed']['result']['data'] ?? ''), true), 'started:x');
+check('10. resolve -> update completes, then workflow', $cmds(4), ['updateResponse', 'completeWorkflowExecution']);
+check('    update result reaches core', \json_decode(\base64_decode($cmd(4, 0)['completed']['data'] ?? ''), true), 'ok:x');
+check('    protocolInstanceId, not the update id', $cmd(4, 0)['protocolInstanceId'] ?? null, 'pi-1');
 check('11. heartbeat reached the host', \count($source2->heartbeats), 1);
 check('    with the task token and the detail', \json_decode(\base64_decode($source2->heartbeats[0]['details'][0]['data'] ?? ''), true), ['at' => 'beat']);
+
+if (\getenv('CORE_DUMP_RAW')) {
+    \printf("\n--- raw completions (protojson, verbatim) ---\n");
+    foreach ([...$source->raw, ...$source2->raw] as $r) {
+        \printf("%s\n", $r);
+    }
+}
 
 \printf("\n%s\n", $failures === 0 ? 'core transport: GREEN' : "core transport: {$failures} FAILED");
 exit($failures === 0 ? 0 : 1);

@@ -27,4 +27,14 @@ fn main() {
             println!("cargo:rustc-link-arg=-Wl,--export-dynamic-symbol={s}");
         }
     }
+
+    // ADR-0040: temporalio-protos declares `links`, so its build script's `cargo:descriptor_path`
+    // reaches us as DEP_TEMPORALIO_PROTOS_DESCRIPTOR_PATH. Handing the path on to the crate lets
+    // the Temporal boundary decode protojson against the real descriptor pool instead of prost's
+    // serde derive, which is not protojson.
+    if let Ok(path) = std::env::var("DEP_TEMPORALIO_PROTOS_DESCRIPTOR_PATH") {
+        println!("cargo:rustc-env=IGNIS_TEMPORAL_DESCRIPTORS={path}");
+        println!("cargo:rerun-if-changed={path}");
+    }
+
 }

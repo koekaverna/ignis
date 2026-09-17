@@ -3,6 +3,10 @@
  * Ignis Temporal runtime (E9, ADR-0013): workflows run as Fibers; every await records a
  * command and suspends; a run's fiber is resumed only by activation jobs, which makes
  * execution deterministic and replayable. Only JSON crosses to Rust (sdk-core).
+ *
+ * Superseded by ADR-0040 (the official sdk-php on the core transport) and kept as the reference the
+ * replay test was built on. It speaks the same protojson as everything else on this boundary: core's
+ * own documents, no schema in between.
  */
 declare(strict_types=1);
 
@@ -56,15 +60,20 @@ final class Context
     public function activity(string $type, array $args = [], int $startToCloseSec = 30): mixed
     {
         $seq = ++$this->run->seq;
-        $this->run->commands[] = ['cmd' => 'ScheduleActivity', 'seq' => $seq, 'activity_type' => $type, 'task_queue' => $this->taskQueue,
-            'args' => array_map(Payloads::encode(...), $args), 'start_to_close_sec' => $startToCloseSec];
+        $this->run->commands[] = ['scheduleActivity' => [
+            'seq' => $seq, 'activityId' => (string) $seq, 'activityType' => $type, 'taskQueue' => $this->taskQueue,
+            'arguments' => array_map(Payloads::encode(...), $args), 'startToCloseTimeout' => $startToCloseSec . 's',
+        ]];
         return $this->await($seq);
     }
 
     public function timer(int $ms): void
     {
         $seq = ++$this->run->seq;
-        $this->run->commands[] = ['cmd' => 'StartTimer', 'seq' => $seq, 'ms' => $ms];
+        $this->run->commands[] = ['startTimer' => [
+            'seq' => $seq,
+            'startToFireTimeout' => rtrim(rtrim(sprintf('%.3f', $ms / 1000), '0'), '.') . 's',
+        ]];
         $this->await($seq);
     }
 
@@ -133,11 +142,11 @@ final class Worker
                 return;
             }
             ++self::$activations;
-            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['run_id'], implode(',', array_map(static fn ($j) => array_key_first($j['variant'] ?? ['?' => 0]), $act['jobs'])), var_export($act['is_replaying'] ?? null, true)));
+            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(static fn ($j) => (string) array_key_first($j), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
             try {
                 $completion = $this->handleActivation($act);
                 self::call(\ignis_temporal_complete($this->worker, json_encode($completion, JSON_THROW_ON_ERROR)));
-                fwrite(STDERR, sprintf("  completed with %d command(s)\n", count($completion['commands'])));
+                fwrite(STDERR, sprintf("  completed with %d command(s)\n", count($completion['successful']['commands'])));
             } catch (\Throwable $e) {
                 fwrite(STDERR, "  activation handling failed: {$e->getMessage()}\n");
                 throw $e;
@@ -147,17 +156,17 @@ final class Worker
 
     private function handleActivation(array $act): array
     {
-        $runId = $act['run_id'];
+        $runId = $act['runId'];
         $run = $this->runs[$runId] ?? null;
         $evicted = false;
         foreach ($act['jobs'] as $job) {
-            $variant = $job['variant'] ?? [];
-            $kind = array_key_first($variant);
-            $data = $variant[$kind] ?? [];
+            // protojson flattens a oneof to its field name: the job IS its single key.
+            $kind = (string) array_key_first($job);
+            $data = $job[$kind] ?? [];
             switch ($kind) {
-                case 'InitializeWorkflow':
-                    $run = $this->runs[$runId] = new WorkflowRun($runId, $data['workflow_type']);
-                    $fn = $this->workflows[$data['workflow_type']] ?? throw new \RuntimeException("unknown workflow {$data['workflow_type']}");
+                case 'initializeWorkflow':
+                    $run = $this->runs[$runId] = new WorkflowRun($runId, $data['workflowType']);
+                    $fn = $this->workflows[$data['workflowType']] ?? throw new \RuntimeException("unknown workflow {$data['workflowType']}");
                     $ctx = new Context($run, $this->taskQueue);
                     $args = array_map(Payloads::decode(...), $data['arguments'] ?? []);
                     $run->fiber = new \Fiber(static function () use ($fn, $ctx, $args, $run): void {
@@ -170,15 +179,15 @@ final class Worker
                     });
                     $run->fiber->start();
                     break;
-                case 'FireTimer':
+                case 'fireTimer':
                     $this->resume($run, (int) $data['seq'], null);
                     break;
-                case 'ResolveActivity':
-                    $status = $data['result']['status'] ?? [];
-                    $value = isset($status['Completed']) ? Payloads::decode($status['Completed']['result'] ?? null) : null;
+                case 'resolveActivity':
+                    $result = $data['result'] ?? [];
+                    $value = isset($result['completed']) ? Payloads::decode($result['completed']['result'] ?? null) : null;
                     $this->resume($run, (int) $data['seq'], $value);
                     break;
-                case 'RemoveFromCache':
+                case 'removeFromCache':
                     unset($this->runs[$runId]);
                     $evicted = true;
                     $reason = (string) ($data['reason'] ?? 'Unspecified');
@@ -193,16 +202,16 @@ final class Worker
             }
         }
         if ($evicted || $run === null) {
-            return ['run_id' => $runId, 'commands' => []];
+            return ['runId' => $runId, 'successful' => ['commands' => []]];
         }
         $commands = $run->commands;
         $run->commands = [];
         if ($run->done) {
             $commands[] = $run->error === null
-                ? ['cmd' => 'CompleteWorkflow', 'result' => Payloads::encode($run->result)]
-                : ['cmd' => 'FailWorkflow', 'message' => $run->error->getMessage()];
+                ? ['completeWorkflowExecution' => ['result' => Payloads::encode($run->result)]]
+                : ['failWorkflowExecution' => ['failure' => ['message' => $run->error->getMessage()]]];
         }
-        return ['run_id' => $runId, 'commands' => $commands];
+        return ['runId' => $runId, 'successful' => ['commands' => $commands]];
     }
 
     private function resume(?WorkflowRun $run, int $seq, mixed $value): void
@@ -225,22 +234,22 @@ final class Worker
                 return;
             }
             ++self::$activityTasks;
-            fwrite(STDERR, sprintf("activity task #%d type=%s\n", self::$activityTasks, $task['variant']['Start']['activity_type'] ?? '?'));
-            $token = $task['task_token'];
+            fwrite(STDERR, sprintf("activity task #%d type=%s\n", self::$activityTasks, $task['start']['activityType'] ?? '?'));
+            $token = $task['taskToken'];
             \Ignis\async(function () use ($task, $token): void {
-                $start = $task['variant']['Start'] ?? null;
+                $start = $task['start'] ?? null;
                 if ($start === null) {
                     return; // cancellations out of scope
                 }
-                $fn = $this->activities[$start['activity_type']] ?? null;
+                $fn = $this->activities[$start['activityType']] ?? null;
                 try {
                     if ($fn === null) {
-                        throw new \RuntimeException("unknown activity {$start['activity_type']}");
+                        throw new \RuntimeException("unknown activity {$start['activityType']}");
                     }
                     $result = $fn(...array_map(Payloads::decode(...), $start['input'] ?? []));
-                    $done = ['task_token' => $token, 'result' => Payloads::encode($result)];
+                    $done = ['taskToken' => $token, 'result' => ['completed' => ['result' => Payloads::encode($result)]]];
                 } catch (\Throwable $e) {
-                    $done = ['task_token' => $token, 'result' => null, 'failure' => $e->getMessage()];
+                    $done = ['taskToken' => $token, 'result' => ['failed' => ['failure' => ['message' => $e->getMessage()]]]];
                 }
                 self::call(\ignis_temporal_complete_activity($this->worker, json_encode($done, JSON_THROW_ON_ERROR)));
             });
