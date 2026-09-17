@@ -201,31 +201,26 @@ final class RequestTest extends TestCase
     }
 
     /**
-     * DEFECT (pinned). `query()` is `?string`, but `parse_str()` gives an array for `x[]=…`, and the
-     * `(string)` cast then warns "Array to string conversion" and hands back the literal `Array`.
-     * `$_GET` from the same URI has the real list. A caller cannot tell the two apart.
+     * `query()` used to be `?string` and cast whatever `parse_str()` produced, so `x[]=…` came back
+     * as the literal `Array` with an "Array to string conversion" warning while `$_GET` held the
+     * real list. `parse_str()` is the only grammar either side uses, so the two must not diverge:
+     * `x[]=` is a list, a plain repeated `x=` is last-wins, and `x[a]=` is a map — PHP's rules, not
+     * ours. A `@dataProvider` would hide that the point is the agreement with `$_GET`.
      */
-    public function testARepeatedParameterStringifiesToTheWordArrayBug(): void
+    public function testARepeatedParameterIsTheListThatIsInGet(): void
     {
-        $r = self::get('/a?x[]=1&x[]=2');
-        [, $get] = $r->superglobals();
-        self::assertSame(['1', '2'], $get['x'], '$_GET has the list');
+        foreach (['/a?x[]=1&x[]=2' => ['1', '2'], '/a?x=1&x=2' => '2', '/a?x[a]=1&x[b]=2' => ['a' => '1', 'b' => '2']] as $uri => $expected) {
+            $r = self::get($uri);
+            [, $get] = $r->superglobals();
 
-        $warnings = [];
-        set_error_handler(static function (int $number, string $message) use (&$warnings): bool {
-            $warnings[] = $message;
-
-            return true;
-        });
-
-        try {
-            $value = $r->query('x');
-        } finally {
-            restore_error_handler();
+            self::assertSame($expected, $r->query('x'), $uri);
+            self::assertSame($get['x'], $r->query('x'), $uri . ': query() and $_GET are the same parse');
         }
+    }
 
-        self::assertSame('Array', $value, 'query() casts the array to a string');
-        self::assertSame(['Array to string conversion'], $warnings);
+    public function testASingleValueIsStillAPlainString(): void
+    {
+        self::assertSame('1', self::get('/a?x=1&y[]=2')->query('x'), 'one scalar stays scalar; only the repeats become lists');
     }
 
     /** @param list<array{name:string,value:string,filename?:string}> $parts */

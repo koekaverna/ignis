@@ -33,6 +33,9 @@ final class InputStream
     }
     public function stream_read(int $n): string|false
     {
+        if ($n < 1) {
+            return '';
+        }
         $chunk = $this->inner ? fread($this->inner, $n) : substr(self::$body, $this->pos, $n);
         $this->pos += \strlen((string) $chunk);
         return $chunk;

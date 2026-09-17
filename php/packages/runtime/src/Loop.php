@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Ignis;
 
 /**
- * @phpstan-type Job array{0: callable, 1: list<mixed>, 2: Future}
+ * @phpstan-type Job array{0: callable, 1: array<array-key, mixed>, 2: Future}
  * @phpstan-type RawRequest array<string, mixed>
  */
 final class Loop
@@ -132,7 +132,7 @@ final class Loop
      */
     private static function poolBody(array $job): never
     {
-        $self = \Fiber::getCurrent();
+        $self = self::currentFiber();
         for (;;) {
             [$fn, $args, $future] = $job;
             try {
@@ -170,8 +170,22 @@ final class Loop
     }
 
     /**
+     * The fiber every pooled job and every request runs on. Nothing here is reachable from the main
+     * stack, and a null would silently corrupt the pool and the cancellation maps rather than fail.
+     * @return \Fiber<mixed,mixed,mixed,mixed>
+     */
+    private static function currentFiber(): \Fiber
+    {
+        $fiber = \Fiber::getCurrent();
+        if ($fiber === null) {
+            throw new \LogicException('Ignis\\Loop: this runs inside a fiber, never on the main stack');
+        }
+        return $fiber;
+    }
+
+    /**
      * The request id is fiber-scoped, so a child fiber has to be handed it explicitly (E11).
-     * @param list<mixed> $args
+     * @param array<array-key, mixed> $args named arguments keep their names through the spread
      */
     private static function attributedToRequest(callable $fn, array $args, mixed $requestId): \Closure
     {
@@ -390,15 +404,22 @@ final class Loop
         return $out;
     }
 
-    /** A fiber failed and nobody awaited its Future: surface it instead of losing it (E15c fix). */
+    /**
+     * A fiber failed and nobody awaited its Future: surface it instead of losing it (E15c fix).
+     * Only one can be rethrown, so the rest are logged rather than dropped on the floor — the loop
+     * stops on the first crash of a batch, and the ones behind it are usually how it is explained.
+     */
     private static function reportUnobserved(): void
     {
-        if (self::$unobserved === []) {
+        $errors = self::$unobserved;
+        self::$unobserved = [];
+        if ($errors === []) {
             return;
         }
-        $e = array_shift(self::$unobserved);
-        self::$unobserved = [];
-        throw $e;
+        foreach (array_slice($errors, 1) as $alsoUnobserved) {
+            self::logFailure('a further unobserved rejection, not the one rethrown', $alsoUnobserved);
+        }
+        throw $errors[0];
     }
 
     /** @var list<\Throwable> rejected futures nobody has awaited (reported when the loop stops) */
@@ -580,10 +601,33 @@ final class Loop
         self::spawn(static function () use ($handler, $request, $id): void {
             try {
                 self::answer($id, self::runHandler($handler, $request, $id));
+            } catch (\Throwable $e) {
+                self::answerFailed($id, $e);
             } finally {
                 self::releaseRequest();
             }
         });
+    }
+
+    /**
+     * Sending the answer happens outside every `catch` in runHandler(), and the Future spawn()
+     * returns is discarded — so without this a failing `ignis_stream_bind` answers nobody, logs
+     * nothing, and surfaces later as an unobserved rejection that kills the loop, not the request.
+     */
+    private static function answerFailed(int $id, \Throwable $e): void
+    {
+        self::logFailure('answering the request failed', $e);
+        try {
+            \ignis_respond($id, 500, ['content-type' => 'text/plain'], '500 ' . $e::class . ': ' . $e->getMessage() . "\n");
+        } catch (\Throwable $second) {
+            self::logFailure('and so did answering it with a 500', $second);
+        }
+    }
+
+    /** Loop-level failures the client may never see. `error_log()` is stderr under the embed SAPI. */
+    private static function logFailure(string $what, \Throwable $e): void
+    {
+        \error_log('ignis: ' . $what . ': ' . $e::class . ': ' . $e->getMessage());
     }
 
     /**
@@ -615,7 +659,7 @@ final class Loop
     /** Gives this fiber the request id and its own $_SERVER/$_GET/$_POST/$_COOKIE (E13, ADR-0006). */
     private static function enterRequest(Http\Request $request, int $id): void
     {
-        self::$requestFibers[$id] = \Fiber::getCurrent();
+        self::$requestFibers[$id] = self::currentFiber();
         Scope::set('ignis.request', $id);
         if (\function_exists('ignis_set_superglobals')) {
             \ignis_set_superglobals(...$request->superglobals());
@@ -671,7 +715,7 @@ final class Loop
 
                 return;
             }
-            \fwrite(\STDERR, 'ignis: streaming handler failed mid-body: ' . $e::class . ': ' . $e->getMessage() . "\n");
+            self::logFailure('streaming handler failed mid-body', $e);
             self::endStream($id, $tail, $started);
 
             return;
@@ -702,7 +746,10 @@ final class Loop
     }
 
     /**
-     * Throw $e into the request's fiber and its children at their suspension points (ADR-0009).
+     * Throw $e into the request's children and only then into its own fiber, at their suspension
+     * points (ADR-0009; research 08: "cancel walks children first"). The parent goes last because
+     * its unwinding answers 499 and hands its fiber back to the pool, which the next request may
+     * take while a child is still in its `finally`. Children unwind in reverse spawn order.
      * A request that is still only queued (B1) has no fiber to throw into: it is never admitted.
      */
     private static function cancelRequest(int $requestId, CancelledException $e, int $ageUs): void
@@ -711,12 +758,12 @@ final class Loop
         if (self::$queueHead < \count(self::$requestQueue) && !isset(self::$requestFibers[$requestId])) {
             self::$queueCancelled[$requestId] = true;
         }
-        $targets = self::$children[$requestId] ?? [];
-        if (isset(self::$requestFibers[$requestId])) {
-            $targets[] = self::$requestFibers[$requestId];
+        $parent = self::$requestFibers[$requestId] ?? null;
+        foreach (array_reverse(self::$children[$requestId] ?? []) as $child) {
+            self::throwInto($child, $e);
         }
-        foreach (array_reverse($targets) as $fiber) {
-            self::throwInto($fiber, $e);
+        if ($parent !== null) {
+            self::throwInto($parent, $e);
         }
         ++self::$cancelled;
         self::$cancelAgeUsMax = max(self::$cancelAgeUsMax, $ageUs);

@@ -36,9 +36,7 @@ final class Future
         $this->value = $value;
         $this->error = $e;
         if ($e !== null && $this->waiters === []) {
-            // Nobody is waiting: remember it so the loop can report it (an await() later un-registers it).
-            Loop::$unobserved[] = $e;
-            $this->unobservedError = $e;
+            $this->rememberUnobserved($e);
         }
         foreach ($this->waiters as $fiber) {
             Loop::markReady($fiber, null);
@@ -47,6 +45,24 @@ final class Future
     }
 
     private ?\Throwable $unobservedError = null;
+
+    /** Nobody is waiting yet, so the loop holds the rejection until someone does (V-22). */
+    private function rememberUnobserved(\Throwable $e): void
+    {
+        Loop::$unobserved[] = $e;
+        $this->unobservedError = $e;
+    }
+
+    /** Awaiting a rejection is observing it, so it leaves the loop's report. */
+    private function observeError(): void
+    {
+        $error = $this->unobservedError;
+        if ($error === null) {
+            return;
+        }
+        $this->unobservedError = null;
+        Loop::$unobserved = array_values(array_filter(Loop::$unobserved, static fn(\Throwable $e): bool => $e !== $error));
+    }
 
     /** Suspends the current fiber until settled; rethrows on rejection. */
     public function await(): mixed
@@ -60,16 +76,10 @@ final class Future
                 \Fiber::suspend();
             }
         }
-        if ($this->error !== null) {
-            if ($this->unobservedError !== null) {
-                $k = array_search($this->unobservedError, Loop::$unobserved, true);
-                if ($k !== false) {
-                    unset(Loop::$unobserved[$k]);
-                    Loop::$unobserved = array_values(Loop::$unobserved);
-                }
-                $this->unobservedError = null;
-            }
-            throw $this->error;
+        $error = $this->error;
+        if ($error !== null) {
+            $this->observeError();
+            throw $error;
         }
         return $this->value;
     }

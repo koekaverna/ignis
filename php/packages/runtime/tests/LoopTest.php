@@ -273,12 +273,12 @@ final class LoopTest extends LoopTestCase
     // ---- cancellation (ADR-0009) -----------------------------------------------------------
 
     /**
-     * NOTE, and not what the comment above `cancelRequest()` reads like: `$targets` is
-     * `[...children, parent]` and the loop runs `array_reverse($targets)`, so the **parent goes
-     * first** and the children follow in reverse spawn order. The parent therefore answers 499 and
-     * returns its fiber to the pool while its children are still being unwound.
+     * Children first, in reverse spawn order, and the request fiber last — research 08 states the
+     * intent ("cancel walks children first") and the mechanism gives the reason: unwinding the
+     * parent answers 499 and returns its fiber to the pool, which `drainQueue()` may hand to the
+     * next request while a child of the cancelled one is still running its `finally`.
      */
-    public function testCancellationOrderIsTheParentThenItsChildrenInReverse(): void
+    public function testCancellationWalksTheChildrenBeforeTheRequestFiber(): void
     {
         $order = [];
         // Ops the fake reactor will never complete, so the loop stops with everything still parked
@@ -312,7 +312,7 @@ final class LoopTest extends LoopTestCase
         FakeReactor::inject(8, ['kind' => 'cancel', 'age_us' => 200]);
         self::drive();
 
-        self::assertSame(['parent', 'child2', 'child1'], $order);
+        self::assertSame(['child2', 'child1', 'parent'], $order);
         self::assertSame([['id' => 8, 'status' => 499, 'headers' => ['content-type' => 'text/plain; charset=utf-8'], 'body' => "499 cancelled\n"]], FakeReactor::responses());
         self::assertSame(1, Loop::$cancelled);
     }
@@ -432,30 +432,89 @@ final class LoopTest extends LoopTestCase
     }
 
     /**
-     * DEFECT, half of it fixed. `runHandler()` now catches everything from entering the request
-     * onwards, so the case its own comment names — "an exception that escaped here would be
-     * answered by nobody" — is covered. `answer()` is not: it runs after `runHandler()` returns and
-     * is guarded only by `poolBody()`, which rejects a Future `admitRequest()` threw away. A
-     * `StreamedResponse` whose `ignis_stream_bind` fails therefore gets **no answer at all** and no
-     * log line; the throwable surfaces later as an unobserved rejection, and `runUntil()` rethrows
-     * it — killing the loop instead of the request.
-     *
-     * The fix is the same shape as the one already applied: wrap the `answer()` call the way
-     * `runHandler()` wraps the handler, so a dispatch failure becomes a 500.
+     * `answer()` runs after `runHandler()` has returned, outside every `catch` it has, and the
+     * Future `admitRequest()` spawns is discarded — so a failure there used to answer nobody and log
+     * nothing, and came back later as an unobserved rejection that `runUntil()` rethrew, killing the
+     * whole loop instead of the one request. A `StreamedResponse` is how it happens for real: the
+     * stub `ignis_stream_bind()` throws exactly where a failing bind does.
      */
-    public function testAThrowOutsideTheHandlersTryLosesTheRequestEntirelyBug(): void
+    public function testAFailureWhileAnsweringBecomesA500AndTheLoopKeepsServing(): void
     {
-        self::serveOnce(9, static fn(Request $r): StreamedResponse => new StreamedResponse(static function (): void {}));
+        self::set('requestHandler', static fn(Request $r): Response => $r->path() === '/stream'
+            ? new StreamedResponse(static function (): void {})
+            : Response::text('the next request'));
 
-        self::assertSame([], FakeReactor::responses(), 'the request vanished: no response, no log line');
-        self::assertCount(1, Loop::$unobserved);
-        self::assertStringContainsString('ignis_stream_bind', Loop::$unobserved[0]->getMessage(), 'it only exists as a rejection nobody reads');
-        self::assertSame(0, Loop::$inflightRequests, 'the slot is released, so the server does not wedge');
-        self::assertSame(1, Loop::$handled, 'and it is counted as handled');
-        Loop::$unobserved = [];
+        $logged = self::withErrorLog(static function (): void {
+            FakeReactor::inject(9, self::rawRequest('/stream'));
+            self::drive();
+            FakeReactor::inject(10, self::rawRequest('/plain'));
+            self::drive();
+        });
+
+        $responses = FakeReactor::responses();
+        self::assertSame(500, $responses[0]['status'], 'the client is answered, not dropped');
+        self::assertStringContainsString('ignis_stream_bind', $responses[0]['body']);
+        self::assertStringContainsString('ignis_stream_bind', $logged, 'and the failure is on the record');
+        self::assertSame([], Loop::$unobserved, 'nothing is left to blow the loop up at its next stop');
+        self::assertSame(
+            ['id' => 10, 'status' => 200, 'headers' => ['content-type' => 'text/plain; charset=utf-8'], 'body' => 'the next request'],
+            $responses[1],
+            'the loop survived the one that failed',
+        );
+        self::assertSame(0, Loop::$inflightRequests);
+        self::assertSame(2, Loop::$handled);
+    }
+
+    /**
+     * DEFECT found while fixing the one above: `reportUnobserved()` rethrew the first rejection and
+     * assigned `[]` over the rest, so a batch of failing fibers was reported as one and the others
+     * left no trace at all. Only one throwable can come out of `runUntil()`; the others belong in
+     * the log, because a crash is usually explained by what failed beside it.
+     */
+    public function testEveryUnobservedRejectionIsReportedAndOnlyOneCanBeRethrown(): void
+    {
+        $logged = self::withErrorLog(static function (): void {
+            foreach (['first', 'second', 'third'] as $message) {
+                Loop::spawn(static function () use ($message): never {
+                    throw new \RuntimeException($message);
+                });
+            }
+
+            try {
+                Loop::run();
+                self::fail('runUntil() must report a rejection nobody awaited');
+            } catch (\RuntimeException $e) {
+                self::assertSame('first', $e->getMessage());
+            }
+        });
+
+        self::assertStringContainsString('second', $logged);
+        self::assertStringContainsString('third', $logged);
+        self::assertSame([], Loop::$unobserved);
     }
 
     // ---- helpers ---------------------------------------------------------------------------
+
+    /**
+     * `Loop::logFailure()` uses `error_log()`, which the embed SAPI sends to stderr — unreadable
+     * from inside the process, so the test points it at a file for the duration.
+     */
+    private static function withErrorLog(callable $body): string
+    {
+        $path = sys_get_temp_dir() . '/ignis-loop-' . uniqid() . '.log';
+        $before = ini_get('error_log');
+        ini_set('error_log', $path);
+
+        try {
+            $body();
+        } finally {
+            ini_set('error_log', $before === false ? '' : $before);
+        }
+        $logged = @file_get_contents($path);
+        @unlink($path);
+
+        return $logged === false ? '' : $logged;
+    }
 
     private static function budget(int $fibers, int $queueDepth = 0): void
     {
