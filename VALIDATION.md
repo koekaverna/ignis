@@ -3480,6 +3480,32 @@ Caught by the gate while making the change: the isolation probe's grouped `use` 
 new class, and the arm reported `Class "StreamedResponse" not found` instead of passing on an empty
 body — the assertion strengthened earlier that run is what made it fail loudly.
 
+### Addendum 2 — the producer takes no arguments, and `Stream` is gone
+
+Three more pushes, each removing something. "Why pass `$out` through?" — because `echo` could not
+start the response on its own, so the Symfony producer had to call `$out->start()` first. That was a
+wart around a missing capability, not a design.
+
+The capability moved into the runtime: `ignis_stream_bind($id, $status, $headers)` stores them and
+sends **nothing**; the status line goes out with the first byte, whatever wrote it — an `echo`
+through `ub_write`, or `Ignis\write()`. `ignis_stream_unbind()` pushes what is left and answers
+`[tail, started]`, which is how the loop still knows whether a failure can be a `500` or can only
+truncate.
+
+With that, the producer needs no argument at all — the same signature Symfony and Laravel use — so:
+
+- **`Ignis\Http\Stream` is deleted.** Its public value was `write()`, and that is `Ignis\write()`.
+- The Symfony runner is one line: `new IgnisStreamedResponse($response->sendContent(...), $status, $headers)`
+  — first-class callable syntax, no closure, no wrapper.
+- `$producer` is constructor property promotion, typed `\Closure` rather than `callable`, which is
+  what let it be promoted and is what every caller already passes.
+
+A producer that writes nothing now answers `204` rather than an empty chunked body, because nothing
+was ever started.
+
+Re-measured after all of it, from a clean container: Symfony `echo` form `chunk1|chunk2|chunk3`
+(ttfb 0.0021 s), `Ignis\write()` form `w1|w2|w3`, ordinary response `200`.
+
 ### Gates
 
 `bench/e23-stream.sh` is six arms now; the new one asserts that a producer failing before its first

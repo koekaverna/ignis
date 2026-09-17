@@ -42,8 +42,8 @@ function all(iterable $futures): array
 /**
  * Sends one frame of the response this fiber is streaming, and waits if the client is behind.
  *
- * Use it instead of `echo` inside a `StreamedResponse` callback. Symfony calls that callback with no
- * arguments, so `echo` is the only channel it offers — and `echo` can only ever be taken
+ * Use it instead of `echo` inside a `StreamedResponse` producer. Symfony calls its callback with no
+ * arguments, so `echo` is the only channel it offers there — and `echo` can only ever be taken
  * optimistically, because the runtime's write hook runs where a fiber cannot suspend. This call
  * can wait, so a slow client parks the producing fiber instead of filling memory:
  *

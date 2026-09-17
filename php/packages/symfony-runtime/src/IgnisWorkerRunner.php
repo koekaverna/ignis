@@ -5,7 +5,6 @@ namespace Ignis\Symfony;
 
 use Ignis\Http\Request as IgnisRequest;
 use Ignis\Http\Response as IgnisResponse;
-use Ignis\Http\Stream;
 use Ignis\Http\StreamedResponse as IgnisStreamedResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -30,23 +29,11 @@ final class IgnisWorkerRunner implements RunnerInterface
             $headers = self::headers($response);
 
             try {
-                if (!$response instanceof StreamedResponse) {
-                    return new IgnisResponse((string) $response->getContent(), $response->getStatusCode(), $headers);
+                if ($response instanceof StreamedResponse) {
+                    return new IgnisStreamedResponse($response->sendContent(...), $response->getStatusCode(), $headers);
                 }
 
-                // Stream it: the loop drives the producer, so nothing is sent until the first
-                // write and a `sendContent()` that fails early still becomes a 500. `Stream::write`
-                // binds this fiber's output, which is why plain `echo` inside the callback is framed
-                // too; a callback that wants the client's back-pressure exactly calls `Ignis\write()`.
-                unset($headers['content-length']);   // no length yet; hyper frames it chunked
-                return new IgnisStreamedResponse(
-                    static function (Stream $out) use ($response): void {
-                        $out->start();
-                        $response->sendContent();
-                    },
-                    $response->getStatusCode(),
-                    $headers,
-                );
+                return new IgnisResponse((string) $response->getContent(), $response->getStatusCode(), $headers);
             } finally {
                 if ($kernel instanceof TerminableInterface) {
                     $kernel->terminate($request, $response);

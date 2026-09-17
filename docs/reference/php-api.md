@@ -105,7 +105,9 @@ by `Ignis\Pg` (one lease per fiber per pool) and Symfony's `FiberRequestStack`.
 | `Response::__construct(string $body = '', int $status = 200, array $headers = [])` | Plain value object; all three properties are `public readonly`. |
 | `Response::text(string $body, int $status = 200): self` | `text/plain; charset=utf-8`. |
 | `Response::json(mixed $data, int $status = 200): self` | `application/json`, `JSON_THROW_ON_ERROR`. |
-| *(removed)* `Response::detached()` | Was status `0` as a sentinel. A handler now says how it answered by what it **returns**: `Response` (the loop sends it), `Stream` (already flowing, the loop ends it), or `null` (answered through another channel, e.g. gRPC). |
+| *(removed)* `Response::detached()` | Was status `0` as a sentinel. A handler now says how it answered by what it **returns**: `Response` (the loop sends it), `StreamedResponse` (a producer the loop drives and ends), or `null` (answered through another channel, e.g. gRPC). |
+| `Ignis\Http\StreamedResponse::__construct(callable $producer, int $status = 200, array $headers = [])` | A body written while the client reads. The producer takes no arguments, as Symfony's does, and writes with `Ignis\write()` or `echo`. Nothing is sent until the first byte, so a producer that fails before writing still answers 500. |
+| `Ignis\write(string $chunk): void` | Sends one frame of the response this fiber is producing, and waits if the client is behind — which `echo` cannot do. |
 
 ## `namespace Ignis\Classic` (`php/packages/runtime/src/classic.php`)
 

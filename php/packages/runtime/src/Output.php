@@ -18,8 +18,8 @@ namespace Ignis;
  * responses swapped bodies. The lock is correct and costs serialisation; the native path costs
  * neither.
  *
- * Streaming needs nothing from here: the first write on an `Ignis\Http\Stream` binds the fiber's
- * output to the response, so an `echo` inside a producer leaves as a frame on its own (V-76).
+ * Streaming needs nothing from here: the loop binds a producer's fiber to its response, so an
+ * `echo` inside it leaves as a frame on its own (V-76).
  */
 final class Output
 {

@@ -13,7 +13,6 @@ require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 use Ignis\Http\Request;
 use Ignis\Http\Response;
-use Ignis\Http\Stream;
 use Ignis\Http\StreamedResponse;
 
 Ignis\serve(static function (Request $r): Response {
@@ -26,13 +25,13 @@ Ignis\serve(static function (Request $r): Response {
 
     $fail = $r->query('fail');
 
-    return new StreamedResponse(static function (Stream $out) use ($n, $ms, $fail): void {
+    return new StreamedResponse(static function () use ($n, $ms, $fail): void {
         if ($fail === 'early') {
             throw new \RuntimeException('failed before writing anything');
         }
         try {
             for ($i = 1; $i <= $n; $i++) {
-                $out->write("chunk{$i}\n");
+                Ignis\write("chunk{$i}\n");
                 Ignis\sleep($ms);
             }
         } catch (\RuntimeException $e) {

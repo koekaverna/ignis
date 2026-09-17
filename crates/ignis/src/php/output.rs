@@ -28,7 +28,7 @@ use super::zval;
 thread_local! {
     /// Fiber context pointer (0 = `{main}`) → the stack of buffers that fiber is filling.
     static SINKS: RefCell<HashMap<usize, Vec<Vec<u8>>>> = RefCell::new(HashMap::new());
-    /// Fibers whose output goes straight out as response chunks: fiber → (request id, pending bytes).
+    /// Fibers whose output goes straight out as response chunks.
     ///
     /// This exists because PHP's own `ob_start()` cannot do it safely. Its buffer stack is per
     /// **thread**, so a fiber that merely echoes while another is streaming writes into that other
@@ -36,7 +36,40 @@ thread_local! {
     /// measured, a second request's `echo` was framed into the first one's body (V-76). `ub_write`
     /// runs at the moment of the write and knows whose it is, which is the only place the question
     /// can still be answered.
-    static BOUND: RefCell<HashMap<usize, (u64, Vec<u8>)>> = RefCell::new(HashMap::new());
+    static BOUND: RefCell<HashMap<usize, Bound>> = RefCell::new(HashMap::new());
+}
+
+/// A fiber whose output is a response body.
+///
+/// The status line is **not** sent at bind time — it goes out with the first byte, whatever produced
+/// it. That is what lets a producer which fails before writing anything still answer `500`: nothing
+/// has been promised to the client yet.
+struct Bound {
+    id: u64,
+    status: u16,
+    headers: Vec<(String, String)>,
+    pending: Vec<u8>,
+    started: bool,
+}
+
+impl Bound {
+    /// Sends `frame`, opening the response first if this is its first byte. Returns the bytes that
+    /// did not fit, which happens only when the client is behind.
+    fn push(&mut self, frame: bytes::Bytes) -> Vec<u8> {
+        if !self.started {
+            if !crate::php::module::reactor().respond_start(self.id, self.status, std::mem::take(&mut self.headers), super::module::stream_chunks()) {
+                return Vec::new(); // the client is already gone
+            }
+            self.started = true;
+        }
+        match crate::php::module::reactor().stream_sender(self.id) {
+            Some(tx) => match tx.try_send(frame) {
+                Err(tokio::sync::mpsc::error::TrySendError::Full(back)) => back.to_vec(),
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        }
+    }
 }
 
 /// Bytes a bound fiber may accumulate before a frame is pushed out.
@@ -71,20 +104,14 @@ pub unsafe extern "C" fn ub_write(str_: *const c_char, str_length: usize) -> usi
     // Bound to a response stream: the bytes are frames, not a buffer to collect.
     let streamed = BOUND.with(|b| {
         let mut b = b.borrow_mut();
-        let Some((id, pending)) = b.get_mut(&key) else { return false };
-        pending.extend_from_slice(bytes);
-        if pending.len() >= frame_bytes() {
-            let id = *id;
-            let frame = std::mem::take(pending);
+        let Some(bound) = b.get_mut(&key) else { return false };
+        bound.pending.extend_from_slice(bytes);
+        if bound.pending.len() >= frame_bytes() {
             // `try_send` only: this runs on the PHP thread inside an internal frame, so it can
             // neither block the thread nor suspend the fiber. A full channel means the client is
-            // behind, and the bytes stay here until `Stream::close()` drains them from PHP, where
-            // awaiting is legal.
-            if let Some(tx) = crate::php::module::reactor().stream_sender(id) {
-                if let Err(tokio::sync::mpsc::error::TrySendError::Full(back)) = tx.try_send(bytes::Bytes::from(frame)) {
-                    *pending = back.to_vec();
-                }
-            }
+            // behind, and the bytes stay here until PHP drains them, where awaiting is legal.
+            let frame = std::mem::take(&mut bound.pending);
+            bound.pending = bound.push(bytes::Bytes::from(frame));
         }
         true
     });
@@ -161,27 +188,22 @@ pub unsafe extern "C" fn flush(_server_context: *mut std::ffi::c_void) {
     let key = unsafe { current() };
     BOUND.with(|b| {
         let mut b = b.borrow_mut();
-        let Some((id, pending)) = b.get_mut(&key) else { return };
-        if pending.is_empty() {
+        let Some(bound) = b.get_mut(&key) else { return };
+        if bound.pending.is_empty() {
             return;
         }
-        let id = *id;
-        let frame = std::mem::take(pending);
-        if let Some(tx) = crate::php::module::reactor().stream_sender(id) {
-            if let Err(tokio::sync::mpsc::error::TrySendError::Full(back)) = tx.try_send(bytes::Bytes::from(frame)) {
-                *pending = back.to_vec();   // the client is behind; it goes out at close()
-            }
-        }
+        let frame = std::mem::take(&mut bound.pending);
+        bound.pending = bound.push(bytes::Bytes::from(frame));
     });
 }
 
-/// `ignis_stream_write(string $bytes): int` — send `$bytes` as a frame of the stream this fiber is
-/// bound to. Returns `0` if the runtime took it, an op id to await if the queue to the socket is
-/// full, and `-1` if this fiber is not streaming.
+/// `ignis_stream_write(string $bytes): int` — send `$bytes` as a frame of the response this fiber is
+/// bound to, opening it if this is the first byte. Returns `0` if the runtime took it, an op id to
+/// await if the queue to the socket is full, and `-1` if this fiber is not streaming.
 ///
-/// This is what a `StreamedResponse` callback calls instead of `echo` when it wants the client's
-/// back-pressure: `echo` can only ever `try_send` (`ub_write` runs where a fiber cannot suspend),
-/// while the op this returns is awaitable, so a slow client parks the producer.
+/// This is what a producer calls instead of `echo` when it wants the client's back-pressure: `echo`
+/// can only ever be taken optimistically (`ub_write` runs where a fiber cannot suspend), while the op
+/// this returns is awaitable, so a slow client parks the producer.
 ///
 /// # Safety
 /// VM frame on a PHP thread; the string argument is copied before anything is submitted.
@@ -194,48 +216,86 @@ pub unsafe extern "C" fn zif_stream_write(ex: *mut sys::zend_execute_data, rv: *
         }
         let key = current();
         // Anything `echo`ed before this call is still pending; it must go first or the response
-        // would be reordered.
-        let (id, mut out) = match BOUND.with(|b| {
-            b.borrow_mut().get_mut(&key).map(|(id, pending)| (*id, std::mem::take(pending)))
-        }) {
-            Some(v) => v,
-            None => {
-                zval::set_long(rv, -1);
-                return;
-            }
+        // would be reordered. `push` opens the response if this is its first byte.
+        let leftover = BOUND.with(|b| {
+            let mut b = b.borrow_mut();
+            let Some(bound) = b.get_mut(&key) else { return None };
+            bound.pending.extend_from_slice(std::slice::from_raw_parts(buf as *const u8, len));
+            let frame = std::mem::take(&mut bound.pending);
+            let back = bound.push(bytes::Bytes::from(frame));
+            let id = bound.id;
+            bound.pending = Vec::new();
+            Some((id, back))
+        });
+        let Some((id, leftover)) = leftover else {
+            zval::set_long(rv, -1);
+            return;
         };
-        out.extend_from_slice(std::slice::from_raw_parts(buf as *const u8, len));
-        zval::set_long(rv, super::module::send_chunk(id, bytes::Bytes::from(out)));
+        // What did not fit is worth an op: awaiting it is exactly the back-pressure.
+        zval::set_long(rv, if leftover.is_empty() { 0 } else { super::module::send_chunk(id, bytes::Bytes::from(leftover)) });
     }
 }
 
-/// `ignis_stream_bind(int $id): bool` — this fiber's output becomes frames of response `$id`.
+/// `ignis_stream_bind(int $id, int $status, array $headers): bool` — this fiber's output becomes the
+/// body of response `$id`.
+///
+/// The status line is not sent here: it goes out with the first byte, whatever wrote it. That is
+/// what lets a producer which fails before writing anything still answer `500`.
 ///
 /// # Safety
-/// VM frame on a PHP thread.
+/// VM frame on a PHP thread; the arguments are copied into owned Rust data.
 pub unsafe extern "C" fn zif_stream_bind(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: one integer argument; nothing Zend-owned is retained.
     unsafe {
         let mut id: sys::zend_long = 0;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut id) != sys::SUCCESS {
+        let mut status: sys::zend_long = 200;
+        let mut ht: *mut sys::HashTable = std::ptr::null_mut();
+        if sys::zend_parse_parameters(zval::num_args(ex), c"llh".as_ptr(), &mut id, &mut status, &mut ht) != sys::SUCCESS {
             return;
         }
+        let headers = super::module::header_pairs(ht, "ignis_stream_bind");
         let key = current();
-        BOUND.with(|b| b.borrow_mut().insert(key, (id as u64, Vec::new())));
+        BOUND.with(|b| {
+            b.borrow_mut().insert(key, Bound {
+                id: id as u64,
+                status: status.clamp(100, 599) as u16,
+                headers,
+                pending: Vec::new(),
+                started: false,
+            })
+        });
         zval::set_bool(rv, true);
     }
 }
 
-/// `ignis_stream_unbind(): string` — stops forwarding and hands back whatever has not gone out yet,
-/// so PHP can send it through `Stream::write()`, where awaiting the runtime is legal.
+/// `ignis_stream_unbind(): array` — stops forwarding and reports `[tail, started]`.
+///
+/// Anything still pending is pushed out here, so `tail` is only what did not fit — PHP sends that,
+/// because there it may await. `started` is how the loop knows whether a failure can still become a
+/// `500` or can only truncate what the client is already reading.
 ///
 /// # Safety
 /// VM frame on a PHP thread.
 pub unsafe extern "C" fn zif_stream_unbind(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     let key = unsafe { current() };
-    let tail = BOUND.with(|b| b.borrow_mut().remove(&key).map(|(_, pending)| pending).unwrap_or_default());
-    // SAFETY: `rv` is the VM's return slot; `string_zval` hands back an owned string zval.
-    unsafe { *rv = super::route::string_zval(&tail) };
+    // Push whatever is pending first — opening the response if this is its first byte — so the tail
+    // handed back is only what did not fit, which PHP can then await.
+    let (tail, started) = BOUND.with(|b| {
+        let mut b = b.borrow_mut();
+        let Some(bound) = b.get_mut(&key) else { return (Vec::new(), false) };
+        if !bound.pending.is_empty() {
+            let frame = std::mem::take(&mut bound.pending);
+            bound.pending = bound.push(bytes::Bytes::from(frame));
+        }
+        let out = (std::mem::take(&mut bound.pending), bound.started);
+        b.remove(&key);
+        out
+    });
+    // SAFETY: `rv` is the VM's return slot; the string zval is owned by the caller.
+    unsafe {
+        zval::set_new_array(rv);
+        sys::add_next_index_stringl(rv, tail.as_ptr() as *const std::ffi::c_char, tail.len());
+        sys::add_next_index_bool(rv, started);
+    }
 }
 
 /// `ignis_capture_reset(): bool` — drops whatever this fiber left behind. Called when a request

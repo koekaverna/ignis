@@ -374,7 +374,7 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
 ///
 /// # Safety
 /// `ht` must be a live hash table owned by the VM for the duration of the call.
-unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(String, String)> {
+pub(super) unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(String, String)> {
     let mut headers = Vec::new();
     // SAFETY: hash iteration through ZEND_API only; every value is copied before returning.
     unsafe {
@@ -402,7 +402,7 @@ unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(String, Strin
 
 /// How many chunks may sit between PHP and the socket. Read once: it cannot change, and
 /// `respond_start` runs per streamed response.
-fn stream_chunks() -> usize {
+pub(super) fn stream_chunks() -> usize {
     static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *V.get_or_init(|| std::env::var("IGNIS_STREAM_CHUNKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2usize))
 }
@@ -832,7 +832,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 38]> = SyncStatic([
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_RESPOND.0.as_ptr(), 3),
     fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stream_write", super::output::zif_stream_write, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
@@ -883,7 +883,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 46]> = SyncStatic([
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_RESPOND.0.as_ptr(), 3),
     fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stream_write", super::output::zif_stream_write, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
@@ -924,7 +924,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_RESPOND.0.as_ptr(), 3),
     fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stream_write", super::output::zif_stream_write, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),

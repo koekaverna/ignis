@@ -512,26 +512,48 @@ final class Loop
     /**
      * Runs a streaming producer and ends its body.
      *
-     * The status line is not sent until the producer's first write, which is what lets a producer
-     * that fails early still answer `500` — once the headers are out, an error can only truncate,
-     * which is all HTTP allows.
+     * Binding does not send anything: the status line goes out with the first byte, whatever wrote
+     * it. That is what lets a producer which fails early still answer `500` — once the headers are
+     * out, an error can only truncate, which is all HTTP allows.
      */
     private static function produce(int $id, Http\StreamedResponse $response): void
     {
-        $out = new Http\Stream($id, $response->status, $response->headers);
+        \ignis_stream_bind($id, $response->status, $response->headers);
         try {
-            ($response->producer)($out);
+            ($response->producer)();
         } catch (\Throwable $e) {
-            if (!$out->started()) {
+            [$tail, $started] = \ignis_stream_unbind();
+            if (!$started && $tail === '') {
                 \ignis_respond($id, 500, ['content-type' => 'text/plain'], '500 ' . $e::class . ': ' . $e->getMessage() . "\n");
 
                 return;
             }
-            // Already streaming: the client has been told 200 and can only be cut short.
             \fwrite(\STDERR, 'ignis: streaming handler failed mid-body: ' . $e::class . ': ' . $e->getMessage() . "\n");
-        } finally {
-            $out->close();
+            self::endStream($id, $tail, $started);
+
+            return;
         }
+        [$tail, $started] = \ignis_stream_unbind();
+        self::endStream($id, $tail, $started);
+    }
+
+    /** Sends whatever the producer left behind and closes the body. */
+    private static function endStream(int $id, string $tail, bool $started): void
+    {
+        if (!$started && $tail === '') {
+            // The producer wrote nothing at all: an ordinary empty response, not a chunked one.
+            \ignis_respond($id, 204, [], '');
+
+            return;
+        }
+        if ($tail !== '') {
+            // Only what did not fit: the unbind already pushed the rest and opened the response.
+            $op = \ignis_respond_chunk($id, $tail);
+            if ($op > 0) {
+                self::awaitOp($op);
+            }
+        }
+        \ignis_respond_end($id);
     }
 
     /** Throw $e into the request's fiber and its children at their suspension points (ADR-0009). */
