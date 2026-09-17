@@ -26,6 +26,7 @@ use Ignis\Http\Response;  // → E4
 // ---------------------------------------------------------------------------
 // 1. Structured concurrency inside one request: ✓ (E1/E2, V-2/V-3)
 // ---------------------------------------------------------------------------
+/** @return array{profile: array<string, mixed>, orders: list<array<string, mixed>>, recommendations: list<string>} */
 function fetchDashboard(int $userId): array
 {
     // Three independent waits run concurrently on one OS thread; the fiber
@@ -35,7 +36,7 @@ function fetchDashboard(int $userId): array
             Ignis\sleep(200);                              // stands in for a slow upstream
             return ['id' => $userId, 'name' => 'Ada'];
         }),
-        Ignis\async(static function () use ($userId): array {
+        Ignis\async(static function (): array {
             Ignis\sleep(200);
             return [['id' => 1, 'total' => 42.0]];
         }),
@@ -50,11 +51,13 @@ function fetchDashboard(int $userId): array
 //    factory is replaced by Ignis (ADR-0007). PDO sqlite does its own file I/O in-process
 //    and still blocks the thread (V-12) — use it for short queries only for now.
 // ---------------------------------------------------------------------------
+/** @return list<array<string, mixed>> */
 function usersFromDb(\PDO $pdo): array
 {
     return $pdo->query('SELECT id, name FROM users ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
 }
 
+/** @return array<string, mixed> */
 function upstreamJson(string $url): array
 {
     return json_decode(file_get_contents($url), true, 512, JSON_THROW_ON_ERROR);
@@ -102,7 +105,10 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
     };
 }, $listen);
 
-/** E14: one lease per fiber; a transaction keeps one backend; the query parks the fiber, not the thread. */
+/**
+ * E14: one lease per fiber; a transaction keeps one backend; the query parks the fiber, not the thread.
+ * @return array<string, mixed>
+ */
 function dbDemo(): array
 {
     static $pool = null;
@@ -119,7 +125,10 @@ function dbDemo(): array
     ]);
 }
 
-/** E16: a named function runs on a synchronous worker thread with its own PHP context; this fiber parks meanwhile. */
+/**
+ * E16: a named function runs on a synchronous worker thread with its own PHP context; this fiber parks meanwhile.
+ * @return array<string, mixed>
+ */
 function offloadDemo(): array
 {
     if ((Ignis\Offload\Client::stats()['workers'] ?? 0) === 0) {

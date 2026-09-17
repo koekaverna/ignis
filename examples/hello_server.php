@@ -22,9 +22,8 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             return Response::text("slept\n");
         })(),
         '/fatal' => (static function (): Response {
-            // E12: a real fatal (bailout) — must kill only this thread's script.
+            // E12: a real fatal (bailout) — must kill only this thread's script, and never return.
             trigger_error('deliberate fatal for E12', E_USER_ERROR);
-            return Response::text("unreachable\n");
         })(),
         '/spin'  => (static function () use ($req): Response {
             // E12: CPU loop with no suspension point; stalls only this thread.
