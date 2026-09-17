@@ -93,7 +93,7 @@ echo "== E13 (isolation)"; $T ./target/release/ignis bench/php/e13_isolation.php
 echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
 echo "== E13 (200 concurrent HTTP)"; timeout 120 bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 timeout 120 bench/e6-fetch.sh | tail -2
-if [ -d php/amphp/vendor ]; then echo "== E7 (Revolt/AMPHP examples, both drivers; fiber-local-manual is a known timing race)"; timeout 120 bench/e7-revolt.sh | grep -E "^(DIFFER|e7)" || true; else echo "== E7 skipped (run: cd php/amphp && composer install --prefer-source)"; fi
+if [ -d php/packages/revolt/vendor ]; then echo "== E7 (Revolt/AMPHP examples, both drivers; fiber-local-manual is a known timing race)"; timeout 120 bench/e7-revolt.sh | grep -E "^(DIFFER|e7)" || true; else echo "== E7 skipped (run: cd php/packages/revolt && composer install --prefer-source)"; fi
 echo "== E11 (cancellation + deadline)"; timeout 120 bench/e11-cancel.sh | grep -E "cancelled|status=" | head -2
 if pg_isready -h "$PGHOST" -q 2>/dev/null; then echo "== E14 (pgsql pool)"; PGHOST="$PGHOST" timeout 120 bench/e14-pg.sh | grep -E "warm|transaction|reset"; else echo "== E14 skipped (no PostgreSQL on $PGHOST)"; fi
 echo "== E12 (supervisor: fatal + spin)"; timeout 120 bench/e12-isolation.sh | grep -E "^after \(a\)|^after hello|server"

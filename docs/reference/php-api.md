@@ -1,15 +1,20 @@
 # PHP API reference
 
 Every public function, class and method a script or framework integration is meant to call.
-Sources: `php/ignis.php` (the userland scheduler — `Ignis\Loop`, `Future`, `async()`, `all()`,
-`sleep()`, `deadline()`, `Scope`, `serve()`, `Ignis\Http\Request`/`Response`), `php/classic.php`
-(`Ignis\Classic`), `php/pg/ignis-pg.php` (`Ignis\Pg`), `php/offload/ignis-offload.php`
-(`Ignis\Offload`, `Ignis\offload()`), `php/amphp/src/IgnisDriver.php` (`Ignis\Revolt\IgnisDriver`),
-`php/symfony/src/*` (`Ignis\Symfony`), and the internal `ignis_*` function table registered from
-`crates/ignis/src/php/module.rs`. Also cross-checked against `php/stubs/ignis.php`, the
+Sources: `php/packages/runtime/src/ignis.php` (the userland scheduler — `Ignis\Loop`, `Future`, `async()`, `all()`,
+`sleep()`, `deadline()`, `Scope`, `serve()`, `Ignis\Http\Request`/`Response`), `php/packages/runtime/src/classic.php`
+(`Ignis\Classic`), `php/packages/pg/src/ignis-pg.php` (`Ignis\Pg`), `php/packages/offload/src/ignis-offload.php`
+(`Ignis\Offload`, `Ignis\offload()`), `php/packages/revolt/src/IgnisDriver.php` (`Ignis\Revolt\IgnisDriver`),
+`php/packages/symfony-runtime/src/*` (`Ignis\Symfony`), and the internal `ignis_*` function table registered from
+`crates/ignis/src/php/module.rs`. Also cross-checked against `php/packages/runtime/stubs/ignis.php`, the
 IDE/static-analysis stub file.
 
-## `namespace Ignis` — the scheduler (`php/ignis.php`)
+The userland ships as one composer package per integration — `ignis/runtime` is the scheduler and
+everything else depends on it; `ignis/symfony-runtime`, `ignis/pg`, `ignis/offload`, `ignis/grpc`,
+`ignis/revolt`, `ignis/swoole`, `ignis/temporal` add one thing each. The list, and how to install
+them into an application, is in [`php/README.md`](https://github.com/koekaverna/ignis/blob/main/php/README.md).
+
+## `namespace Ignis` — the scheduler (`php/packages/runtime/src/ignis.php`)
 
 ### Top-level functions
 
@@ -20,7 +25,7 @@ IDE/static-analysis stub file.
 | `all(iterable<Future> $futures): array` | Awaits every future, returning their values in the same order/keys as given. Each `await()` can throw — a rejected future's exception propagates from here. |
 | `deadline(int $ms): void` | Sets a wall-clock deadline for the **current request**: after `$ms`, the request's fiber and every fiber it spawned via `async()` receive a `DeadlineExceededException` at their suspension point. Must be called from inside a request (throws `LogicException` otherwise — there is no "current request" outside one). |
 | `serve(callable(Http\Request):Http\Response $handler, string $addr = '127.0.0.1:8080'): void` | Worker mode: listens on `$addr`, runs `$handler` in a pooled fiber per request, forever. Wraps `Loop::serve()`. |
-| `offload(string $fn, mixed ...$args): mixed` | See `Ignis\Offload` below — runs `$fn(...$args)` on a synchronous offload worker thread; the current fiber parks. Declared in `php/offload/ignis-offload.php`, not `php/ignis.php`. |
+| `offload(string $fn, mixed ...$args): mixed` | See `Ignis\Offload` below — runs `$fn(...$args)` on a synchronous offload worker thread; the current fiber parks. Declared in `php/packages/offload/src/ignis-offload.php`, not `php/packages/runtime/src/ignis.php`. |
 
 ```php
 Ignis\serve(function (Ignis\Http\Request $req): Ignis\Http\Response {
@@ -102,7 +107,7 @@ by `Ignis\Pg` (one lease per fiber per pool) and Symfony's `FiberRequestStack`.
 | `Response::json(mixed $data, int $status = 200): self` | `application/json`, `JSON_THROW_ON_ERROR`. |
 | `Response::detached(): self` | Status `0` — tells the loop the handler already answered through another channel (a gRPC stream, E10) and to send nothing itself. |
 
-## `namespace Ignis\Classic` (`php/classic.php`)
+## `namespace Ignis\Classic` (`php/packages/runtime/src/classic.php`)
 
 Serves a document root of ordinary PHP scripts, one `include` per request — the FrankenPHP/RoadRunner-style worker mode, for legacy procedural apps that expect real top-level globals.
 
@@ -114,8 +119,8 @@ Serves a document root of ordinary PHP scripts, one `include` per request — th
 | `finish_request(): bool` | Sends the response immediately and lets the script keep running after that (`fastcgi_finish_request()` analogue); any output after this point is dropped. Returns `false` if called outside a request or after the response was already sent. |
 
 ```php
-require '.../php/ignis.php';
-require '.../php/classic.php';
+require '.../php/packages/runtime/src/ignis.php';
+require '.../php/packages/runtime/src/classic.php';
 Ignis\Classic\listen('/var/www/html/public', '0.0.0.0:8080');
 while ($script = Ignis\Classic\accept()) {
     include $script;              // top level of the main script: real globals
@@ -133,7 +138,7 @@ Also declared (global namespace, only if not already defined — e.g. under `Ign
 `getallheaders()`, `apache_request_headers()`, `apache_response_headers()` polyfills built from
 `$_SERVER`'s `HTTP_*` entries and the sent header list.
 
-## `namespace Ignis\Pg` (`php/pg/ignis-pg.php`, E14/ADR-0015)
+## `namespace Ignis\Pg` (`php/packages/pg/src/ignis-pg.php`, E14/ADR-0015)
 
 Connections belong to the runtime (a process-wide pool); PHP code holds *leases*.
 
@@ -163,7 +168,7 @@ $pool->transaction(function (Ignis\Pg\Lease $l) {
 });
 ```
 
-## `namespace Ignis\Offload` (`php/offload/ignis-offload.php`, E16/ADR-0016)
+## `namespace Ignis\Offload` (`php/packages/offload/src/ignis-offload.php`, E16/ADR-0016)
 
 | Signature | What it does |
 |---|---|
@@ -183,7 +188,7 @@ With auto-routing on (the default whenever `--offload N > 0`), ordinary code is 
 source change; the same calls made outside a fiber (worker thread 0, or an offload worker itself)
 run exactly as stock PHP.
 
-## `Ignis\Revolt\IgnisDriver` (`php/amphp/src/IgnisDriver.php`, ADR-0008/E7)
+## `Ignis\Revolt\IgnisDriver` (`php/packages/revolt/src/IgnisDriver.php`, ADR-0008/E7)
 
 A `Revolt\EventLoop\Internal\AbstractDriver` implementation over the Ignis reactor — lets
 `amphp`/Revolt-based code (and anything built on it) run unmodified on Ignis. Select it with the
@@ -199,7 +204,7 @@ binary) throws `Revolt\EventLoop\UnsupportedFeatureException`. Signal callbacks
 (`SignalCallback`) are not supported yet and also throw `UnsupportedFeatureException` if a caller
 registers one.
 
-## `namespace Ignis\Symfony` (`php/symfony/src/*`, ADR-0011)
+## `namespace Ignis\Symfony` (`php/packages/symfony-runtime/src/*`, ADR-0011)
 
 The `symfony/runtime` adapter for worker mode. Select it via the standard Symfony Runtime
 mechanism:
@@ -231,11 +236,11 @@ except for the two noted below.
 | `ignis_respond(int $id, int $status, array $headers, string $body): bool` | `Ignis\Loop`'s request dispatch |
 | `ignis_set_superglobals(array, array, array, array): void` | `Ignis\Loop`'s request dispatch (ADR-0006) |
 | `ignis_cancel_parked_any(\Fiber, \Throwable): bool` | `Ignis\Loop::throwInto()` (ADR-0009 cancellation) |
-| `ignis_grpc_send`/`_end`/`_call`/`_recv` | `php/grpc/ignis-grpc.php` (E10; not one of the four files this reference documents in full) |
+| `ignis_grpc_send`/`_end`/`_call`/`_recv` | `php/packages/grpc/src/ignis-grpc.php` (E10; not one of the four files this reference documents in full) |
 | `ignis_pg_open`/`_acquire`/`_query`/`_release`/`_stats` | `Ignis\Pg\Pool`/`Lease` above |
 | `ignis_offload_submit`/`_next`/`_done`/`_callback`/`_cb_result`/`_stats` | `Ignis\Offload\Client`/`offload()` above |
 | `ignis_route_enable`/`_route_pass` | `Ignis\Offload\Router` above |
-| `ignis_temporal_*` (7 functions, `feature = "temporal"` builds only) | `php/temporal/ignis-temporal.php` (not covered by this reference) |
+| `ignis_temporal_*` (7 functions, `feature = "temporal"` builds only) | `php/packages/temporal-prototype/src/ignis-temporal.php` (not covered by this reference) |
 | `ignis_park_on`/`ignis_op_result` (`cfg(php_async_abi)` builds only — the true-async backend, ADR-0003) | `backend/async_core.rs`'s PHP-side counterpart |
 
 **Two exceptions a custom event-loop integration legitimately calls directly** (as `IgnisDriver`
@@ -243,9 +248,9 @@ does): `ignis_watch(resource $stream, int $mode): int` (one-shot readiness watch
 readable / `2` = writable, ADR-0008) and `ignis_cancel(int $op): int` (cancels a pending
 `ignis_watch`). Every other application should go through `Ignis\sleep()`/`async()`/`Ignis\Pg`/etc.
 
-### Consistency with `php/stubs/ignis.php`
+### Consistency with `php/packages/runtime/stubs/ignis.php`
 
-`php/stubs/ignis.php` (IDE/static-analysis stubs, guarded with `function_exists()` and throwing if
+`php/packages/runtime/stubs/ignis.php` (IDE/static-analysis stubs, guarded with `function_exists()` and throwing if
 somehow reached under the real binary) declares every function above, **plus** the 7
 `ignis_temporal_*` functions and `ignis_park_on`/`ignis_op_result` unconditionally — i.e. it is a
 superset of any single build's function table, since those two groups only exist in the

@@ -11,7 +11,7 @@
 //
 // Usage: ignis bench/php/e18_curl.php <url> [n]   (env fallback: URL, N; default n=100)
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $url = $argv[1] ?? getenv('URL') ?: null;
 $n = (int) ($argv[2] ?? getenv('N') ?: 100);

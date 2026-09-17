@@ -85,7 +85,7 @@ remains a hazard nothing detects yet.
 
 **Unmeasured, and stated as such:** whether an actual Symfony session reaches that `flock` under the
 embed SAPI at all — the probe stopped at `Session cannot be started after headers have already been
-sent` (`php_embed_init()` pins `SG(headers_sent)`, which is why `php/classic.php` handles session
+sent` (`php_embed_init()` pins `SG(headers_sent)`, which is why `php/packages/runtime/src/classic.php` handles session
 cookies itself). V-58 measures the lock mechanism directly with `flock`; the end-to-end Symfony
 session path needs its own test before any claim is made about it, and that test is the first step
 of decision 4.

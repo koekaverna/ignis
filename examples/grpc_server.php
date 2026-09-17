@@ -1,8 +1,8 @@
 <?php
 // E10 demo: gRPC service written in PHP, served on the same listener as HTTP (examples/grpc/greeter.proto).
 declare(strict_types=1);
-require __DIR__ . '/../php/ignis.php';
-require __DIR__ . '/../php/grpc/ignis-grpc.php';
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../php/packages/grpc/src/ignis-grpc.php';
 
 use Ignis\Grpc\Call;
 use Ignis\Grpc\Client;

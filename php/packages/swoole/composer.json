@@ -1,0 +1,8 @@
+{
+    "name": "ignis/swoole",
+    "description": "A shim for a subset of the Swoole coroutine API on top of Ignis fibers (E15d). Load it with auto_prepend_file; it is a compatibility layer, not a Swoole implementation.",
+    "type": "library",
+    "license": "MIT",
+    "require": { "php": ">=8.4", "ignis/runtime": "@dev" },
+    "config": { "allow-plugins": false }
+}

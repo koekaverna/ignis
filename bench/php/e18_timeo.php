@@ -2,7 +2,7 @@
 // SO_RCVTIMEO under universal park (research 30 finding): a blocking socket_recv() with a kernel
 // receive timeout must return false with EAGAIN after ~T ms — and not block the thread meanwhile.
 // Usage: ignis bench/php/e18_timeo.php   (sockets.rs is gone; the seed's libphp rows carry this)
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $t0 = hrtime(true);
 $fs = [];
 for ($i = 0; $i < 3; $i++) {

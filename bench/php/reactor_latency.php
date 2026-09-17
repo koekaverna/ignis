@@ -6,7 +6,7 @@
 //   epoll      : a real Op::Watch -> dup + AsyncFd (epoll_ctl ADD) + wait + drop (DEL) + close.
 // Env: N (ops per leg, default 5000), CONC (fiber counts for the amortization curve).
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 use Ignis\Loop;
 use function Ignis\all;

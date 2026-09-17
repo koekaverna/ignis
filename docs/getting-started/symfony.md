@@ -10,8 +10,8 @@ app's own PHP is older):
 
 ```
 composer config platform.php 8.5.10
-composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php","options":{"symlink":false}}'
-composer require ignis/runtime:@dev --no-scripts
+composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php/packages/*","options":{"symlink":false}}'
+composer require ignis/runtime:@dev ignis/symfony-runtime:@dev --no-scripts
 composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
 composer dump-autoload
 mkdir -p var && chmod -R a+rwX var

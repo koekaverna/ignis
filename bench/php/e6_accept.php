@@ -1,7 +1,7 @@
 <?php
 // E6'': server accept inside a fiber, hooked client on the same thread; select + get_name on hooked streams.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $srv = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
 $addr = stream_socket_get_name($srv, false);
 $t0 = hrtime(true);

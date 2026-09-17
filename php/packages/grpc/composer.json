@@ -1,0 +1,9 @@
+{
+    "name": "ignis/grpc",
+    "description": "gRPC handlers and clients in PHP on the runtime's own listener (E10): tonic serves h2 next to HTTP, the PHP side sees plain data.",
+    "type": "library",
+    "license": "MIT",
+    "require": { "php": ">=8.4", "ignis/runtime": "@dev" },
+    "autoload": { "files": ["src/ignis-grpc.php"] },
+    "config": { "allow-plugins": false }
+}

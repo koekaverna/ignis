@@ -70,7 +70,7 @@ With the servers up, all 21 pass in every mode.
 
 ## Does chaos have anything to reorder? Mostly no — and here is the number
 
-`IGNIS_CHAOS=1` (php/ignis.php, `Loop::$chaos`) does three things: shuffle the ready-fiber batch,
+`IGNIS_CHAOS=1` (php/packages/runtime/src/ignis.php, `Loop::$chaos`) does three things: shuffle the ready-fiber batch,
 shuffle the completed-op batch from `ignis_poll()`, and insert an extra 0 ms yield after every awaited
 op with probability `IGNIS_CHAOS_P` (0.5). All three only act where PHP **running inside an Ignis
 fiber awaits an Ignis op**: `Ignis\sleep`, `Ignis\async/all`, the hooked `sleep()`/`usleep()`, the
@@ -135,7 +135,7 @@ gate too. `bench/e15-chaos.sh` writes a ~45-line entry point per suite that
 * calls `(new PHPUnit\TextUI\Application)->run($_SERVER['argv'])` directly,
 * sets `memory_limit=-1` (`E15_MEMORY_LIMIT` to override) — Doctrine ORM's `QueryLog` blows the 128 MB
   default at 46 % of its suite, **in every mode**,
-* and, when `IGNIS_MODE=1`, requires `php/ignis.php` and runs the whole application inside one
+* and, when `IGNIS_MODE=1`, requires `php/packages/runtime/src/ignis.php` and runs the whole application inside one
   `Ignis\async(…)->await()`, printing `Loop::$chaosYields`, `$resumes`, `$fibersCreated` and the poll
   time on STDERR at the end.
 

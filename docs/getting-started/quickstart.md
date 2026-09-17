@@ -8,7 +8,7 @@ a pooled Fiber.
 ```php
 <?php
 declare(strict_types=1);
-require __DIR__ . '/../php/ignis.php';
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
 
 use Ignis\Http\Request;
 use Ignis\Http\Response;

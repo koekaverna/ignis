@@ -18,5 +18,5 @@ bench/.*.sh
 
 # mkdocs build output
 /site/
-/php/temporal/core/vendor/
-/php/temporal/core/composer.lock
+/php/packages/temporal-core-transport/vendor/
+/php/packages/temporal-core-transport/composer.lock

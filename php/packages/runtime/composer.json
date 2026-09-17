@@ -1,0 +1,10 @@
+{
+    "name": "ignis/runtime",
+    "description": "The Ignis userland: the fiber scheduler (Ignis\\Loop, async/all/sleep/deadline/serve), Future, Scope, Request/Response, and the classic worker loop. Requires the ignis binary; does nothing under php-fpm or php-cli.",
+    "type": "library",
+    "license": "MIT",
+    "require": { "php": ">=8.4" },
+    "autoload": { "files": ["src/ignis.php"] },
+    "autoload-dev": { "files": ["stubs/ignis.php"] },
+    "config": { "allow-plugins": false }
+}

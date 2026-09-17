@@ -8,27 +8,27 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-VENDOR=${SDKPHP_VENDOR:-php/temporal/core/vendor/autoload.php}
+VENDOR=${SDKPHP_VENDOR:-php/packages/temporal-core-transport/vendor/autoload.php}
 PHP=${IGNIS_STOCK_PHP:-/opt/php85-zts/bin/php}
 BIN=${IGNIS_BIN:-./target/release/ignis}
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
 
 if [ ! -f "$VENDOR" ]; then
-  echo "== installing temporal/sdk into php/temporal/core/vendor (composer in docker)"
+  echo "== installing temporal/sdk into php/packages/temporal-core-transport/vendor (composer in docker)"
   command -v docker >/dev/null || { echo "docker needed to install sdk-php, or set SDKPHP_VENDOR"; exit 2; }
   timeout 600 docker run --rm -v "$PWD/php/temporal/core":/app -w /app composer:latest \
     install --ignore-platform-reqs --no-interaction 2>&1 | tail -3
-  VENDOR=php/temporal/core/vendor/autoload.php
+  VENDOR=php/packages/temporal-core-transport/vendor/autoload.php
 fi
 [ -f "$VENDOR" ] || { echo "no sdk-php at $VENDOR"; exit 1; }
 printf '== temporal/sdk %s\n' "$(sed -nE 's/.*"version": "(v[0-9][^"]*)".*/\1/p' "$(dirname "$VENDOR")/composer/installed.json" 2>/dev/null | head -1)"
 
 fail=0
 echo "== conformance under the ignis binary"
-SDKPHP_VENDOR="$VENDOR" timeout 120 "$BIN" php/temporal/core/tests/conformance.php || fail=1
+SDKPHP_VENDOR="$VENDOR" timeout 120 "$BIN" php/packages/temporal-core-transport/tests/conformance.php || fail=1
 
 echo "== conformance under stock PHP (the transport must not need Ignis)"
-SDKPHP_VENDOR="$VENDOR" timeout 120 "$PHP" php/temporal/core/tests/conformance.php || fail=1
+SDKPHP_VENDOR="$VENDOR" timeout 120 "$PHP" php/packages/temporal-core-transport/tests/conformance.php || fail=1
 
 [ "$fail" = 0 ] && echo "E20: GREEN" || echo "E20: FAILED"
 exit $fail

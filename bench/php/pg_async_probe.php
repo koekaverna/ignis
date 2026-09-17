@@ -3,7 +3,7 @@
 // socket is handed to the reactor, the fiber parks on the one poll point like any other op.
 // Env: PG_DSN, FIBERS (default 20), SLEEP (seconds per query, default 0.2), N (SELECT 1 count, default 2000).
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 use Ignis\Loop;
 use function Ignis\all;

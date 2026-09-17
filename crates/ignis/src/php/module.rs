@@ -1,5 +1,5 @@
 //! The `ignis` internal PHP module: registers the C-level primitives the
-//! userland scheduler (php/ignis.php) is built on.
+//! userland scheduler (php/packages/runtime/src/ignis.php) is built on.
 //!
 //! Functions exposed to PHP (all thread-affine, all cheap):
 //! - `ignis_submit_sleep(int $ms): int`  → op id
@@ -770,13 +770,14 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 29]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 36]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 37]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_temporal_complete", crate::backend::temporal::zif_complete_activation, ARGINFO_T2.0.as_ptr(), 2),
     fe(c"ignis_temporal_poll_activity", crate::backend::temporal::zif_poll_activity, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_temporal_complete_activity", crate::backend::temporal::zif_complete_activity, ARGINFO_T2.0.as_ptr(), 2),
+    fe(c"ignis_temporal_heartbeat", crate::backend::temporal::zif_heartbeat, ARGINFO_T2.0.as_ptr(), 2),
     fe(c"ignis_temporal_shutdown", crate::backend::temporal::zif_shutdown, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),

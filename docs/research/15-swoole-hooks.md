@@ -3,9 +3,9 @@
 Date: 2026-09-16 (E15c). Sources: `/home/user/cmp/swoole-src` (shallow clone, `tests/swoole_runtime/`:
 46 top-level `.phpt` + 107 in 9 subdirectories; `tests/include/{bootstrap,config,functions}.php`,
 `tests/include/lib/src/Assert.php`; `ext-src/php_swoole_coroutine.h:120-144` for the `HOOK_*` bit values),
-`php/ignis.php` (Loop/Future/Scope, `Ignis\sleep/async/all`), `crates/ignis/src/php/stream.rs` (the `tcp`
+`php/packages/runtime/src/ignis.php` (Loop/Future/Scope, `Ignis\sleep/async/all`), `crates/ignis/src/php/stream.rs` (the `tcp`
 transport replacement), `docs/research/06-stream-transport-hook.md`. Empirical probes ran the release
-binary on `/tmp/swoole-e15/probe{1,2,3}.php`; the bench is `bench/e15-swoole.sh`, the shim `php/swoole/shim.php`.
+binary on `/tmp/swoole-e15/probe{1,2,3}.php`; the bench is `bench/e15-swoole.sh`, the shim `php/packages/swoole/src/shim.php`.
 
 ## 0. What Ignis actually hooks today (from `stream.rs`)
 
@@ -56,7 +56,7 @@ ssl 6 (SSL, needs `tests/include/ssl_certs`), remote_object 1 (DNS/NET_FUNCTION)
 
 ## 2. Swoole APIs called by the tests (number of test files)
 
-| API | Top-level (46) | Subdirs (107) | Shim (`php/swoole/shim.php`) |
+| API | Top-level (46) | Subdirs (107) | Shim (`php/packages/swoole/src/shim.php`) |
 |---|---|---|---|
 | `Swoole\Runtime::enableCoroutine()` | 34 | 55 | yes — records flags only |
 | `Assert::*` (`SwooleTest\Assert`, `$throwException=false`) | 33 | 53 | loaded from `tests/include/lib/src/Assert.php` by the bench bootstrap |

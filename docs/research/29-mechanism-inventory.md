@@ -16,23 +16,23 @@ mechanisms.
 | 2 | `ext/sockets` hooks (nine functions, `can_block`) | `php/sockets.rs` | 326 | 0 | 0 | 21 | 16 | E15 sockets phpt (fiber 84/118), Swoole shim (55/153) | V-29 |
 | 3 | `sleep()`/`usleep()` MINIT swap | `php/sleep.rs` | 112 | 0 | 0 | 7 | 8 | smoke "E15 fixes" leg; E15 fibers phpt | V-22 |
 | 4 | `stream_socket_accept` hook | `php/accept.rs` | 315 | 0 | 0 | 11 | 12 | E15 streams phpt, Revolt, Swoole shim, smoke server leg | V-26 |
-| 5 | offload: workers, routing trampolines, `create_object` hook, worker-pinned proxies, PHP client | `offload.rs`, `php/route.rs`, `php/offload/ignis-offload.php`, `php/offload/worker.php` | 329 | 0 | 490 | 10 | 10 | **no suite** — `bench/e16-offload.sh` and smoke's `/offload` route only | V-24 |
-| 6 | context: superglobal/scope fiber-switch observer | `php/superglobals.rs` (+ `Ignis\Scope` in `php/ignis.php`) | 269 | 0 | (in 825) | 15 | 14 | smoke E13 (isolation, 200 concurrent HTTP), Symfony chaos (V-27), phpt fiber modes | V-11 |
+| 5 | offload: workers, routing trampolines, `create_object` hook, worker-pinned proxies, PHP client | `offload.rs`, `php/route.rs`, `php/packages/offload/src/ignis-offload.php`, `php/packages/offload/src/worker.php` | 329 | 0 | 490 | 10 | 10 | **no suite** — `bench/e16-offload.sh` and smoke's `/offload` route only | V-24 |
+| 6 | context: superglobal/scope fiber-switch observer | `php/superglobals.rs` (+ `Ignis\Scope` in `php/packages/runtime/src/ignis.php`) | 269 | 0 | (in 825) | 15 | 14 | smoke E13 (isolation, 200 concurrent HTTP), Symfony chaos (V-27), phpt fiber modes | V-11 |
 | 7 | universal park, stage 1 | `php/park.rs`, `csrc/park.c` | 397 | 47 | 0 | 23 | 19 | **no suite in CI** (feature off); phpt/E1/E2 run once on the park build (V-45 addendum) | V-45 |
 
 Shared beneath every mechanism (kept by any model): `reactor.rs` 812 (6 blocks), `php/module.rs`
-867 (34 / 31), `php/embed.rs` 292 (14 / 4), `php/zval.rs` 177 (14 / 10), `php/ignis.php` 825.
+867 (34 / 31), `php/embed.rs` 292 (14 / 4), `php/zval.rs` 177 (14 / 10), `php/packages/runtime/src/ignis.php` 825.
 
 ## Adapters (carry no mechanism)
 
 | adapter | files | Rust | PHP | `unsafe {` | gated by | created by |
 |---|---|---|---|---|---|---|
-| Revolt driver | `php/amphp/src/IgnisDriver.php`, `prepend.php` | 0 | 131 | 0 | Revolt DriverTest (gate 80) | V-13, V-23 |
-| symfony/runtime | `php/symfony/src/*` | 0 | 133 | 0 | Symfony chaos (V-27), V-40 image run | V-16, V-40 |
-| gRPC glue | `grpc.rs`, `php/grpc/ignis-grpc.php` | 250 | 242 | 0 | `bench/e10-grpc.sh` (bench, no suite) | V-20 |
-| Temporal glue | `backend/temporal.rs`, `php/temporal/ignis-temporal.php` | 331 | 249 | 10 | CI job E9 (replay + negative control) | V-18, V-19 |
-| PostgreSQL pool | `pg.rs`, `php/pg/ignis-pg.php` | 386 | 159 | 0 | `bench/e14-pg.sh`, `bench/m4-pool-survives.sh` (benches, no suite) | V-21, V-42–44 |
-| classic mode | `php/classic.php` | 0 | 271 | 0 | FrankenPHP testdata (gate 29) | V-23 |
+| Revolt driver | `php/packages/revolt/src/IgnisDriver.php`, `prepend.php` | 0 | 131 | 0 | Revolt DriverTest (gate 80) | V-13, V-23 |
+| symfony/runtime | `php/packages/symfony-runtime/src/*` | 0 | 133 | 0 | Symfony chaos (V-27), V-40 image run | V-16, V-40 |
+| gRPC glue | `grpc.rs`, `php/packages/grpc/src/ignis-grpc.php` | 250 | 242 | 0 | `bench/e10-grpc.sh` (bench, no suite) | V-20 |
+| Temporal glue | `backend/temporal.rs`, `php/packages/temporal-prototype/src/ignis-temporal.php` | 331 | 249 | 10 | CI job E9 (replay + negative control) | V-18, V-19 |
+| PostgreSQL pool | `pg.rs`, `php/packages/pg/src/ignis-pg.php` | 386 | 159 | 0 | `bench/e14-pg.sh`, `bench/m4-pool-survives.sh` (benches, no suite) | V-21, V-42–44 |
+| classic mode | `php/packages/runtime/src/classic.php` | 0 | 271 | 0 | FrankenPHP testdata (gate 29) | V-23 |
 
 Tree totals: Rust 6,326 lines under `crates/ignis/src` with **187 `unsafe {` blocks and 154
 `unsafe fn`/`extern` declarations**, C 47, PHP userland 3,288 (without vendor, apps, examples).

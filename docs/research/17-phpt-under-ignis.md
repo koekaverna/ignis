@@ -31,7 +31,7 @@ needed. `--ARGS--` is forwarded after `--`.
 ## Counts
 
 Binary under test: `target/release/ignis` md5 `95729a80d934a941f04c8ef8b7df5094` (build 2026-09-16
-02:22:46), `php/ignis.php` md5 `126e6f076f24d37516b7e38d36e99336`, pinned into `/tmp/e15-phpt/`
+02:22:46), `php/packages/runtime/src/ignis.php` md5 `126e6f076f24d37516b7e38d36e99336`, pinned into `/tmp/e15-phpt/`
 because the main agent rebuilt the binary while the suites were running. php-src at tag
 `php-8.5.10` (`34308a66`). `--set-timeout 15`, serial (no `-j`), `--offline`.
 
@@ -53,7 +53,7 @@ script and binary measured stock 2 s / main 5 s / fiber 34 s for fibers, 6 s / 4
 streams and 4 s / 11 s / 12 s for sockets. The stable signal is that **`main` mode costs 3-7× the
 stock CLI per suite** — every test pays a fresh `php_embed_init()`/shutdown where the CLI pays a
 lighter startup — and that `fiber` mode costs roughly the same as `main` (the harness adds one
-`require` of `php/ignis.php` and one fiber per test). Exactly one test in the whole matrix hit the
+`require` of `php/packages/runtime/src/ignis.php` and one fiber per test). Exactly one test in the whole matrix hit the
 15 s per-test timeout: `streams/proc_open_bug60120`, whose child PHP process dies on the missing
 `STDIN` constant while the parent waits for its output.
 
@@ -286,7 +286,7 @@ Also worth knowing about the harness:
 * `Ignis\Loop::runUntil()` must keep polling while a fiber is parked in a C hook (the
   `ignis_inflight() === 0` term in its exit test). Without it the loop leaves as soon as its
   *userland* wait map is empty and **every** socket test dies silently at its first socket call with
-  exit code 0 — that was the state of `php/ignis.php` when this task started and it is the reason
+  exit code 0 — that was the state of `php/packages/runtime/src/ignis.php` when this task started and it is the reason
   `scripts/phpt-harness.php` still carries an `IGNIS_PHPT_WATCHDOG=1` fallback.
 
 ## Reproducing
@@ -299,7 +299,7 @@ IGNIS_BIN=/path/to/ignis bench/e15-phpt.sh   # pin a specific binary
 Artifacts land in `bench/results/e15-phpt/`: `<mode>-<suite>.log` (full run-tests output with
 `--show-diff`), `.txt` (failing test paths, from run-tests' own `-w`), `.tsv` (result per test, from
 `-W`), `<mode>-diffs/**` (the `.diff`/`.out` run-tests wrote next to each test), and `summary.md`.
-Stack traces in the stored `.out`/`.diff` files name `/tmp/e15-phpt/pinned/{php/ignis.php,
+Stack traces in the stored `.out`/`.diff` files name `/tmp/e15-phpt/pinned/{php/packages/runtime/src/ignis.php,
 scripts/phpt-harness.php}` rather than the repo paths: those are the byte-identical pinned copies
 this run used (see Counts). A plain `bench/e15-phpt.sh` shows the repo paths instead.
 

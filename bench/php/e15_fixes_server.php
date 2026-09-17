@@ -1,5 +1,5 @@
 <?php
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $srv = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
 $name = stream_socket_get_name($srv, false);
 error_log("server on $name");

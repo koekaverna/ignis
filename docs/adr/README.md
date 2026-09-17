@@ -6,7 +6,7 @@ the main agent sets "accepted". Numbers in an ADR cite a V-n or say "unmeasured"
 
 | # | title | status | decision in one line |
 |---|---|---|---|
-| [0001](0001-embedding-ffi-and-scheduler-placement.md) | Embedding via raw bindgen, reactor in Rust, scheduler in PHP userland | accepted (V-1) | bindgen over the embed headers; the reactor is the only bridge; the scheduler is `php/ignis.php` |
+| [0001](0001-embedding-ffi-and-scheduler-placement.md) | Embedding via raw bindgen, reactor in Rust, scheduler in PHP userland | accepted (V-1) | bindgen over the embed headers; the reactor is the only bridge; the scheduler is `php/packages/runtime/src/ignis.php` |
 | [0002](0002-http-boundary-and-fiber-pool.md) | Value-based HTTP request boundary and a userland fiber pool | accepted (V-4) + addendum: the network path never waits for PHP | requests cross as plain data; parked fibers are reused; hyper never runs on a PHP thread |
 | [0003](0003-two-backend-reactor-trait.md) | Reactor/scheduler behind a trait with two backends | accepted (V-7) | mainline PHP is the production backend; the true-async fork stays a second target |
 | [0004](0004-worker-threads.md) | N PHP worker OS threads, one reactor each | accepted (V-9) | threads = cores, each with its own engine context and reactor |

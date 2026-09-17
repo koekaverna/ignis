@@ -10,8 +10,8 @@
 //                     i.e. the session was reset before the connection went back
 //                     to idle).
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
-require __DIR__ . '/../../php/pg/ignis-pg.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../../php/packages/pg/src/ignis-pg.php';
 
 use Ignis\Http\Request;
 use Ignis\Http\Response;

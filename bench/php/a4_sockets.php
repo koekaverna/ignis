@@ -10,7 +10,7 @@
 // fibers never get to run and nothing completes -- the control is expected to STALL, which is the
 // point: it is what "blocks the thread" looks like from outside.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $n = (int) (getenv('N') ?: 20);
 $delayMs = (int) (getenv('DELAY_MS') ?: 200);

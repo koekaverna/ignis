@@ -1,7 +1,7 @@
 //! M1 (product): `ignis.toml`, the one configuration file, and the `serve` front-end.
 //!
 //! Precedence, highest first: CLI flag > environment variable > `ignis.toml` > product default.
-//! The PHP side (`php/ignis.php`, the examples, the Symfony runtime) already reads `IGNIS_*`
+//! The PHP side (`php/packages/runtime/src/ignis.php`, the examples, the Symfony runtime) already reads `IGNIS_*`
 //! environment variables, so the file is bridged into the environment once, before any other
 //! thread exists — the scheduler needed no change to gain a config file. `serve` then rewrites
 //! itself into the legacy `[--supervise] [--threads N] [--offload N] <entry.php>` form, so the

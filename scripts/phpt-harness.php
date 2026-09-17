@@ -25,7 +25,7 @@
  */
 declare(strict_types=1);
 
-require __DIR__ . '/../php/ignis.php';
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
 
 $file = getenv('IGNIS_PHPT_FILE');
 if ($file === false || $file === '') {

@@ -30,7 +30,7 @@ Destructor suspension, left open deliberately:
    hang. Matches the pain-map wording verbatim.
 2. **Run destructors on a dedicated fiber**, mirroring backend (b)'s `defer` microtask design: a
    suspend inside one is a normal suspend of that fiber, not a re-entrant suspend of the interrupted
-   one. Costs a new scheduler concept not in `php/ignis.php` today.
+   one. Costs a new scheduler concept not in `php/packages/runtime/src/ignis.php` today.
 
 ## Decision
 

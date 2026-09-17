@@ -2515,3 +2515,42 @@ transport. The dev server is not on this box (the Temporal CLI has to be fetched
 replay numbers are for the prototype runtime, not for this one. Queries, updates, cancellation,
 child workflows, local activities and heartbeats are untranslated — `CoreCodec::encode()` throws
 by name rather than dropping them.
+
+## V-62 — the PHP userland is one package per integration, and nothing it does changed (CONFIRMED)
+
+Date: 2026-09-17T13:0xZ. Owner asked for the `php/` tree to be packages, Symfony/Tempest style, with
+`ignis/symfony-runtime` and the Temporal SDK support as the minimum. Ten packages now live under
+`php/packages/*`, each with its own `composer.json`, `src/`, and dependencies on the others; the root
+`php/composer.json` is a monorepo aggregate with a `packages/*` path repository and installs nowhere.
+
+`ignis/runtime` · `ignis/symfony-runtime` · `ignis/pg` · `ignis/offload` · `ignis/grpc` ·
+`ignis/revolt` · `ignis/swoole` · `ignis/temporal` (host for the official SDK) ·
+`ignis/temporal-core-transport` (the portable adapter) · `ignis/temporal-prototype` (ours, frozen).
+
+87 files carried a path into the old layout and were rewritten; `JOURNAL.md`, `VALIDATION.md`,
+`DECISIONS.md` and `HYPOTHESES.md` were **not** — they record what was true then, and their commands
+name paths that no longer exist by design (CLAUDE.md "do not rewrite history").
+
+Gates after the move, all on this box:
+
+| gate | result |
+|---|---|
+| `php -l` over every file in `php/`, `examples/`, `bench/php/`, `scripts/` | 0 failures |
+| `cargo build --release -p ignis` (`include_str!` of the offload worker moved with it) | ok |
+| `cargo nextest run --workspace` | 9/9 |
+| `bench/e20-sdkphp.sh` (composer install in the package, then both hosts) | GREEN, 11/11 ×2 |
+| `scripts/smoke.sh` | **GREEN** — E1 10k fibers 1151.8 ms, E2 200.99 ms / 3.83 µs warm, E13 0 mismatches, E6 50/50, E11 cancel 273 µs max, E12 restart 1, hello 33,260 rps |
+| `mkdocs build --strict` | clean |
+
+The install recipe changed with the layout and is updated in README, `docs/deploy.md` and
+`docs/getting-started/symfony.md`: the path repository is now `/opt/ignis/php/packages/*` and an
+application requires `ignis/runtime:@dev ignis/symfony-runtime:@dev`.
+
+**Pre-existing and not caused by this** (checked before assuming): `bench/e7-revolt.sh` reports
+`differing=6`. The examples it runs are inside `vendor/revolt/event-loop/examples/` and require
+`../vendor/autoload.php` — a nested vendor directory that a `--prefer-source` install never creates.
+The failing path lies entirely inside the vendor tree, which moved intact, and smoke does not gate on
+E7 (`| grep … || true`). Filed as an observation, not fixed here.
+
+**Deleted, not deprecated:** the retired `php/symfony/worker.php` shim is gone rather than kept as a
+migration note — owner's call, no back-compat before the first stable release.

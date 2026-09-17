@@ -1,8 +1,8 @@
 <?php
 // Classic-mode server: every request includes the matching script under DOCROOT (default: FrankenPHP's testdata).
 declare(strict_types=1);
-require __DIR__ . '/../php/ignis.php';
-require __DIR__ . '/../php/classic.php';
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../php/packages/runtime/src/classic.php';
 
 // FrankenPHP's testdata is written against its worker API; these one-shot shims let it run in classic mode.
 // _executor.php ends its non-worker branch with exit(0), which would stop the resident Ignis script (an

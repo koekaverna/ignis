@@ -1,7 +1,7 @@
 <?php
 // E13 (b): two interleaved fibers each set their own superglobals; after suspending they must still see them.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $mismatch = 0;
 $mk = static function (string $tag) use (&$mismatch): Ignis\Future {
     return Ignis\async(static function () use ($tag, &$mismatch): void {

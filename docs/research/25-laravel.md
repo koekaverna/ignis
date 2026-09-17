@@ -17,8 +17,8 @@ kill criterion for each.
   taken from what Octane's own source assumes about it, not from `laravel/framework` itself — flagged
   "not verified" where it matters.
 - In-repo: `docs/adr/0006-fiber-scoped-superglobals.md`, `VALIDATION.md` V-11 (and its addendum),
-  V-16 (and its addendum), V-40, `php/symfony/src/IgnisWorkerRunner.php`,
-  `php/symfony/src/IgnisRuntime.php`, `php/classic.php`, `docs/pain-map.md` item 1.
+  V-16 (and its addendum), V-40, `php/packages/symfony-runtime/src/IgnisWorkerRunner.php`,
+  `php/packages/symfony-runtime/src/IgnisRuntime.php`, `php/packages/runtime/src/classic.php`, `docs/pain-map.md` item 1.
 
 ## What Octane requires of a server
 
@@ -133,7 +133,7 @@ this file.** A driver can only add its own Artisan command (e.g. `octane:ignis`,
 "`octane:start --server=ignis`" as BACKLOG's phrasing assumes. This is a verified constraint, not a
 guess — I read the whole `match` and grepped for a server registry and found none.
 
-## What Ignis already gives (read from `docs/adr/0006-*.md`, `VALIDATION.md`, `php/symfony/`)
+## What Ignis already gives (read from `docs/adr/0006-*.md`, `VALIDATION.md`, `php/packages/symfony-runtime/`)
 
 - **ADR-0006** (accepted, V-11): the four superglobals (`$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE`) are
   swapped per fiber by a `zend_observer` fiber-switch hook, at +100 ns/switch (V-11), ≤ 0.7 µs after
@@ -143,16 +143,16 @@ guess — I read the whole `match` and grepped for a server registry and found n
   to `Ignis\Symfony\FiberRequestStack` — 100 concurrent `/whoami` requests, 0 mismatches, because
   Symfony's own DI container lets you *substitute* the one stateful service (`RequestStack`) with a
   fiber-aware one. Symfony's container itself has no equivalent of `Container::$instance`.
-- **`php/symfony/src/IgnisWorkerRunner.php:24-27`**: boots the kernel once, and per request just
+- **`php/packages/symfony-runtime/src/IgnisWorkerRunner.php:24-27`**: boots the kernel once, and per request just
   reads `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` (already fiber-scoped) into
   `Request::createFromGlobals()`, plus a hand-built `Request` for non-form bodies. This is
   structurally identical to `FrankenPhpClient::marshalRequest()` (`src/FrankenPhp/FrankenPhpClient.php:19-25`),
   which is just `Request::capture()` — FrankenPHP populates real superglobals per worker call the
   same way Ignis's observer does per fiber. **This part of the problem is already solved and proven**
   (V-16, V-40) for the request side.
-- **`php/classic.php`**: `Ignis\Classic\serve()` boots nothing itself — `Runner::$run` does a plain
+- **`php/packages/runtime/src/classic.php`**: `Ignis\Classic\serve()` boots nothing itself — `Runner::$run` does a plain
   `include $file` per request inside `Ignis\serve()`'s fiber, with a documented assumption
-  (`php/classic.php:9-17`): "a classic script must not suspend (no `Ignis\sleep`/async I/O inside the
+  (`php/packages/runtime/src/classic.php:9-17`): "a classic script must not suspend (no `Ignis\sleep`/async I/O inside the
   include)" because the header table and output buffers are per-OS-thread, not per-fiber. Classic
   mode is therefore **strictly one script running to completion per fiber-turn on its thread** — no
   two classic requests are ever mid-execution at once on the same thread.
@@ -224,16 +224,16 @@ implementation of "reset Laravel's manager singletons between requests" this res
 the same unresolved concurrency problem, so it is dominated by (a) before any test is run; kill it
 immediately, do not build a prototype.
 
-**(c) `php/classic.php` per request, no worker mode.** `bootstrap/app.php` and `vendor/autoload.php`
+**(c) `php/packages/runtime/src/classic.php` per request, no worker mode.** `bootstrap/app.php` and `vendor/autoload.php`
 are `include`d fresh inside the classic fiber every request, so `Container::$instance` is set by
 Laravel's own bootstrap to a brand-new object each time — there is no cross-request sharing to
 protect, because classic mode's own contract ("a classic script must not suspend") already forbids
 the interleaving that would make it dangerous. This needs **zero new Ignis or adapter code** — the
-same `php/classic.php` that already serves plain document roots. Cost: full framework boot every
+same `php/packages/runtime/src/classic.php` that already serves plain document roots. Cost: full framework boot every
 request (autoload + service providers), the same price `php-fpm` already pays today, no Octane-style
 warm-container win, and any blocking call (PDO, sync HTTP) blocks the whole OS thread for that
 request's duration (V-12 already found PDO cannot be hooked). **Kill criterion:** benchmark a
-`laravel/laravel` skeleton's `/` welcome route through `php/classic.php` (same methodology as V-40)
+`laravel/laravel` skeleton's `/` welcome route through `php/packages/runtime/src/classic.php` (same methodology as V-40)
 against `php-fpm` (V-6's floor, 9.9k req/s for a routeless hello) at 1 and N threads; if it is not at
 least competitive with that floor, classic mode is not even a safe "no worse than today" fallback and
 Laravel should wait rather than ship a slow default.

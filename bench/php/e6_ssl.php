@@ -1,7 +1,7 @@
 <?php
 // E6' / H25: ssl:// through the hook. Env: PORTS="8441 8442 8443", CAFILE (the servers' self-signed cert).
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $ports = array_map('intval', explode(' ', getenv('PORTS') ?: '8441 8442 8443'));
 $cafile = getenv('CAFILE') ?: '/tmp/e6-ssl/cert.pem';
 $hook = getenv('IGNIS_NO_STREAM_HOOK') ? 'off' : 'on';

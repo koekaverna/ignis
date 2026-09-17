@@ -13,7 +13,7 @@
 declare(strict_types=1);
 
 namespace {
-    require_once __DIR__ . '/../ignis.php';
+    require_once __DIR__ . '/../../runtime/src/ignis.php';
 
     const SWOOLE_HOOK_TCP = 1 << 1; const SWOOLE_HOOK_UDP = 1 << 2; const SWOOLE_HOOK_UNIX = 1 << 3;
     const SWOOLE_HOOK_UDG = 1 << 4; const SWOOLE_HOOK_SSL = 1 << 5; const SWOOLE_HOOK_TLS = 1 << 6;

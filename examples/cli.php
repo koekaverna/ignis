@@ -14,7 +14,7 @@
  * What this does NOT give you: parallel CPU. All ten fibers share one thread, so ten busy loops
  * would still run one after another — that is what `--offload N` or `--threads N` are for.
  */
-require __DIR__ . '/../php/ignis.php';
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
 
 $n = 10;
 $t = microtime(true);

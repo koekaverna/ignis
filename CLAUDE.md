@@ -53,7 +53,7 @@ One process, two worlds that only ever exchange plain data over channels:
 
 `crates/ignis/src/php/` is the FFI/Zend boundary — `embed.rs` (engine lifecycle, `!Send` `Engine`, `WorkerThread::attach` per thread), `module.rs` (the `ignis` internal module: `ignis_submit_sleep`, `ignis_poll`, `ignis_serve`, `ignis_respond`, …), `zval.rs`, `wait.rs` (the C-side park registry: op id → suspended fiber, resumed by `ignis_poll`), `park.rs` + `csrc/park.c` (universal park, ADR-0020/0037: the interposed libc calls, on by default, policy from `IGNIS_PARK` — this is how unmodified `file_get_contents`/`fsockopen`/`ext/sockets`/`sleep()` park the fiber), `superglobals.rs` (zend_observer fiber-switch hook swapping `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` per fiber), `route.rs`. `crates/ignis-sys` is raw bindgen over the embed SAPI headers.
 
-`php/ignis.php` is the userland scheduler: `Ignis\Loop` (fiber pool — parked Fibers are reused, which is the single biggest win of the project, V-4), `Future`, `async()`, `all()`, `sleep()`, `deadline()`, `Scope`, `serve()`. It is deliberately shaped like a Revolt driver (`php/amphp/src/IgnisDriver.php`). Integrations layer on top without new primitives: `php/pg/`, `php/offload/`, `php/grpc/`, `php/temporal/`, `php/symfony/`, `php/swoole/shim.php`, `php/classic.php`.
+`php/packages/runtime/src/ignis.php` is the userland scheduler: `Ignis\Loop` (fiber pool — parked Fibers are reused, which is the single biggest win of the project, V-4), `Future`, `async()`, `all()`, `sleep()`, `deadline()`, `Scope`, `serve()`. It is deliberately shaped like a Revolt driver (`php/packages/revolt/src/IgnisDriver.php`). Integrations layer on top without new primitives: `php/pg/`, `php/offload/`, `php/grpc/`, `php/temporal/`, `php/packages/symfony-runtime/`, `php/packages/swoole/src/shim.php`, `php/packages/runtime/src/classic.php`.
 
 `examples/app.php` is the API spec — the file an application developer should be able to write. Unimplemented parts are feature-guarded and reported, never faked. Change it only with intent.
 
@@ -72,6 +72,6 @@ with its reason.
 ### Editing rules that come from the architecture
 
 - Every `unsafe` block states why it is sound; the FFI boundary documents ownership, lifetime and who frees. `.claude/hooks/guard-ffi.sh` blocks subagents from editing `crates/ignis/src/php/**`, `crates/ignis-sys/**`, `crates/ignis/src/backend/**` or any file containing `unsafe` — only the main agent touches those.
-- A new capability is normally a new `Op` variant + a tokio actor + a thin `module.rs` function, with the logic in `php/ignis.php`. Adding a second wait point to a PHP thread breaks the design.
+- A new capability is normally a new `Op` variant + a tokio actor + a thin `module.rs` function, with the logic in `php/packages/runtime/src/ignis.php`. Adding a second wait point to a PHP thread breaks the design.
 - Subagents: `bencher` (measurements, comparison builds), `porter` (external test suites, failure classification: ours / not applicable / upstream), `scribe` (reconciles STATUS/GOALS/pain-map with VALIDATION/JOURNAL — never invents numbers).
 - **Product mode (owner, 2026-09-16):** the work queue is `BACKLOG.md`, the procedure is `docs/orchestration.md` — the main agent orchestrates, Sonnet agents execute `agent`/`research` items, every agent number is re-run by main before it enters VALIDATION.md.

@@ -3,7 +3,7 @@
 /**
  * Ignis side of the core transport (ADR-0040): the ~40 lines that cannot be upstreamed.
  *
- * Everything the translation needs is `ignis/temporal-core-transport` in `php/temporal/core/` —
+ * Everything the translation needs is `ignis/temporal-core-transport` in `php/packages/temporal-core-transport/` —
  * a standalone composer package that knows nothing about Ignis.
  * This file implements its one port over the reactor ops the runtime already exposes
  * (`ignis_temporal_poll`/`complete`, ADR-0013), and starts the workers:
@@ -28,7 +28,7 @@ use Temporal\Worker\WorkerInterface;
 if (!\interface_exists(ActivationSource::class)) {
     // the package's own autoloader is not in play (SDKPHP_VENDOR points at another vendor/)
     foreach (['ActivationSource', 'CoreCodec', 'CoreHost', 'CoreWorkerFactory'] as $class) {
-        require_once __DIR__ . "/core/src/{$class}.php";
+        require_once __DIR__ . "/../../temporal-core-transport/src/{$class}.php";
     }
 }
 

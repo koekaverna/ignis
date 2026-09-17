@@ -29,10 +29,10 @@ in `.env` does nothing; `var/` must be writable by the image's `ignis` user).
 **Why.** V-40 proved the recipe; it lives only in VALIDATION.md.
 **Files.** README.md.
 **Acceptance.** `grep -c "extra.runtime.class" README.md` ≥ 1; the section contains every command
-from V-40 verbatim; no command in it references `php/symfony/worker.php`.
+from V-40 verbatim; no command in it references the deleted Symfony worker wrapper.
 **Constraints.** Do not invent numbers; link V-40 and V-16 for the ones you cite.
 
-### M3-2 Retire `php/symfony/worker.php` `agent` `done (validated by main: shim exits 2 with the migration note; references updated)`
+### M3-2 Retire the Symfony worker wrapper `agent` `done (shim first, then deleted outright on 2026-09-17 — owner: no back-compat before the first stable release)`
 **What.** The wrapper with the hardcoded `app/public/index.php` is superseded by the composer
 package (V-40). Either delete it, or reduce it to a one-line shim that prints how to migrate and
 exits 2. Update every reference (`grep -rn worker.php bench scripts docs README.md`).
@@ -55,7 +55,7 @@ VALIDATION.
 and FrankenPHP (`laravel/octane`: `Octane\Swoole\SwooleClient`, the worker loop in
 `src/Worker.php`, request/response marshalling) and decide, with evidence, between (a) an Octane
 "server" for Ignis, (b) a symfony/runtime-style runner that boots `bootstrap/app.php` and calls
-`Illuminate\Contracts\Http\Kernel::handle` per fiber, (c) `php/classic.php` per request.
+`Illuminate\Contracts\Http\Kernel::handle` per fiber, (c) `php/packages/runtime/src/classic.php` per request.
 **Deliverable.** `docs/research/25-laravel.md`: sources with line references, what Octane requires
 of a server (worker count, request lifecycle hooks, sandboxing of the container per request),
 what the fiber-scoped superglobals (ADR-0006) already give, the recommended option and its kill
@@ -66,7 +66,7 @@ version it verified against, from source, not memory.
 ### M3-5a Laravel in classic mode, serialised by the budget `agent` `open`
 **What.** Research 25 (Octane v2.19.1, commit 68a2516): Octane never has two requests in one engine at
 once, and `Illuminate\Container\Container::$instance` is process-global — so any route that
-interleaves Laravel requests on one thread corrupts the container. `php/classic.php` already runs
+interleaves Laravel requests on one thread corrupts the container. `php/packages/runtime/src/classic.php` already runs
 one `include` per request but only *assumes* no suspension ("a classic script must not suspend").
 Ship Laravel through classic mode with **`budget.fibers = 1` per thread**: ADR-0019 then makes the
 serialisation a guarantee (the second request waits as data), hooks can stay on, and the model is
@@ -185,7 +185,7 @@ and prints `e18: curl_100x200ms wall_ms=<≈20000> …`, `e18: pgsql_100x200ms w
 `e18: overhead_ns delta=<≈0>`; WRITEFUNCTION fiber identity is recorded per transfer (today: all
 in the main fiber or each in its own — report which, that is a fact about offload-off blocking).
 
-### E18-I1 `bench/php/e18_pgsql.php` exits 0 and prints nothing under the park build `main` `done (2026-09-17, V-46): the loop's idle checks ignored $ready/$pending — ignis_poll() resumes C-parked fibers itself, the fiber they settle waits in $ready with nothing in flight, and a nested all() inside an outer fiber broke out of the loop; pre-existing (the old sleep hook showed it too), not an offload interaction; fixed in php/ignis.php; H33 through the bench script: 308/301/303 ms`
+### E18-I1 `bench/php/e18_pgsql.php` exits 0 and prints nothing under the park build `main` `done (2026-09-17, V-46): the loop's idle checks ignored $ready/$pending — ignis_poll() resumes C-parked fibers itself, the fiber they settle waits in $ready with nothing in flight, and a nested all() inside an outer fiber broke out of the loop; pre-existing (the old sleep hook showed it too), not an offload interaction; fixed in php/packages/runtime/src/ignis.php; H33 through the bench script: 308/301/303 ms`
 **What.** Under `target-park` with `IGNIS_PARK=libpq` the agent's bench runs its 100 connections
 (the trace shows 100 forwarded `connect`s and 398 `poll` wake-ups), then exits 0 with **zero
 bytes on stdout and stderr**; the default build prints `e18: pgsql_100x200ms …`. Not a `write`
@@ -247,7 +247,7 @@ at ≥ 95 % of their throughput. Extend `bench/e11-cancel.sh` or write `bench/b2
 route on a dead PG DSN under load beside `/` under `wrk`; `/` throughput with and without the dead
 route within 5 %.
 **Constraints.** `main` for `pg.rs`; an agent may write the bench and the PHP error class first
-(`php/pg/ignis-pg.php` is agent-safe).
+(`php/packages/pg/src/ignis-pg.php` is agent-safe).
 
 ### M4-3 Cap concurrent connections at the listener (B8) `main` `open`
 **What.** `IGNIS_MAX_CONNECTIONS` / `[limits] connections` in `ignis.toml`: past it, `accept` is
@@ -386,7 +386,7 @@ exactly which library made it impossible and why.
 
 ### H-1 Remaining hardcoded `127.0.0.1:8080` in benches `agent` `done (validated by main: quoted grep clean, wrk-hello over IGNIS_LISTEN 24,884 req/s)`
 `bench/{e8-symfony,rss-1m,soak-threads,e10-grpc,e10-compare,e12-inflight,e16-offload,ab-sleep,compare,wrk-hello}.sh`
-and `examples/{classic_server,grpc_server}.php`, `php/amphp/examples/amp-socket-client.php`: the
+and `examples/{classic_server,grpc_server}.php`, `php/packages/revolt/examples/amp-socket-client.php`: the
 same `ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"` + content-based readiness that the five smoke
 benches got (commit 52e81a5). **Acceptance.** `grep -rln "127.0.0.1:8080" bench examples php --include=*.sh --include=*.php`
 lists only files where it is the *default* inside `${IGNIS_LISTEN:-…}` or `getenv(...) ?: ...`.
@@ -421,7 +421,7 @@ binary. **Acceptance.** `scripts/smoke.sh --image ignis:local` prints the app.ph
 `ignis_grpc_*`, `ignis_route_*`, `ignis_set_superglobals`, `ignis_cancel_parked_any`, and the
 `temporal` ones behind the feature) is defined in Rust, so an IDE, PHPStan or Psalm sees an
 "unknown function" at every call site (phpantom flagged `ignis_watch`, `ignis_stats` today). Ship
-`php/stubs/ignis.php`: one stub per function with the exact signature and return type from
+`php/packages/runtime/stubs/ignis.php`: one stub per function with the exact signature and return type from
 `crates/ignis/src/php/module.rs` (read-only for you) and a docblock naming the ADR/V-n, wrapped in
 `if (!function_exists(...))` guards so it is harmless if loaded under the binary. Register it in
 `php/composer.json` under `autoload-dev.files` and mention it in README's Configure section.
@@ -447,10 +447,10 @@ WARN; a script with `trigger_error(..., E_USER_ERROR)` still prints one. `main` 
 ### H-11 `examples/grpc_server.php` fails static analysis `agent` `done (validated by main: phpstan L6 0 errors on the example + grpc lib)`
 **What.** phpantom flags lines 24–25: `intdiv(hrtime(true), …)` — `hrtime(true)` is typed `int|float`.
 (The first version of this entry blamed JSON-decoded fields; the agent read the line, I had not.)
-Fixed with a cast. Note for any phpstan run: `php/stubs/ignis.php` covers only the `ignis_*` C
-functions — pass `php/ignis.php` (and pg/offload files) too, or every `Ignis\*` symbol is "not found". Cast or validate at the
-boundary so the example passes PHPStan level 6 with `php/stubs/ignis.php` loaded (H-7).
-**Acceptance.** `phpstan analyse -l 6 examples/grpc_server.php --autoload-file php/stubs/ignis.php`
+Fixed with a cast. Note for any phpstan run: `php/packages/runtime/stubs/ignis.php` covers only the `ignis_*` C
+functions — pass `php/packages/runtime/src/ignis.php` (and pg/offload files) too, or every `Ignis\*` symbol is "not found". Cast or validate at the
+boundary so the example passes PHPStan level 6 with `php/packages/runtime/stubs/ignis.php` loaded (H-7).
+**Acceptance.** `phpstan analyse -l 6 examples/grpc_server.php --autoload-file php/packages/runtime/stubs/ignis.php`
 reports 0 errors (phpstan via the builder image's composer, `composer global require phpstan/phpstan`).
 
 ### R-GLOBALS A legacy entry script loses its globals and cannot redeclare its functions `main` `half done (V-54): globals fixed by the top-level worker loop (Ignis\Classic\listen/accept/respond, examples/classic_worker.php) — $GLOBALS and `global $x` now behave as under stock php -S, 10.5k req/s on one thread, FrankenPHP testdata still 29. Still open: an unguarded top-level `function foo() {}` survives into the next request and PHP's uncatchable "Cannot redeclare" fatal ends the worker (the supervisor respawns, the request is lost). Only a per-request PHP request cycle (RINIT/RSHUTDOWN) fixes that — the bootstrap cost the worker model exists to avoid, so it is an ADR, not a patch; documented as the worker-runtime rule (require_once / function_exists) for now. NOTE: the option once written here — "run the entry on the thread's main context, not in a fiber" — is WRONG and V-54 measured why: a method's scope is no more global than a fiber's; only the top level of the main script is.`
@@ -469,11 +469,11 @@ Measured before deciding, and the numbers are kept because they are the point: t
 
 ### H-12 E4 hello throughput is 58k req/s on this box today, V-6 measured 128k `main` `open — measured (V-46 addendum 3): V-6's own commit gives 61.5–63.1k on this box, so 128k → 62k is the box; the code-side drop 2026-09-15 → HEAD is ≈ 4–5 % (58.3–60.0k) and still worth one bisect in a quiet slot` — V-46 addendum 2: park on and off both ~58k, p99 1.8 ms, quiet box, same wrk shape as V-6 (`-t2 -c64 -d10s`, 1 PHP thread). Either the box changed (WSL2 kernel 6.18 now; V-6's kernel not recorded) or something landed between 2026-09-15 and cycle 1 (budget admission, health route, superglobals lazy swap, log floor). Bisect with `git bisect run` over `bench/wrk-hello.sh` before any perf claim cites V-6 again.
 
-### H-12 `php/ignis.php` at phpstan level 6 `agent` `open`
-**What.** The H-11 agent's run reported ~30 level-6 findings in `php/ignis.php` (generics on
+### H-12 `php/packages/runtime/src/ignis.php` at phpstan level 6 `agent` `open`
+**What.** The H-11 agent's run reported ~30 level-6 findings in `php/packages/runtime/src/ignis.php` (generics on
 `Fiber`/`WeakMap`, untyped iterables, always-true conditions); main's raw-format count read 0, so
 the number is not established. Establish it, then fix the ones that are real without changing
-behaviour. **Acceptance.** phpstan L6 on `php/ignis.php php/pg/*.php php/offload/*.php` with the
+behaviour. **Acceptance.** phpstan L6 on `php/packages/runtime/src/ignis.php php/pg/*.php php/offload/*.php` with the
 stub loaded: 0 errors, and `scripts/smoke.sh` still GREEN.
 
 ### H-8 Retire the `IGNIS_ADDR` name `agent` `done (validated by main: no code hits, classic_server answers on IGNIS_LISTEN)`

@@ -78,7 +78,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
       - name: composer install (E7 Revolt/AMPHP examples)
-        run: cd php/amphp && timeout 600 composer install --prefer-source --no-interaction --quiet || echo "composer failed; E7 will be skipped"
+        run: cd php/packages/revolt && timeout 600 composer install --prefer-source --no-interaction --quiet || echo "composer failed; E7 will be skipped"
       - name: smoke (every step under timeout)
         run: PGHOST=postgres timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
       - uses: actions/upload-artifact@v4
@@ -154,7 +154,7 @@ jobs:
       - name: Revolt DriverTest on IgnisDriver
         if: matrix.suite == 'revolt'
         run: |
-          (cd php/amphp && timeout 600 composer install --prefer-source --no-interaction --quiet)
+          (cd php/packages/revolt && timeout 600 composer install --prefer-source --no-interaction --quiet)
           timeout 900 bench/e15-revolt.sh 2>&1 | tee /tmp/e15-revolt.log
           scripts/ci-gate.sh revolt /tmp/e15-revolt.log
       - name: Swoole swoole_runtime through the shim

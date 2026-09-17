@@ -48,7 +48,7 @@ binary:
 | boundary | encode | decode | round trip |
 |---|---|---|---|
 | `Payloads` in pure PHP | 35.91 µs | 17.53 µs | **53.45 µs** |
-| our own JSON payload boundary (`Payloads::encode` in `php/temporal/ignis-temporal.php`) | 0.35 µs | 0.55 µs | **0.90 µs** |
+| our own JSON payload boundary (`Payloads::encode` in `php/packages/temporal-prototype/src/ignis-temporal.php`) | 0.35 µs | 0.55 µs | **0.90 µs** |
 
 59× — and against a workflow task that costs a network round trip to the Temporal server (V-19:
 1224 ms for 5 activations) it is noise either way. It is skipped because seam B makes it free to
@@ -135,7 +135,7 @@ Ruby and Python all do, which is what `temporalio-sdk-core-c-bridge` exists for 
 transport is a missing piece of their architecture rather than a favour to us.
 
 Upstream acceptance cannot be waited on, so the code is written to be *movable* instead: it is a
-composer package, `ignis/temporal-core-transport` in `php/temporal/core/` — its own `composer.json`,
+composer package, `ignis/temporal-core-transport` in `php/packages/temporal-core-transport/` — its own `composer.json`,
 PSR-4 `Temporal\Worker\Transport\Core\` over `src/`, `temporal/sdk` as its only dependency, its own
 README and conformance test. It depends on nothing from Ignis and reaches its host through one
 interface with two methods:
@@ -145,14 +145,14 @@ public function poll(string $kind): ?string;             // JSON WorkflowActivat
 public function complete(string $kind, string $json): void;
 ```
 
-Ignis implements that port in `php/temporal/sdk.php` (~40 lines over `ignis_temporal_*`). Anything
+Ignis implements that port in `php/packages/temporal/src/CoreSource.php` (~40 lines over `ignis_temporal_*`). Anything
 else that can produce activations — a PECL extension, sdk-core's C bridge, a file of recorded
 activations — works unchanged. That is what `bench/e20-sdkphp.sh` proves by running the conformance
 test twice, once under the ignis binary and once under the stock PHP CLI.
 
 ## 7. Result
 
-`php/temporal/core/selftest.php` feeds a recorded script of sdk-core activations to a **stock**
+`php/packages/temporal-core-transport/tests/conformance.php` feeds a recorded script of sdk-core activations to a **stock**
 sdk-php worker — attributes, `Workflow::newActivityStub()`, `yield`, `Workflow::timer()` — and
 asserts the completions. Green under both hosts (V-61):
 

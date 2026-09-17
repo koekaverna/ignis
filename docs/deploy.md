@@ -40,8 +40,8 @@ Then, from the app's root:
 
 ```
 composer config platform.php 8.5.10
-composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php","options":{"symlink":false}}'
-composer require ignis/runtime:@dev --no-scripts
+composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php/packages/*","options":{"symlink":false}}'
+composer require ignis/runtime:@dev ignis/symfony-runtime:@dev --no-scripts
 composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
 composer dump-autoload
 mkdir -p var && chmod -R a+rwX var
@@ -187,7 +187,7 @@ a `warn`, not silent) if you need to get unblocked immediately; treat that as a 
 it means blocking calls in that library are no longer provably non-blocking on this box.
 
 **A port already in use.** The listener bind happens inside the PHP entry script's first call to
-`ignis_serve()` (`php/ignis.php`'s `serve()`), not before the process starts — so if another process
+`ignis_serve()` (`php/packages/runtime/src/ignis.php`'s `serve()`), not before the process starts — so if another process
 already holds the port, `/_ignis/health` will refuse the connection outright (nothing is listening
 at all, not even a 503), and the container log shows an uncaught `ignis_serve: bind …: Address
 already in use` exception from every worker, followed by the same respawn-then-give-up sequence

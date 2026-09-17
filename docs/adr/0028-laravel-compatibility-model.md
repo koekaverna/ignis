@@ -13,7 +13,7 @@ Ignis interleaves fibers on one thread, so an unmodified Octane worker inside in
 corrupts the container the way the pre-ADR-0006 superglobals did. `octane:start --server=` is a
 closed `match`; a fourth server is its own `octane:ignis` command. Ignis already has the
 request-marshalling half: `IgnisWorkerRunner` is structurally `FrankenPhpClient::marshalRequest`.
-`php/classic.php` runs one `include` per request but only *assumes* no suspension ("a classic
+`php/packages/runtime/src/classic.php` runs one `include` per request but only *assumes* no suspension ("a classic
 script must not suspend").
 
 ## Options considered

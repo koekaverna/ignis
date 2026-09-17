@@ -216,7 +216,7 @@ fn main() -> ExitCode {
                             return;
                         }
                     };
-                    if let Err(e) = w.eval(include_str!("../../../php/offload/worker.php"), "ignis-offload-worker") {
+                    if let Err(e) = w.eval(include_str!("../../../php/packages/offload/src/worker.php"), "ignis-offload-worker") {
                         eprintln!("offload thread {i}: {e:#}");
                     }
                 })

@@ -1,7 +1,7 @@
 <?php
 // Worker-mode hello world: the script stays resident, every request runs in a pooled fiber.
 declare(strict_types=1);
-require __DIR__ . '/../php/ignis.php';
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
 
 // One pooled fiber per in-flight request, 16 KiB VM stack each: 10k concurrent requests need > 160 MiB.
 ini_set('memory_limit', '1G');

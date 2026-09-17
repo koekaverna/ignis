@@ -14,7 +14,7 @@
 //
 // Usage: ignis bench/php/e18_dns.php <host> [n]   (env fallback: DNS_HOST, N; default n=50)
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $host = $argv[1] ?? getenv('DNS_HOST') ?: 'localhost';
 $n = (int) ($argv[2] ?? getenv('N') ?: 50);

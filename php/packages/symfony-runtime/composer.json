@@ -1,0 +1,10 @@
+{
+    "name": "ignis/symfony-runtime",
+    "description": "symfony/runtime adapter for Ignis (ADR-0011): boots the kernel once and serves each request in its own fiber, with a per-fiber RequestStack.",
+    "type": "library",
+    "license": "MIT",
+    "require": { "php": ">=8.4", "ignis/runtime": "@dev" },
+    "suggest": { "symfony/runtime": "Set APP_RUNTIME=Ignis\\Symfony\\IgnisRuntime and point ignis.toml's entry at public/index.php." },
+    "autoload": { "psr-4": { "Ignis\\Symfony\\": "src/" } },
+    "config": { "allow-plugins": false }
+}

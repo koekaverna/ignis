@@ -1,7 +1,7 @@
 <?php
 // E1 / H2: N fibers on one thread each sleeping $ms via tokio; wall time must be < 1.2 s for N=10000, ms=1000.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 // $argv is not registered under the embed SAPI: parameters come from the environment.
 $n  = (int) (getenv('N') ?: 10000);

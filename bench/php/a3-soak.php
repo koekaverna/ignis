@@ -8,9 +8,9 @@
 // this box -- it just returns its "set PG_DSN..." info message, never an error.
 declare(strict_types=1);
 
-require __DIR__ . '/../../php/ignis.php';
-require __DIR__ . '/../../php/pg/ignis-pg.php';
-require __DIR__ . '/../../php/offload/ignis-offload.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../../php/packages/pg/src/ignis-pg.php';
+require __DIR__ . '/../../php/packages/offload/src/ignis-offload.php';
 
 use Ignis\Http\Request;
 use Ignis\Http\Response;

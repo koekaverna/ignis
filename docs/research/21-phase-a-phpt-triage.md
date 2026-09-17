@@ -14,9 +14,9 @@ Linux book 6.18.33.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 18 2
 $ /opt/php85-zts/bin/php -v
 PHP 8.5.10 (cli) (built: Sep 16 2026 09:51:10) (ZTS)
 $ git -C /home/koe/php-src describe --tags   # php-8.5.10, 34308a66
-$ md5sum target/release/ignis php/ignis.php
+$ md5sum target/release/ignis php/packages/runtime/src/ignis.php
 856974a616438cc46dc615a0e31c7d7e  target/release/ignis
-960a6e7a0bde5a6e0597f107380d084d  php/ignis.php
+960a6e7a0bde5a6e0597f107380d084d  php/packages/runtime/src/ignis.php
 $ git rev-parse HEAD   # 7917425aacd0e7d712e77485cc8d770063ef2224
 $ df -h /   # 865G free of 1007G (10% used) — no disk pressure
 ```

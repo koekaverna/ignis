@@ -60,7 +60,7 @@ purely to let test harnesses that re-exec `PHP_BINARY -r ...`/`... -- ` keep wor
 For the normal `<script.php>` form: the script path is canonicalized if possible (falls back to the
 given path if that fails), `threads` is floored at `1` regardless of what `--threads`/`IGNIS_THREADS`
 said, and `offload` worker threads (if `> 0`) are spawned first, each running
-`php/offload/worker.php` on its own attached engine context. Then `threads` PHP worker threads are
+`php/packages/offload/src/worker.php` on its own attached engine context. Then `threads` PHP worker threads are
 spawned (`ignis-php-<i>`), each with its own `Reactor` and its own `WorkerThread::attach()`, all
 running the *same* script file. If `--supervise` is set, thread slot 0 (the main thread) becomes a
 pure supervisor loop — it runs no PHP itself — and worker slots `1..=threads` are respawned

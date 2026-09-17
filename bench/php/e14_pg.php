@@ -1,8 +1,8 @@
 <?php
 // E14 / H23: runtime-owned PostgreSQL pool with per-fiber leases. Env: PG_DSN, POOL (default 20), FIBERS (default 200), N (SELECT 1 count).
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
-require __DIR__ . '/../../php/pg/ignis-pg.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../../php/packages/pg/src/ignis-pg.php';
 
 use Ignis\Pg\LeaseError;
 use Ignis\Pg\Pool;

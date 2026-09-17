@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E15c / H22c: run Swoole's tests/swoole_runtime/*.phpt through php/swoole/shim.php on the ignis binary
+# E15c / H22c: run Swoole's tests/swoole_runtime/*.phpt through php/packages/swoole/src/shim.php on the ignis binary
 # and classify every failure by the first missing hook/API found in its output.
 #
 #   bench/e15-swoole.sh          # the 55 top-level tests
@@ -22,7 +22,7 @@ mkdir -p "$OUT/cases" "$OUT/include" "$OUT/out"
 # bootstrap still expect the Swoole classes to exist), then Swoole's own config/functions/Assert.
 cat > "$OUT/include/bootstrap.php" <<EOF
 <?php
-require_once '$ROOT/php/swoole/shim.php';
+require_once '$ROOT/php/packages/swoole/src/shim.php';
 error_reporting(E_ALL ^ E_DEPRECATED);
 require_once '$SRC/../include/config.php';
 require_once '$SRC/../include/lib/src/Assert.php';
@@ -30,7 +30,7 @@ class Assert extends SwooleTest\\Assert { protected static \$throwException = fa
 class_alias(Assert::class, 'SwooleTest\\AssertShim');
 EOF
 cat > "$OUT/ignis.ini" <<EOF
-auto_prepend_file=$ROOT/php/swoole/shim.php
+auto_prepend_file=$ROOT/php/packages/swoole/src/shim.php
 display_errors=1
 display_startup_errors=1
 error_reporting=E_ALL

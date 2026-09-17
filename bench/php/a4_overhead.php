@@ -9,7 +9,7 @@
 // a few hundred thousand sends and made the first version of this bench useless.
 // Compare `hook=on` against `IGNIS_NO_SOCKETS_HOOK=1` (`hook=off`); the difference is the hook.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $n = (int) (getenv('N') ?: 100000);
 $s = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);

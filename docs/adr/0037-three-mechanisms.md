@@ -39,7 +39,7 @@ listed in research 29 separately.
 | metric | before (measured where marked) | after (target) |
 |---|---|---|
 | mechanisms a wait can take | **7** (research 29) | **3** |
-| files a maintainer touches to add a new blocking **library** | 2–3, at least one guarded FFI file: `route.rs` + `php/offload/ignis-offload.php` (offload), or `stream.rs` (if on php_stream), or `sockets.rs` — measured by reading | 1 table row (+ a research verdict for `park`) |
+| files a maintainer touches to add a new blocking **library** | 2–3, at least one guarded FFI file: `route.rs` + `php/packages/offload/src/ignis-offload.php` (offload), or `stream.rs` (if on php_stream), or `sockets.rs` — measured by reading | 1 table row (+ a research verdict for `park`) |
 | … a new blocking **PHP function** | a hook in a guarded Rust file with arginfo (`sockets.rs` pattern, ~30 lines each — V-29) | 1 row |
 | … a new **vendor static** | code in `superglobals.rs` (a slot) | 1 context row (once the slot generalises; **today still code**) |
 | LOC / `unsafe {` per mechanism | 705/16, ~250/6, 326/21, 112/7, 315/11, 819/10, 269/15, 444/23 | park ≈ 1,200/38 (estimate), offload ≈ 700/8 (estimate), context 269/15 |

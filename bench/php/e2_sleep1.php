@@ -5,7 +5,7 @@
 // tokio::spawn + register + fire + cancel-map-remove a real timer per fiber (ADR/roadmap A2 target:
 // replace this with a timer wheel). New bench, not in VALIDATION.md yet.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $n = (int) (getenv('N') ?: 10000);
 ini_set('memory_limit', '1G');

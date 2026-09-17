@@ -5,7 +5,7 @@
 // parked fiber (result -2 = "would have deadlocked"); with it on `block` the calls serialize.
 // Usage: IGNIS_LOCKLIB=/tmp/e18/liblocklib.so IGNIS_THREADS=1 ignis bench/php/e18_deadlock.php
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 if (!function_exists('ignis_locklib_call')) {
     fwrite(STDERR, "ignis_locklib_call() missing: build with IGNIS_LOCKLIB pointing at liblocklib.so\n");

@@ -1,0 +1,9 @@
+{
+    "name": "ignis/pg",
+    "description": "Ignis\\Pg: the runtime-owned PostgreSQL pool (ADR-0015). Queries are reactor ops, so a waiting fiber costs no thread and a lease is visible in /_ignis/metrics.",
+    "type": "library",
+    "license": "MIT",
+    "require": { "php": ">=8.4", "ignis/runtime": "@dev" },
+    "autoload": { "files": ["src/ignis-pg.php"] },
+    "config": { "allow-plugins": false }
+}

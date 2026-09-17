@@ -21,7 +21,7 @@ orchestrator has re-run it. `BACKLOG.md` is the queue; this file is the loop.
    quiet box. A number that does not reproduce within the item's stated tolerance is not a result;
    send the agent back with the two outputs side by side.
 4. **Gate.** `cargo nextest run --workspace`; `scripts/smoke.sh` (with `IGNIS_LISTEN` set on this
-   box); `bench/e15-phpt.sh` if `php/ignis.php`, `crates/**` or `scripts/ignis-php` changed. A
+   box); `bench/e15-phpt.sh` if `php/packages/runtime/src/ignis.php`, `crates/**` or `scripts/ignis-php` changed. A
    regression against `bench/results/e15-baseline.txt` blocks the item.
 5. **Record.** VALIDATION entry (the orchestrator's numbers, with "agent's run: X, re-run: Y"),
    JOURNAL line, BACKLOG status → `done (V-n)`, README/ROADMAP if user-visible. Commit per item

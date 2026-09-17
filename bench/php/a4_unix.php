@@ -3,7 +3,7 @@
 // Server half uses the stock unix transport (server sockets are not hooked); N client fibers each
 // wait DELAY ms for their answer. Hooked: ~DELAY. Control (IGNIS_NO_UNIX_HOOK=1): serialised.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $n = (int) (getenv('N') ?: 10);
 $delay = (int) (getenv('DELAY_MS') ?: 200);
 $path = sys_get_temp_dir() . '/ignis-a4-' . getmypid() . '.sock';

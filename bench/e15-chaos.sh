@@ -11,7 +11,7 @@
 #   ignis          target/release/ignis, the whole PHPUnit Application inside ONE Ignis fiber
 #   chaos-seed-N   same + IGNIS_CHAOS=1 IGNIS_CHAOS_SEED=N and IGNIS_NOISE background fibers
 #
-# Chaos (php/ignis.php, Loop::$chaos) shuffles the ready-fiber batch and the completed-op batch
+# Chaos (php/packages/runtime/src/ignis.php, Loop::$chaos) shuffles the ready-fiber batch and the completed-op batch
 # and inserts an extra 0 ms yield after every awaited op. It can only act where PHP running inside
 # an Ignis fiber awaits an Ignis op (Ignis\sleep, hooked sleep()/usleep(), hooked tcp:// streams).
 # IGNIS_NOISE=N spawns N fibers looping on Ignis\sleep(1) so those batches have >1 entry and the
@@ -61,7 +61,7 @@ $run = static fn (): int => (new PHPUnit\TextUI\Application)->run($_SERVER['argv
 if (!getenv('IGNIS_MODE')) {
     exit($run());
 }
-require '__IGNIS_ROOT__/php/ignis.php';
+require '__IGNIS_ROOT__/php/packages/runtime/src/ignis.php';
 $stop = new stdClass();
 $stop->v = false;
 $noiseTicks = 0;

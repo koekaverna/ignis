@@ -36,10 +36,10 @@ defaults with no file at all). Reference copies: `ignis.toml.example` (repo root
 | `php_ini` | `IGNIS_PHP_INI` | unset (engine's compiled-in php.ini search path) | Extra php.ini path; the embed SAPI has no `-c`/`-d` flags of its own. | No unconditional default — absent key + absent env means `IGNIS_PHP_INI` is never set and `embed.rs` passes `None` to the engine init. |
 | `log` | `RUST_LOG` | unset → `tracing_subscriber` falls back to `warn` | Log filter in `RUST_LOG`/`tracing_subscriber::EnvFilter` syntax. | No unconditional default here either; `main.rs` supplies `"warn"` itself if `RUST_LOG` ends up unset by any path. `warn` is a deliberate floor (comment in `main.rs`): it's what makes worker respawns and stalled-thread warnings visible without opting in. |
 | `budget.fibers` | `IGNIS_FIBER_BUDGET` | `1024` | Admitted request fibers per thread at once (ADR-0019). A held fiber is ~15 kB (some comments say ~34 kB, see caveat below) of RSS; past the budget a request waits as **data**, not as a Fiber. `0` = unlimited. | Read back on the PHP side by `Ignis\Loop::budgetInit()` via `getenv('IGNIS_FIBER_BUDGET')`, not by any Rust code — the Rust side only ever *writes* this env var. |
-| `budget.queue` | `IGNIS_QUEUE_DEPTH` | `4096` | Requests allowed to wait as queued data once the fiber budget is full. Past it, the answer is `503` + `retry-after: 1`. `0` = unbounded. | Same read-side note as `budget.fibers`: consumed only by `php/ignis.php`. |
-| `exempt` | `IGNIS_BUDGET_EXEMPT` | `["/_ignis/"]` | Path **prefixes** admitted regardless of the budget, so health/metrics endpoints stay reachable on a saturated server. Written to the env as a comma-joined string. | `Ignis\Loop::isExempt()` does a plain `str_starts_with`; entries with a literal comma in the path can't be expressed this way. Also read only by `php/ignis.php`. |
+| `budget.queue` | `IGNIS_QUEUE_DEPTH` | `4096` | Requests allowed to wait as queued data once the fiber budget is full. Past it, the answer is `503` + `retry-after: 1`. `0` = unbounded. | Same read-side note as `budget.fibers`: consumed only by `php/packages/runtime/src/ignis.php`. |
+| `exempt` | `IGNIS_BUDGET_EXEMPT` | `["/_ignis/"]` | Path **prefixes** admitted regardless of the budget, so health/metrics endpoints stay reachable on a saturated server. Written to the env as a comma-joined string. | `Ignis\Loop::isExempt()` does a plain `str_starts_with`; entries with a literal comma in the path can't be expressed this way. Also read only by `php/packages/runtime/src/ignis.php`. |
 
-`crates/ignis/src/config.rs` doc comment says a fiber costs "~15 kB (V-37)"; `php/ignis.php`'s own
+`crates/ignis/src/config.rs` doc comment says a fiber costs "~15 kB (V-37)"; `php/packages/runtime/src/ignis.php`'s own
 comment on `$fiberBudget` says "~34 KB (V-5)". Both are cited to different VALIDATION.md entries —
 flagging the discrepancy rather than picking one, since neither is something this pass can
 re-measure.
@@ -47,7 +47,7 @@ re-measure.
 ## Environment variables outside `ignis.toml`
 
 Everything below is read directly with `std::env::var`/`var_os` somewhere in `crates/ignis/src/**`
-(or, for the two PHP-side scheduler knobs at the end, `getenv()` in `php/ignis.php`) and has **no
+(or, for the two PHP-side scheduler knobs at the end, `getenv()` in `php/packages/runtime/src/ignis.php`) and has **no
 `ignis.toml` key at all** — the file cannot express them.
 
 ### Supported settings (meant for production use)
@@ -61,8 +61,8 @@ Everything below is read directly with `std::env::var`/`var_os` somewhere in `cr
 | `IGNIS_PG_LEASE_WARN_MS` | `crates/ignis/src/pg.rs` | `5000` | A PostgreSQL connection lease held longer than this is counted in `ignis_pg_lease_age_seconds_max` / `ignis_pg_leases_over_warn` (`/metrics`, `crates/ignis/src/metrics.rs`) and in `ignis_pg_stats()['leases_over_warn']`. Does not itself kill or reclaim the lease. |
 | `IGNIS_LOCKLIB` | `crates/ignis/src/php/locklib.rs` | unset (the `ignis_locklib_*` functions are never registered) | Path to the H36 lock-hazard test shim (`bench/e18/locklib.c`), `dlopen`ed with `RTLD_GLOBAL`. Exists only to prove that `park` deadlocks a library holding a non-recursive mutex across a blocking syscall while `block` does not (ADR-0037 §5) — not something an application ever sets. Listed here rather than under diagnostics because it gates whether a whole function family exists, not just a runtime behavior. |
 | `IGNIS_POLL_SPIN_US` | `crates/ignis/src/reactor.rs` | `0` | Microseconds the reactor's `poll` spins on `try_recv` before parking the OS thread (H30). `0` means never spin — go straight to the blocking receive. |
-| `IGNIS_LOOP_GC` | `php/ignis.php` (`Loop::gcInit`, read via `getenv`) | on (any value other than `""`/`"0"`, **including unset**, counts as on) | Takes PHP's automatic cycle collector off the hot path: `gc_disable()`, and the userland loop calls `gc_collect_cycles()` itself at an idle point (never mid-request) once the root buffer crosses `IGNIS_LOOP_GC_ROOTS`. |
-| `IGNIS_LOOP_GC_ROOTS` | `php/ignis.php` | `5000` (floored at `100`) | Root-buffer size that triggers the loop's own `gc_collect_cycles()` when `IGNIS_LOOP_GC` is on. |
+| `IGNIS_LOOP_GC` | `php/packages/runtime/src/ignis.php` (`Loop::gcInit`, read via `getenv`) | on (any value other than `""`/`"0"`, **including unset**, counts as on) | Takes PHP's automatic cycle collector off the hot path: `gc_disable()`, and the userland loop calls `gc_collect_cycles()` itself at an idle point (never mid-request) once the root buffer crosses `IGNIS_LOOP_GC_ROOTS`. |
+| `IGNIS_LOOP_GC_ROOTS` | `php/packages/runtime/src/ignis.php` | `5000` (floored at `100`) | Root-buffer size that triggers the loop's own `gc_collect_cycles()` when `IGNIS_LOOP_GC` is on. |
 
 ### Front door: limits and shutdown
 
@@ -151,9 +151,9 @@ mechanism itself:
 | `IGNIS_PARK_TRACE` | `crates/ignis/src/php/park.rs` | unset (silent) | See above. |
 | `IGNIS_NO_SUPERGLOBALS` | `crates/ignis/src/php/superglobals.rs` | unset (fiber-scoped `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` installed) | Any value skips installing the ADR-0006 fiber-switch observer that swaps superglobals per fiber. Exists to measure the swap's cost, not to run production traffic without per-request superglobals. |
 | `IGNIS_LOCKLIB` | `crates/ignis/src/php/locklib.rs` | unset | See above (H36 harness only). |
-| `IGNIS_CHAOS` | `php/ignis.php` (`Loop::chaosInit`) | off | Any non-empty, non-`"0"` value shuffles the order ready fibers/completed ops resume in, and adds an extra yield point before every awaited op with probability `IGNIS_CHAOS_P`. For finding order-dependent bugs (E15e), never for production. |
-| `IGNIS_CHAOS_P` | `php/ignis.php` | `0.5` | Probability of the extra yield when `IGNIS_CHAOS` is on. Clamped to `[0.0, 1.0]`. |
-| `IGNIS_CHAOS_SEED` | `php/ignis.php` | current `hrtime()` (non-reproducible) | Seeds `mt_srand()` so a chaos run is reproducible. |
+| `IGNIS_CHAOS` | `php/packages/runtime/src/ignis.php` (`Loop::chaosInit`) | off | Any non-empty, non-`"0"` value shuffles the order ready fibers/completed ops resume in, and adds an extra yield point before every awaited op with probability `IGNIS_CHAOS_P`. For finding order-dependent bugs (E15e), never for production. |
+| `IGNIS_CHAOS_P` | `php/packages/runtime/src/ignis.php` | `0.5` | Probability of the extra yield when `IGNIS_CHAOS` is on. Clamped to `[0.0, 1.0]`. |
+| `IGNIS_CHAOS_SEED` | `php/packages/runtime/src/ignis.php` | current `hrtime()` (non-reproducible) | Seeds `mt_srand()` so a chaos run is reproducible. |
 
 ### Mentioned in `CLAUDE.md` but not found in the current source
 

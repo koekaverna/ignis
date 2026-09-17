@@ -1,7 +1,7 @@
 <?php
 // E2 / H3: all() of three 200ms sleeps must return in < 230ms; per-fiber overhead < 100us.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $t0 = hrtime(true);
 $r = Ignis\all([

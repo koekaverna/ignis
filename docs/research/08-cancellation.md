@@ -3,7 +3,7 @@
 Date: 2026-09-16 (Cycle 8). Sources: `crates/ignis/src/http.rs` (service future awaits a oneshot),
 hyper 1.11 `proto/h1/dispatch.rs` (the in-flight service future is dropped when the connection
 task ends), `Zend/zend_fibers.c` (`zend_fiber_resume_exception`, ZEND_API in 8.5.10 — research 00),
-`Fiber::throw()` userland, php/ignis.php (`Loop::$waiting`, dispatch).
+`Fiber::throw()` userland, php/packages/runtime/src/ignis.php (`Loop::$waiting`, dispatch).
 
 ## Facts
 - hyper drops the request-handling future (our `handle()`) together with the connection when the

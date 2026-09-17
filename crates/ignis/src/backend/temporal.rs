@@ -14,7 +14,12 @@ use ignis_sys as sys;
 use temporalio_client::{Connection, ConnectionOptions};
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_protos::coresdk::activity_result::{ActivityExecutionResult, Success, activity_execution_result};
-use temporalio_protos::coresdk::workflow_commands::{CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity, StartTimer, workflow_command};
+use temporalio_protos::coresdk::workflow_commands::{
+    CancelChildWorkflowExecution, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution, QueryResult,
+    QuerySuccess, RequestCancelActivity, RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity,
+    StartChildWorkflowExecution, StartTimer, UpdateResponse, query_result, update_response, workflow_command,
+};
+use temporalio_protos::coresdk::ActivityHeartbeat;
 use temporalio_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use temporalio_protos::coresdk::ActivityTaskCompletion;
 use temporalio_protos::temporal::api::common::v1::{Payload, WorkflowExecution};
@@ -50,13 +55,30 @@ impl PhpPayload {
     }
 }
 
+/// One arm per sdk-php request the transport translates (ADR-0040). Adding a workflow feature to
+/// the PHP side means adding an arm here, and nothing else on the Rust side.
 #[derive(serde::Deserialize)]
 #[serde(tag = "cmd")]
 enum PhpCommand {
     StartTimer { seq: u32, ms: u64 },
+    CancelTimer { seq: u32 },
     ScheduleActivity { seq: u32, activity_type: String, task_queue: String, #[serde(default)] args: Vec<PhpPayload>, #[serde(default = "thirty")] start_to_close_sec: u64 },
+    CancelActivity { seq: u32 },
+    /// Local activities are scheduled by core and delivered on the *activity* task stream with
+    /// `is_local`, so the only new thing here is the command.
+    ScheduleLocalActivity { seq: u32, activity_type: String, #[serde(default)] args: Vec<PhpPayload>, #[serde(default = "thirty")] start_to_close_sec: u64 },
+    CancelLocalActivity { seq: u32 },
+    /// `protocol_instance_id`, not the update id: the id sdk-php knows is `DoUpdate.id`, and the
+    /// transport keeps the mapping (research 35 §3).
+    UpdateAccepted { protocol_instance_id: String },
+    UpdateRejected { protocol_instance_id: String, message: String },
+    UpdateCompleted { protocol_instance_id: String, result: Option<PhpPayload> },
+    RespondToQuery { query_id: String, #[serde(default)] result: Option<PhpPayload>, #[serde(default)] failure: Option<String> },
+    StartChildWorkflow { seq: u32, workflow_type: String, workflow_id: String, task_queue: String, #[serde(default)] args: Vec<PhpPayload> },
+    CancelChildWorkflow { seq: u32, #[serde(default)] reason: String },
     CompleteWorkflow { result: Option<PhpPayload> },
     FailWorkflow { message: String },
+    CancelWorkflow {},
 }
 
 fn thirty() -> u64 {
@@ -98,6 +120,60 @@ fn translate_completion(json: &str) -> anyhow::Result<WorkflowActivationCompleti
                     start_to_close_timeout: Some(dur(start_to_close_sec, 0)),
                     ..Default::default()
                 })
+            }
+            PhpCommand::CancelTimer { seq } => workflow_command::Variant::CancelTimer(CancelTimer { seq }),
+            PhpCommand::CancelActivity { seq } => workflow_command::Variant::RequestCancelActivity(RequestCancelActivity { seq }),
+            PhpCommand::CancelLocalActivity { seq } => workflow_command::Variant::RequestCancelLocalActivity(RequestCancelLocalActivity { seq }),
+            PhpCommand::ScheduleLocalActivity { seq, activity_type, args, start_to_close_sec } => {
+                workflow_command::Variant::ScheduleLocalActivity(ScheduleLocalActivity {
+                    seq,
+                    activity_id: seq.to_string(),
+                    activity_type,
+                    arguments: args.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
+                    start_to_close_timeout: Some(dur(start_to_close_sec, 0)),
+                    ..Default::default()
+                })
+            }
+            PhpCommand::UpdateAccepted { protocol_instance_id } => {
+                workflow_command::Variant::UpdateResponse(UpdateResponse {
+                    protocol_instance_id,
+                    response: Some(update_response::Response::Accepted(())),
+                })
+            }
+            PhpCommand::UpdateRejected { protocol_instance_id, message } => {
+                workflow_command::Variant::UpdateResponse(UpdateResponse {
+                    protocol_instance_id,
+                    response: Some(update_response::Response::Rejected(Failure { message, ..Default::default() })),
+                })
+            }
+            PhpCommand::UpdateCompleted { protocol_instance_id, result } => {
+                workflow_command::Variant::UpdateResponse(UpdateResponse {
+                    protocol_instance_id,
+                    response: Some(update_response::Response::Completed(result.map(PhpPayload::into_proto).transpose()?.unwrap_or_default())),
+                })
+            }
+            PhpCommand::RespondToQuery { query_id, result, failure } => {
+                let variant = match failure {
+                    Some(message) => query_result::Variant::Failed(Failure { message, ..Default::default() }),
+                    None => query_result::Variant::Succeeded(QuerySuccess { response: result.map(PhpPayload::into_proto).transpose()? }),
+                };
+                workflow_command::Variant::RespondToQuery(QueryResult { query_id, variant: Some(variant) })
+            }
+            PhpCommand::StartChildWorkflow { seq, workflow_type, workflow_id, task_queue, args } => {
+                workflow_command::Variant::StartChildWorkflowExecution(StartChildWorkflowExecution {
+                    seq,
+                    workflow_id,
+                    workflow_type,
+                    task_queue,
+                    input: args.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
+                    ..Default::default()
+                })
+            }
+            PhpCommand::CancelChildWorkflow { seq, reason } => {
+                workflow_command::Variant::CancelChildWorkflowExecution(CancelChildWorkflowExecution { child_workflow_seq: seq, reason })
+            }
+            PhpCommand::CancelWorkflow {} => {
+                workflow_command::Variant::CancelWorkflowExecution(CancelWorkflowExecution { ..Default::default() })
             }
             PhpCommand::CompleteWorkflow { result } => {
                 workflow_command::Variant::CompleteWorkflowExecution(CompleteWorkflowExecution { result: result.map(PhpPayload::into_proto).transpose()? })
@@ -312,6 +388,40 @@ pub unsafe extern "C" fn zif_complete_activity(ex: *mut sys::zend_execute_data, 
                 Err(e) => Outcome::Failed(format!("complete activity: {e}")),
             }
         });
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct PhpHeartbeat {
+    task_token: Vec<u8>,
+    #[serde(default)]
+    details: Vec<PhpPayload>,
+}
+
+/// `ignis_temporal_heartbeat(int $worker, string $json): bool`
+///
+/// Unlike every other call here this one is **synchronous and returns no op**: core's
+/// `record_activity_heartbeat` only enqueues, so there is nothing to await, and sdk-php calls it
+/// from inside an activity through its RPC seam where a parked fiber would be surprising.
+pub unsafe extern "C" fn zif_heartbeat(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    unsafe {
+        let Some((id, Some(json))) = worker_arg(ex) else { return };
+        let Some(w) = worker(id) else {
+            zval::set_bool(rv, false);
+            return;
+        };
+        let ok = (|| -> anyhow::Result<()> {
+            let hb: PhpHeartbeat = serde_json::from_str(&json)?;
+            w.record_activity_heartbeat(ActivityHeartbeat {
+                task_token: hb.task_token,
+                details: hb.details.into_iter().map(PhpPayload::into_proto).collect::<anyhow::Result<_>>()?,
+            });
+            Ok(())
+        })();
+        if let Err(e) = &ok {
+            tracing::warn!(error = %e, "temporal heartbeat");
+        }
+        zval::set_bool(rv, ok.is_ok());
     }
 }
 

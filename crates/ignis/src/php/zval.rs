@@ -87,7 +87,7 @@ pub unsafe fn arg(ex: *mut sys::zend_execute_data, n: u32) -> *mut sys::zval {
 
 /// Reads a `zend_long` argument, or `None` if it is not IS_LONG (the caller
 /// then raises a TypeError). No juggling on purpose: the userland wrapper in
-/// php/ignis.php declares `int` types, so anything else is an Ignis bug.
+/// php/packages/runtime/src/ignis.php declares `int` types, so anything else is an Ignis bug.
 ///
 /// # Safety
 /// Same as [`arg`].

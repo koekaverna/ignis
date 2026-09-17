@@ -45,7 +45,7 @@ run through Ignis instead of stock PHP or the tool each suite was written for:
 | ext/sockets/tests (118) | 80 pass | **80 pass (100%)** | 75 pass |
 | ext/standard/tests/streams (160) | 138 pass | **131 pass (94.9%)** | 116 pass |
 | Revolt `DriverTest` (81 tests, 222 assertions), vs `StreamSelectDriver` | 1 error, 8 skipped | — | **identical: 1 error, 0 failures, 8 skipped** |
-| FrankenPHP `testdata/*.php` through `php/classic.php` | — | **29 passed / 4 failed / 33 skipped** | — |
+| FrankenPHP `testdata/*.php` through `php/packages/runtime/src/classic.php` | — | **29 passed / 4 failed / 33 skipped** | — |
 
 ## Offload pool bound, vs an unbounded blocking call (V-24)
 

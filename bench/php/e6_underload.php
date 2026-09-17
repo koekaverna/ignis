@@ -7,7 +7,7 @@
 // i.e. the connection is accepted but no readable status line ever arrives, and the server logs
 // nothing at RUST_LOG=debug. Env: URL, N (default 150), ROUNDS (default 10).
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 use function Ignis\all; use function Ignis\async;
 $url = getenv('URL'); $N = (int)(getenv('N') ?: 150); $R = (int)(getenv('ROUNDS') ?: 10);
 $fail = 0; $tot = 0;

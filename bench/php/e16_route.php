@@ -1,8 +1,8 @@
 <?php
 // E16 part 2: config-driven auto-routing with no code changes — SQLite3 / PDO / curl used the normal way inside fibers.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
-require __DIR__ . '/../../php/offload/ignis-offload.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../../php/packages/offload/src/ignis-offload.php';
 
 use Ignis\Offload\Router;
 

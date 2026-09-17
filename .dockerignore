@@ -3,8 +3,8 @@ target
 target-async
 .git
 php/*/vendor
-php/symfony/app
-php/amphp/vendor
+php/packages/symfony-runtime/app
+php/packages/revolt/vendor
 bench/results
 docs
 *.md

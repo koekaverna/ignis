@@ -8,7 +8,7 @@
 //
 // Env: PORT (an e6_ssl_server.php instance), CAFILE.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $port = (int) (getenv('PORT') ?: 8441);
 $hook = getenv('IGNIS_NO_STREAM_HOOK') ? 'off' : 'on';

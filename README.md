@@ -50,8 +50,8 @@ the default.
 | `exempt` | `["/_ignis/"]` | path prefixes admitted regardless of the budget |
 
 Every `ignis_*` function is defined in Rust, so an IDE, PHPStan or Psalm sees "unknown function" at
-call sites unless it also loads `php/stubs/ignis.php` (BACKLOG H-7) — pull it in via `ignis/runtime`'s
-`autoload-dev.files` (composer, dev only), or `require 'php/stubs/ignis.php';` directly in your
+call sites unless it also loads `php/packages/runtime/stubs/ignis.php` (BACKLOG H-7) — pull it in via `ignis/runtime`'s
+`autoload-dev.files` (composer, dev only), or `require 'php/packages/runtime/stubs/ignis.php';` directly in your
 analyser's bootstrap. Each stub is `function_exists()`-guarded, so loading it under the real binary
 is a no-op.
 
@@ -89,8 +89,8 @@ app's own PHP is older):
 
 ```
 composer config platform.php 8.5.10
-composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php","options":{"symlink":false}}'
-composer require ignis/runtime:@dev --no-scripts
+composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php/packages/*","options":{"symlink":false}}'
+composer require ignis/runtime:@dev ignis/symfony-runtime:@dev --no-scripts
 composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
 composer dump-autoload
 mkdir -p var && chmod -R a+rwX var
@@ -137,8 +137,8 @@ the top level of the main script — not in a function, not in a closure, not in
 measured all four). So classic mode offers a loop your own script owns:
 
 ```php
-require '/path/to/ignis/php/ignis.php';
-require '/path/to/ignis/php/classic.php';
+require '/path/to/ignis/php/packages/runtime/src/ignis.php';
+require '/path/to/ignis/php/packages/runtime/src/classic.php';
 
 Ignis\Classic\listen('/var/www/html/public', '0.0.0.0:8080');
 while ($script = Ignis\Classic\accept()) {

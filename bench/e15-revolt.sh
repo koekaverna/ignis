@@ -20,11 +20,11 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 BIN=$ROOT/target/release/ignis
 PHP=${PHP_BIN:-/opt/php85-zts/bin/php}
-AMPHP=$ROOT/php/amphp
+AMPHP=$ROOT/php/packages/revolt
 TMP=${TMP_DIR:-/tmp/e15-revolt}
 mkdir -p "$TMP"
-# php/amphp/ignis.ini names prepend.php by an absolute path; regenerate it for this checkout.
-sed "s#^auto_prepend_file=.*#auto_prepend_file=$ROOT/php/amphp/prepend.php#" "$ROOT/php/amphp/ignis.ini" > "$TMP/ignis.ini"
+# php/packages/revolt/ignis.ini names prepend.php by an absolute path; regenerate it for this checkout.
+sed "s#^auto_prepend_file=.*#auto_prepend_file=$ROOT/php/packages/revolt/prepend.php#" "$ROOT/php/packages/revolt/ignis.ini" > "$TMP/ignis.ini"
 REPS=${REPS:-3}
 BOOT=$AMPHP/test/bootstrap.php
 mkdir -p "$TMP"
@@ -33,7 +33,7 @@ cat > "$TMP/phpunit-run.php" <<'EOF'
 <?php declare(strict_types=1);
 // Minimal PHPUnit entry point for the embed SAPI: no shebang, no dom/libxml/xmlwriter gate,
 // and $_SERVER['PHP_SELF'] filled in. Everything else is stock PHPUnit.
-$root = getenv('AMPHP_ROOT') ?: dirname(__DIR__) . '/php/amphp';
+$root = getenv('AMPHP_ROOT') ?: dirname(__DIR__) . '/php/packages/revolt';
 $_SERVER['PHP_SELF'] ??= $_SERVER['argv'][0] ?? __FILE__;
 $_SERVER['SCRIPT_NAME'] ??= $_SERVER['PHP_SELF'];
 $_SERVER['SCRIPT_FILENAME'] ??= $_SERVER['PHP_SELF'];
@@ -41,7 +41,7 @@ require $root . '/vendor/autoload.php';
 exit((new PHPUnit\TextUI\Application)->run($_SERVER['argv']));
 EOF
 
-# Baseline twin of php/amphp/test/IgnisDriverTest.php: same abstract suite, same three
+# Baseline twin of php/packages/revolt/tests/IgnisDriverTest.php: same abstract suite, same three
 # re-enabled data-provider tests, but on StreamSelectDriver. Keep in sync with that file.
 cat > "$TMP/SelectDriverCompatTest.php" <<'EOF'
 <?php declare(strict_types=1);

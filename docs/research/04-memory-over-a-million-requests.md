@@ -1,6 +1,6 @@
 # Research 04 — Where a worker-mode process can leak, and how to measure it
 
-Date: 2026-09-16 (Cycle 4). Sources: php/ignis.php, crates/ignis/src/{reactor,http}.rs,
+Date: 2026-09-16 (Cycle 4). Sources: php/packages/runtime/src/ignis.php, crates/ignis/src/{reactor,http}.rs,
 main/main.c `php_request_shutdown` (not called per HTTP request in worker mode),
 V-4/V-5 RSS notes.
 

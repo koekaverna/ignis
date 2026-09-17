@@ -35,7 +35,7 @@
 // one sample ~0.2s. The "parks" fiber's usleep produces neither: it took the parked branch, not
 // the timed one — see research 32 §B's "where timing is taken".
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $ms = 200;
 $fs = [];

@@ -6,7 +6,7 @@ unchanged and is what this builds on. Measurements in `docs/research/35-sdk-php-
 
 ## Context
 
-ADR-0013 shipped a workflow runtime of our own: `php/temporal/ignis-temporal.php`, ~250 lines,
+ADR-0013 shipped a workflow runtime of our own: `php/packages/temporal-prototype/src/ignis-temporal.php`, ~250 lines,
 workflows as fibers, activities as fibers, replay proven with a negative control (V-19). It was
 accepted "for the prototype scope" and it has stayed there. What it does not have is everything an
 application actually needs: signals, queries, updates, child workflows, cancellation scopes, local
@@ -34,9 +34,9 @@ tie to RoadRunner turns out to be a default argument.
 ## Decision
 
 1. **The official SDK is the userland.** Workflows and activities are written with
-   `temporalio/sdk-php`; Ignis supplies the host. `php/temporal/ignis-temporal.php` stays only as
+   `temporalio/sdk-php`; Ignis supplies the host. `php/packages/temporal-prototype/src/ignis-temporal.php` stays only as
    the reference the replay test was built on and is not developed further.
-2. **The adapter is a composer package, not Ignis glue.** `php/temporal/core/` is
+2. **The adapter is a composer package, not Ignis glue.** `php/packages/temporal-core-transport/` is
    `ignis/temporal-core-transport` — its own `composer.json`, PSR-4 `Temporal\Worker\Transport\Core\`
    over `src/`, `temporal/sdk` as its only dependency, its conformance test in `tests/`, and no
    dependency on this runtime at all. This is the owner's call and the important half of the
@@ -44,7 +44,7 @@ tie to RoadRunner turns out to be a default argument.
    it is written so it can be offered upstream without being rewritten. PHP is the only Temporal SDK
    not sitting on sdk-core; this is the piece that is missing there.
 3. **One port, two methods.** `ActivationSource::poll(kind)` / `complete(kind, json)` is the entire
-   surface a host must implement; `php/temporal/sdk.php` does it in ~40 lines over the existing
+   surface a host must implement; `php/packages/temporal/src/CoreSource.php` does it in ~40 lines over the existing
    reactor ops. `bench/e20-sdkphp.sh` runs the conformance test under the ignis binary **and** under
    the stock PHP CLI, so "host-agnostic" is a gate, not a claim.
 4. **Concurrency is a pool of factories, one per fiber.** `WorkerFactory` accumulates the responses
@@ -75,7 +75,7 @@ tie to RoadRunner turns out to be a default argument.
 ## Consequences
 
 Better: signals, queries, updates, child workflows, saga, interceptors, data converters and
-versioning arrive as sdk-php features rather than as our backlog; `php/temporal/ignis-temporal.php`
+versioning arrive as sdk-php features rather than as our backlog; `php/packages/temporal-prototype/src/ignis-temporal.php`
 stops growing; the adapter is testable with recorded activations and no server.
 
 Worse: we now depend on sdk-php's **internal** command model. `HostConnectionInterface` and

@@ -6,10 +6,10 @@ cd "$(dirname "$0")/.."
 # IGNIS_LISTEN when :8080 is taken; the examples read the same variable, so the server and
 # the client can never disagree and curl a stranger that happens to hold the port.
 ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
-BIN=./target/release/ignis; EX=php/amphp/vendor/revolt/event-loop/examples; AEX=php/amphp/examples
+BIN=./target/release/ignis; EX=php/packages/revolt/vendor/revolt/event-loop/examples; AEX=php/packages/revolt/examples
 # The ini lives in this repo; it used to be an absolute path to another machine, so on any
 # other checkout the ini silently did not apply.
-mkdir -p /tmp/e7-revolt; sed "s#^auto_prepend_file=.*#auto_prepend_file=$PWD/php/amphp/prepend.php#" php/amphp/ignis.ini > /tmp/e7-revolt/ignis.ini
+mkdir -p /tmp/e7-revolt; sed "s#^auto_prepend_file=.*#auto_prepend_file=$PWD/php/packages/revolt/prepend.php#" php/packages/revolt/ignis.ini > /tmp/e7-revolt/ignis.ini
 export IGNIS_PHP_INI=/tmp/e7-revolt/ignis.ini
 run() { # driver script [stdin-file]
   local d="$1" s="$2"; shift 2

@@ -8,7 +8,7 @@
  *
  * No phpunit.xml.dist: reading an XML configuration needs ext-dom/ext-libxml,
  * which this minimal PHP build does not have. Run phpunit with
- * `--no-configuration --bootstrap php/amphp/test/bootstrap.php`.
+ * `--no-configuration --bootstrap php/packages/revolt/tests/bootstrap.php`.
  */
 declare(strict_types=1);
 
@@ -26,7 +26,7 @@ require $root . '/vendor/autoload.php';
         }
         return;
     }
-    // Ignis\Revolt\Test\* -> php/amphp/test/*
+    // Ignis\Revolt\Test\* -> php/packages/revolt/tests/*
     if (\str_starts_with($class, 'Ignis\\Revolt\\Test\\')) {
         $path = $root . '/test/'
             . \str_replace('\\', '/', \substr($class, \strlen('Ignis\\Revolt\\Test\\'))) . '.php';

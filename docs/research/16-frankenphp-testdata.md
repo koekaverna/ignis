@@ -3,7 +3,7 @@
 Source: `/home/user/frankenphp` (`frankenphp_test.go`, `statusline_test.go`, `finishrequest_realserver_test.go`,
 `requestbodytimeout_test.go`, `worker_test.go`, `server_test.go`, `watcher_test.go`, `workerextension_test.go`,
 `worker_internal_test.go`; `cli_test.go` runs no HTTP request and is out of scope).
-Port: `php/classic.php` (classic-mode adapter), `examples/classic_server.php` (FrankenPHP-testdata shims),
+Port: `php/packages/runtime/src/classic.php` (classic-mode adapter), `examples/classic_server.php` (FrankenPHP-testdata shims),
 `bench/e15-frankenphp.sh` (curl replay, `PASS|FAIL|SKIP` per script).
 
 Result of `bench/e15-frankenphp.sh` (ignis `--threads 2`, PHP 8.5.10 ZTS embed): **passed=29 failed=4 skipped=33**.
@@ -75,7 +75,7 @@ Not requested by any Go test (no entry): `echo.php`, `hello.php`, `hello.txt` (b
 
 ## 2. What the adapter had to do (facts about the embed SAPI under a resident script)
 
-Measured with `target/release/ignis` on probe scripts before writing `php/classic.php`:
+Measured with `target/release/ignis` on probe scripts before writing `php/packages/runtime/src/classic.php`:
 
 1. `php_embed_init()` sets `SG(headers_sent)=1` and `SG(request_info).no_headers=1` (sapi/embed/php_embed.c:244).
    Consequence: `header()`, `headers_list()`, `header_remove()`, `http_response_code()`, `setcookie()` all work
@@ -133,7 +133,7 @@ Measured with `target/release/ignis` on probe scripts before writing `php/classi
 | script | cause | class |
 |---|---|---|
 | server-variable.php | `[REMOTE_HOST]`, `[REMOTE_ADDR]`, `[REMOTE_PORT]`, `[REMOTE_IDENT]` missing: the reactor does not expose the peer socket address (fact 10). The other 21 assertions pass. | Ignis runtime gap: expose peer addr/port in the request payload |
-| cookies.php (malformed) | `Request::superglobals()` parses cookies as `trim(name)=urldecode(trim(value))` on one header value; the runtime's header map keeps only the last `Cookie` header, and the last duplicate name wins. PHP/FrankenPHP: join multiple `Cookie` headers with `; `, keep the first duplicate, mangle ` `/`.` to `_` in names, keep trailing spaces in values, drop NUL bytes. Result here: `['secondCookie' => 'overwritten']`. | Ignis runtime gap (`php/ignis.php` cookie parsing + multi-header join in the transport) |
+| cookies.php (malformed) | `Request::superglobals()` parses cookies as `trim(name)=urldecode(trim(value))` on one header value; the runtime's header map keeps only the last `Cookie` header, and the last duplicate name wins. PHP/FrankenPHP: join multiple `Cookie` headers with `; `, keep the first duplicate, mangle ` `/`.` to `_` in names, keep trailing spaces in values, drop NUL bytes. Result here: `['secondCookie' => 'overwritten']`. | Ignis runtime gap (`php/packages/runtime/src/ignis.php` cookie parsing + multi-header join in the transport) |
 | env/putenv.php | `putenv()` is process-wide and never reset between requests (`test=8` on the second request). FrankenPHP module mode restores the environment per request; its worker mode does not either (`TestEnvIsNotResetInWorkerMode`). | worker-mode semantics; not fixable in userland |
 | file-upload.php | no rfc1867 handling: the runtime sets `$_SERVER/$_GET/$_POST/$_COOKIE` only, `$_FILES` stays empty, `$_POST` is not parsed for `multipart/form-data`. | Ignis runtime gap (multipart parsing + temp files) |
 

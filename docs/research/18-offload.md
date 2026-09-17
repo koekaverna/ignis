@@ -25,7 +25,7 @@ Nothing allocated by one PHP thread's heap may be touched by another PHP thread.
 
 ## Wire shape
 
-- Worker threads: `WorkerThread::attach()` (own TSRM context, own reactor-less loop) running `php/offload/worker.php`: `while ($job = ignis_offload_next()) { … ignis_offload_done($id, $serializedResult) }`. `ignis_offload_next()` blocks on a crossbeam channel; the pool is N threads, N = `--offload N`.
+- Worker threads: `WorkerThread::attach()` (own TSRM context, own reactor-less loop) running `php/packages/offload/src/worker.php`: `while ($job = ignis_offload_next()) { … ignis_offload_done($id, $serializedResult) }`. `ignis_offload_next()` blocks on a crossbeam channel; the pool is N threads, N = `--offload N`.
 - Caller: `ignis_offload_submit(string $fn, string $serializedArgs, int $affinityWorker = -1): int` → `Op::Custom` future resolving when the worker answers (`Outcome::Blob`); a callback request arrives as a `['kind' => 'offload_cb', 'job' => …, 'cb' => …, 'args' => …]` payload the loop routes to the owning request fiber's callback table; the answer goes back through `ignis_offload_cb_result(job, serialized)`.
 - Errors: exceptions on the worker are serialized (`class`, `message`, `code`, trace as string) and rethrown on the caller as `Ignis\Offload\RemoteException`.
 

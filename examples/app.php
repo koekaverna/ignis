@@ -14,9 +14,9 @@
  */
 declare(strict_types=1);
 
-require __DIR__ . '/../php/ignis.php';
-require __DIR__ . '/../php/pg/ignis-pg.php'; // E14: runtime-owned PostgreSQL pool (route /db needs PG_DSN)
-require __DIR__ . '/../php/offload/ignis-offload.php'; // E16: offload pool (route /offload needs --offload N)
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../php/packages/pg/src/ignis-pg.php'; // E14: runtime-owned PostgreSQL pool (route /db needs PG_DSN)
+require __DIR__ . '/../php/packages/offload/src/ignis-offload.php'; // E16: offload pool (route /offload needs --offload N)
 
 use Ignis\Future;
 use Ignis\Http\Request;   // → E4 (hyper transport)

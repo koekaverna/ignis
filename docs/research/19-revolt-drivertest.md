@@ -1,9 +1,9 @@
 # Research 19 — Revolt's abstract `DriverTest` against `IgnisDriver` (E15b / H22b)
 
 Date: 2026-09-16 (Cycle 17, porter). Script: `bench/e15-revolt.sh`.
-Subject under test: `Ignis\Revolt\IgnisDriver` (`php/amphp/src/IgnisDriver.php`, ADR-0008, research 07).
+Subject under test: `Ignis\Revolt\IgnisDriver` (`php/packages/revolt/src/IgnisDriver.php`, ADR-0008, research 07).
 Suite: `revolt/event-loop` 1.x `test/Driver/DriverTest.php` (65 abstract test methods) via the new
-`php/amphp/test/IgnisDriverTest.php` + `php/amphp/test/bootstrap.php`.
+`php/packages/revolt/tests/IgnisDriverTest.php` + `php/packages/revolt/tests/bootstrap.php`.
 Machine: 4 vCPU, load average 4.4–6.1 during the runs (a php-src `.phpt` suite was running on the same box).
 
 ## The two summary lines
@@ -25,12 +25,12 @@ stock  StreamSelectDriverTest (as shipped)   Tests: 69, Assertions: 94, Errors: 
 Commands (both inside `bench/e15-revolt.sh`):
 
 ```
-IGNIS_PHP_INI=php/amphp/ignis.ini IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_SLEEP_HOOK=1 \
+IGNIS_PHP_INI=php/packages/revolt/ignis.ini IGNIS_NO_STREAM_HOOK=1 IGNIS_NO_SLEEP_HOOK=1 \
   timeout 300 ./target/release/ignis /tmp/e15-revolt/phpunit-run.php \
-  --no-configuration --bootstrap php/amphp/test/bootstrap.php php/amphp/test/IgnisDriverTest.php
+  --no-configuration --bootstrap php/packages/revolt/tests/bootstrap.php php/packages/revolt/tests/IgnisDriverTest.php
 
 timeout 300 /opt/php85-zts/bin/php /tmp/e15-revolt/phpunit-run.php \
-  --no-configuration --bootstrap php/amphp/test/bootstrap.php /tmp/e15-revolt/SelectDriverCompatTest.php
+  --no-configuration --bootstrap php/packages/revolt/tests/bootstrap.php /tmp/e15-revolt/SelectDriverCompatTest.php
 ```
 
 ## What phpunit needed in order to run inside the embed binary
@@ -57,10 +57,10 @@ Four obstacles, all in the harness, none in the driver. The script writes a 8-li
    `phpunit.xml.dist` (reading an XML config needs ext-dom) — hence `test/bootstrap.php` instead.
 4. **The abstract suite is not autoloadable.** Composer applies `autoload-dev` only to the root package,
    so `revolt/event-loop`'s `Revolt\EventLoop\ => test/` mapping is absent from `vendor/autoload.php`.
-   `php/amphp/test/bootstrap.php` registers it (plus `Ignis\Revolt\Test\ => php/amphp/test/`).
+   `php/packages/revolt/tests/bootstrap.php` registers it (plus `Ignis\Revolt\Test\ => php/packages/revolt/tests/`).
 
 `$argv`/`$_SERVER['argv']` and `STDIN`/`STDOUT`/`STDERR` were already correct (Cycle 15/17 work): the
-counts are unchanged with and without `IGNIS_PHP_INI=php/amphp/ignis.ini`, so the `auto_prepend_file`
+counts are unchanged with and without `IGNIS_PHP_INI=php/packages/revolt/ignis.ini`, so the `auto_prepend_file`
 that defines the stream constants is no longer needed for this suite.
 
 ### Data-provider repair (why 81 tests and not 69)
@@ -71,7 +71,7 @@ method. PHPUnit 12 ignores doc-comment metadata and requires static providers, s
 four tests with zero arguments and each one dies with `ArgumentCountError`. That happens on **any**
 driver — it is the 4-error line of the stock `StreamSelectDriverTest` run above.
 
-`php/amphp/test/IgnisDriverTest.php` re-enables three of them (`testDisableWithConsecutiveCancel`,
+`php/packages/revolt/tests/IgnisDriverTest.php` re-enables three of them (`testDisableWithConsecutiveCancel`,
 `testCallbackReferenceInfo`, `testCallbackRegistrationAndCancellationInfo`) with `#[DataProvider]`
 attributes over a static copy of the provider, which turns 3 collected-but-dead tests into 18 real ones
 (defer / delay / repeat / onWritable / onReadable / onSignal) and raises assertions from 94 to 222.

@@ -67,7 +67,7 @@ These three hold everywhere in the codebase, and every FFI change is checked aga
 
 `Ignis\Loop` — the fiber pool, `Future`, `async()`, `all()`, `sleep()`, `deadline()` — is
 deliberately shaped like a [Revolt](https://revolt.run) event-loop driver
-(`php/amphp/src/IgnisDriver.php`), not implemented as a Rust-side scheduler calling
+(`php/packages/revolt/src/IgnisDriver.php`), not implemented as a Rust-side scheduler calling
 `zend_fiber_resume()` directly. ADR-0001 measured the alternative and rejected it: a profile of the
 10,000-fiber benchmark put the Rust side at 0.3% of PHP-thread samples — the userland scheduler is
 not the bottleneck (fiber lifecycle, the mmap'd C stack per Fiber, is), so there is no performance

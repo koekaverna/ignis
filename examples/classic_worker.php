@@ -19,8 +19,8 @@
  */
 declare(strict_types=1);
 
-require __DIR__ . '/../php/ignis.php';
-require __DIR__ . '/../php/classic.php';
+require __DIR__ . '/../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../php/packages/runtime/src/classic.php';
 
 $docroot = $argv[1] ?? getenv('IGNIS_DOCROOT') ?: __DIR__ . '/public';
 $addr = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';

@@ -1,0 +1,13 @@
+{
+    "name": "ignis/temporal",
+    "description": "Ignis host for the official temporalio/sdk-php (ADR-0040): implements the core transport's ActivationSource over the runtime's sdk-core ops, and runs the worker as one workflow fiber plus a pool of activity fibers.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.4",
+        "ignis/runtime": "@dev",
+        "ignis/temporal-core-transport": "@dev"
+    },
+    "autoload": { "files": ["src/CoreSource.php"] },
+    "config": { "allow-plugins": false }
+}

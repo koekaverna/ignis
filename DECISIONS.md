@@ -244,3 +244,23 @@ to track.
 
 ADR-0040 accepted; ADR-0013's Rust half stands. Kill criterion recorded there: if sdk-php's private
 command model breaks us twice in a row, the answer is RoadRunner as a sidecar, not a third runtime.
+
+## 2026-09-17 — the PHP userland ships as one package per integration
+
+`php/` was a flat tree of files required by path. It is now ten composer packages under
+`php/packages/*` (Symfony-monorepo shape: per-package `composer.json`, `src/`, inter-package
+requires; the root is an aggregate with a `packages/*` path repository and is installed nowhere).
+An application now takes the adapter it uses and nothing else: `composer require ignis/runtime:@dev
+ignis/symfony-runtime:@dev` against `/opt/ignis/php/packages/*`.
+
+Two boundaries are deliberate. `ignis/temporal` is the Ignis host for the **official** sdk-php and
+carries nothing else; `ignis/temporal-core-transport` stays free of any Ignis dependency so it can
+go upstream; and our own pre-ADR-0040 workflow runtime is `ignis/temporal-prototype`, frozen and
+separate, because mixing it with the SDK path is what made the old directory unreadable.
+
+The retired `php/symfony/worker.php` shim was deleted rather than kept as a migration note: before
+the first stable release there is no back-compat to preserve, and a file that exists only to say
+"use something else" is a file someone has to read.
+
+History files (JOURNAL, VALIDATION, DECISIONS, HYPOTHESES) keep the old paths: they record what was
+true when they were written.

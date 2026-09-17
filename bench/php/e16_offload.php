@@ -1,8 +1,8 @@
 <?php
 // E16 / H24: offload pool. Run: ignis --offload 8 bench/php/e16_offload.php  (env: FIBERS=100, MS=200, N=2000, PG_DSN)
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
-require __DIR__ . '/../../php/offload/ignis-offload.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
+require __DIR__ . '/../../php/packages/offload/src/ignis-offload.php';
 
 $fibers = (int) (getenv('FIBERS') ?: 100);
 $ms = (int) (getenv('MS') ?: 200);

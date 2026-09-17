@@ -7,7 +7,7 @@
 //
 // Usage: ignis bench/php/e18_pgsql.php <pdo_dsn> [n]   (env fallback: PG_PDO_DSN, N; default n=100)
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $dsn = $argv[1] ?? getenv('PG_PDO_DSN') ?: null;
 $n = (int) ($argv[2] ?? getenv('N') ?: 100);

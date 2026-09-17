@@ -1,5 +1,5 @@
 <?php
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 error_log("start");
 $t = hrtime(true);
 $fs = [];

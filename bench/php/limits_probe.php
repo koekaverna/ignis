@@ -3,7 +3,7 @@
 // idle timeout) are all enforced before a request ever reaches PHP, so the route itself
 // only needs to prove the server is up.
 declare(strict_types=1);
-require __DIR__ . '/../../php/ignis.php';
+require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 use Ignis\Http\Request;
 use Ignis\Http\Response;

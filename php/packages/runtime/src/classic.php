@@ -35,8 +35,8 @@ function finish(): never { throw new Finished(); }
  * globals — WordPress's `$wpdb`, Drupal, any procedural docroot — need this; a framework front
  * controller (Symfony, Laravel) does not and can keep using `Ignis\Classic\serve()`.
  *
- *     require '.../php/ignis.php';
- *     require '.../php/classic.php';
+ *     require '.../php/packages/runtime/src/ignis.php';
+ *     require '.../php/packages/runtime/src/classic.php';
  *     Ignis\Classic\listen('/var/www/html/public', '0.0.0.0:8080');
  *     while ($script = Ignis\Classic\accept()) {
  *         include $script;              // top level of the main script: real globals
