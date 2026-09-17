@@ -2760,3 +2760,68 @@ Total 28/28 green in both hosts. Gates: `cargo nextest` 9/9, release build clean
 Temporal Cloud needs them on the host's own channel, and `ignis_grpc_call` has no header argument
 today. And this is still a canned-response test: no call has yet gone to a real Temporal server over
 this path.
+
+## V-67 — "per fiber" is not "per request", and `$_SESSION` is shared across both (CONFIRMED)
+
+Date: 2026-09-17T12:3xZ. Groundwork for making Symfony services fiber-scoped (Doctrine's
+`EntityManager`, the security token storage). Two things had to be measured before any of that has a
+shape, and both came out against the comfortable assumption. Binary `target/release/ignis`, one PHP
+thread, probes kept as `bench/php/scope_reuse.php` and `bench/php/session_shared.php`.
+
+### 1. `Ignis\Scope` isolates concurrent requests and leaks into the next one
+
+`Scope` is a `WeakMap` keyed by the `Fiber` object, and the loop **reuses parked fibers** (V-4, the
+project's biggest win). So a value left on a fiber outlives the request that put it there. Measured
+by returning what the *previous* request left, plus the fiber's object id:
+
+```
+wave 1 (4 concurrent, pool warm with one fiber)
+  {"n":"1","inherited":"warm","fiber":6}     ← the one reused fiber
+  {"n":"2","inherited":null,"fiber":15}      ← fresh
+  {"n":"3","inherited":null,"fiber":22}
+  {"n":"4","inherited":null,"fiber":17}
+wave 2 (the same 4, all fibers now from the pool)
+  {"n":"5","inherited":"1","fiber":6}
+  {"n":"6","inherited":"2","fiber":15}
+  {"n":"7","inherited":"4","fiber":17}
+  {"n":"8","inherited":"3","fiber":22}
+```
+
+Every fiber in wave 2 carries its own wave-1 value, id for id. **Concurrent isolation holds; request
+isolation does not.** Both halves matter for the design: a fiber-scoped `EntityManager` needs an
+explicit teardown at request end (otherwise request *n+1* inherits request *n*'s identity map), and
+the same reuse is what lets its database connection be opened once per pooled fiber instead of once
+per request — which is the whole reason the simple design is affordable.
+
+### 2. `session_start()` does not work at all — and `$_SESSION` is still shared
+
+Research 36 (agent) reported `$_SESSION` as a cross-user disclosure through Symfony's
+`NativeSessionStorageFactory`. Re-run by main, the mechanism is different and the conclusion is
+narrower, so it is recorded here rather than taken as given:
+
+```
+{"v":"warm","started":false,"status":1,"id":"",
+ "error":"session_start(): Session cannot be started after headers have already been sent"}
+```
+
+`session_start()` fails on every request under the embed SAPI (`php_embed_init()` pins
+`SG(headers_sent)`, the same wall V-58's probe hit), `session_status()` stays 1 = none and
+`session_id()` is empty. So nothing routed through **ext/session** — Symfony's native storage
+included — can leak, because it never starts. That also means R-SESS's `flock` deadlock cannot be
+reached through `session_start()` on this SAPI.
+
+What *is* real, measured with two overlapping requests 100 ms apart:
+
+```
+alice: {"v":"alice","before":"alice","after":"bob"}
+bob:   {"v":"bob",  "before":"bob",  "after":"bob"}
+```
+
+`alice` wrote `$_SESSION['v']`, parked, and on resume read **bob's** value. `$_SESSION` is not one of
+the four superglobals the fiber-switch observer swaps — `superglobals.rs:22` is exactly
+`_SERVER`, `_GET`, `_POST`, `_COOKIE` (verified by main, not taken from the agent) — so it is a plain
+thread-global array that any code writing to it directly shares across every fiber on that thread.
+
+So the honest statement is two sentences, not one: sessions do not work here, which is already
+ADR-0038/R-SESS and is documented; and `$_SESSION` used as a plain array is shared across
+overlapping requests, which was not documented and now is.
