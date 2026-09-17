@@ -159,6 +159,13 @@ fix would cost the worker model's own bootstrap saving.
 - **`memory_limit` is per thread, not per fiber or per request.** One fiber's OOM ends the whole
   thread's script, taking every other in-flight fiber on that thread with it (ADR-0025); there is
   no per-fiber memory accounting.
+- **Name resolution blocks a thread.** `getaddrinfo()` has no file descriptor, so nothing can park
+  it: every hostname lookup holds its OS thread for the whole resolve. Against a warm cache that is
+  microseconds; against a sick or unreachable resolver it is seconds, and with N threads that is N
+  requests stalled rather than one fiber. libpq and PHP's `fsockopen`/`stream_socket_client`/
+  `gethostbyname` are affected; libcurl is not (it resolves on its own thread). **Run a local
+  caching resolver** — nscd, systemd-resolved, or dnsmasq in the pod — and this stops mattering;
+  that is the recommended production setup today. Tracked as BACKLOG R-DNS with the planned fix.
 - **Linux-only, by construction.** Universal park depends on `epoll`, raw `syscall` numbers and
   `dladdr` semantics that are Linux-specific (ADR-0037's build/distribution table); there is no
   other-OS target.

@@ -22,6 +22,7 @@ VALIDATION.md entry that measured it. Nothing here is a claim without a number b
 | a legacy docroot that keeps state in globals (`$wpdb` and friends) | **only in the top-level worker loop** — `examples/classic_worker.php`. In that shape `$GLOBALS` and `global $x` behave as under `php -S`; in the fiber-based `Ignis\Classic\serve()` they do not, because an entry included from a fiber has its top-level variables as locals | V-53, V-54 |
 | a script that declares a function at top level without a guard | **fatals on the second request** (`Cannot redeclare`, uncatchable; the thread is respawned). Use `require_once` or `function_exists()` — the rule in every worker runtime | V-53, V-54 |
 | PHP 8.5.10 ZTS + embed SAPI build itself | builds and links here, all target extensions present | V-0, V-1 |
+| a hostname lookup (`fsockopen('tcp://host:port')`, `gethostbyname()`, libpq connecting by name) | **blocks the OS thread** for the whole resolve — `getaddrinfo()` has no fd to park on. `curl_*` is unaffected (threaded resolver). Run a local caching resolver; tracked as R-DNS | research 26, 27, 31 |
 
 ## Hook-off controls
 

@@ -159,3 +159,16 @@ op already depend on; it lived in `stream.rs` only because ADR-0007 wrote it the
 verbatim to `php/wait.rs` (151 lines) and the callers rewired. `Outcome::Connected/Data/WouldBlock/
 Written/Closed` went with the actor; the one arm `module.rs` still needs is `Outcome::Error`, which
 now routes to a parked fiber and otherwise logs with the message attached.
+
+## 2026-09-17 — DNS: record the risk, do not build it yet (owner)
+
+Owner, asked how DNS would be parked and what the alternatives were: "пока не делаем, это нужно
+записать как и риск с использованием flock". So R-DNS is written up the way R-SESS is — BACKLOG,
+ADR-0024's non-goals, the runbook's known limits, the site's non-goals page and the compatibility
+table — with the planned implementation, its costs, the rejected alternative and the operational
+mitigation, and no code. The key technical point, recorded so it is not re-litigated: `getaddrinfo`
+cannot be parked at all (no fd), so this was never a park row; the plan is glibc's own call on a
+blocking pool with the fiber suspended on it, handing back glibc's pointer untouched so
+`freeaddrinfo` needs no interposition. Writing our own resolver is rejected until measurement
+demands it, because its failure mode is wrong answers (nsswitch, ndots/search, AI_* flags, RFC 6724
+sorting), not slowness.

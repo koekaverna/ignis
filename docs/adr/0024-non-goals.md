@@ -36,6 +36,15 @@ and `ext/session`'s `flock` on the session file (BACKLOG R-SESS: a session-lock 
 thread, not a fiber). Anything needing that would be a fourth mechanism (io_uring, or offload for
 file I/O) and gets its own ADR.
 
+**Added 2026-09-17 (research 31, owner decision):** **name resolution is not made asynchronous
+either.** `getaddrinfo()` has no file descriptor, so there is no readiness to wait for and universal
+park cannot apply — a lookup blocks its OS thread for its full duration. libpq and PHP's own
+`fsockopen`/`gethostbyname` are affected; libcurl is not (threaded resolver, research 26). The
+runtime will not ship its own resolver: reproducing `nsswitch`, `resolv.conf` search/ndots, the
+`AI_*` flags and RFC 6724 sorting fails as *wrong answers*, not as slowness. The planned fix is to
+run glibc's own `getaddrinfo` on a blocking pool and suspend the fiber on it (BACKLOG R-DNS); until
+then the answer is operational — a local caching resolver.
+
 ## Options considered
 
 Promising durability through a write-ahead request log (rejected: it reinvents a queue in the

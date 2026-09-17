@@ -56,3 +56,16 @@ The park mechanism depends on epoll, raw `syscall()` numbers per architecture, a
 semantics that are constructs of the Linux/glibc ABI ([ADR-0020](../adr/0020-universal-park.md),
 [ADR-0037](../adr/0037-three-mechanisms.md) §5). This is an accepted constraint, not a
 near-term roadmap item.
+
+## Name resolution is not asynchronous
+
+`getaddrinfo()` has no file descriptor, so universal park — which waits for readiness and then makes
+the real call — has nothing to wait on. A hostname lookup blocks the OS thread that makes it.
+libpq and PHP's own `fsockopen`/`gethostbyname` go through it; libcurl does not, because this build
+uses curl's threaded resolver.
+
+Run a **local caching resolver** (nscd, systemd-resolved, dnsmasq) and lookups return from cache in
+microseconds, which is the practical answer and needs no code. Ignis will not ship its own resolver:
+reproducing `nsswitch.conf`, `/etc/hosts`, `resolv.conf`'s search list and `ndots`, the `AI_*` flags
+and RFC 6724 address sorting is a surface where being almost right means connecting to the wrong
+address or failing to resolve a Kubernetes service — a worse failure than a slow one.
