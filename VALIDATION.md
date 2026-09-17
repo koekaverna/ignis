@@ -2996,9 +2996,11 @@ the entry script an application points `ignis.toml` at — and none of them has 
 directory to autoload from.
 
 But a hand-kept list of `require_once` is a trap: add a class, test it under composer where it works,
-and the direct-`require` path breaks silently. Both files now register an `spl_autoload_register`
-over `Ignis\` → `src/` instead, and require only what cannot be autoloaded — the free functions and
-the CGI-era polyfills. 46 and 27 lines.
+and the direct-`require` path breaks silently. `ignis.php` now registers one
+`spl_autoload_register` over `Ignis\` → `src/` (guarded, so requiring it twice registers once) and
+eagerly loads only `functions.php`, which PSR-4 cannot reach. `classic.php` registers nothing: it
+requires `ignis.php` and adds the two classic files that are not autoloadable — its free functions
+and the CGI-era polyfills. 46 and 27 lines.
 
 Same proof as above, run against the previous require-list version: the reflection surface is
 **identical, 24 entries**. And a class dropped into `src/` with no bootstrap edit loads:
