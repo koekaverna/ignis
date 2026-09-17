@@ -6,8 +6,15 @@
     "require": {
         "php": ">=8.4",
         "ignis/runtime": "@dev",
-        "ignis/temporal-core-transport": "@dev"
+        "ignis/temporal-core-transport": "@dev",
+        "ignis/grpc": "@dev"
     },
-    "autoload": { "files": ["src/CoreSource.php"] },
-    "config": { "allow-plugins": false }
+    "autoload": {
+        "files": [
+            "src/CoreSource.php"
+        ]
+    },
+    "config": {
+        "allow-plugins": false
+    }
 }

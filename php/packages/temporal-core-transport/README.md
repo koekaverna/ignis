@@ -69,6 +69,25 @@ composer install
 php tests/conformance.php
 ```
 
+## The client
+
+`WorkflowClient` normally reaches Temporal through **ext-grpc**. It does not have to:
+`BaseClient::invoke()` funnels all ~95 service methods through the pipeline that
+`withInterceptorPipeline()` installs publicly, so one interceptor replaces the whole gRPC client.
+
+```php
+$client = WorkflowClient::create(CoreServiceClient::for($yourUnaryCall));
+$client->start($client->newUntypedWorkflowStub('GreetWorkflow', $options), 'Ada');
+```
+
+`ServiceCall` is the port — one unary call, path in, protobuf bytes out. Two details make it work
+without the extension: `ServiceClient::create()` refuses when `ext-grpc` is missing but the
+constructor does not, and `Connection` needs a `\Grpc\BaseStub` — which comes from the `grpc/grpc`
+*composer* package, so `DetachedStub` simply subclasses it with a constructor that opens nothing.
+
+Not handled: per-call metadata and deadlines from `ContextInterface` are ignored, so API-key
+authentication and TLS have to live in the host's own channel.
+
 ## The wire
 
 **protojson — core's own documents.** The host hands over a `WorkflowActivation` exactly as core

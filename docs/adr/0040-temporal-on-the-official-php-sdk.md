@@ -61,7 +61,15 @@ tie to RoadRunner turns out to be a default argument.
    produce an empty completion. The consequence that matters: **a new Temporal feature costs nothing
    on the Rust side**, only in the PHP package, which is where decision 2 says all the knowledge
    belongs.
-6. **An untranslated command is an exception, never a silent drop.** `CoreCodec::encode()` throws
+6. **The client is the same trick as the worker** (added 2026-09-17, V-66). sdk-php's
+   `WorkflowClient` reaches Temporal through ext-grpc, which this runtime will not carry — gRPC's
+   C core brings its own threads and poller into the process, the objection that also rules out the
+   Go SDK through cgo. It does not have to: `BaseClient::invoke()` funnels all ~95 service methods
+   through a publicly installable interceptor pipeline, so one interceptor replaces the whole gRPC
+   client, and the actual call is `ignis_grpc_call()` — generic unary by path since E10, with no new
+   Rust at all. The port is `ServiceCall`; `ext-bcmath` was added to the PHP build because
+   google/protobuf's pure-PHP int64 handling needs it.
+7. **An untranslated command is an exception, never a silent drop.** `CoreCodec::encode()` throws
    by name for anything outside the translated set, because a dropped command is a workflow that
    hangs until its task timeout — a far worse bug to find.
 

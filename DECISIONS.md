@@ -305,3 +305,20 @@ time — the old schema could not express them.
 The PHP-side prototype runtime (`php/packages/temporal-prototype`, ADR-0013, superseded) was moved to
 the same dialect. It has no local test — CI's `bench/e9-temporal.sh` is its first real exercise, and
 that is stated in V-65 rather than glossed.
+
+## 2026-09-17 — the Temporal client goes through the runtime's own gRPC, not ext-grpc
+
+ADR-0040 listed the client as a gap. It is not: sdk-php funnels every service method through
+`BaseClient::invoke()` and a publicly installable interceptor pipeline, so one interceptor replaces
+the whole gRPC client (V-66). The call itself is `ignis_grpc_call()` — generic unary by path since
+E10 — so there is no new Rust, and the client works in a build without `--features temporal`.
+
+**ext-grpc is refused deliberately, not for convenience.** It embeds gRPC's C core, which brings its
+own threads and poller into the process; that is the same objection that rules out the Go SDK
+through cgo, and it would put a second event loop next to the reactor. `ext-bcmath` was added
+instead — a bundled extension with no threads and no external library — because google/protobuf's
+pure-PHP int64 path needs it.
+
+Known limit, recorded so nobody meets it in production: `ContextInterface` metadata and deadlines
+are dropped, so API-key auth and TLS must live in the host's channel. Temporal Cloud therefore does
+not work over this path yet, and `ignis_grpc_call` needs a header argument before it can.

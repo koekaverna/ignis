@@ -2718,3 +2718,45 @@ superseded by ADR-0040 and kept for the replay test) was converted to the same d
 live run — there is no Temporal dev server on this box, so `bench/e9-temporal.sh` in CI is its first
 real exercise. Gates run here: `cargo nextest` 9/9, `cargo test --features temporal completion_json`
 3/3, `bench/e20-sdkphp.sh` green in both hosts.
+
+## V-66 — sdk-php's WorkflowClient works with no gRPC extension, and needs no new Rust (CONFIRMED)
+
+Date: 2026-09-17T15:1xZ. Owner asked what happens to the Temporal *client*. ADR-0040 had listed it
+as a gap ("`ext-grpc` is absent, so `WorkflowClient` cannot start workflows from PHP here"). It is
+not a gap: the client is the same trick as the worker.
+
+**The seam.** `BaseClient::invoke()` routes every one of the service's ~95 methods through
+`$invokePipeline`, installed by the public `withInterceptorPipeline()`. An interceptor that answers
+instead of calling `$next` never reaches the gRPC stub, so **one method covers the whole service**.
+
+**Two obstacles, both small and both measured:**
+
+| | |
+|---|---|
+| `ServiceClient::create()` refuses outright without `ext-grpc` | its constructor takes a stub factory and does not — that is the way in |
+| `Connection` builds the stub eagerly, property typed `\Grpc\BaseStub` | that class comes from the `grpc/grpc` **composer** package, not the extension, so `DetachedStub` subclasses it with a constructor that opens nothing |
+| `bccomp()` undefined | google/protobuf's pure-PHP int64 path needs `ext-bcmath` — a *bundled* extension; `--enable-bcmath` added to `scripts/build-php.sh` and `/opt/php85-zts` rebuilt |
+
+**No new Rust.** `ignis_grpc_call(url, path, message, streaming)` has been a generic unary call by
+path since E10 (ADR-0014: opaque-bytes codec, no codegen), and `Ignis\Grpc\Client` already wraps it
+with status handling. So `Ignis\Temporal\GrpcServiceCall` is five lines, the call parks the calling
+fiber like any reactor op, and **the client works in a build without `--features temporal`**.
+
+Measured (`bench/e20-sdkphp.sh`, scenario 3, temporal/sdk v2.19), under the ignis binary and under
+stock PHP, `ext-grpc loaded = no` in both:
+
+```
+12. WorkflowClient::start() without ext-grpc   ok      run id came back through the port
+    reached the right gRPC method              ok      /temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution
+    the request is a real protobuf             ok      workflowType = GreetWorkflow
+    task queue survives                        ok      ignis
+    argument survives                          ok      "Ada"
+```
+
+Total 28/28 green in both hosts. Gates: `cargo nextest` 9/9, release build clean.
+
+**Not handled, and said rather than faked:** per-call metadata and deadlines from
+`ContextInterface` are ignored, so API-key authentication and TLS options do not reach the host —
+Temporal Cloud needs them on the host's own channel, and `ignis_grpc_call` has no header argument
+today. And this is still a canned-response test: no call has yet gone to a real Temporal server over
+this path.

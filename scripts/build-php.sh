@@ -27,6 +27,7 @@ cd "$SRC"
   --enable-pdo --with-pdo-sqlite --with-sqlite3 --enable-fibers --with-zlib \
   --enable-cli --disable-cgi --disable-phpdbg --disable-zend-signals \
   --enable-filter --enable-ctype --enable-tokenizer --enable-session --with-iconv \
+  --enable-bcmath \
   --with-pdo-pgsql --with-pgsql --with-curl --with-openssl
 make -j"$JOBS"
 make install

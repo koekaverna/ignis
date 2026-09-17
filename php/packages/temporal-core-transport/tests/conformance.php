@@ -21,12 +21,14 @@ if (!\is_file($vendor)) {
 require $vendor;
 if (!\interface_exists(\Temporal\Worker\Transport\Core\ActivationSource::class)) {
     // installed without this package's own autoloader (e.g. SDKPHP_VENDOR points elsewhere)
-    foreach (['ActivationSource', 'HeartbeatSink', 'CoreCodec', 'CoreRpc', 'CoreHost', 'CoreWorkerFactory'] as $class) {
+    foreach (['ActivationSource', 'HeartbeatSink', 'ServiceCall', 'CoreCodec', 'CoreRpc', 'CoreHost', 'CoreWorkerFactory', 'DetachedStub', 'CoreServiceClient'] as $class) {
         require \dirname(__DIR__) . "/src/{$class}.php";
     }
 }
 
 use Temporal\Worker\Transport\Core\ActivationSource;
+use Temporal\Worker\Transport\Core\CoreServiceClient;
+use Temporal\Worker\Transport\Core\ServiceCall;
 use Temporal\Worker\Transport\Core\CoreWorkerFactory;
 
 require __DIR__ . '/workflow.php';
@@ -261,6 +263,56 @@ check('    update result reaches core', \json_decode(\base64_decode($cmd(4, 0)['
 check('    protocolInstanceId, not the update id', $cmd(4, 0)['protocolInstanceId'] ?? null, 'pi-1');
 check('11. heartbeat reached the host', \count($source2->heartbeats), 1);
 check('    with the task token and the detail', \json_decode(\base64_decode($source2->heartbeats[0]['details'][0]['data'] ?? ''), true), ['at' => 'beat']);
+
+// ---------------------------------------------------------------------------------------------
+// Scenario 3: the client half. sdk-php's own WorkflowClient, in a build with no gRPC extension,
+// with every call answered by a ServiceCall instead of a channel.
+
+final class RecordingCall implements ServiceCall
+{
+    /** @var list<array{path:string,request:string}> */
+    public array $calls = [];
+    private string $reply = '';
+
+    public function willReply(\Google\Protobuf\Internal\Message $response): void
+    {
+        $this->reply = $response->serializeToString();
+    }
+
+    public function call(string $path, string $request): string
+    {
+        $this->calls[] = ['path' => $path, 'request' => $request];
+
+        return $this->reply;
+    }
+}
+
+\printf("\nclient: ext-grpc loaded = %s\n", \extension_loaded('grpc') ? 'yes' : 'no');
+
+$transport = new RecordingCall();
+$transport->willReply((new \Temporal\Api\Workflowservice\V1\StartWorkflowExecutionResponse())->setRunId('run-from-core'));
+
+$clientOk = true;
+try {
+    $wfClient = \Temporal\Client\WorkflowClient::create(CoreServiceClient::for($transport));
+    $stub = $wfClient->newUntypedWorkflowStub('GreetWorkflow', \Temporal\Client\WorkflowOptions::new()->withTaskQueue('ignis'));
+    $run = $wfClient->start($stub, 'Ada');
+    check('12. WorkflowClient::start() without ext-grpc', $run->getExecution()->getRunID(), 'run-from-core');
+} catch (\Throwable $e) {
+    $clientOk = false;
+    check('12. WorkflowClient::start() without ext-grpc', $e::class . ': ' . $e->getMessage(), 'run-from-core');
+}
+
+if ($clientOk) {
+    $sent = $transport->calls[0] ?? ['path' => '', 'request' => ''];
+    check('    reached the right gRPC method', $sent['path'], '/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution');
+
+    $req = new \Temporal\Api\Workflowservice\V1\StartWorkflowExecutionRequest();
+    $req->mergeFromString($sent['request']);
+    check('    the request is a real protobuf', $req->getWorkflowType()?->getName(), 'GreetWorkflow');
+    check('    task queue survives', $req->getTaskQueue()?->getName(), 'ignis');
+    check('    argument survives', \json_decode($req->getInput()?->getPayloads()[0]?->getData() ?? '', true), 'Ada');
+}
 
 if (\getenv('CORE_DUMP_RAW')) {
     \printf("\n--- raw completions (protojson, verbatim) ---\n");
