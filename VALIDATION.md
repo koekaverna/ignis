@@ -2656,3 +2656,17 @@ consecutive runs: `differing=0`, rc=0, with the truncation showing up once as `S
 The control arm runs with `IGNIS_NO_UNIVERSAL_PARK=1`, stated in the script next to the reason: a
 control's job is to say what the program does on a stock event loop, and until R-FOREIGN-FIBER is
 fixed park has no business in it.
+
+**One smoke run failed on E1 and it was the box, not the code.** The run right after these changes
+read `wall_ms=1473.0` against the 1200 ms bar with E2 warm at 8.73 µs. `load average: 19.71` and a
+`rustc` at 116 % — a parallel session in this repository was building. Re-measured once the box was
+quiet (no `rustc`/`cargo`, load under 3), same binary, nothing rebuilt:
+
+```
+E2  all3x200_ms=202.07  per_fiber_us_cold=20.08  per_fiber_us_warm=3.62
+E1  wall_ms=1165.1  overhead_ms=165.1  completed=10000  resumes=20000  peak_rss_kb=186368
+```
+
+Both inside their bars, and E2 warm is 3.62 µs against the 3.83 µs of the last quiet run. Recorded
+because the owner rule is "benchmarks one at a time, never beside a build" and this is what breaking
+it looks like from the inside.
