@@ -352,10 +352,34 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
             for (k, v) in r.headers {
                 b = b.header(k, v);
             }
-            Ok(b.body(crate::grpc::plain_body(r.body)).unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR, "bad response headers\n")))
+            let body = match r.body {
+                crate::reactor::ResponseBody::Full(bytes) => crate::grpc::plain_body(bytes),
+                // R-STREAM: hyper starts writing now and frames the rest as it arrives, so the
+                // client gets the first bytes while PHP is still producing the last.
+                crate::reactor::ResponseBody::Stream(rx) => tonic::body::Body::new(ChannelBody { rx }),
+            };
+            Ok(b.body(body).unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR, "bad response headers\n")))
         }
         // PHP dropped the responder without answering (handler crashed hard).
         Err(_) => Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n")),
+    }
+}
+
+/// A response body PHP is still producing. Each `ignis_respond_chunk()` is one frame; the body ends
+/// when the runtime drops the sender, which `ignis_respond_end()` does.
+struct ChannelBody {
+    rx: tokio::sync::mpsc::Receiver<Bytes>,
+}
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        self.rx.poll_recv(cx).map(|o| o.map(|b| Ok(hyper::body::Frame::data(b))))
     }
 }
 

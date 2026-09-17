@@ -55,7 +55,25 @@ pub struct HttpRequest {
 pub struct HttpResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: Bytes,
+    pub body: ResponseBody,
+}
+
+/// What PHP answered with. A whole body is one `ignis_respond()`; a stream is
+/// `ignis_respond_start()` followed by chunks, and the front door starts writing before PHP has
+/// finished producing (R-STREAM).
+#[derive(Debug)]
+pub enum ResponseBody {
+    Full(Bytes),
+    /// Chunks as PHP produces them. The channel is small on purpose: a full channel is what makes
+    /// `ignis_respond_chunk()` park its fiber, which is back-pressure from the client's TCP window
+    /// all the way into the handler.
+    Stream(tokio::sync::mpsc::Receiver<Bytes>),
+}
+
+impl ResponseBody {
+    pub fn full(bytes: Bytes) -> Self {
+        Self::Full(bytes)
+    }
 }
 
 /// Result of an op. Plain data only.
@@ -100,6 +118,9 @@ pub struct Reactor {
     done_tx: Sender<Completion>,
     from_tokio: Receiver<Completion>,
     responders: Mutex<HashMap<u64, oneshot::Sender<HttpResponse>>>,
+    /// R-STREAM: for a response PHP is still producing, the end hyper is draining. Present only
+    /// between `respond_start` and `respond_end`; dropping the sender is what ends the body.
+    stream_out: Mutex<HashMap<u64, tokio::sync::mpsc::Sender<Bytes>>>,
     /// gRPC response streams PHP is still filling (E10, ADR-0014).
     streams: Mutex<HashMap<u64, mpsc::UnboundedSender<GrpcMsg>>>,
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
@@ -202,6 +223,7 @@ impl Reactor {
             done_tx,
             from_tokio,
             responders: Mutex::new(HashMap::new()),
+            stream_out: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
@@ -296,7 +318,9 @@ impl Reactor {
 
     /// Tokio side: the response future for `id` was dropped before PHP answered.
     pub fn cancel_request(&self, id: u64) {
-        let known = self.responders.lock().unwrap().remove(&id).is_some() || self.streams.lock().unwrap().remove(&id).is_some();
+        let known = self.responders.lock().unwrap().remove(&id).is_some()
+            || self.streams.lock().unwrap().remove(&id).is_some()
+            || self.stream_out.lock().unwrap().remove(&id).is_some();
         if known {
             self.inflight.fetch_add(1, Ordering::Relaxed);
             let _ = self.done_tx.send(Completion { id, outcome: Outcome::Cancelled { dropped_at: std::time::Instant::now() } });
@@ -311,11 +335,42 @@ impl Reactor {
         }
     }
 
+    /// PHP-thread side: begin a streamed answer. The status and headers go out now, the body
+    /// follows chunk by chunk. `cap` is the number of chunks that may sit between PHP and the
+    /// socket — small, because that queue is the back-pressure.
+    pub fn respond_start(&self, id: u64, status: u16, headers: Vec<(String, String)>, cap: usize) -> bool {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(cap.max(1));
+        match self.responders.lock().unwrap().remove(&id) {
+            Some(responder) => {
+                if responder.send(HttpResponse { status, headers, body: ResponseBody::Stream(rx) }).is_err() {
+                    return false; // client already gone
+                }
+                self.stream_out.lock().unwrap().insert(id, tx);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The sending end of a streamed answer, if one is open.
+    pub fn stream_sender(&self, id: u64) -> Option<tokio::sync::mpsc::Sender<Bytes>> {
+        self.stream_out.lock().unwrap().get(&id).cloned()
+    }
+
+    /// Ends a streamed answer: dropping the last sender closes the body and completes the response.
+    pub fn respond_end(&self, id: u64) -> bool {
+        self.stream_out.lock().unwrap().remove(&id).is_some()
+    }
+
     /// The owning PHP thread is going away (script ended, fatal): every request it has not
     /// answered gets its responder dropped, so hyper answers 500 / tonic answers an error now
     /// instead of holding the connection until the client gives up (E12').
     pub fn fail_pending(&self) -> usize {
-        let dropped = self.responders.lock().unwrap().drain().count() + self.streams.lock().unwrap().drain().count();
+        // A half-written stream is dropped too: the client sees a truncated body rather than a
+        // connection that never finishes.
+        let dropped = self.responders.lock().unwrap().drain().count()
+            + self.streams.lock().unwrap().drain().count()
+            + self.stream_out.lock().unwrap().drain().count();
         dropped
     }
 
@@ -447,8 +502,8 @@ mod tests {
         assert_eq!(got.len(), 1);
         let Outcome::Request(req) = &got[0].outcome else { panic!("not a request") };
         assert_eq!(req.uri, "/x?y=1");
-        assert!(r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: Bytes::new() }));
-        assert!(!r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: Bytes::new() }));
+        assert!(r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: ResponseBody::full(Bytes::new()) }));
+        assert!(!r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: ResponseBody::full(Bytes::new()) }));
         let resp = rt.block_on(rx).unwrap();
         assert_eq!(resp.status, 204);
     }

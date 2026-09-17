@@ -3194,3 +3194,51 @@ is the natural place to push into a chunk channel, which is where the design in 
 
 Gates: `cargo nextest` 9/9, php suite 41/62, `scripts/smoke.sh` **GREEN** with the probe reading
 `two 300 ms captures: wall=301 ms serialised=no`.
+
+## V-74 — streamed responses actually stream (CONFIRMED)
+
+Date: 2026-09-17T19:0xZ. R-STREAM built. Before, a `StreamedResponse` was collected into a string and
+sent in one piece; the client waited for the last byte to see the first, and the body sat in memory
+twice. Measured then and now, same three-chunks-300-ms-apart handler:
+
+| | before | after |
+|---|---|---|
+| time to first byte | 0.906 s | **0.0017 s** |
+| total | 0.906 s | 0.907 s |
+| when the chunks arrive | all within 8 ms, at the end | **300 ms apart, as produced** |
+| framing | `content-length: 21` | **`transfer-encoding: chunked`**, no length |
+| the thread while a stream is open | — | keeps serving, **3/3** ticks answered |
+
+### How it is built
+
+**Rust.** `ResponseBody` is now `Full(Bytes)` or `Stream(mpsc::Receiver<Bytes>)`; `http.rs` grows a
+15-line `hyper::body::Body` over that receiver, so hyper frames chunks as they arrive. Three
+functions: `ignis_respond_start(id, status, headers)`, `ignis_respond_chunk(id, bytes) -> op`,
+`ignis_respond_end(id)`. The channel holds `IGNIS_STREAM_CHUNKS` (default 2) chunks.
+
+**The back-pressure is the point.** `ignis_respond_chunk` returns an **op**, and the op completes only
+when the runtime has taken the chunk — which it cannot do while the queue to the socket is full. So
+`Stream::write()` awaits, a slow client parks the producing fiber, the thread keeps serving everyone
+else, and memory stays at one chunk instead of the whole body. A client that hangs up turns the send
+into an error, which `write()` raises so the handler stops producing.
+
+**Userland.** `Ignis\Http\Stream::open($request, $status, $headers)` / `write()` / `close()`, with the
+handler returning `Response::detached()` — the same contract gRPC handlers already use for answering
+through another channel.
+
+**Symfony.** `IgnisWorkerRunner` opens a stream for `StreamedResponse` and forwards `sendContent()`
+through `Output::captureChunked()`. That one still uses `ob_start()`, because only PHP's own buffer
+layer has a **callback**, and a callback is what turns output into "a chunk to send now" — V-72
+measured that a fiber can suspend inside it, which is what makes the awaited write work there. It is
+also the one place the thread lock survives: `ob_start()` is a thread resource, so two *streamed*
+responses on one thread serialise. Ordinary responses and direct `Stream` use do not.
+
+An application must use the pattern `StreamedResponse` documents — `ob_flush(); flush();`. With only
+`flush()` the bytes stay in PHP's own buffer until the end, exactly as under php-fpm with output
+buffering on; that is PHP's semantics, not ours.
+
+### Gate
+
+`bench/e23-stream.sh`, in `scripts/smoke.sh`: chunked framing with no `Content-Length`, `ttfb < 0.2 s`
+while `total > 0.8 s`, and three `/tick` requests answered while a stream is open. Smoke **GREEN**;
+`cargo nextest` 9/9; php suite 41 tests / 62 assertions.

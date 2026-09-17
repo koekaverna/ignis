@@ -84,6 +84,9 @@ if IGNIS_RAW_OB=1 $T ./target/release/ignis bench/php/output_isolation.php >/tmp
 fi
 echo "  control (plain ob_start): $(cat /tmp/ignis-ob-control.log)"
 $T ./target/release/ignis bench/php/output_isolation.php || { echo "output isolation FAILED"; exit 1; }
+echo "== E23 (streaming: the client reads while PHP is still producing)"
+timeout 180 bench/e23-stream.sh 2>&1 | sed 's/^/  /' | tail -8
+[ "${PIPESTATUS[0]}" = 0 ] || { echo "E23 FAILED"; exit 1; }
 echo "== E22 (multipart: our parser must agree with PHP's own, case for case)"
 timeout 180 bench/e22/e22-multipart.sh 2>&1 | tail -2
 [ "${PIPESTATUS[0]}" = 0 ] || { echo "E22 FAILED"; exit 1; }

@@ -34,17 +34,31 @@ final class IgnisWorkerRunner implements RunnerInterface
             }
             $response = $kernel->handle($request);
             if ($response instanceof StreamedResponse) {
-                // Not `ob_start()`: the output-buffer stack is per THREAD, and `sendContent()`
-                // parks on I/O, so a plain buffer here collects what every other fiber echoes in
-                // the meantime — two responses swapped bodies in V-72. `Output::capture()` attributes
-                // output to the running fiber inside the runtime (`sapi_module.ub_write` is ours),
-                // so concurrent streamed responses stay apart and do not serialise (V-73).
-                // It still collects the whole body in memory: real streaming needs a chunked
-                // response op on the Rust side, which does not exist yet (BACKLOG R-STREAM).
-                $content = \Ignis\Output::capture(static fn () => $response->sendContent());
-            } else {
-                $content = (string) $response->getContent();
+                // Stream it: the status and headers go out now and the body follows as frames, so
+                // the client reads while the callback is still producing (R-STREAM). `write()`
+                // awaits the runtime, which is the client's back-pressure reaching the handler.
+                $headers = [];
+                foreach ($response->headers->allPreserveCase() as $name => $values) {
+                    $headers[strtolower($name)] = implode(', ', $values);
+                }
+                foreach ($response->headers->getCookies() as $cookie) {
+                    $headers['set-cookie'] = (string) $cookie;
+                }
+                unset($headers['content-length']);   // there is no length yet, and hyper frames it chunked
+                $out = \Ignis\Http\Stream::open($ignisRequest, $response->getStatusCode(), $headers);
+                try {
+                    \Ignis\Output::captureChunked($out, static fn () => $response->sendContent());
+                } finally {
+                    $out->close();
+                }
+                if ($kernel instanceof TerminableInterface) {
+                    $kernel->terminate($request, $response);
+                }
+
+                return IgnisResponse::detached();
             }
+
+            $content = (string) $response->getContent();
             $headers = [];
             foreach ($response->headers->allPreserveCase() as $name => $values) {
                 $headers[strtolower($name)] = implode(', ', $values);

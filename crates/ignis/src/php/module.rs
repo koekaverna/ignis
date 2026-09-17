@@ -384,8 +384,99 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
             sys::zend_hash_move_forward_ex(ht, &mut pos);
         }
         let body = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(body as *const u8, body_len));
-        let ok = reactor().respond(id as u64, HttpResponse { status: status.clamp(100, 599) as u16, headers, body });
+        let ok = reactor().respond(id as u64, HttpResponse { status: status.clamp(100, 599) as u16, headers, body: crate::reactor::ResponseBody::Full(body) });
         zval::set_bool(rv, ok);
+    }
+}
+
+/// Reads a `string => string` PHP array into header pairs, skipping anything else loudly.
+///
+/// # Safety
+/// `ht` must be a live hash table owned by the VM for the duration of the call.
+unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    // SAFETY: hash iteration through ZEND_API only; every value is copied before returning.
+    unsafe {
+        let mut pos: sys::HashPosition = 0;
+        sys::zend_hash_internal_pointer_reset_ex(ht, &mut pos);
+        loop {
+            let v = sys::zend_hash_get_current_data_ex(ht, &pos);
+            if v.is_null() {
+                break;
+            }
+            let mut skey: *mut sys::zend_string = ptr::null_mut();
+            let mut nkey: sys::zend_ulong = 0;
+            let kt = sys::zend_hash_get_current_key_ex(ht, &mut skey, &mut nkey, &pos);
+            if kt == sys::HASH_KEY_IS_STRING && zval::type_of(v) == sys::IS_STRING {
+                headers.push((zval::zstr_to_string(skey), zval::zstr_to_string((*v).value.str_)));
+            } else {
+                tracing::warn!("{who}: header entries must be string => string; skipped one");
+            }
+            sys::zend_hash_move_forward_ex(ht, &mut pos);
+        }
+    }
+
+    headers
+}
+
+/// `ignis_respond_start(int $id, int $status, array $headers): bool` — R-STREAM.
+///
+/// Status and headers go out now; the body follows as chunks. hyper frames it `chunked`, so the
+/// client is reading while PHP is still producing.
+unsafe extern "C" fn zif_ignis_respond_start(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: args are VM-owned for the call and copied into owned Rust data.
+    unsafe {
+        let mut id: sys::zend_long = 0;
+        let mut status: sys::zend_long = 0;
+        let mut ht: *mut sys::HashTable = ptr::null_mut();
+        if sys::zend_parse_parameters(zval::num_args(ex), c"llh".as_ptr(), &mut id, &mut status, &mut ht) != sys::SUCCESS {
+            return;
+        }
+        let headers = header_pairs(ht, "ignis_respond_start");
+        let cap = std::env::var("IGNIS_STREAM_CHUNKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2usize);
+        zval::set_bool(rv, reactor().respond_start(id as u64, status.clamp(100, 599) as u16, headers, cap));
+    }
+}
+
+/// `ignis_respond_chunk(int $id, string $bytes): int` — one frame; returns an op to await.
+///
+/// The op completes when the runtime has accepted the chunk, which it cannot do while the queue to
+/// the socket is full. Awaiting it is therefore the client's back-pressure reaching the handler: the
+/// fiber parks, the thread keeps serving, and memory stays at one chunk.
+unsafe extern "C" fn zif_ignis_respond_chunk(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: the string argument is copied before the future is submitted.
+    unsafe {
+        let mut id: sys::zend_long = 0;
+        let mut buf: *mut c_char = ptr::null_mut();
+        let mut len: usize = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"ls".as_ptr(), &mut id, &mut buf, &mut len) != sys::SUCCESS {
+            return;
+        }
+        let chunk = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(buf as *const u8, len));
+        let Some(tx) = reactor().stream_sender(id as u64) else {
+            zval::set_long(rv, -1);
+            return;
+        };
+        let op = reactor().submit(crate::reactor::Op::Custom(Box::pin(async move {
+            match tx.send(chunk).await {
+                Ok(()) => crate::reactor::Outcome::Json("\"ok\"".into()),
+                // The receiver is gone: the client hung up. The handler sees it and can stop.
+                Err(_) => crate::reactor::Outcome::Failed("client gone".into()),
+            }
+        })));
+        zval::set_long(rv, op as i64);
+    }
+}
+
+/// `ignis_respond_end(int $id): bool` — no more chunks; the body is complete.
+unsafe extern "C" fn zif_ignis_respond_end(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: one integer argument.
+    unsafe {
+        let mut id: sys::zend_long = 0;
+        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut id) != sys::SUCCESS {
+            return;
+        }
+        zval::set_bool(rv, reactor().respond_end(id as u64));
     }
 }
 
@@ -736,7 +827,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 32]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
@@ -751,6 +842,9 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 32]> = SyncStatic([
     fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe(c"ignis_respond_start", zif_ignis_respond_start, ARGINFO_RESPOND.0.as_ptr(), 3),
+    fe(c"ignis_respond_chunk", zif_ignis_respond_chunk, ARGINFO_RESPOND.0.as_ptr(), 2),
+    fe(c"ignis_respond_end", zif_ignis_respond_end, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
@@ -773,7 +867,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 32]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -796,6 +890,9 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
     fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe(c"ignis_respond_start", zif_ignis_respond_start, ARGINFO_RESPOND.0.as_ptr(), 3),
+    fe(c"ignis_respond_chunk", zif_ignis_respond_chunk, ARGINFO_RESPOND.0.as_ptr(), 2),
+    fe(c"ignis_respond_end", zif_ignis_respond_end, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
@@ -816,7 +913,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 34]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 37]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
@@ -831,6 +928,9 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 34]> = SyncStatic([
     fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
+    fe(c"ignis_respond_start", zif_ignis_respond_start, ARGINFO_RESPOND.0.as_ptr(), 3),
+    fe(c"ignis_respond_chunk", zif_ignis_respond_chunk, ARGINFO_RESPOND.0.as_ptr(), 2),
+    fe(c"ignis_respond_end", zif_ignis_respond_end, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC2.0.as_ptr(), 2),
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),

@@ -82,6 +82,47 @@ final class Output
         return $captured === false ? '' : $captured;
     }
 
+    /**
+     * Runs `$emit` and forwards its output to a stream in chunks instead of collecting it.
+     *
+     * This is the one place `ob_start()` is still the right tool: only PHP's own buffer layer has a
+     * **callback**, and a callback is what turns "output" into "a chunk to send now". Measured
+     * (V-72): a fiber can suspend inside that callback, so `$out->write()` awaits the reactor there
+     * and the producer feels the client's back-pressure.
+     *
+     * The price is the lock. `ob_start()` is a thread resource whatever sits under it, so while one
+     * fiber streams this way another must wait — streamed responses on one thread serialise. Ordinary
+     * responses are untouched, and `Stream` used directly (no `ob`) does not serialise at all.
+     *
+     * @param callable():void $emit
+     */
+    public static function captureChunked(\Ignis\Http\Stream $out, callable $emit, int $chunk = 8192): void
+    {
+        while (self::$busy !== null && self::$holder !== \Fiber::getCurrent()) {
+            self::$busy->await();
+        }
+        $done = self::$busy = new Future();
+        self::$holder = \Fiber::getCurrent();
+        try {
+            \ob_start(static function (string $buf) use ($out): string {
+                if ($buf !== '') {
+                    $out->write($buf);      // awaits: this is where a slow client parks the producer
+                }
+
+                return '';
+            }, \max(1, $chunk));
+            try {
+                $emit();
+            } finally {
+                \ob_end_flush();
+            }
+        } finally {
+            self::$busy = null;
+            self::$holder = null;
+            $done->resolve(null);
+        }
+    }
+
     /** True while some fiber on this thread holds the **fallback** buffer. For tests. */
     public static function isHeld(): bool
     {
