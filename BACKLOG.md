@@ -484,6 +484,38 @@ not, and keeps producing for a client that is gone.
 **Acceptance.** Start a stream, kill the client mid-body, the handler's fiber is cancelled inside the
 bound E11 uses for whole-body responses. Lands with S4-ANSWER-MAP.
 
+### S3-RSS-DRIFT 13 MB of RSS growth that is not the extensions `main` `open — measured 2026-09-18`
+**What.** The E3 re-measurement (S3-NUMBERS) came back with worker-mode RSS at **42.7 MB** against
+V-10's 26.2 MB, +16.5 MB. The framing in the brief -- "that is the cost of building the extensions
+in" -- did not survive the measurement, and the bencher said so rather than confirming it:
+
+- the owner's own 2026-09-17 before/after puts the extensions at **~3.0 MB**;
+- that measurement's *pre-extension* baseline was already **34.6 MB, 7.7 MB above V-10**;
+- `mimalloc` (8.1 MB resident) landed 2026-09-15, before V-10, so it is not new;
+- `libphp.so` grew 50.3 -> 67.5 MB on disk but is demand-paged, only 8,956 kB resident -- 17 MB of
+  disk cannot become 16.5 MB of RSS.
+
+So it decomposes as roughly **~8 MB before the extensions, ~3 MB extensions, ~5 MB since**, across
+the 281 commits between V-10 and HEAD. Nobody has ever asked where that went.
+**Why.** E3 is one of the project's headline claims and the absolute is now quoted wrong either way
+-- as a regression it is not, or as an extension cost it mostly is not.
+**Acceptance.** A `git bisect run` over `bench/rss-1m.sh` at a fixed request count naming the commits
+that moved it, or a recorded decomposition (allocator, tokio, added statics) that accounts for the
+~13 MB. Then V-10 is amended with the true figure and its reason.
+**Constraints.** Needs a quiet box: the same instrument measured ~52k req/s under contention against
+V-10's ~167k, so throughput from a loaded run is junk even though RSS at a given request count is
+not -- the two runs agreed on RSS to 0.3% across a 5x load difference, which is what makes the
+flatness claim safe to keep and the throughput claim unsafe to quote.
+
+### S3-STATS-SCOPE `/stats` reports one thread's PHP heap, not the process's `agent` `open — 2026-09-18`
+**What.** `examples/hello_server.php`'s `/stats` reports `mem` from `memory_get_usage()`, and the
+Zend MM heap is thread-local under ZTS. At `--threads 1` -- V-10 and every E3 run so far -- that is
+the whole PHP side, so "flat to the byte" is honest. At `--threads N` it is one worker's heap and
+the number means much less than a reader would assume.
+**Acceptance.** Either a per-thread sum across the registry, or the field renamed and documented so
+it cannot be read as process-wide. The summing version touches `module.rs`, so it is a `main` item
+if that route is taken.
+
 ### S3-NUMBERS The numbers this work made stale `main` `open`
 **What.** V-10's 26.2 MB predates the toolchain extensions (+2.9 MB, DECISIONS 2026-09-17); the PHP
 coverage floor V-79's addendum calls for is not in CI; H-12's 58k-vs-128k has never been bisected.
