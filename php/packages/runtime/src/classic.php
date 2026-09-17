@@ -3,10 +3,9 @@
 /**
  * Ignis classic mode: serve a document root of ordinary PHP scripts, one `include` per request.
  *
- * The pieces live one per file under PSR-4 (`Ignis\Classic\` → `src/Classic/`); this file loads them
- * for the entry scripts and benches that `require` it directly. Free functions and the CGI-era
- * polyfills cannot be autoloaded, so they are required here and listed in composer's
- * `autoload.files`.
+ * Opt-in on purpose — `require` this next to (or instead of) `ignis.php`, which it loads itself.
+ * The classes are autoloaded from `src/Classic/`; the free functions and the CGI-era polyfills
+ * cannot be, so they are required here.
  *
  * Assumptions (embed SAPI, resident script, one fiber per request):
  * - `header()`/`headers_list()`/`http_response_code()` work because `php_embed_init()` sets
@@ -24,8 +23,5 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/ignis.php';
-require_once __DIR__ . '/Classic/Finished.php';
-require_once __DIR__ . '/Classic/InputStream.php';
-require_once __DIR__ . '/Classic/Runner.php';
 require_once __DIR__ . '/Classic/functions.php';
 require_once __DIR__ . '/Classic/polyfills.php';

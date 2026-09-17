@@ -2988,6 +2988,23 @@ again. That parser had **no** coverage until now; it reached main untested (JOUR
 
 ### Gates
 
+### Addendum — the bootstraps register an autoloader instead of listing the classes
+
+Asked whether `ignis.php` and `classic.php` are still needed at all. They are: **70 files** reference
+`src/ignis.php` and 16 reference `src/classic.php` — examples, benches, `scripts/phpt-harness.php`,
+the entry script an application points `ignis.toml` at — and none of them has a composer vendor
+directory to autoload from.
+
+But a hand-kept list of `require_once` is a trap: add a class, test it under composer where it works,
+and the direct-`require` path breaks silently. Both files now register an `spl_autoload_register`
+over `Ignis\` → `src/` instead, and require only what cannot be autoloaded — the free functions and
+the CGI-era polyfills. 46 and 27 lines.
+
+Same proof as above, run against the previous require-list version: the reflection surface is
+**identical, 24 entries**. And a class dropped into `src/` with no bootstrap edit loads:
+`php -r 'require src/ignis.php; echo Ignis\Probe::ok();'` → `autoloaded`. Suite still `OK (29 tests,
+46 assertions)`; smoke **GREEN**, E7 `differing=0`, hello 44,910 rps.
+
 `scripts/smoke.sh` now runs the PHP suite as a gate right after the Rust unit tests, and CI installs
 its dev dependencies next to the Revolt ones. Full run after the split: **GREEN**, E7 `differing=0`,
 E13 0 mismatches, hello 50,636 rps.
