@@ -34,11 +34,12 @@ final class IgnisWorkerRunner implements RunnerInterface
             }
             $response = $kernel->handle($request);
             if ($response instanceof StreamedResponse) {
-                // The output-buffer stack is per THREAD, and `sendContent()` almost always parks on
-                // I/O, so a plain `ob_start()` here collects whatever every other fiber echoes in the
-                // meantime — one response's body inside another's (V-72). `Output::capture()` makes
-                // the buffer exclusive: other fibers wanting it park instead of writing into ours.
-                // This still collects the whole body in memory; real streaming needs a chunked
+                // Not `ob_start()`: the output-buffer stack is per THREAD, and `sendContent()`
+                // parks on I/O, so a plain buffer here collects what every other fiber echoes in
+                // the meantime — two responses swapped bodies in V-72. `Output::capture()` attributes
+                // output to the running fiber inside the runtime (`sapi_module.ub_write` is ours),
+                // so concurrent streamed responses stay apart and do not serialise (V-73).
+                // It still collects the whole body in memory: real streaming needs a chunked
                 // response op on the Rust side, which does not exist yet (BACKLOG R-STREAM).
                 $content = \Ignis\Output::capture(static fn () => $response->sendContent());
             } else {

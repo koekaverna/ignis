@@ -5,23 +5,21 @@ declare(strict_types=1);
 namespace Ignis;
 
 /**
- * Capturing output is a thread resource, not a fiber one — so only one fiber may hold it.
+ * Everything a fiber writes, and nothing another fiber wrote.
  *
- * PHP's output-buffer stack lives in the per-thread executor globals, and `ob_start()` in a fiber
- * pushes onto the same stack every other fiber on that thread writes to. Measured (V-72): with two
- * fibers, one inside `ob_start()` and suspended, the other's `echo` landed in the first one's buffer
- * and came back from its `ob_get_clean()` — `A sees: 'from-Afrom-B'`. In a server that is one
- * response's body appended to another's, which is a disclosure, not a formatting nuisance.
+ * Under Ignis this is done by the runtime: `sapi_module.ub_write` is ours, so every `echo` is
+ * attributed to `EG(active_fiber)` and lands in that fiber's buffer (`crates/ignis/src/php/output.rs`).
+ * There is nothing to lock and nothing to serialise — two streamed responses on one thread capture
+ * at the same time.
  *
- * `php/packages/runtime/src/classic.php` already states the rule for classic mode ("a classic script
- * must not suspend"). This is the same rule with the enforcement supplied: a fiber that wants the
- * buffer takes it, and any other fiber that wants it **parks** until it is free. Two streamed
- * responses on one thread therefore serialise — which is the honest cost, and much smaller than the
- * bug it replaces.
+ * The fallback below is for a PHP-only run (a unit test, an older binary): it uses `ob_start()`,
+ * which is a **thread** resource, so it also takes a lock. V-72 measured what happens without one —
+ * nested buffers only behave if they close last-in-first-out, interleaved fibers do not, and two
+ * responses swapped bodies. The lock is correct and costs serialisation; the native path costs
+ * neither.
  *
- * It does not make output streaming: the body is still collected into a string, because
- * `ignis_respond()` takes a whole body and there is no chunked-response op yet. What it does is make
- * the collected body *this request's*.
+ * Neither path streams: `ignis_respond()` takes a whole body and there is no chunked response op
+ * yet (BACKLOG R-STREAM). What this decides is whose bytes they are, not when they leave.
  */
 final class Output
 {
@@ -38,6 +36,17 @@ final class Output
      */
     public static function capture(callable $emit): string
     {
+        if (\function_exists('ignis_capture_start')) {
+            \ignis_capture_start();
+            try {
+                $emit();
+            } finally {
+                $captured = \ignis_capture_take();
+            }
+
+            return $captured;
+        }
+
         // Nesting inside the fiber that already holds it is safe and must not wait: a fiber cannot
         // interleave with itself, so its buffers always close last-in-first-out.
         if (self::$busy !== null && self::$holder === \Fiber::getCurrent()) {
@@ -73,9 +82,17 @@ final class Output
         return $captured === false ? '' : $captured;
     }
 
-    /** True while some fiber on this thread holds the buffer. For tests and metrics. */
+    /** True while some fiber on this thread holds the **fallback** buffer. For tests. */
     public static function isHeld(): bool
     {
         return self::$busy !== null;
+    }
+
+    /** Request end: drop anything a fiber left behind before it goes back to the pool (V-67). */
+    public static function reset(): void
+    {
+        if (\function_exists('ignis_capture_reset')) {
+            \ignis_capture_reset();
+        }
     }
 }

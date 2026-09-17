@@ -53,4 +53,21 @@ $want = ['A' => 'A-startA-end', 'B' => 'B-startB-end'];
 $leaked = $results != $want;
 printf("mode=%s A=%s B=%s leaked=%s\n", $raw ? 'raw-ob' : 'Output::capture',
     var_export($results['A'] ?? null, true), var_export($results['B'] ?? null, true), $leaked ? 'yes' : 'no');
+
+// Second property, and the reason the runtime owns `ub_write` instead of PHP owning a lock: two
+// captures must run AT THE SAME TIME. A thread-wide buffer can only be made safe by serialising,
+// and serialising two 300 ms captures costs 600 ms — measured, V-73. Per-fiber attribution costs
+// nothing, so this stays near 300.
+if (!$raw) {
+    $t = microtime(true);
+    Ignis\all([
+        Ignis\async(static fn (): string => Ignis\Output::capture(static function (): void { echo 'A'; Ignis\sleep(300); })),
+        Ignis\async(static fn (): string => Ignis\Output::capture(static function (): void { echo 'B'; Ignis\sleep(300); })),
+    ]);
+    $wall = (microtime(true) - $t) * 1000;
+    $serialised = $wall > 450;
+    printf("two 300 ms captures: wall=%.0f ms serialised=%s\n", $wall, $serialised ? 'yes' : 'no');
+    $leaked = $leaked || $serialised;
+}
+
 exit($leaked ? 1 : 0);

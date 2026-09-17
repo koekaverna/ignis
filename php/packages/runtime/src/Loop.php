@@ -494,6 +494,7 @@ final class Loop
                 // the pool. Without it the next request on the same fiber inherits the last one's
                 // security token, EntityManager and database lease (V-67, V-68).
                 Scope::clear();
+                Output::reset();
                 // The slot is released after the answer is on its way, and the next waiting
                 // request is admitted from here — the loop needs no extra wait point for it.
                 --self::$inflightRequests;

@@ -108,7 +108,7 @@ pub fn pass() {
 }
 
 /// A fresh (non-interned, refcounted) string zval owned by the caller.
-unsafe fn string_zval(bytes: &[u8]) -> sys::zval {
+pub(super) unsafe fn string_zval(bytes: &[u8]) -> sys::zval {
     // No zend_string_init binding (static inline): build it through a temporary array element.
     unsafe {
         let mut tmp: sys::zval = std::mem::zeroed();

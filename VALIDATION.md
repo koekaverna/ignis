@@ -3152,3 +3152,45 @@ every sample is printed.
 
 Verified after the change: `scripts/smoke.sh` **GREEN**, with the E1 line reading
 `1320.5 / 1222.9 / 1171.7, best 1171.7 (load 11.26)` — under the bar even on a busy box.
+
+## V-73 — output is attributed to the fiber by the runtime, so the lock is gone (CONFIRMED)
+
+Date: 2026-09-17T18:2xZ. The owner's answer to V-72's fix was two words: "and a lock too". Right —
+the lock was a symptom of solving a runtime problem in PHP, and there was a handle we were not
+holding.
+
+Every `echo`, `print` and `var_dump` leaves PHP through `sapi_module.ub_write`. The embed SAPI's own
+writes to stdout (`php-src/sapi/embed/php_embed.c:74`), and we were already writing to neighbouring
+fields of that struct (`embed.rs:59-67`) without touching this one. Now it is ours
+(`crates/ignis/src/php/output.rs`): the hook reads `EG(active_fiber)` and appends to **that fiber's**
+buffer, falling through to stdout when nothing is capturing. This is ADR-0006's context mechanism
+applied to output, next to the superglobals it already applies to — no fourth mechanism, no lock.
+
+Three internal functions: `ignis_capture_start()`, `ignis_capture_take()`, `ignis_capture_reset()`
+(request end, because fibers are pooled — V-67). Buffers are a stack per fiber, so a nested capture
+keeps the outer one intact.
+
+### What it buys, measured
+
+Two fibers, each capturing around a 300 ms park:
+
+| | wall | bodies |
+|---|---|---|
+| PHP lock + `ob_start()` (the V-72 fallback) | **605 ms** — serialised | correct |
+| runtime attribution via `ub_write` | **304 ms** — concurrent | correct |
+| plain `ob_start()`, no lock (control) | — | **swapped**: `A='B-startA-end'` |
+
+The lock was correct and cost 2× on two concurrent streamed responses; per-fiber attribution costs
+neither. `bench/php/output_isolation.php` now gates both properties — bodies not swapped **and**
+`wall < 450 ms` — with the plain-`ob_start()` control that must still fail.
+
+`Ignis\Output::capture()` uses the native path when the binary provides it and keeps the lock+`ob`
+fallback otherwise, so the package still behaves under plain php-cli — which is also what the unit
+tests exercise (41 tests, 62 assertions, all on the fallback).
+
+**Still not streaming.** `ignis_respond()` takes a whole body and there is no chunked op (R-STREAM).
+This decides *whose* bytes they are, not *when* they leave. It does make R-STREAM cheaper: `ub_write`
+is the natural place to push into a chunk channel, which is where the design in the backlog points.
+
+Gates: `cargo nextest` 9/9, php suite 41/62, `scripts/smoke.sh` **GREEN** with the probe reading
+`two 300 ms captures: wall=301 ms serialised=no`.

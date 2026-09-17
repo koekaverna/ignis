@@ -58,6 +58,10 @@ impl Engine {
         let rc = unsafe {
             sys::php_embed_module.startup = Some(module::ignis_sapi_startup);
             sys::php_embed_module.register_server_variables = Some(register_server_variables);
+            // Output leaves PHP through this hook, and under Ignis it has to be the running
+            // fiber's, not the thread's (V-72: two responses swapped bodies through `ob_start`).
+            // With no capture active it falls through to stdout exactly as the embed SAPI did.
+            sys::php_embed_module.ub_write = Some(super::output::ub_write);
             if let Some(exe) = exe {
                 let leaked: &'static CString = Box::leak(Box::new(exe));
                 sys::php_embed_module.executable_location = leaked.as_ptr() as *mut c_char;
