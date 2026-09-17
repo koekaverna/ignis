@@ -384,6 +384,20 @@ exactly which library made it impossible and why.
 
 ## Product hygiene (small, `agent`)
 
+### R-LIMITS-CONFIG The four listener limits are env-only and were promised in comments `agent` `open — 2026-09-17`
+**What.** `http.rs` carried four `// Future ignis.toml key: …` comments. A promise in a comment is
+tracked by nobody, so they are here instead and deleted from the source. Each is an environment
+variable today with no `ignis.toml` key and no default in `config.rs`:
+`limits.max_body_bytes` (`IGNIS_MAX_BODY_BYTES`, 8 MiB), `limits.max_connections`
+(`IGNIS_MAX_CONNECTIONS`, 8192, ~34 kB per held connection per V-5),
+`limits.header_timeout_ms` (`IGNIS_HEADER_TIMEOUT_MS`, 10 000),
+`limits.idle_timeout_ms` (`IGNIS_IDLE_TIMEOUT_MS`, 60 000).
+**Why.** M1 made `ignis.toml` the one configuration file, and these four are the last listener knobs
+that are not in it. `max_connections` is also ADR-0025's connection cap, which M4-3 needs.
+**Acceptance.** A `[limits]` table in `Config` with `deny_unknown_fields`, bridged by
+`serve_to_legacy_args` the way `budget` already is, env still winning over the file; a test in
+`config.rs` covering the precedence for at least one of them; `ignis.toml.example` updated.
+
 ### R-MAIN-RED `main` has been red since before the quality work, on two gates `main` `open — evidence 2026-09-17`
 **What.** Every one of the last six `ci.yml` runs on `main` failed, including runs that predate this
 body of work (35249027373 at 16:50, 35249914989, 35258827928, 35259213051). Three jobs were failing;
