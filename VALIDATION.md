@@ -3513,3 +3513,121 @@ byte answers **500**, which is the property the whole design exists for. `cargo 
 suite **41 tests / 66 assertions**, `bench/e21` GREEN, `bench/e23` GREEN, `scripts/smoke.sh` **GREEN**. Symfony path
 re-measured on both forms: `echo` ttfb 0.0030 s, `Ignis\write()` ttfb 0.0024 s, both `total` 0.906 s
 with the correct bodies.
+
+## V-78 — Rust line coverage, and what a coverage number on this codebase can honestly mean (CONFIRMED)
+
+Date: 2026-09-17T20:1xZ. Machine: this box (WSL2, kernel 6.18, 4 vCPU reported by
+`available_parallelism`), `cargo 1.98.0`, `PHP_CONFIG=/opt/php85-zts/bin/php-config`, default
+features (`universal-park` on). Tooling installed for this entry: `llvm-tools-preview` +
+`cargo-llvm-cov` (neither was present; there had never been a coverage tool in this repo).
+
+### Command
+
+```
+cargo llvm-cov nextest --workspace --summary-only \
+  --ignore-filename-regex '(bindings\.rs|/build\.rs|/rustc/)'
+```
+
+`nextest`, not `test`: the new tests in `config.rs`, `pg.rs`, `offload.rs`, `metrics.rs` and
+`http.rs` depend on a virgin process each (`OnceLock` globals, and `config::default_env` mutates the
+environment), which is what nextest gives and `cargo test` does not.
+
+The ignore regex is the load-bearing flag. `bindings.rs` is 17,944 generated lines with ~244
+instrumentable functions that no test calls; left in, it dominates the denominator and the number
+stops meaning anything.
+
+### Before and after
+
+The "before" was measured on commit `a0a67ac` in a separate worktree with its own target dir, so it
+is the same command against the same tree minus the tests.
+
+| | tests | lines | missed | **covered** |
+|---|---|---|---|---|
+| before (`a0a67ac`) | 9 | 3,522 | 3,252 | **7.67 %** |
+| after | 54 | 4,034 | 2,826 | **29.95 %** |
+
+The denominator grew by 512 lines because the same work added code: `php/tsrm.rs`, the methods
+extracted out of `fn main`, and the four type aliases.
+
+### Per file, after
+
+| file | lines | covered | | file | lines | covered |
+|---|---|---|---|---|---|---|
+| `config.rs` | 129 | **90.70 %** | | `pg.rs` | 364 | 41.76 % |
+| `offload.rs` | 124 | **88.71 %** | | `main.rs` | 312 | 25.96 % |
+| `metrics.rs` | 175 | **86.86 %** | | `grpc.rs` | 138 | 22.46 % |
+| `php/zval.rs` | 62 | **82.26 %** | | `php/module.rs` | 585 | 7.18 % |
+| `reactor.rs` | 366 | **81.42 %** | | `php/park.rs` | 609 | 3.78 % |
+| `http.rs` | 350 | 43.14 % | | `php/{embed,output,route,superglobals,wait,locklib,tsrm}.rs` | 719 | **0.00 %** |
+
+The tokio side alone (`config`, `grpc`, `http`, `main`, `metrics`, `offload`, `pg`, `reactor` =
+1,958 lines) is **55.8 %**. `php/**` is 2,076 lines at ~2 %, and that is not laziness: every line in
+those files needs `php_embed_init` on the calling thread. They are covered by E1/E2/E5/E6/E7/E11/E13
+and by `bench/e15-phpt.sh`, which are pass/fail suites rather than line counters.
+
+### Predicted before measuring, as this repo requires
+
+ADR-0041 predicted 2–5 % before the tests and 20–30 % after, with 55–70 % on the tokio side and near
+0 % on `php/**`. Measured: 7.67 % before (higher than predicted — the 9 existing tests reach more of
+`reactor.rs` than assumed, 48 % of it), 29.95 % after (top of the band), 55.8 % on the tokio side
+(bottom of the band), ~2 % on `php/**`. The "before" prediction was wrong and is left here wrong.
+
+### Not instrumented, stated rather than hidden
+
+`crates/ignis/csrc/park.c`, 68 lines of C. `cc` reads `CFLAGS`, not `RUSTFLAGS`, so instrumenting it
+needs build-script plumbing and a merged profdata across two instrumentation runtimes — and every
+line in it executes only under a live engine with an interposed syscall, so a unit-coverage figure
+for it would be 0 % however much work went in. It is exercised by E18, E15 and by
+`php::park::selfcheck()` at boot.
+
+**Reported, not gated** (ADR-0041 §6): a floor on a tree where half the lines need a live PHP engine
+rewards tests that touch reachable-but-uninteresting code, which is the opposite of the point.
+
+## V-79 — PHP line coverage, on the engine the library actually ships on (CONFIRMED)
+
+Date: 2026-09-17T20:1xZ. PHP 8.5.10 ZTS + **PCOV 1.0.12 built from source against
+`/opt/php85-zts`** — clone, `phpize`, `configure`, `make` in 3 s; it carries explicit `#ifdef ZTS`
+and loads into the ZTS build. Baked into `docker/php.Dockerfile` at `/opt/pcov/pcov.so` so CI needs
+no network for it.
+
+### Command
+
+```
+scripts/test-php.sh --coverage
+```
+
+which runs PHPUnit under `/opt/php85-zts/bin/php` with `-d extension=/opt/pcov/pcov.so
+-d pcov.enabled=1 -d pcov.directory=php/packages` and `--coverage-text`.
+
+### Number
+
+| | tests | lines | **covered** |
+|---|---|---|---|
+| baseline, before any new test | 41 | 106 / 645 (`runtime/src` only) | **16.43 %** |
+| after `phpunit.xml` spans every package | 42 | 106 / 1,889 | **5.61 %** |
+
+The numerator is the same. The denominator tripled because `<source>` now covers
+`packages/*/src` rather than `runtime/src` alone — nine of eleven packages had no tests at all, and
+the 16.43 % figure had simply not been looking at them. **5.61 % is the honest starting point**, and
+16.43 % was never the library's coverage, only one package's.
+
+Covered classes today: `Ignis\Scope` 100 %, `Ignis\Http\Response` 100 %, `Ignis\Http\Request` 95 %,
+`Ignis\Output` 65 %, `Ignis\Future` 42 %. Everything else is 0 %.
+
+### Why the driver was built rather than installed
+
+`php-pcov 1.0.11` is one apt line away in Ubuntu 24.04 — for the image's **stock 8.3.6 NTS** php. A
+coverage number from a different engine than the one we ship on is a different measurement; three
+seconds of `make` buys the right one. The apt package remains the fallback if pcov ever stops
+building against a newer PHP.
+
+### Not covered by construction
+
+`packages/revolt/src` — its suite (`IgnisDriverTest`, 81 tests) runs **inside the ignis binary** via
+`bench/e15-revolt.sh` against the gate `revolt.pass 80`, so its coverage would have to come from that
+run. `Loop::produce`/`endStream` back-pressure is E23; `ignis_cancel_parked_any` is E11; the
+universal-park paths are E18. Those are pass/fail gates, not line counters.
+
+**Gated, unlike the Rust side**: the PHP library's unit-testable surface is most of the library, so a
+fixed floor of `achieved − 5` is meaningful here. It is set once the test waves land, never as a
+"must not decrease" ratchet — that reddens every time somebody adds a file.
