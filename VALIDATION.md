@@ -3674,3 +3674,59 @@ one of them states why it is sound. After: **0**, verified by
 `clippy::undocumented_unsafe_blocks` enabled. Seven copies of the TSRM accessor became one
 (`php/tsrm.rs`) along the way, which removed three of the 92 by deleting the code rather than
 documenting it three times.
+
+## V-80 — `ext/session` on files does NOT deadlock a thread; the rule it was cited for still stands (REFUTES part of R-SESS)
+
+Date: 2026-09-18T01:0xZ. Cycle item S1-SESS. The owner chose ADR-0038 option 2 — refuse to boot on
+`session.save_handler=files` — and the brief said to measure first whether a real session reaches the
+blocking `flock` at all. It does not, so the refusal is not built. Recording why, because the
+decision rested on a claim this measurement kills.
+
+### Two fibers on one thread cannot hold two session locks
+
+```
+IGNIS_PHP_INI=<use_cookies=0, save_path=…>  ./target/release/ignis sess-probe2.php
+use_cookies=0 handler=files save_path=…
+Warning: session_id(): Session ID cannot be changed when a session is active
+both returned in 401 ms
+[{"fiber":1,"started":true,"at_ms":0},{"fiber":2,"started":true,"at_ms":51}]
+```
+
+Fiber 1 opens the session and holds it across a 400 ms yield. Fiber 2 does not block: it does not
+take a second lock at all, because **`ext/session` is a per-thread singleton** — its `session_start()`
+joins fiber 1's active session (V-67 found the same thing from the other side: `$_SESSION` is shared
+across fibers). There is no second `flock`, so there is nothing to deadlock on.
+
+With the default `session.use_cookies=1` it is narrower still: `session_start()` fails outright under
+this SAPI (`php_embed_init()` pins `SG(headers_sent)`), which V-67 already recorded.
+
+### Across threads it serialises and completes, exactly like php-fpm
+
+Classic server, `--threads 2`, a script that opens the session, holds it across `usleep(400_000)`
+and closes it. Two concurrent requests carrying the **same** session id:
+
+| | wall | result |
+|---|---|---|
+| one request alone | 401 ms | `n=1 held_ms=401` |
+| two concurrent, same id, two threads | **818 ms** | `n=1` and `n=2`, both answered |
+| a third request afterwards | — | answered; **no thread lost** |
+
+They serialise on the session lock and both finish. That is php-fpm's behaviour for a shared session
+and is not a defect.
+
+### What this does and does not change
+
+**Stands, unchanged:** V-58's rule. A blocking `flock` held across a yield *does* kill the thread —
+that was measured with a raw `flock` probe (`scratchpad/flock2.php`), not through `ext/session`, and
+the mechanism is still true: a regular file is not epoll-able (research 30 group (d)), so the call
+cannot park and blocks the OS thread.
+
+**Refuted:** R-SESS's framing that `ext/session`'s files handler is how you reach it. It is not,
+for the two reasons above.
+
+**The real exposure, and it is not sessions:** any *application* code that takes a blocking
+`flock(LOCK_EX)` inside a fiber. And `flock` is **not in the interposed set** (`crates/ignis/build.rs`
+lists read, write, recv, send, recvfrom, sendto, poll, connect, nanosleep, usleep, sleep, accept …
+and no `flock`), so today that call blocks the thread with no warning, no `ignis_park_failed_total`
+increment, and nothing in the log. A boot refusal on a session setting would not have caught one of
+those; it would only have forbidden a configuration that demonstrably works.
