@@ -6,7 +6,6 @@ namespace Ignis\Symfony;
 use Ignis\Http\Request as IgnisRequest;
 use Ignis\Http\Response as IgnisResponse;
 use Ignis\Http\Stream;
-use Ignis\Output;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -24,7 +23,7 @@ final class IgnisWorkerRunner implements RunnerInterface
     public function run(): int
     {
         $kernel = $this->kernel;
-        \Ignis\serve(static function (IgnisRequest $ignisRequest) use ($kernel): IgnisResponse|Stream {
+        \Ignis\serve(static function (IgnisRequest $ignisRequest) use ($kernel): IgnisResponse {
             $request = self::toSymfony($ignisRequest);
             $response = $kernel->handle($request);
             $headers = self::headers($response);
@@ -34,15 +33,19 @@ final class IgnisWorkerRunner implements RunnerInterface
                     return new IgnisResponse((string) $response->getContent(), $response->getStatusCode(), $headers);
                 }
 
-                // Stream it: the status and headers go out now and the body follows as frames, so
-                // the client reads while the callback is still producing (R-STREAM). The write
-                // inside `captureChunked()` awaits the runtime, which is the client's back-pressure
-                // reaching the handler.
+                // Stream it: the loop drives the producer, so nothing is sent until the first
+                // write and a `sendContent()` that fails early still becomes a 500. `Stream::write`
+                // binds this fiber's output, which is why plain `echo` inside the callback is framed
+                // too; a callback that wants the client's back-pressure exactly calls `Ignis\write()`.
                 unset($headers['content-length']);   // no length yet; hyper frames it chunked
-                $out = Stream::open($ignisRequest, $response->getStatusCode(), $headers);
-                Output::captureChunked($out, static fn () => $response->sendContent());
-
-                return $out;   // the loop closes it, whether or not sendContent() threw
+                return IgnisResponse::stream(
+                    static function (Stream $out) use ($response): void {
+                        $out->start();
+                        $response->sendContent();
+                    },
+                    $response->getStatusCode(),
+                    $headers,
+                );
             } finally {
                 if ($kernel instanceof TerminableInterface) {
                     $kernel->terminate($request, $response);

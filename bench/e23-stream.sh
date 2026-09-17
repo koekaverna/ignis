@@ -37,6 +37,14 @@ wait $SLOW 2>/dev/null
 echo "  ticks answered during the stream: $ticks/3"
 [ "$ticks" = 3 ] || { echo "  the stream blocked the thread"; fail=1; }
 
+echo "== a producer that fails before its first byte still answers 500"
+# Nothing is sent until the first write, which is the only reason this can be a 500 at all: once the
+# status line is out the client has been told 200 and an error can only truncate. Before the loop
+# owned the producer's lifetime, an early failure answered 200 with an empty chunked body.
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/?n=0&fail=early")
+echo "  early failure -> HTTP $code"
+[ "$code" = 500 ] || { echo "  an early failure must be a 500, not a truncated 200"; fail=1; }
+
 echo "== another fiber's echo must not land in the stream"
 kill $S 2>/dev/null; wait $S 2>/dev/null
 IGNIS_LISTEN="127.0.0.1:$PORT" "$BIN" --threads 1 bench/php/stream_isolation.php >/tmp/ignis-e23-iso.log 2>&1 & S=$!
@@ -47,7 +55,13 @@ curl -s -m 5 "http://127.0.0.1:$PORT/noise" >/dev/null
 wait $C 2>/dev/null
 body=$(tr -d '\n' < /tmp/ignis-e23-iso.txt)
 echo "  streamed body: $body"
-case "$body" in *NOISE*) echo "  another request's echo was framed into this response"; fail=1;; *) echo "  only its own bytes  ok";; esac
+# Both halves matter: the noise must be absent AND this response's own bytes must be present — an
+# empty body would otherwise pass the first check while measuring nothing.
+case "$body" in
+  *NOISE*)    echo "  another request's echo was framed into this response"; fail=1;;
+  A-1A-2)     echo "  only its own bytes  ok";;
+  *)          echo "  expected 'A-1A-2', so this arm stopped measuring"; fail=1;;
+esac
 kill $S 2>/dev/null; wait $S 2>/dev/null
 
 echo "== a graceful shutdown waits for a stream instead of cutting it"

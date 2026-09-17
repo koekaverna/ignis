@@ -3414,3 +3414,58 @@ another echoes, and the streamed body must contain only its own bytes.
 
 Gates: `cargo nextest` 9/9, php suite 40/61, `bench/e21` GREEN, `bench/e23` GREEN (five arms),
 `scripts/smoke.sh` **GREEN**.
+
+## V-77 — the streaming API takes a producer, because an open stream cannot fail (CONFIRMED)
+
+Date: 2026-09-17T22:0xZ. Two questions from the owner — what do other PHP libraries do, and should
+`Stream` take a callback — and the second one exposed a defect.
+
+### What PHP already does, read from installed sources
+
+| | shape |
+|---|---|
+| Symfony `StreamedResponse` | a callback called with **no arguments**; output is the only channel. Even `setChunks(iterable)` is wrapped into an `echo` loop |
+| Laravel | the same class, so the same contract |
+| PSR-7 `StreamInterface` (what Guzzle exposes) | an object: `write()`, `read()`, `close()`, `eof()` |
+| AMPHP `WritableStream` | an object: `write(string): void`, `end()`, `isWritable()` — `write()` returns void and suspends, which is exactly back-pressure under fibers |
+| Swoole | `$response->write($chunk)` on the response object |
+
+So the ecosystem has two shapes — a callback that writes through output, and a writer object — and the
+useful design is both: a **callback that is handed a writer**.
+
+### The defect the question found
+
+With `Stream::open()` the handler opened the stream itself, which sent the status line immediately.
+So a handler that failed straight afterwards could no longer answer an error — measured:
+
+```
+before:  handler throws right after open()   →  HTTP/1.1 200 OK, empty chunked body
+after:   same handler                        →  HTTP/1.1 500 Internal Server Error, with the message
+         throws after the first byte         →  200 chunked, truncated, and logged (all HTTP allows)
+         normal                              →  part1|part2
+```
+
+### The design
+
+`Ignis\Http\Response::stream(callable $producer, $status, $headers)` returns an ordinary `Response`
+carrying a producer; `Loop` drives it, and **nothing is sent until the producer's first write**. That
+is the whole reason for the callback: the loop owns the lifetime, so it can still turn an early
+failure into a real answer, and it closes the body whether the producer returned or threw.
+
+It also simplifies what came before it. The handler's return type is `Response|null` again — the
+`Response|Stream|null` union is gone — and three things were deleted outright: `Output::captureChunked`
+(the producer's `echo` is framed by the runtime, so there was nothing left to wrap), `Stream::open()`
+and `Stream::id()` (the loop constructs it), and `Stream::isClosed()` (no callers, ever).
+`Ignis\Http\Stream` is now 103 lines: `write()`, `start()`, `started()`, `close()`.
+
+The Symfony runner shrank to the same shape — `IgnisResponse::stream(fn (Stream $out) => { $out->start();
+$response->sendContent(); })` — and `sendContent()` needs no wrapper at all, because the first write
+binds this fiber's output.
+
+### Gates
+
+`bench/e23-stream.sh` is six arms now; the new one asserts that a producer failing before its first
+byte answers **500**, which is the property the whole design exists for. `cargo nextest` 9/9, php
+suite 40/61, `bench/e21` GREEN, `bench/e23` GREEN, `scripts/smoke.sh` **GREEN**. Symfony path
+re-measured on both forms: `echo` ttfb 0.0030 s, `Ignis\write()` ttfb 0.0024 s, both `total` 0.906 s
+with the correct bodies.

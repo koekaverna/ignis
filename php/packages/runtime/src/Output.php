@@ -18,8 +18,8 @@ namespace Ignis;
  * responses swapped bodies. The lock is correct and costs serialisation; the native path costs
  * neither.
  *
- * `capture()` collects; `captureChunked()` forwards to an `Ignis\Http\Stream` as it goes, which is
- * how a Symfony `StreamedResponse` reaches the client while it is still being produced (V-74).
+ * Streaming needs nothing from here: the first write on an `Ignis\Http\Stream` binds the fiber's
+ * output to the response, so an `echo` inside a producer leaves as a frame on its own (V-76).
  */
 final class Output
 {
@@ -80,75 +80,6 @@ final class Output
         }
 
         return $captured === false ? '' : $captured;
-    }
-
-    /**
-     * Runs `$emit` and forwards its output to a stream as it is written, instead of collecting it.
-     *
-     * The runtime does the forwarding: `ignis_stream_bind()` binds **this fiber's** output to the
-     * response, and `sapi_module.ub_write` frames it. That matters because PHP's own `ob_start()`
-     * cannot do it safely — its buffer stack is per **thread**, so a fiber that merely echoes while
-     * another is streaming writes into that other buffer, and by the time the handler runs the bytes
-     * are already mixed and unattributable. Measured: a second request's `echo` was delivered inside
-     * the first one's streamed body (V-76). `ub_write` runs at the moment of the write and knows
-     * whose it is, which is the only place the question can still be answered.
-     *
-     * It also needs no lock, so two streamed responses on one thread no longer serialise.
-     *
-     * **The trade, stated plainly.** `ub_write` runs inside an internal frame, where a fiber cannot
-     * suspend, so it can only `try_send`. While the client keeps up that is the whole story; when it
-     * falls behind the bytes accumulate in this fiber's pending buffer and go out at `close()`,
-     * where awaiting is legal again. So this path bounds *nothing* if a producer outruns a slow
-     * client without ever returning — use `Stream::write()` directly for that, where every write
-     * awaits and the back-pressure is exact.
-     *
-     * **There is no PHP output buffer on this path**, on purpose — that is what closes the hazard.
-     * So `ob_flush()` has nothing to flush and raises the notice PHP raises under
-     * `output_buffering=0`; an application streaming through Ignis does not need it, because an
-     * `echo` already leaves as a frame. `flush()` is harmless and also unnecessary.
-     *
-     * @param callable():void $emit
-     */
-    public static function captureChunked(\Ignis\Http\Stream $out, callable $emit, int $chunk = 8192): void
-    {
-        if (\function_exists('ignis_stream_bind')) {
-            \ignis_stream_bind($out->id());
-            try {
-                $emit();
-            } finally {
-                $tail = \ignis_stream_unbind();
-                if ($tail !== '') {
-                    $out->write($tail);
-                }
-            }
-
-            return;
-        }
-
-        // Plain php-cli: no runtime to bind to, so PHP's own buffer layer and the lock it needs.
-        while (self::$busy !== null && self::$holder !== \Fiber::getCurrent()) {
-            self::$busy->await();
-        }
-        $done = self::$busy = new Future();
-        self::$holder = \Fiber::getCurrent();
-        try {
-            \ob_start(static function (string $buf) use ($out): string {
-                if ($buf !== '') {
-                    $out->write($buf);
-                }
-
-                return '';
-            }, \max(1, $chunk));
-            try {
-                $emit();
-            } finally {
-                \ob_end_flush();
-            }
-        } finally {
-            self::$busy = null;
-            self::$holder = null;
-            $done->resolve(null);
-        }
     }
 
     /** @var resource|null */

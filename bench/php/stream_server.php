@@ -15,22 +15,27 @@ use Ignis\Http\Request;
 use Ignis\Http\Response;
 use Ignis\Http\Stream;
 
-Ignis\serve(static function (Request $r): Response|Stream {
+Ignis\serve(static function (Request $r): Response {
     if ($r->path() === '/tick') {
         return Response::text("tick\n");
     }
 
     $n = (int) ($r->query('n') ?? 3);
     $ms = (int) ($r->query('ms') ?? 300);
-    $out = Stream::open($r, 200, ['content-type' => 'text/plain']);
-    try {
-        for ($i = 1; $i <= $n; $i++) {
-            $out->write("chunk{$i}\n");
-            Ignis\sleep($ms);
-        }
-    } catch (\RuntimeException $e) {
-        // the client hung up: stop producing, which is the point of back-pressure
-    }
 
-    return $out;   // returning it IS the answer; the loop ends the body
+    $fail = $r->query('fail');
+
+    return Response::stream(static function (Stream $out) use ($n, $ms, $fail): void {
+        if ($fail === 'early') {
+            throw new \RuntimeException('failed before writing anything');
+        }
+        try {
+            for ($i = 1; $i <= $n; $i++) {
+                $out->write("chunk{$i}\n");
+                Ignis\sleep($ms);
+            }
+        } catch (\RuntimeException $e) {
+            // the client hung up: stop producing, which is the point of back-pressure
+        }
+    }, 200, ['content-type' => 'text/plain']);
 }, getenv('IGNIS_LISTEN') ?: '127.0.0.1:8199');

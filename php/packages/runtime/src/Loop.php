@@ -483,16 +483,16 @@ final class Loop
                 unset(self::$requestFibers[$id], self::$children[$id]);
                 Scope::set('ignis.request', null);
             }
-            // What the handler returned IS the contract, so a reader sees it in the signature:
-            //   Response → the loop sends it
-            //   Stream   → the answer is already on its way; the loop only has to end it
-            //   null     → answered through another channel entirely (gRPC, E10)
-            if ($answer instanceof Http\Response) {
+            // What the handler returned IS the contract, and a reader sees it in the signature:
+            //   Response with a producer → the loop drives it and ends the body
+            //   Response                 → the loop sends it
+            //   null                     → answered through another channel entirely (gRPC, E10)
+            if ($answer instanceof Http\Response && $answer->producer !== null) {
+                self::produce($id, $answer);
+            } elseif ($answer instanceof Http\Response) {
                 \ignis_respond($id, $answer->status, $answer->headers, $answer->body);
-            } elseif ($answer instanceof Http\Stream) {
-                $answer->close();   // idempotent, so a handler may close it itself
             } elseif ($answer !== null) {
-                \ignis_respond($id, 500, ['content-type' => 'text/plain'], "handler must return Ignis\\Http\\Response, Ignis\\Http\\Stream or null\n");
+                \ignis_respond($id, 500, ['content-type' => 'text/plain'], "handler must return Ignis\\Http\\Response or null\n");
             }
             } finally {
                 // The request is over: drop its fiber-scoped state before this fiber goes back to
@@ -507,6 +507,31 @@ final class Loop
                 self::drainQueue();
             }
         });
+    }
+
+    /**
+     * Runs a streaming producer and ends its body.
+     *
+     * The status line is not sent until the producer's first write, which is what lets a producer
+     * that fails early still answer `500` — once the headers are out, an error can only truncate,
+     * which is all HTTP allows.
+     */
+    private static function produce(int $id, Http\Response $response): void
+    {
+        $out = new Http\Stream($id, $response->status, $response->headers);
+        try {
+            ($response->producer)($out);
+        } catch (\Throwable $e) {
+            if (!$out->started()) {
+                \ignis_respond($id, 500, ['content-type' => 'text/plain'], '500 ' . $e::class . ': ' . $e->getMessage() . "\n");
+
+                return;
+            }
+            // Already streaming: the client has been told 200 and can only be cut short.
+            \fwrite(\STDERR, 'ignis: streaming handler failed mid-body: ' . $e::class . ': ' . $e->getMessage() . "\n");
+        } finally {
+            $out->close();
+        }
     }
 
     /** Throw $e into the request's fiber and its children at their suspension points (ADR-0009). */

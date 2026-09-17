@@ -19,16 +19,15 @@ declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 use Ignis\Http\{Request, Response, Stream};
 
-Ignis\serve(function (Request $r): Response|Stream {
+Ignis\serve(function (Request $r): Response {
     if ($r->path() === '/noise') {
         echo 'NOISE-FROM-B';          // no Output::capture, no ob — a bare echo
         return Response::text("noise sent\n");
     }
-    $out = Stream::open($r, 200, ['content-type' => 'text/plain']);
-    Ignis\Output::captureChunked($out, static function (): void {
-        echo "A-1\n"; flush();
+    // The first write binds this fiber's output to the response, so a plain `echo` leaves as a frame.
+    return Response::stream(static function (Stream $out): void {
+        $out->write("A-1\n");
         Ignis\sleep(400);             // /noise runs entirely inside this park
-        echo "A-2\n"; flush();
-    });
-    return $out;
+        echo "A-2\n";                 // echo is framed too, and stays this response's
+    }, 200, ['content-type' => 'text/plain']);
 }, getenv('IGNIS_LISTEN') ?: '127.0.0.1:8203');
