@@ -18,3 +18,6 @@ bench/.*.sh
 
 # mkdocs build output
 /site/
+/php/temporal/core/vendor/
+/php/temporal/core/composer.json
+/php/temporal/core/composer.lock

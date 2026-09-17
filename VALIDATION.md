@@ -2463,3 +2463,49 @@ does not parallelize (`--offload`/`--threads`); and `getaddrinfo` is not interpo
 so a fan-out to a *hostname* resolves serially — the I/O arm above uses an IP for that reason.
 
 Commands: `ignis examples/cli.php [seq]`, and the I/O arm in this entry's scratch script.
+
+## V-61 — the official temporalio/sdk-php runs on Ignis through a portable core transport (CONFIRMED)
+
+Date: 2026-09-17T11:4xZ. Owner asked whether we can take the PHP SDK instead of growing our own
+workflow runtime, and then — correctly — where the adapter should live. Both answers are measured.
+
+**Seams, probed in the ignis binary.** `temporal/sdk` **v2.19** (installed with composer in docker:
+our PHP build has no `ext-phar`, and only `vendor/` is needed).
+
+| seam | result |
+|---|---|
+| `WorkerFactory::run(?HostConnectionInterface)` | `RoadRunner::create()` is only a default — a host of ours drove the loop, `exit=0`, `GetWorkerInfo` answered with `GreetWorkflow` / `greet` |
+| `WorkerFactory::$codec` (`protected`) | replaceable — frames became plain arrays, **no protobuf on the wire** |
+
+**Protobuf, the cost that was avoided** (54-byte `Payloads`, 10k iterations, this binary, no
+`ext-protobuf`): pure-PHP encode 35.91 µs + decode 17.53 µs = **53.45 µs**, against **0.90 µs** for
+our own JSON payload boundary. Payload *objects* are still constructed, so the DataConverter keeps
+owning encode/decode — only the serialize/parse round trip is gone.
+
+**Conformance, `bench/e20-sdkphp.sh` → `php/temporal/core/selftest.php`.** A recorded script of
+sdk-core activations is fed to a **stock** sdk-php worker (attributes, `Workflow::newActivityStub()`,
+`yield`, `Workflow::timer()` — `php/temporal/demo-sdk.php`, shared with the example so the two
+cannot drift):
+
+| activation | completion the transport produced |
+|---|---|
+| `InitializeWorkflow` | `ScheduleActivity{seq:1, activity_type:"greet", task_queue:"ignis", start_to_close_sec:5}`, argument `"Ada"` intact |
+| activity task | result `"Hello, Ada!"`, `task_token` echoed |
+| `ResolveActivity{seq:1}` | `StartTimer{seq:2, ms:1000}` |
+| `FireTimer{seq:2}` | `CompleteWorkflow{result:"HELLO, ADA!"}` |
+| `RemoveFromCache` | no commands |
+
+11 of 11 checks pass **under the ignis binary and under the stock PHP CLI** — the second arm is the
+gate on the claim that the package needs no Ignis (ADR-0040 decision 3). No Rust was changed: the
+four commands this needs are the four `ignis_temporal_complete()` already accepted (ADR-0013).
+
+**Two undocumented seams, found by failing.** `StartWorkflow`'s `options['info']` must carry the
+`#[Marshal]` names of `Temporal\Workflow\WorkflowInfo` with **nanosecond** timeouts; and sdk-php
+builds its own responses with `EncodedValues::fromValues()` and no data converter, so `toPayloads()`
+throws unless the transport calls `setDataConverter()` first.
+
+**Not measured yet, and not claimed:** a live run against a Temporal server and a replay under this
+transport. The dev server is not on this box (the Temporal CLI has to be fetched); V-19's live and
+replay numbers are for the prototype runtime, not for this one. Queries, updates, cancellation,
+child workflows, local activities and heartbeats are untranslated — `CoreCodec::encode()` throws
+by name rather than dropping them.

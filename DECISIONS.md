@@ -225,3 +225,22 @@ Concurrency begins exactly where the script says there is a second thing to do.
 Shipped: `examples/cli.php` (the measurement, runnable, with its hook-off arm) and
 `docs/getting-started/cli.md` — including what it does *not* give: parallel CPU, and concurrent DNS
 while R-DNS is open.
+
+## 2026-09-17 — Temporal runs on the official PHP SDK; the adapter is a portable package
+
+Growing `php/temporal/ignis-temporal.php` into a real SDK means writing signals, queries, updates,
+child workflows, saga, interceptors, codecs and versioning — a second Temporal SDK. One exists, and
+its tie to RoadRunner turned out to be a default argument: `WorkerFactory::run()` takes a host, and
+`$codec` is protected. Measured (V-61): a stock sdk-php workflow runs on sdk-core activations
+through our transport, under the ignis binary and under stock PHP, with no protobuf on the wire and
+no change to the Rust side.
+
+Owner's correction, and the more important half: the adapter translates **sdk-php's own** command
+model, so it is written as a portable package (`php/temporal/core/`, namespace
+`Temporal\Worker\Transport\Core`) with a two-method port, not as Ignis glue. Ignis implements the
+port in ~40 lines. It can be offered upstream — PHP is the only Temporal SDK not sitting on
+sdk-core — and if upstream takes it, the coupling risk becomes theirs to maintain rather than ours
+to track.
+
+ADR-0040 accepted; ADR-0013's Rust half stands. Kill criterion recorded there: if sdk-php's private
+command model breaks us twice in a row, the answer is RoadRunner as a sidecar, not a third runtime.
