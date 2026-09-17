@@ -1,0 +1,5 @@
+# Commits that changed formatting and nothing else. GitHub honours this file automatically; locally:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# rustfmt adopted at max_width=140 (ADR-0041 §5): 15 files, +365/-186, no logic change.
+8d28dc55cbc4e487947bc5d9b198fc3cb4839836
