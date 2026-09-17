@@ -1,0 +1,10 @@
+# ignis/revolt promises PHP 8.1 to AMPHP users, so it is analysed at a lower min than the rest of
+# the tree. Everything else — level, exclusions, the ignis_* stubs — comes from the root config.
+includes:
+    - ../../phpstan.neon
+
+parameters:
+    phpVersion:
+        min: 80100
+    paths!:
+        - src

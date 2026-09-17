@@ -28,6 +28,9 @@ thread_local! {
 
 #[cfg(feature = "universal-park")]
 unsafe fn eg() -> *mut sys::zend_executor_globals {
+    // SAFETY: every thread that runs PHP has called ts_resource(0), so the TSRM cache pointer is
+    // live, and executor_globals_offset comes from the libphp we linked against -- the sum is that
+    // thread's own executor globals.
     unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
 }
 
@@ -38,6 +41,9 @@ unsafe fn eg() -> *mut sys::zend_executor_globals {
 /// PHP thread, inside an internal call on the current fiber's stack.
 #[cfg(feature = "universal-park")]
 pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
+    // SAFETY: the caller upholds `# Safety` above -- PHP thread, internal call, current fiber's
+    // stack. `fiber` is checked non-null and switching unblocked before it is suspended, and the
+    // zval handed to zend_fiber_suspend is zeroed storage this frame owns.
     unsafe {
         let fiber = (*eg()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() {
@@ -65,6 +71,8 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
 /// PHP thread, inside an internal call on the current fiber's stack.
 #[cfg(feature = "universal-park")]
 pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
+    // SAFETY: as `await_op` -- the caller upholds `# Safety` above, and the same non-null and
+    // switch-blocked checks guard the suspension.
     unsafe {
         let fiber = (*eg()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() || ids.is_empty() {
@@ -113,6 +121,9 @@ pub fn is_parked(id: u64) -> bool {
 /// PHP thread, from inside `ignis_poll` (an internal function frame on the
 /// loop's stack), which is a valid resumer context.
 pub unsafe fn resume_parked(id: u64, outcome: Outcome) -> bool {
+    // SAFETY: the caller upholds `# Safety` above (inside ignis_poll, a valid resumer frame). The
+    // fiber pointer comes out of PARKED, which only this thread writes and only while that fiber is
+    // suspended, so it is live and resumable exactly once -- the remove() makes it once.
     unsafe {
         let Some(fiber) = PARKED.with(|p| p.borrow_mut().remove(&id)) else { return false };
         RESULTS.with(|r| r.borrow_mut().insert(id, outcome));

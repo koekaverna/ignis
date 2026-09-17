@@ -53,6 +53,9 @@ pub fn try_reactor() -> Option<Arc<Reactor>> {
 /// after process start, so sharing across threads is sound.
 #[repr(transparent)]
 struct SyncStatic<T>(T);
+// SAFETY: stated by the type's own doc above -- every T stored in one of these is built from
+// 'static literals and other statics and is never mutated after process start, so no thread can
+// observe a torn or freed value.
 unsafe impl<T> Sync for SyncStatic<T> {}
 
 const fn arg_info(name: &'static CStr) -> sys::zend_internal_arg_info {
@@ -115,6 +118,9 @@ unsafe extern "C" fn zif_ignis_submit_sleep(ex: *mut sys::zend_execute_data, rv:
 /// # Safety
 /// Must run on the PHP thread inside a request; `out` receives ownership.
 unsafe fn request_to_zval(out: *mut sys::zval, req: &crate::reactor::HttpRequest) {
+    // SAFETY: the caller upholds `# Safety` above -- PHP thread, inside a request, `out` is VM-owned
+    // storage this call may write once. Every string copied in is borrowed from `req`, which outlives
+    // the call, and add_assoc_* copies rather than borrows.
     unsafe {
         zval::set_new_array(out);
         sys::add_assoc_stringl_ex(out, c"method".as_ptr(), 6, req.method.as_ptr() as *const c_char, req.method.len());
@@ -583,10 +589,18 @@ thread_local! {
     pub static OFFLOAD_WORKER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
+/// # Safety
+/// `p` must point to `l` readable bytes for the duration of the call.
 unsafe fn str_arg(p: *mut c_char, l: usize) -> String {
+    // SAFETY: the caller upholds the length contract above; the slice is read and copied before it
+    // returns, so the String never borrows VM memory.
     unsafe { String::from_utf8_lossy(std::slice::from_raw_parts(p as *const u8, l)).into_owned() }
 }
+
+/// # Safety
+/// `p` must point to `l` readable bytes for the duration of the call.
 unsafe fn bytes_arg(p: *mut c_char, l: usize) -> bytes::Bytes {
+    // SAFETY: as `str_arg` -- copy_from_slice owns the result, so nothing outlives the VM's buffer.
     unsafe { bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(p as *const u8, l)) }
 }
 
@@ -716,6 +730,7 @@ unsafe extern "C" fn zif_ignis_route_enable(ex: *mut sys::zend_execute_data, rv:
 /// `ignis_route_pass(): void` — the Router declines the current call; the original handler runs (E16).
 unsafe extern "C" fn zif_ignis_route_pass(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     super::route::pass();
+    // SAFETY: `rv` is the VM's return slot for this internal call, valid and writable once.
     unsafe { zval::set_null(rv) }
 }
 
@@ -1033,6 +1048,8 @@ mod tests {
             .0
             .iter()
             .filter(|f| !f.fname.is_null())
+            // SAFETY: fname is checked non-null just above and every entry's name is a 'static
+            // CStr literal in the table.
             .map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string())
             .collect();
         for n in [
@@ -1054,6 +1071,8 @@ mod tests {
         let sg = FUNCTIONS
             .0
             .iter()
+            // SAFETY: fname is checked non-null in the same expression, and the names are 'static
+            // CStr literals in the table.
             .find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals")
             .unwrap();
         assert_eq!(sg.num_args, 4);

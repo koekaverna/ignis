@@ -1,0 +1,43 @@
+# PHPStan for the whole userland: one config, not eleven.
+#
+# The phpVersion range replaces per-package configs. The min is the lowest contract any package
+# promises (ignis/temporal-core-transport is >=8.2 deliberately — it is written to go upstream),
+# the max is the engine we ship on. Every file in the tree parses on 8.3 and on 8.5, so there is
+# no 8.4-only syntax anywhere for a wider range to break on.
+#
+# ignis/revolt is not here: it promises 8.1 to AMPHP users, so packages/revolt/phpstan.neon
+# re-runs this config with min 80100 over that one package.
+#
+# There is deliberately no phpstan-baseline.neon. The debt is being driven to zero; a baseline is
+# the file that would make that optional.
+parameters:
+    level: 6
+
+    phpVersion:
+        min: 80200
+        max: 80504
+
+    paths:
+        - packages/doctrine/src
+        - packages/grpc/src
+        - packages/offload/src
+        - packages/pg/src
+        - packages/runtime/src
+        - packages/runtime/tests
+        - packages/swoole/src
+        - packages/symfony-runtime/src
+        - packages/temporal/src
+        - packages/temporal-core-transport/src
+        - packages/temporal-core-transport/tests
+        - packages/temporal-prototype/src
+        - ../examples
+
+    excludePaths:
+        - */vendor/*
+        - ../bench/e21/app
+
+    # Scanned, never bootstrapped. The stub bodies throw on purpose, and
+    # packages/offload/src/ignis-offload.php guards on function_exists('ignis_route_enable') —
+    # which a loaded stub satisfies — and then calls ignis_offload_stats(), which throws.
+    scanFiles:
+        - packages/runtime/stubs/ignis.php

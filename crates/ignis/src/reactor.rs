@@ -141,11 +141,13 @@ pub struct Reactor {
 async fn watch_fd(fd: i32, write: bool) -> Outcome {
     use std::os::fd::FromRawFd;
     use tokio::io::Interest;
-    // SAFETY: dup() returns a fresh descriptor we own; OwnedFd closes it.
+    // SAFETY: dup(2) takes an int and validates it itself; a closed or invalid fd returns -1.
     let dup = unsafe { libc::dup(fd) };
     if dup < 0 {
         return Outcome::Error(format!("dup({fd}) failed: {}", std::io::Error::last_os_error()));
     }
+    // SAFETY: `dup` is a descriptor this call just created and has not handed to anyone, so OwnedFd
+    // is its only owner and closes it exactly once. The caller's `fd` is untouched.
     let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup) };
     let interest = if write { Interest::WRITABLE } else { Interest::READABLE };
     let afd = match tokio::io::unix::AsyncFd::with_interest(owned, interest) {
