@@ -846,8 +846,11 @@ final class Request
         $get = [];
         parse_str($query, $get);
         $post = [];
-        if ($this->method === 'POST' && str_starts_with($this->headers['content-type'] ?? '', 'application/x-www-form-urlencoded')) {
+        $type = $this->headers['content-type'] ?? '';
+        if ($this->method === 'POST' && str_starts_with($type, 'application/x-www-form-urlencoded')) {
             parse_str($this->body, $post);
+        } elseif ($this->method === 'POST' && preg_match('#^multipart/form-data\b.*boundary="?([^";]+)"?#i', $type, $m) === 1) {
+            parse_str(self::multipartQuery($this->body, $m[1]), $post);
         }
         $cookie = [];
         foreach (explode(';', $this->headers['cookie'] ?? '') as $pair) {
@@ -856,6 +859,34 @@ final class Request
             }
         }
         return [$server, $get, $post, $cookie];
+    }
+
+    /**
+     * Field parts of a `multipart/form-data` body as a query string, so `parse_str()` applies PHP's
+     * own `name[]` / `name[key]` rules instead of a second implementation of them. A browser sends
+     * this encoding for any `FormData`, so without it `$_POST` is empty and every field falls back
+     * to its default — which looks like bad input, not like a missing parser.
+     *
+     * File parts are skipped rather than half-supported: they belong in `$_FILES`, and that is not
+     * one of the four fiber-scoped superglobals (ADR-0006), so one shared array would hand a
+     * concurrent request someone else's upload.
+     */
+    private static function multipartQuery(string $body, string $boundary): string
+    {
+        $pairs = [];
+        foreach (explode('--' . $boundary, $body) as $part) {
+            $part = ltrim($part, "\r\n");
+            if ($part === '' || str_starts_with($part, '--')) {
+                continue;
+            }
+            [$headers, $value] = array_pad(explode("\r\n\r\n", $part, 2), 2, '');
+            if (str_contains($headers, 'filename=') || preg_match('/\bname="([^"]*)"/', $headers, $m) !== 1) {
+                continue;
+            }
+            $pairs[] = rawurlencode($m[1]) . '=' . rawurlencode(rtrim($value, "\r\n"));
+        }
+
+        return implode('&', $pairs);
     }
 }
 

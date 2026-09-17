@@ -306,3 +306,26 @@ Nothing in this document is a number. Specifically:
   worth acting on.
 - **No claim is made about the true-async backend** (`cfg(php_async_abi)`), which was not built or
   consulted for this note.
+
+---
+
+## Correction by the main agent, 2026-09-17 (V-67)
+
+The headline above — `$_SESSION` as a cross-user disclosure through Symfony's
+`NativeSessionStorageFactory` — was re-run before being accepted (rule C15) and the mechanism is not
+that one. Measured from a real request under `target/release/ignis`:
+
+```
+{"started":false,"status":1,"id":"",
+ "error":"session_start(): Session cannot be started after headers have already been sent"}
+```
+
+`session_start()` **fails on every request** under the embed SAPI, so nothing that goes through
+ext/session — Symfony's native storage included — ever holds data to leak. What is real, and was
+measured with two overlapping requests, is narrower and still worth fixing: `$_SESSION` used as a
+plain array is a thread-global (`superglobals.rs:22` swaps exactly `_SERVER`, `_GET`, `_POST`,
+`_COOKIE`), and one request read the other's value across a park. Both halves are in V-67, and the
+probe is `bench/php/session_shared.php`.
+
+The `Kernel::boot()` analysis in §2 stands and was the more useful half: it is why resetting cannot
+be the answer under concurrency, and it is quoted in `FiberScopePass`.

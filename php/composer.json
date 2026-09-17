@@ -1,10 +1,16 @@
 {
     "name": "ignis/php",
-    "description": "The Ignis PHP userland, as packages. This root is the monorepo: it is not installed anywhere — install the package you need from packages/*, which is what the path repository below is for.",
+    "description": "The Ignis PHP userland, as packages. This root is the monorepo: it is not installed anywhere \u2014 install the package you need from packages/*, which is what the path repository below is for.",
     "type": "project",
     "license": "MIT",
     "repositories": [
-        { "type": "path", "url": "packages/*", "options": { "symlink": false } }
+        {
+            "type": "path",
+            "url": "packages/*",
+            "options": {
+                "symlink": false
+            }
+        }
     ],
     "require": {
         "php": ">=8.4",
@@ -16,9 +22,12 @@
         "ignis/swoole": "@dev",
         "ignis/temporal": "@dev",
         "ignis/temporal-core-transport": "@dev",
-        "ignis/temporal-prototype": "@dev"
+        "ignis/temporal-prototype": "@dev",
+        "ignis/doctrine": "@dev"
     },
     "minimum-stability": "dev",
     "prefer-stable": true,
-    "config": { "allow-plugins": false }
+    "config": {
+        "allow-plugins": false
+    }
 }

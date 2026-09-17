@@ -20,3 +20,6 @@ bench/.*.sh
 /site/
 /php/packages/temporal-core-transport/vendor/
 /php/packages/temporal-core-transport/composer.lock
+/bench/e21/app/vendor/
+/bench/e21/app/var/
+/bench/e21/app/composer.lock

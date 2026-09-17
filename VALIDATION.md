@@ -2888,3 +2888,56 @@ all within bars, E7 `differing=0`, hello 48,659 rps).
 firewall, no `ContextListener`, no `UsageTrackingTokenStorage` in play; and the other stateful
 singletons are untouched — Doctrine's identity map, the translator's locale, profiler collectors,
 Monolog buffers. `$_SESSION` is separate and covered by V-67.
+
+## V-69 — Doctrine's identity map is shared between overlapping requests; fixed, with a control that must fail (CONFIRMED)
+
+Date: 2026-09-17T13:2xZ. The same shape as V-68, one floor down: `doctrine.orm.default_entity_manager`
+is a container singleton holding a `UnitOfWork`, which is a per-request object by nature.
+
+Fixture: `bench/e21/app` — a minimal Symfony app (framework-bundle 7.4, security-bundle 7.4,
+doctrine-bundle 3.3.2, orm 3.7.1, dbal 4.4.4, `pdo_sqlite`), one PHP thread, one entity. `/em` loads
+the entity, mutates it **in memory only**, parks 300 ms, and reads it back; request A is fired 100 ms
+before B, so B runs inside A's park.
+
+```
+control, no bundle
+  A1 {"tag":"A1","fiber":18,"uow":8415,"uow_after":8415,"before":"A1","after":"B1","leaked":true}  3/3
+with IgnisDoctrineBundle
+  A1 {"tag":"A1","fiber":18,"uow":3936,"uow_after":3936,"before":"A1","after":"A1","leaked":false} 0/3
+  A2 {"tag":"A2","fiber":18,"uow":32,  ...}
+  A3 {"tag":"A3","fiber":18,"uow":3875,...}
+```
+
+In the control both requests share one `UnitOfWork` (8415) and A reads B's uncommitted mutation. With
+the bundle the UnitOfWork id is **different in every request on the same fiber** (3936, 32, 3875) —
+which is both halves at once: concurrent requests are isolated, and a request does not inherit the
+previous one's manager from the pooled fiber it reuses (that second half is `Scope::clear()`, V-67).
+
+### Two things the design had to get right, both from reading the source rather than guessing
+
+**`shared: false` alone does nothing.** Dozens of application services take the manager in their
+constructor and keep it — 38 of them in the app research 38 surveyed. The id everyone injects has to
+stay one shared object, so `DoctrineFiberScopePass` moves the original definition to
+`<id>.ignis_inner`, marks *that* non-shared, and publishes a shared `FiberEntityManager` that
+resolves the fiber's instance through a locator on every call. The 35 forwarders are generated from
+`EntityManagerInterface`, and `Doctrine\ORM\Decorator\EntityManagerDecorator` is deliberately **not**
+extended: it reads `$this->wrapped` directly in every method, which is exactly what must not be fixed
+at construction time.
+
+**`clear()` does not roll back.** Verified in the installed source: `EntityManager::clear()` is
+`$this->unitOfWork->clear()` and nothing else (`orm/src/EntityManager.php:425-428`), and nothing in
+DoctrineBundle rolls back at request end — so a request that dies between `beginTransaction()` and
+`commit()` would hand its open transaction to the next request on the same pooled fiber.
+`FiberEntityManager::reset()` rolls back while a transaction is active, then clears.
+
+### The gate
+
+`bench/e21/e21-fiber-scope.sh` runs **four** arms — token and identity map, each with and without the
+bundle — and fails if a control does *not* leak, because a control that stops leaking means the
+harness stopped measuring. `E21: GREEN` covers V-68 and V-69 together.
+
+**Unmeasured, and stated plainly:** connection count. One manager per fiber means one connection per
+fiber, so connections are peak concurrent fibers × threads — the owner's `ignis.toml` says
+`threads = 4`, `fibers = 1024`, which is 4096 against a stock PostgreSQL `max_connections` of
+100–151. The fixture is SQLite and cannot measure it. Nothing here bounds it yet; the pool that would
+(a DBAL driver middleware leasing per statement) is designed in research 38 and not built.

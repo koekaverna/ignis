@@ -1,0 +1,15 @@
+{
+    "name": "ignis/doctrine",
+    "description": "Doctrine ORM under Ignis fibers: one EntityManager per request instead of one per process, so two overlapping requests never share an identity map, and the transaction a request leaves open never becomes the next one's.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.4",
+        "ignis/runtime": "@dev",
+        "ignis/symfony-runtime": "@dev",
+        "doctrine/orm": "^3.0",
+        "doctrine/doctrine-bundle": "^2.12 || ^3.0"
+    },
+    "autoload": { "psr-4": { "Ignis\\Doctrine\\": "src/" } },
+    "config": { "allow-plugins": false }
+}

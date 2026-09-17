@@ -7,6 +7,7 @@ nothing else. Every package here needs the `ignis` binary — under php-fpm or p
 |---|---|
 | [`ignis/runtime`](packages/runtime) | the scheduler: `Ignis\Loop`, `Future`, `async()`, `all()`, `sleep()`, `deadline()`, `Scope`, `serve()`, and the classic worker loop. Everything else depends on it. |
 | [`ignis/symfony-runtime`](packages/symfony-runtime) | `symfony/runtime` adapter (ADR-0011): boot the kernel once, serve each request in its own fiber |
+| [`ignis/doctrine`](packages/doctrine) | Doctrine's `EntityManager` per request instead of per process (V-69) — without it two overlapping requests share one identity map |
 | [`ignis/pg`](packages/pg) | the runtime-owned PostgreSQL pool (ADR-0015) |
 | [`ignis/offload`](packages/offload) | synchronous worker threads for what park cannot reach (ADR-0016) |
 | [`ignis/grpc`](packages/grpc) | gRPC handlers and clients on the runtime's own listener (E10) |
