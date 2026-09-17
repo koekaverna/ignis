@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr;
 
+use super::tsrm;
 use ignis_sys as sys;
 
 use crate::reactor::Outcome;
@@ -26,13 +27,6 @@ thread_local! {
     static RESULTS: RefCell<HashMap<u64, Outcome>> = RefCell::new(HashMap::new());
 }
 
-#[cfg(feature = "universal-park")]
-unsafe fn eg() -> *mut sys::zend_executor_globals {
-    // SAFETY: every thread that runs PHP has called ts_resource(0), so the TSRM cache pointer is
-    // live, and executor_globals_offset comes from the libphp we linked against -- the sum is that
-    // thread's own executor globals.
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
-}
 
 /// Parks the running fiber until op `id` completes. `None` = could not park
 /// (not in a fiber, switching blocked, or the fiber was unwound meanwhile).
@@ -45,7 +39,7 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
     // stack. `fiber` is checked non-null and switching unblocked before it is suspended, and the
     // zval handed to zend_fiber_suspend is zeroed storage this frame owns.
     unsafe {
-        let fiber = (*eg()).active_fiber;
+        let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() {
             return None;
         }
@@ -56,7 +50,7 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
         // being destroyed (then EG(exception) carries an unwind exit).
         sys::zend_fiber_suspend(fiber, ptr::null_mut(), &mut ret);
         sys::zval_ptr_dtor(&mut ret);
-        if !(*eg()).exception.is_null() {
+        if !(*tsrm::executor_globals()).exception.is_null() {
             PARKED.with(|p| p.borrow_mut().remove(&id));
             return None;
         }
@@ -74,7 +68,7 @@ pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
     // SAFETY: as `await_op` -- the caller upholds `# Safety` above, and the same non-null and
     // switch-blocked checks guard the suspension.
     unsafe {
-        let fiber = (*eg()).active_fiber;
+        let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() || ids.is_empty() {
             return None;
         }
@@ -94,7 +88,7 @@ pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
                 p.remove(id);
             }
         });
-        if !(*eg()).exception.is_null() {
+        if !(*tsrm::executor_globals()).exception.is_null() {
             return None;
         }
         RESULTS.with(|r| {

@@ -35,6 +35,7 @@ use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use super::tsrm;
 use ignis_sys as sys;
 
 use super::wait::{await_any, await_op};
@@ -136,14 +137,11 @@ pub fn install() {
 unsafe extern "C" fn on_switch(_from: *mut sys::zend_fiber_context, to: *mut sys::zend_fiber_context) {
     // SAFETY: called by Zend on the switching thread with live contexts; EG() is this thread's.
     unsafe {
-        let main = (*eg()).main_fiber_context;
+        let main = (*tsrm::executor_globals()).main_fiber_context;
         PARK.with(|p| p.set(if to == main { 0 } else { 1 }));
     }
 }
 
-unsafe fn eg() -> *mut sys::zend_executor_globals {
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
-}
 
 /// Holds the gate at `2` while a handler runs; restores `1` on drop.
 struct InHandler;

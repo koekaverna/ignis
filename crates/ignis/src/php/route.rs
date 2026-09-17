@@ -8,6 +8,7 @@
 //! entry's `create_object` is swapped; inside a fiber it instantiates the userland proxy class
 //! (`Ignis\Offload\Proxy\<Name>`, a subclass of the real class) instead.
 
+use super::tsrm;
 use std::collections::HashMap;
 use std::ffi::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,16 +55,10 @@ const DEFAULT_FUNCTIONS: &str = "";
 /// `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to get the old behaviour back for it.
 const DEFAULT_CLASSES: &str = "SQLite3";
 
-unsafe fn cg() -> *mut sys::zend_compiler_globals {
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::compiler_globals_offset) as *mut sys::zend_compiler_globals }
-}
-unsafe fn eg() -> *mut sys::zend_executor_globals {
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
-}
 
 fn routing_here() -> bool {
     // Inside a fiber on a thread with a reactor (never on offload workers: they have no reactor).
-    ENABLED.load(Ordering::Relaxed) && unsafe { !(*eg()).active_fiber.is_null() } && super::module::try_reactor().is_some()
+    ENABLED.load(Ordering::Relaxed) && unsafe { !(*tsrm::executor_globals()).active_fiber.is_null() } && super::module::try_reactor().is_some()
 }
 
 /// MINIT (main thread): swap handlers and create_object for the configured names.
@@ -77,7 +72,7 @@ pub unsafe fn install() {
     let creates = ORIG_CREATE.get_or_init(|| Mutex::new(HashMap::new()));
     unsafe {
         for name in functions.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            let zv = sys::zend_hash_str_find((*cg()).function_table, name.as_ptr() as *const c_char, name.len());
+            let zv = sys::zend_hash_str_find((*tsrm::compiler_globals()).function_table, name.as_ptr() as *const c_char, name.len());
             if zv.is_null() {
                 continue; // extension not built: nothing to route
             }
@@ -89,7 +84,7 @@ pub unsafe fn install() {
         }
         for name in classes.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let lc = name.to_ascii_lowercase();
-            let zv = sys::zend_hash_str_find((*cg()).class_table, lc.as_ptr() as *const c_char, lc.len());
+            let zv = sys::zend_hash_str_find((*tsrm::compiler_globals()).class_table, lc.as_ptr() as *const c_char, lc.len());
             if zv.is_null() {
                 continue;
             }

@@ -19,6 +19,7 @@ pub mod locklib;
 pub mod module;
 pub mod output;
 pub mod route;
+pub mod tsrm;
 pub mod superglobals;
 pub mod wait;
 pub mod zval;
