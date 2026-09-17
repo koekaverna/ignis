@@ -1,4 +1,5 @@
 <?php
+
 // E6' / H25: ssl:// through the hook. Env: PORTS="8441 8442 8443", CAFILE (the servers' self-signed cert).
 declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
@@ -10,7 +11,7 @@ Ignis\async(static function () use ($ports, $cafile, $hook): void {
     // 1. Three concurrent https fetches, each server sleeps 200 ms: ≈ 200 ms with the hook, ≈ 600 ms without.
     $ctx = stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]);
     $t = hrtime(true);
-    $rs = Ignis\all(array_map(static fn (int $p) => Ignis\async(static fn () => file_get_contents("https://127.0.0.1:$p/", false, $ctx)), $ports));
+    $rs = Ignis\all(array_map(static fn(int $p) => Ignis\async(static fn() => file_get_contents("https://127.0.0.1:$p/", false, $ctx)), $ports));
     printf("hook %s: 3 concurrent https fetches (200 ms each) in %.0f ms; bodies: %s\n", $hook, (hrtime(true) - $t) / 1e6, json_encode(array_map('trim', $rs)));
 
     // 2. Verification follows the context: default (verify on, self-signed) must fail; cafile makes it pass; wrong peer_name fails; verify_peer_name=false passes.

@@ -1,4 +1,5 @@
 <?php
+
 /**
  * examples/app.php — THE API SPEC.
  *
@@ -38,7 +39,7 @@ function fetchDashboard(int $userId): array
             Ignis\sleep(200);
             return [['id' => 1, 'total' => 42.0]];
         }),
-        Ignis\async(static fn (): array => ['sku-1', 'sku-2']),
+        Ignis\async(static fn(): array => ['sku-1', 'sku-2']),
     ]);
     return compact('profile', 'orders', 'recommendations');
 }
@@ -77,7 +78,11 @@ $listen = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';
 Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
     return match ($req->path()) {
         '/'          => Response::text("hello from fiber\n"),
-        '/deadline'  => (static function (): Response { Ignis\deadline(100); Ignis\sleep(1000); return Response::text("never\n"); })(),
+        '/deadline'  => (static function (): Response {
+            Ignis\deadline(100);
+            Ignis\sleep(1000);
+            return Response::text("never\n");
+        })(),
         '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
         '/users'     => Response::json(usersFromDb($pdo)),
         '/upstream'  => Response::json(upstreamJson("http://$listen/dashboard")), // self-call, suspends (E6)
@@ -106,7 +111,7 @@ function dbDemo(): array
         return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
     }
     $pool ??= new Ignis\Pg\Pool($dsn, 10);
-    return $pool->transaction(static fn (Ignis\Pg\Lease $l) => [
+    return $pool->transaction(static fn(Ignis\Pg\Lease $l) => [
         'backend' => $l->backendPid(),
         'now' => $l->query('SELECT now()::text AS t')[0]['t'],
         'sleep_ms' => (int) $l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0]['d'],

@@ -1,4 +1,5 @@
 <?php
+
 // H1 smoke: a Rust-implemented internal function is callable from PHP.
 $id = ignis_submit_sleep(1);
 $events = ignis_poll(1000);

@@ -1,4 +1,5 @@
 <?php
+
 // One-route worker for bench/limits.sh: the http.rs limits (body cap, header timeout,
 // idle timeout) are all enforced before a request ever reaches PHP, so the route itself
 // only needs to prove the server is up.

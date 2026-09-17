@@ -51,8 +51,13 @@ Ignis\all([Ignis\async($body('A', 10)), Ignis\async($body('B', 120))]);
 ksort($results);
 $want = ['A' => 'A-startA-end', 'B' => 'B-startB-end'];
 $leaked = $results != $want;
-printf("mode=%s A=%s B=%s leaked=%s\n", $raw ? 'raw-ob' : 'Output::capture',
-    var_export($results['A'] ?? null, true), var_export($results['B'] ?? null, true), $leaked ? 'yes' : 'no');
+printf(
+    "mode=%s A=%s B=%s leaked=%s\n",
+    $raw ? 'raw-ob' : 'Output::capture',
+    var_export($results['A'] ?? null, true),
+    var_export($results['B'] ?? null, true),
+    $leaked ? 'yes' : 'no',
+);
 
 // Second property, and the reason the runtime owns `ub_write` instead of PHP owning a lock: two
 // captures must run AT THE SAME TIME. A thread-wide buffer can only be made safe by serialising,
@@ -61,8 +66,14 @@ printf("mode=%s A=%s B=%s leaked=%s\n", $raw ? 'raw-ob' : 'Output::capture',
 if (!$raw) {
     $t = microtime(true);
     Ignis\all([
-        Ignis\async(static fn (): string => Ignis\Output::capture(static function (): void { echo 'A'; Ignis\sleep(300); })),
-        Ignis\async(static fn (): string => Ignis\Output::capture(static function (): void { echo 'B'; Ignis\sleep(300); })),
+        Ignis\async(static fn(): string => Ignis\Output::capture(static function (): void {
+            echo 'A';
+            Ignis\sleep(300);
+        })),
+        Ignis\async(static fn(): string => Ignis\Output::capture(static function (): void {
+            echo 'B';
+            Ignis\sleep(300);
+        })),
     ]);
     $wall = (microtime(true) - $t) * 1000;
     $serialised = $wall > 450;

@@ -1,4 +1,5 @@
 <?php
+
 // E18-B / H34 control: N concurrent libpq connects (pg_connect, PGSQL_CONNECT_FORCE_NEW) to a
 // hostname. H34's real target is `slow.ignis.test`, answered slowly by bench/e18/resolver.py — but
 // getaddrinfo(3) only sees that stub once the runtime resolver is pointed at it, and glibc reads
@@ -28,7 +29,7 @@ $main = Ignis\async(static function () use ($host, $n, &$ok): void {
         $fs[] = Ignis\async(static function () use ($host, &$ok): void {
             $conn = @pg_connect(
                 "host=$host port=5432 dbname=ignis user=ignis password=ignis connect_timeout=1",
-                PGSQL_CONNECT_FORCE_NEW
+                PGSQL_CONNECT_FORCE_NEW,
             );
             if ($conn !== false) {
                 $ok++;

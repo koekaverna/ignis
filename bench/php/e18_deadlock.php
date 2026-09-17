@@ -1,4 +1,5 @@
 <?php
+
 // H36 (ADR-0020 acceptance 5): a library that holds a pthread mutex across a blocking read.
 // Two fibers on ONE thread call it against an empty pipe; a writer fiber feeds the pipe after
 // 200 ms. Expected: with the library on a `park` row the second fiber finds the mutex held by a
@@ -31,8 +32,13 @@ foreach ([0, 1] as $i) {
 ignis_locklib_feed($pipe[1], 200, 2);
 foreach (Ignis\all($fs) as $res) {
     if (is_array($res)) {
-        printf("  fiber %d: result=%d (%s) after %d ms\n", $res['fiber'], $res['result'],
-            $res['result'] === -2 ? 'MUTEX HELD BY A PARKED FIBER — the hazard' : 'returned', $res['ms']);
+        printf(
+            "  fiber %d: result=%d (%s) after %d ms\n",
+            $res['fiber'],
+            $res['result'],
+            $res['result'] === -2 ? 'MUTEX HELD BY A PARKED FIBER — the hazard' : 'returned',
+            $res['ms'],
+        );
     }
 }
 printf("e18_deadlock: policy=%s total %d ms\n", $policy, intdiv(hrtime(true) - $t0, 1_000_000));

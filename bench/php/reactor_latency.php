@@ -1,4 +1,5 @@
 <?php
+
 // Reactor round-trip latency at low concurrency (H30). Three legs that differ in exactly one thing:
 //   php-only   : ignis_watch() on an already-ready fd -> completes inside the zif, tokio never sees it.
 //   channels   : Ignis\sleep(0) -> crosses the mpsc to the dispatcher and the crossbeam back, no timer,
@@ -9,6 +10,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 use Ignis\Loop;
+
 use function Ignis\all;
 use function Ignis\async;
 

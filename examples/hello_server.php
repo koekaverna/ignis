@@ -1,4 +1,5 @@
 <?php
+
 // Worker-mode hello world: the script stays resident, every request runs in a pooled fiber.
 declare(strict_types=1);
 require __DIR__ . '/../php/packages/runtime/src/ignis.php';
@@ -29,12 +30,17 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             // E12: CPU loop with no suspension point; stalls only this thread.
             $until = hrtime(true) + (int) ($req->query('s') ?? 5) * 1_000_000_000;
             $n = 0;
-            while (hrtime(true) < $until) { $n++; }
+            while (hrtime(true) < $until) {
+                $n++;
+            }
             return Response::text("spun $n\n");
         })(),
         '/slow'  => (static function (): Response {
             // E11: 5 s of work in this fiber plus a child; a client disconnect must cancel both.
-            $child = Ignis\async(static function (): string { Ignis\sleep(5000); return 'child done'; });
+            $child = Ignis\async(static function (): string {
+                Ignis\sleep(5000);
+                return 'child done';
+            });
             try {
                 Ignis\sleep(5000);
                 return Response::text($child->await() . "\n");
@@ -55,9 +61,9 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             $t0 = hrtime(true);
             $ms = (int) ($_GET['ms'] ?? 200);
             $bodies = Ignis\all([
-                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
-                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
-                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
             ]);
             return Response::json(['bodies' => $bodies, 'ms' => round((hrtime(true) - $t0) / 1e6, 1)]);
         })(),

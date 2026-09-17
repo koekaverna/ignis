@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Classic mode, top-level worker loop — for apps that keep state in globals.
  *

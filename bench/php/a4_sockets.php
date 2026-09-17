@@ -1,4 +1,5 @@
 <?php
+
 // A4 / H29 (ADR-0018): N concurrent ext/sockets reads, each waiting DELAY ms, on ONE PHP thread.
 //
 // The server half uses stream_socket_server/accept, which the ADR-0007 transport hook already
@@ -55,10 +56,10 @@ for ($i = 0; $i < $n; $i++) {
         return $got === false ? 'read-failed' : $got;
     });
 }
-$got = array_map(static fn ($f) => $f->await(), $clients);
+$got = array_map(static fn($f) => $f->await(), $clients);
 $wallMs = (hrtime(true) - $t0) / 1e6;
 
-$ok = count(array_filter($got, static fn ($v) => $v === 'ok'));
+$ok = count(array_filter($got, static fn($v) => $v === 'ok'));
 printf("n=%d delay_ms=%d wall_ms=%.1f ok=%d hook=%s\n", $n, $delayMs, $wallMs, $ok, getenv('IGNIS_NO_SOCKETS_HOOK') ? 'off' : 'on');
 // Concurrency holds when the wall stays near one delay instead of growing with N.
 exit(($ok === $n && $wallMs < $delayMs * 3) ? 0 : 1);

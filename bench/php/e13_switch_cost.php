@@ -1,4 +1,5 @@
 <?php
+
 // E13 (c): cost of a suspend/resume pair, with vs without the superglobals observer (IGNIS_NO_SUPERGLOBALS=1).
 declare(strict_types=1);
 $n = (int) (getenv('N') ?: 1000000);

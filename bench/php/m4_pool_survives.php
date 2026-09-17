@@ -1,4 +1,5 @@
 <?php
+
 // M4-8 (ADR-0015, ADR-0012): does the runtime-owned PG pool survive a PHP worker
 // thread's death while it holds a lease? Routes:
 //   /lease-hold?ms=N  acquire a lease, dirty the session (search_path + a temp

@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Two questions about sessions under fibers, answered in one run (V-66):
  *

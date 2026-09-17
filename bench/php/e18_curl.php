@@ -1,4 +1,5 @@
 <?php
+
 // E18-B / H32 control: N fibers, each curl_exec against a /sleep?ms=<ms> URL. CURLOPT_WRITEFUNCTION
 // records spl_object_id(Fiber::getCurrent()) so we can tell which fiber each callback actually ran
 // in. Today (no universal park, ADR-0020) that is a plain blocking curl_exec inside libphp: with
@@ -53,7 +54,7 @@ $main = Ignis\async(static function () use ($url, $n, &$ok, &$writefnFibers, &$s
         $wall,
         $ok,
         count($writefnFibers),
-        $sameFiber ? 'yes' : 'no'
+        $sameFiber ? 'yes' : 'no',
     );
 });
 Ignis\Loop::run();
