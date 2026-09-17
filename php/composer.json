@@ -53,7 +53,7 @@
         }
     },
     "scripts": {
-        "lint": "find packages tests ../examples ../bench ../scripts -name '*.php' -not -path '*/vendor/*' -exec php -l {} \\; | grep -v '^No syntax errors detected' ; test $? -eq 1",
+        "lint": "find packages tests ../examples ../bench ../scripts -name '*.php' -not -path '*/vendor/*' -not -path '*/var/cache/*' -exec php -l {} \\; | grep -v '^No syntax errors detected' ; test $? -eq 1",
         "stan": "phpstan analyse --no-progress && phpstan analyse --no-progress -c packages/revolt/phpstan.neon",
         "cs": "php-cs-fixer check --diff --show-progress=none",
         "fix": "php-cs-fixer fix --show-progress=none",

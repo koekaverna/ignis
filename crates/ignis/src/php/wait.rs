@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr;
 
+#[cfg(feature = "universal-park")]
 use super::tsrm;
 use ignis_sys as sys;
 
@@ -26,7 +27,6 @@ thread_local! {
     /// op id → outcome delivered by `ignis_poll` before the fiber is resumed.
     static RESULTS: RefCell<HashMap<u64, Outcome>> = RefCell::new(HashMap::new());
 }
-
 
 /// Parks the running fiber until op `id` completes. `None` = could not park
 /// (not in a fiber, switching blocked, or the fiber was unwound meanwhile).

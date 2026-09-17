@@ -55,12 +55,13 @@ const DEFAULT_FUNCTIONS: &str = "";
 /// `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to get the old behaviour back for it.
 const DEFAULT_CLASSES: &str = "SQLite3";
 
-
 fn routing_here() -> bool {
     // Inside a fiber on a thread with a reactor (never on offload workers: they have no reactor).
     // SAFETY: reached only from a zif_handler on a PHP thread, so this thread has a TSRM context
     // and EG(active_fiber) is a plain pointer field the engine keeps current.
-    ENABLED.load(Ordering::Relaxed) && unsafe { !(*tsrm::executor_globals()).active_fiber.is_null() } && super::module::try_reactor().is_some()
+    ENABLED.load(Ordering::Relaxed)
+        && unsafe { !(*tsrm::executor_globals()).active_fiber.is_null() }
+        && super::module::try_reactor().is_some()
 }
 
 /// MINIT (main thread): swap handlers and create_object for the configured names.

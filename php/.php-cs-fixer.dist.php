@@ -7,6 +7,9 @@ declare(strict_types=1);
  *
  * packages/swoole/src/shim.php alone accounts for most of the diff. It is deliberately not
  * excluded — one permanent exception is worse than one noisy formatting commit.
+ *
+ * Caching is off: the whole tree formats in half a second, and a cache file in the working tree
+ * is one more artefact to keep out of git.
  */
 
 use PhpCsFixer\Config;
@@ -20,6 +23,7 @@ $finder = Finder::create()
 
 return (new Config())
     ->setParallelConfig(ParallelConfigFactory::detect())
+    ->setUsingCache(false)
     ->setRiskyAllowed(false)
     ->setRules(['@PER-CS' => true])
     ->setFinder($finder);

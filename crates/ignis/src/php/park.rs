@@ -82,6 +82,7 @@ fn trace(msg: &str) {
     if *ON.get_or_init(|| std::env::var_os("IGNIS_PARK_TRACE").is_some()) {
         // Raw syscall on purpose: `eprintln!` would go through the interposed `write`.
         let line = format!("park: {msg}\n");
+        // SAFETY: `line` is a live local and its length is its own; write(2) only reads those bytes.
         unsafe { libc::syscall(libc::SYS_write, 2, line.as_ptr(), line.len()) };
     }
 }
@@ -142,7 +143,6 @@ unsafe extern "C" fn on_switch(_from: *mut sys::zend_fiber_context, to: *mut sys
     }
 }
 
-
 /// Holds the gate at `2` while a handler runs; restores `1` on drop.
 struct InHandler;
 impl Drop for InHandler {
@@ -158,6 +158,8 @@ unsafe fn may_park(ret: *const c_void, sym: &str) -> Option<InHandler> {
     }
     PARK.with(|p| p.set(2));
     let guard = InHandler;
+    // SAFETY: `ret` is a return address from the interposer, used only as a lookup key and passed to
+    // dladdr, which validates it itself. The gate is already at 2, so site_parks cannot re-enter.
     if unsafe { site_parks(ret, sym) } { Some(guard) } else { None }
 }
 
@@ -197,11 +199,15 @@ unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
 /// readiness is not what the caller asked for). A regular file cannot be parked on either (epoll
 /// refuses it).
 unsafe fn would_block(fd: c_int) -> bool {
+    // SAFETY: F_GETFL takes no pointer and validates the descriptor itself, returning -1 for a bad
+    // one -- which is handled on the next line.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 || flags & libc::O_NONBLOCK != 0 {
         return false;
     }
+    // SAFETY: libc::stat is plain C data with no niche, so all-zero is a valid value to overwrite.
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: fstat writes one struct stat into `st`, a live local of exactly that type.
     if unsafe { libc::fstat(fd, &mut st as *mut libc::stat) } != 0 {
         return false;
     }
@@ -221,6 +227,8 @@ unsafe fn would_block(fd: c_int) -> bool {
     //
     // The direction is not known here, and it does not need to be: `accept` has its own handler
     // and never asks this question.
+    // SAFETY: both helpers below only pass `fd` and their own local storage to getsockopt/getpeername,
+    // which validate the descriptor themselves.
     unsafe {
         if getsockopt_int(fd, libc::SO_ACCEPTCONN) == Some(1) {
             return false; // listening: a data call errors out now
@@ -245,6 +253,7 @@ unsafe fn getsockopt_int(fd: c_int, opt: c_int) -> Option<c_int> {
 
 /// Has a peer (`getpeername` succeeds) — i.e. the socket is connected.
 unsafe fn is_connected(fd: c_int) -> bool {
+    // SAFETY: sockaddr_storage is plain C data; all-zero is a valid value for getpeername to fill.
     let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
     let mut l = size_of::<libc::sockaddr_storage>() as libc::socklen_t;
     // SAFETY: getpeername writes at most `l` bytes into `ss`, a live local of that size.
@@ -273,6 +282,7 @@ unsafe fn is_bound(fd: c_int) -> bool {
 /// Zero-timeout readiness probe, raw syscall.
 unsafe fn ready_now(fd: c_int, events: i16) -> bool {
     let mut p = libc::pollfd { fd, events, revents: 0 };
+    // SAFETY: one live pollfd, and the count says one. A zero timeout cannot block.
     unsafe { libc::syscall(libc::SYS_poll, &mut p as *mut libc::pollfd, 1usize, 0) > 0 }
 }
 
@@ -285,6 +295,8 @@ unsafe fn park_on(fd: c_int, write: bool) -> bool {
     };
     let id = r.submit(Op::Watch { fd, write });
     trace(&format!("park_on fd={fd} write={write} op={id}"));
+    // SAFETY: reached from an interposer on a PHP thread inside a fiber, which is await_any's
+    // contract; `id` was just submitted to this thread's own reactor.
     let ok = unsafe { await_any(&[id]).is_some() };
     trace(&format!("park_on fd={fd} resumed ok={ok}"));
     if !ok {
@@ -296,9 +308,12 @@ unsafe fn park_on(fd: c_int, write: bool) -> bool {
 /// The socket's own kernel timeout (`SO_RCVTIMEO` for reads, `SO_SNDTIMEO` for writes) in ms;
 /// 0 = none, and 0 for anything that is not a socket (a pipe has no such option).
 unsafe fn sock_timeout_ms(fd: c_int, write: bool) -> c_int {
+    // SAFETY: timeval is two integers; all-zero is a valid value for getsockopt to overwrite.
     let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
     let mut len = size_of::<libc::timeval>() as libc::socklen_t;
     let opt = if write { libc::SO_SNDTIMEO } else { libc::SO_RCVTIMEO };
+    // SAFETY: `len` says how much of `tv` may be written and both are live locals of that size; a
+    // non-socket fd just returns an error, which is handled.
     if unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut tv as *mut libc::timeval as *mut c_void, &mut len) } != 0 {
         return 0;
     }
@@ -317,9 +332,12 @@ enum Wait {
 /// Park until `fd` is ready in `dir` or its `SO_RCVTIMEO`/`SO_SNDTIMEO` elapses (research 30:
 /// `ext/sockets` users set those and expect the timeout; the point hook raced it, so does this).
 unsafe fn park_io(fd: c_int, write: bool) -> Wait {
+    // SAFETY: sock_timeout_ms only reads a socket option into its own storage.
     let timeout = unsafe { sock_timeout_ms(fd, write) };
     let fds = [libc::pollfd { fd, events: if write { libc::POLLOUT } else { libc::POLLIN }, revents: 0 }];
     trace(&format!("park_io fd={fd} write={write} timeout={timeout}"));
+    // SAFETY: `fds` is a live local array and park_pollfds borrows it for the call only; we are on a
+    // PHP thread inside a fiber, which is its contract.
     match unsafe { park_pollfds(&fds, timeout) } {
         Some(false) => Wait::TimedOut,
         _ => Wait::Ready,
@@ -332,6 +350,7 @@ unsafe fn park_sleep(us: u64) -> bool {
         return false;
     };
     let id = r.submit(Op::Sleep { us });
+    // SAFETY: PHP thread inside a fiber (checked by the caller), and `id` is this thread's own op.
     unsafe { matches!(await_op(id), Some(Outcome::Slept { .. })) }
 }
 
@@ -339,6 +358,10 @@ unsafe fn park_sleep(us: u64) -> bool {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mut c_void, n: usize) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "read")
             && would_block(fd)
@@ -354,6 +377,10 @@ pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mu
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "write")
             && would_block(fd)
@@ -369,6 +396,10 @@ pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *c
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mut c_void, n: usize, flags: c_int) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "recv")
             && flags & libc::MSG_DONTWAIT == 0
@@ -385,6 +416,10 @@ pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mu
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_send(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize, flags: c_int) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "send")
             && flags & libc::MSG_DONTWAIT == 0
@@ -409,6 +444,10 @@ pub unsafe extern "C" fn ignis_park_recvfrom(
     addr: *mut c_void,
     alen: *mut c_uint,
 ) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "recvfrom")
             && flags & libc::MSG_DONTWAIT == 0
@@ -433,6 +472,10 @@ pub unsafe extern "C" fn ignis_park_sendto(
     addr: *const c_void,
     alen: c_uint,
 ) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "sendto")
             && flags & libc::MSG_DONTWAIT == 0
@@ -472,6 +515,8 @@ unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> Option<bool> 
     if ids.is_empty() {
         return None;
     }
+    // SAFETY: PHP thread inside a fiber; every id in `ids` was submitted to this thread's reactor
+    // just above, and the ones that did not win are cancelled immediately after.
     let (woke, _) = unsafe { await_any(&ids) }?;
     for id in &ids {
         if *id != woke {
@@ -487,6 +532,9 @@ fn ms_ceil(ts: &libc::timespec) -> c_int {
 }
 
 unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: libc::nfds_t, timeout: c_int) -> c_int {
+    // SAFETY: the caller is an interposer handing over libc's own arguments, so `fds` really does
+    // point to `n` pollfds. They are passed to the kernel unchanged, and the fallback `real()` issues
+    // exactly the call the program made.
     unsafe {
         let real = |t: c_int| libc::syscall(libc::SYS_poll, fds, n as usize, t) as c_int;
         let Some(_g) = may_park(ret, sym) else { return real(timeout) };
@@ -515,6 +563,7 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_poll(ret: *const c_void, fds: *mut libc::pollfd, n: libc::nfds_t, timeout: c_int) -> c_int {
+    // SAFETY: arguments forwarded unchanged from the interposed `poll`, which is poll_impl's contract.
     unsafe { poll_impl(ret, "poll", fds, n, timeout) }
 }
 
@@ -526,6 +575,10 @@ pub unsafe extern "C" fn ignis_park_ppoll(
     ts: *const libc::timespec,
     mask: *const libc::sigset_t,
 ) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         // A signal mask changes what the wait observes; that wait stays the kernel's.
         if !mask.is_null() {
@@ -548,6 +601,10 @@ pub unsafe extern "C" fn ignis_park_select(
     e: *mut libc::fd_set,
     tv: *mut libc::timeval,
 ) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         // pselect6 is the one select syscall every Linux arch has; a NULL sigmask makes it select.
         let sel = |r: *mut libc::fd_set, w: *mut libc::fd_set, e: *mut libc::fd_set, ts: *const libc::timespec| {
@@ -612,6 +669,10 @@ pub unsafe extern "C" fn ignis_park_select(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr: *const c_void, alen: c_uint) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         let real = || libc::syscall(libc::SYS_connect, fd, addr, alen as usize) as c_int;
         let Some(_g) = may_park(ret, "connect") else { return real() };
@@ -653,6 +714,10 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_nanosleep(ret: *const c_void, req: *const libc::timespec, rem: *mut libc::timespec) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "nanosleep")
             && !req.is_null()
@@ -672,6 +737,10 @@ pub unsafe extern "C" fn ignis_park_nanosleep(ret: *const c_void, req: *const li
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_usleep(ret: *const c_void, us: c_uint) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "usleep")
             && park_sleep(us as u64)
@@ -685,6 +754,10 @@ pub unsafe extern "C" fn ignis_park_usleep(ret: *const c_void, us: c_uint) -> c_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_uint {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "sleep")
             && park_sleep(s as u64 * 1_000_000)
@@ -701,6 +774,10 @@ pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_ui
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_accept4(ret: *const c_void, fd: c_int, addr: *mut c_void, alen: *mut c_uint, flags: c_int) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         // A listening socket is readable when a connection is pending; the real accept4 follows
         // either way, so "readable" that is not "would succeed" ends as it does in stock PHP.
@@ -718,6 +795,10 @@ pub unsafe extern "C" fn ignis_park_accept4(ret: *const c_void, fd: c_int, addr:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_recvmsg(ret: *const c_void, fd: c_int, msg: *mut c_void, flags: c_int) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "recvmsg")
             && flags & libc::MSG_DONTWAIT == 0
@@ -734,6 +815,10 @@ pub unsafe extern "C" fn ignis_park_recvmsg(ret: *const c_void, fd: c_int, msg: 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: *const c_void, flags: c_int) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "sendmsg")
             && flags & libc::MSG_DONTWAIT == 0
@@ -750,6 +835,10 @@ pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_readv(ret: *const c_void, fd: c_int, iov: *const c_void, cnt: c_int) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "readv")
             && would_block(fd)
@@ -765,6 +854,10 @@ pub unsafe extern "C" fn ignis_park_readv(ret: *const c_void, fd: c_int, iov: *c
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *const c_void, cnt: c_int) -> isize {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
+    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
+    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
+    // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "writev")
             && would_block(fd)
@@ -859,6 +952,8 @@ pub fn selfcheck() -> Result<(), String> {
 /// closed loopback port hangs until the timeout instead of answering ECONNREFUSED — that made the
 /// first version of this self-check cost 1.3 s on every process start.) Only who called us matters.
 unsafe fn probe_libcurl(h: *mut c_void) {
+    // SAFETY: `h` is a handle dlopen returned. Every symbol is transmuted to the signature libcurl
+    // documents and called only when dlsym found it, and the handle stays open for the calls.
     unsafe {
         let init: Option<unsafe extern "C" fn() -> *mut c_void> = std::mem::transmute(libc::dlsym(h, c"curl_easy_init".as_ptr()));
         let setopt: Option<unsafe extern "C" fn(*mut c_void, c_int, ...) -> c_int> =
@@ -889,6 +984,8 @@ unsafe fn probe_libcurl(h: *mut c_void) {
 
 /// Make libpq's own code call `connect(2)`, same shape.
 unsafe fn probe_libpq(h: *mut c_void) {
+    // SAFETY: as probe_libcurl -- `h` is a live dlopen handle, each symbol is transmuted to libpq's
+    // documented signature, and each is called only if dlsym found it.
     unsafe {
         let connectdb: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void> =
             std::mem::transmute(libc::dlsym(h, c"PQconnectdb".as_ptr()));
