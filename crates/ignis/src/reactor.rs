@@ -111,6 +111,23 @@ pub struct Completion {
 }
 
 /// Handle owned by one PHP thread (plus clones on tokio for producing events).
+/// What a request id still owes, and the only three shapes it can take.
+///
+/// `respond_start` is a *transition* from `Whole` to `Streaming` rather than a delete from one map
+/// and an insert into another, so the invariant "an id is in exactly one state" is expressed rather
+/// than remembered.
+///
+/// The payloads stay different on purpose: gRPC's terminal value carries trailers HTTP has no
+/// analogue for, and its channel is unbounded while the HTTP stream's bound *is* the back-pressure.
+enum Answer {
+    /// A whole-body response PHP has not sent yet.
+    Whole(oneshot::Sender<HttpResponse>),
+    /// R-STREAM: the headers went out, the body is still being written. Dropping the sender ends it.
+    Streaming(mpsc::Sender<Bytes>),
+    /// A gRPC response stream PHP is still filling (E10, ADR-0014).
+    Grpc(mpsc::UnboundedSender<GrpcMsg>),
+}
+
 pub struct Reactor {
     next_id: AtomicU64,
     /// Ops submitted or requests delivered that PHP has not yet consumed via poll.
@@ -120,12 +137,11 @@ pub struct Reactor {
     to_tokio: mpsc::UnboundedSender<(u64, Op)>,
     done_tx: Sender<Completion>,
     from_tokio: Receiver<Completion>,
-    responders: Mutex<HashMap<u64, oneshot::Sender<HttpResponse>>>,
-    /// R-STREAM: for a response PHP is still producing, the end hyper is draining. Present only
-    /// between `respond_start` and `respond_end`; dropping the sender is what ends the body.
-    stream_out: Mutex<HashMap<u64, mpsc::Sender<Bytes>>>,
-    /// gRPC response streams PHP is still filling (E10, ADR-0014).
-    streams: Mutex<HashMap<u64, mpsc::UnboundedSender<GrpcMsg>>>,
+    /// Everything this thread still owes a client, keyed by request id. One map rather than three,
+    /// because an id is in exactly one of `Answer`'s states and three maps could not say so --
+    /// which is how `pending_requests` came to count two of them and let a graceful shutdown
+    /// truncate a live download (V-75).
+    answers: Mutex<HashMap<u64, Answer>>,
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
     last_active_us: AtomicU64,
     created: std::time::Instant,
@@ -227,9 +243,7 @@ impl Reactor {
             to_tokio,
             done_tx,
             from_tokio,
-            responders: Mutex::new(HashMap::new()),
-            stream_out: Mutex::new(HashMap::new()),
-            streams: Mutex::new(HashMap::new()),
+            answers: Mutex::new(HashMap::new()),
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
             spin_us: std::env::var("IGNIS_POLL_SPIN_US").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -279,11 +293,11 @@ impl Reactor {
     pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.responders.lock().unwrap().insert(id, tx);
+        self.answers.lock().unwrap().insert(id, Answer::Whole(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
             // PHP thread gone: drop the responder so the connection gets a 500.
-            self.responders.lock().unwrap().remove(&id);
+            self.answers.lock().unwrap().remove(&id);
         }
         (id, rx)
     }
@@ -292,40 +306,50 @@ impl Reactor {
     pub fn deliver_stream_request(&self, req: HttpRequest) -> (u64, mpsc::UnboundedReceiver<GrpcMsg>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
-        self.streams.lock().unwrap().insert(id, tx);
+        self.answers.lock().unwrap().insert(id, Answer::Grpc(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
-            self.streams.lock().unwrap().remove(&id);
+            self.answers.lock().unwrap().remove(&id);
         }
         (id, rx)
     }
 
     /// PHP-thread side (E10): one response message. False if the stream is unknown or the client is gone.
     pub fn stream_send(&self, id: u64, msg: Bytes) -> bool {
-        match self.streams.lock().unwrap().get(&id) {
-            Some(tx) => tx.send(Ok(msg)).is_ok(),
-            None => false,
+        match self.answers.lock().unwrap().get(&id) {
+            Some(Answer::Grpc(tx)) => tx.send(Ok(msg)).is_ok(),
+            _ => false,
         }
+    }
+
+    /// Removes the answer for `id` only if it is in the state the caller expects.
+    ///
+    /// Checking before removing is the whole point: a `respond()` on a streaming id, or a
+    /// `stream_end()` on a whole-body one, must be refused -- not silently destroy an answer the
+    /// caller was not entitled to. The first version of this map did remove first and cost a test.
+    fn take_answer(&self, id: u64, expected: fn(&Answer) -> bool) -> Option<Answer> {
+        let mut answers = self.answers.lock().unwrap();
+        if answers.get(&id).is_some_and(expected) { answers.remove(&id) } else { None }
     }
 
     /// PHP-thread side (E10): finish the stream with a gRPC status (0 = OK).
     pub fn stream_end(&self, id: u64, code: i32, message: String) -> bool {
-        match self.streams.lock().unwrap().remove(&id) {
-            Some(tx) => {
+        match self.take_answer(id, |answer| matches!(answer, Answer::Grpc(_))) {
+            Some(Answer::Grpc(tx)) => {
                 if code != 0 {
                     let _ = tx.send(Err((code, message)));
                 }
                 true
             }
-            None => false,
+            _ => false,
         }
     }
 
     /// Tokio side: the response future for `id` was dropped before PHP answered.
     pub fn cancel_request(&self, id: u64) {
-        let known = self.responders.lock().unwrap().remove(&id).is_some()
-            || self.streams.lock().unwrap().remove(&id).is_some()
-            || self.stream_out.lock().unwrap().remove(&id).is_some();
+        // One remove for every state, which is the point of the single map: a new kind of answer
+        // cannot be forgotten here the way stream_out was forgotten in pending_requests (V-75).
+        let known = self.answers.lock().unwrap().remove(&id).is_some();
         if known {
             self.inflight.fetch_add(1, Ordering::Relaxed);
             let _ = self.done_tx.send(Completion { id, outcome: Outcome::Cancelled { dropped_at: std::time::Instant::now() } });
@@ -334,9 +358,9 @@ impl Reactor {
 
     /// PHP-thread side: answer request `id`. Returns false if unknown/already answered.
     pub fn respond(&self, id: u64, resp: HttpResponse) -> bool {
-        match self.responders.lock().unwrap().remove(&id) {
-            Some(tx) => tx.send(resp).is_ok(),
-            None => false,
+        match self.take_answer(id, |answer| matches!(answer, Answer::Whole(_))) {
+            Some(Answer::Whole(tx)) => tx.send(resp).is_ok(),
+            _ => false,
         }
     }
 
@@ -345,13 +369,18 @@ impl Reactor {
     /// socket — small, because that queue is the back-pressure.
     pub fn respond_start(&self, id: u64, status: u16, headers: Vec<(String, String)>, cap: usize) -> bool {
         let (tx, rx) = mpsc::channel::<Bytes>(cap.max(1));
-        match self.responders.lock().unwrap().remove(&id) {
-            Some(responder) => {
+        let mut answers = self.answers.lock().unwrap();
+        match answers.remove(&id) {
+            Some(Answer::Whole(responder)) => {
                 if responder.send(HttpResponse { status, headers, body: ResponseBody::Stream(rx) }).is_err() {
-                    return false; // client already gone
+                    return false; // client already gone, and the id stays removed
                 }
-                self.stream_out.lock().unwrap().insert(id, tx);
+                answers.insert(id, Answer::Streaming(tx));
                 true
+            }
+            Some(other) => {
+                answers.insert(id, other); // not a whole-body answer; leave it as it was
+                false
             }
             None => false,
         }
@@ -359,12 +388,15 @@ impl Reactor {
 
     /// The sending end of a streamed answer, if one is open.
     pub fn stream_sender(&self, id: u64) -> Option<mpsc::Sender<Bytes>> {
-        self.stream_out.lock().unwrap().get(&id).cloned()
+        match self.answers.lock().unwrap().get(&id) {
+            Some(Answer::Streaming(tx)) => Some(tx.clone()),
+            _ => None,
+        }
     }
 
     /// Ends a streamed answer: dropping the last sender closes the body and completes the response.
     pub fn respond_end(&self, id: u64) -> bool {
-        self.stream_out.lock().unwrap().remove(&id).is_some()
+        self.take_answer(id, |answer| matches!(answer, Answer::Streaming(_))).is_some()
     }
 
     /// The owning PHP thread is going away (script ended, fatal): every request it has not
@@ -373,9 +405,7 @@ impl Reactor {
     /// A half-written stream is dropped with the rest: the client sees a truncated body rather than
     /// a connection that never finishes.
     pub fn fail_pending(&self) -> usize {
-        self.responders.lock().unwrap().drain().count()
-            + self.streams.lock().unwrap().drain().count()
-            + self.stream_out.lock().unwrap().drain().count()
+        self.answers.lock().unwrap().drain().count()
     }
 
     /// Marks the owning PHP thread as alive (watchdog, ADR-0012).
@@ -389,14 +419,14 @@ impl Reactor {
         Duration::from_micros(now.saturating_sub(self.last_active_us.load(Ordering::Relaxed)))
     }
 
-    /// Requests delivered to this thread's loop and not yet answered (ADR-0010).
-    /// Requests this thread owes an answer for. **Every** kind counts: a whole-body response not yet
-    /// sent, a gRPC stream, and a streamed HTTP response still being written. Leaving the last one
-    /// out made a live stream invisible to the three things that read this — dispatch
-    /// (`http::Registry::pick`), `ignis_requests_inflight`, and `drain()`, which then ended a
-    /// graceful shutdown while a client was still receiving (measured: 2 of 5 chunks, V-75).
+    /// Requests this thread owes an answer for, of any kind (ADR-0010).
+    ///
+    /// It is one `len()` because there is one map. When it was three, this counted two of them, so a
+    /// streamed response was invisible to dispatch, to `ignis_requests_inflight` and to `drain()` --
+    /// which ended a graceful shutdown while a client was still receiving, at 2 of 5 chunks (V-75).
+    /// The type is what prevents that now, not the reader remembering a third map.
     pub fn pending_requests(&self) -> usize {
-        self.responders.lock().unwrap().len() + self.streams.lock().unwrap().len() + self.stream_out.lock().unwrap().len()
+        self.answers.lock().unwrap().len()
     }
 
     pub fn server_started(&self) {
@@ -556,6 +586,27 @@ mod tests {
         assert!(!r.respond(id, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
         r.cancel_request(id);
         assert!(r.poll(Some(Duration::from_millis(10))).is_empty(), "an unknown id must not complete again");
+    }
+
+    /// The invariant the single map exists to express: an id is in exactly one state, and
+    /// `respond_start` moves it rather than adding a second entry.
+    #[test]
+    fn respond_start_moves_an_id_from_whole_to_streaming() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (id, _rx) = r.deliver_request_with_id(a_request());
+
+        assert!(r.stream_sender(id).is_none(), "not streaming until respond_start");
+        assert!(r.respond_start(id, 200, vec![], 4));
+        assert_eq!(r.pending_requests(), 1, "moved, not duplicated");
+        assert!(r.stream_sender(id).is_some());
+
+        // The old state is gone: a whole-body answer on a streaming id must be refused.
+        assert!(!r.respond(id, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
+        assert!(!r.stream_send(id, Bytes::from_static(b"x")), "nor is it a gRPC stream");
+
+        assert!(r.respond_end(id));
+        assert_eq!(r.pending_requests(), 0);
     }
 
     #[test]
