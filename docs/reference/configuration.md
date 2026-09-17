@@ -82,6 +82,15 @@ Measured behaviour: 413 on an oversized body, connections closed on both timeout
 under `wrk -c64` against a cap of 8 with the server still healthy afterwards, and a `SIGTERM` drain
 that finished five 1.5 s requests while refusing new connections (V-55, V-56).
 
+!!! note "`IGNIS_OFFLOAD_CLASSES` is per class, not per driver"
+
+    The runtime picks the mechanism when the VM executes `new`, where only the class name exists —
+    the driver is in the DSN, which the constructor has not seen yet. So `PDO` is all-or-nothing:
+    routing it sends `pgsql` to a worker too (2,753 ms against 303 ms for 100 × 200 ms queries),
+    and leaving it alone makes `new PDO('sqlite:…')` block the thread for the file access. Pick by
+    what your application actually uses — the cases are worked through in
+    [Compatibility](../compatibility.md#databases-what-parks-what-is-pooled-and-the-one-choice-you-have-to-make).
+
 ### `IGNIS_PARK` — universal-park policy table
 
 Grammar (comma-separated entries, whitespace around each entry trimmed):

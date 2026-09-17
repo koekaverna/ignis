@@ -186,3 +186,10 @@ refuses regular files (ADR-0024) — so offload is the only mechanism they have,
 the docs would leave a SQLite user with a blocked thread and no explanation. Every place that said
 "curl goes to offload" now says it parks, with the measured numbers; offload is documented only as
 the answer for what park cannot reach. Raised with the owner.
+
+## 2026-09-17 — pdo_sqlite: document the trade, do not build the fix yet (owner)
+
+Owner, asked how to solve it: "пока только обнови документацию и сайт". So the compatibility page
+gets a "Databases" section that works through the four cases an application can be in, the
+configuration reference gets a note explaining why `IGNIS_OFFLOAD_CLASSES` is per class and not per
+driver, and the designed fix is written down as BACKLOG R-PDO-SQLITE with its gate. No code.

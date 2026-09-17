@@ -39,6 +39,43 @@ naming what may park; unset means the built-in seed
 (`libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto`), empty means
 nothing parks.
 
+## Databases: what parks, what is pooled, and the one choice you have to make
+
+| driver | mechanism | why |
+|---|---|---|
+| `pdo_pgsql`, `ext/pgsql`, `Ignis\Pg` | **parks the fiber** | a socket — there is readiness to wait for. 100 concurrent 200 ms queries on one thread: **303 ms** (V-45, V-59) |
+| `pdo_mysql`, `mysqli` | **parks the fiber**, by construction | also a socket, and `mysqlnd` goes through `php_stream`. **Not compiled into the current build**, so this is design, not measurement |
+| `SQLite3` | **offload pool** | a regular file. `epoll` refuses regular files, so nothing can park it ([ADR-0024](concept/non-goals.md)); a worker thread blocks instead of your request thread |
+| `PDO` on `sqlite:` | **blocks the OS thread** by default | see below — this is the one case the runtime cannot decide for you |
+
+### Why `PDO` on SQLite is different
+
+The runtime chooses the mechanism when the VM executes `new`, and it only knows the **class name**
+at that moment: the driver lives in the DSN, which does not exist yet. `SQLite3` is always
+file-backed, so it is routed; `PDO` is not, so routing it would send `pgsql` to a worker as well —
+nine times slower than parking (2,753 ms against 303 ms for the same 100 queries).
+
+So the default routes `SQLite3` and leaves `PDO` alone, and an application that uses
+`new PDO('sqlite:…')` blocks its thread for the length of the file access. That is the same rule
+already in force for `file_get_contents()`, opcache and file sessions — SQLite is not special, it
+was merely exempt by accident until 2026-09-17.
+
+**What to do, depending on your application:**
+
+- **SQLite only in tests, PostgreSQL/MySQL in production** — change nothing. The default is right:
+  production parks, and a blocked thread in a test run costs nothing.
+- **SQLite in production, no socket database** — set `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` and give
+  the pool some workers (`offload = 4`). Every `PDO` then goes to a worker, which is what you want
+  when every `PDO` is SQLite.
+- **Both, under concurrency** — there is no configuration that is right for both, because the
+  setting is per class and not per driver. Use the `SQLite3` class for the SQLite side where you
+  can (it is routed on its own), or accept the blocking on the SQLite side. This is the one real
+  gap, and the fix for it — teaching the proxy to decide from the DSN inside the constructor — is
+  designed but not built (BACKLOG R-PDO-SQLITE).
+- **Read-heavy SQLite on a warm page cache** — measure before you configure anything. A read served
+  from the page cache takes microseconds; the blocking that hurts is `fsync` on write under
+  concurrency.
+
 ## What does not carry over
 
 See [What it is not](concept/non-goals.md) for the full, deliberate list — no durability across
