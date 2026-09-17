@@ -2300,3 +2300,58 @@ to a real tag; after fixing, the dispatch dry run (run 35186677545) passed every
 one that had failed, and proved the audit's other fix — a dispatch publishes no image and creates
 no release. And the session git proxy, recorded in 8ffd758 as refusing tag pushes, accepted this
 one; that constraint no longer holds.
+
+## V-58 — a file lock held across a yield deadlocks the thread; Symfony's cache lock does not (CONFIRMED)
+
+Date: 2026-09-17T06:04:24Z. Asked about Symfony's file locks, both paths measured on this build.
+
+### Symfony's cache stampede lock is safe — because `usleep` parks
+
+`vendor/symfony/cache/LockRegistry.php` never takes a blocking lock: the winner races with
+`flock(LOCK_EX|LOCK_NB)` (`:110`), and a loser polls `flock(LOCK_SH|LOCK_NB)` with
+**`usleep(100_000)`** between attempts (`:144-148`) until a 30 s deadline. `libphp:usleep` is in the
+default park policy (V-46), so the poll suspends the fiber.
+
+`scratchpad/lockprobe.php` — one fiber holds the exclusive lock for 600 ms, three run the loser
+loop, a ticker counts 10 ms sleeps:
+
+| | losers | ticker |
+|---|---|---|
+| park on (default) | 607 / 607 / 608 ms, all proceed | **60 of 60** — the thread kept serving |
+| `IGNIS_NO_UNIVERSAL_PARK=1` | — | **never finished** (killed at 60 s) |
+
+The control is the interesting half: without park, `usleep` blocks the thread, the winner's timer is
+never polled, it never releases, and the losers spin forever. Universal park is what makes Symfony's
+stampede protection work in a worker runtime at all.
+
+### A blocking `flock` held across a yield deadlocks the thread — permanently
+
+This is `ext/session`'s files handler: `flock(LOCK_EX)` at `mod_files.c:210`, held from
+`session_start()` to `session_write_close()`. Two fibers on one thread, the shape of two requests
+from one browser (`scratchpad/flock2.php`):
+
+    [   0 ms] A: holds the lock
+    [  51 ms] B: asking for the lock (blocking flock on a regular file)
+    <nothing further; killed at 12 s>
+
+A takes the lock and yields; B's blocking `flock` cannot park — a regular file is not epoll-able
+(research 30 group (d)) — so it blocks the **OS thread**, so the loop cannot resume A, so the lock
+is never released. Not a stall: a **deadlock**, and the thread is gone until the supervisor notices.
+Both arms hang identically: the second arm's holder "does not await", it only calls
+`usleep(400_000)` — which parks, because park is on. **Park widens the window**: far more code
+yields than a php-fpm developer expects, so "I hold this lock only briefly" stops being true.
+
+R-SESS said "stalls a thread for as long as the other request holds the session". That was too
+kind and is corrected: it hangs the thread for good.
+
+### The rule this establishes
+
+A lock a fiber can hold across a yield must live where park can see the wait — on a socket
+(Redis, PostgreSQL) — or inside the runtime. Never on a file. Symfony's cache obeys it by accident
+(non-blocking + `usleep`); `ext/session`'s files handler does not.
+
+Not measured here: whether `session_start()` under the embed SAPI reaches that `flock` at all —
+the probe hit `Session cannot be started after headers have already been sent`
+(`php_embed_init()` pins `SG(headers_sent)`, which is why `php/classic.php` handles session cookies
+itself). The lock mechanism is measured above with `flock` directly; what an actual Symfony session
+does end to end still needs its own test before any claim is made about it.
