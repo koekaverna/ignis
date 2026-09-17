@@ -582,6 +582,10 @@ final class Loop
                 \ignis_respond($id, $response->status, $response->headers, $response->body);
             }
             } finally {
+                // The request is over: drop its fiber-scoped state before this fiber goes back to
+                // the pool. Without it the next request on the same fiber inherits the last one's
+                // security token, EntityManager and database lease (V-67, V-68).
+                Scope::clear();
                 // The slot is released after the answer is on its way, and the next waiting
                 // request is admitted from here — the loop needs no extra wait point for it.
                 --self::$inflightRequests;
@@ -708,6 +712,25 @@ final class Scope
             return self::$main[$key] ?? $default;
         }
         return (self::$map?->offsetExists($fiber) ? self::$map[$fiber] : [])[$key] ?? $default;
+    }
+
+    /**
+     * Drops everything this fiber holds. Called once per request (`admitRequest`), because a fiber
+     * outlives the request that used it: the loop keeps parked fibers and hands them to the next
+     * request, so without this "per fiber" silently means "per fiber, forever" — measured in V-67,
+     * where request n+1 read request n's value on the same fiber id. Anything holding a resource
+     * (an `Ignis\Pg` lease) releases through its destructor when the reference goes.
+     */
+    public static function clear(): void
+    {
+        $fiber = \Fiber::getCurrent();
+        if ($fiber === null) {
+            self::$main = [];
+            return;
+        }
+        if (self::$map?->offsetExists($fiber)) {
+            self::$map[$fiber] = [];
+        }
     }
 }
 

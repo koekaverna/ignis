@@ -13,6 +13,7 @@ composer config platform.php 8.5.10
 composer config repositories.ignis '{"type":"path","url":"/opt/ignis/php/packages/*","options":{"symlink":false}}'
 composer require ignis/runtime:@dev ignis/symfony-runtime:@dev --no-scripts
 composer config extra.runtime.class 'Ignis\Symfony\IgnisRuntime'
+# then add Ignis\Symfony\IgnisBundle::class => ['all' => true] to config/bundles.php
 composer dump-autoload
 mkdir -p var && chmod -R a+rwX var
 ```
@@ -52,10 +53,33 @@ docker run -p 8080:8080 \
 
 ## Fiber-scoped state
 
-`RequestStack` and the request-scoped services Symfony's DI container hands out are fiber-scoped
-(V-16): two interleaved requests never observe each other's `Request` object, even though both are
-running on the same OS thread at the same time. This is the [context](../concept/mechanisms.md)
-mechanism, applied to the framework's own state on top of PHP's superglobals.
+Register the bundle — without it the container's request-scoped singletons are shared by every
+fiber, and for the security token that is a privilege-escalation bug, not a slowdown (V-68):
+
+```php
+// config/bundles.php
+Ignis\Symfony\IgnisBundle::class => ['all' => true],
+```
+
+It makes `request_stack` (ADR-0011, V-16) and `security.token_storage` (V-68) per fiber, so two
+interleaved requests never observe each other's `Request` or authenticated user even though both run
+on the same OS thread at the same time. This is the [context](../concept/mechanisms.md) mechanism
+applied to the framework's own state, on top of PHP's superglobals.
+
+!!! warning "Only the listed services are covered"
+
+    An earlier version of this page said "`RequestStack` **and the request-scoped services
+    Symfony's DI container hands out** are fiber-scoped". The second half was false and V-68
+    measured it: every container singleton that keeps per-request state is shared by all fibers
+    until something scopes it. Symfony's own `kernel.reset` tag is the inventory of such services,
+    and resetting cannot help between *overlapping* requests — `Kernel::boot()` only resets when
+    nothing else is in flight, which under load is never (research 36).
+
+    The services scoped today are `request_stack`, `security.token_storage` and
+    `security.untracked_token_storage`. `$_SESSION` is **not** one of the four superglobals the
+    runtime swaps per fiber, so two overlapping requests share it (V-67) — and `session_start()`
+    does not work under the embed SAPI at all, so server-side sessions are a non-goal here
+    (ADR-0038). Doctrine's `EntityManager` is next and is not scoped yet.
 
 ## Deployment
 

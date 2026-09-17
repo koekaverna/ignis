@@ -2825,3 +2825,66 @@ thread-global array that any code writing to it directly shares across every fib
 So the honest statement is two sentences, not one: sessions do not work here, which is already
 ADR-0038/R-SESS and is documented; and `$_SESSION` used as a plain array is shared across
 overlapping requests, which was not documented and now is.
+
+## V-68 — a parked request resumes as whoever authenticated meanwhile; fixed and re-measured (CONFIRMED)
+
+Date: 2026-09-17T13:0xZ. ADR-0011's kill criterion, reached: "any framework service that keeps
+request state outside `RequestStack`". Found by an agent, **re-run by main before being recorded**
+(rule C15), fix written and re-run again.
+
+### The defect
+
+A minimal Symfony app (framework-bundle 7.4.19, security-bundle 7.4.18, security-core 8.1.6,
+http-kernel 8.1.7) on one PHP thread, stateless `http_basic`, two users: `alice` (ROLE_USER) and
+`bob` (ROLE_USER + ROLE_ADMIN). `/whoami` reads the token, calls `Ignis\sleep(300)`, reads it again.
+`alice`'s request is fired 100 ms before `bob`'s, so `bob` runs entirely inside `alice`'s park:
+
+```
+A1 {"tag":"A1-alice","fiber":16,
+    "before":{"token_storage":"alice","security_getUser":"alice","request_user":"alice","is_admin":false},
+    "after": {"token_storage":"bob",  "security_getUser":"bob",  "request_user":"alice","is_admin":true},
+    "leaked":true}
+== A-side leaks: 5 / 5        (main's re-run; the agent measured 10 / 10)
+```
+
+`isGranted('ROLE_ADMIN')` is **false before the await and true after it, inside a non-admin's
+request** — privilege escalation, not a mislabelled username. Symmetric: with the roles reversed the
+admin loses the role mid-request, so it is a plain overwrite, not a directional race.
+
+Cause: `Symfony\…\Token\Storage\TokenStorage` keeps the token in a private property of a **shared**
+service (the compiled container has `$container->services['security.token_storage'] ??= new
+TokenStorage()`, injected into the authenticator manager, the access listener, the exception
+listener, the value resolvers). The firewall writes it once per request and nothing restores it.
+
+**Why it was easy to miss:** every `$request`-shaped check still passes. `Request::getUser()` is a
+per-fiber superglobal (ADR-0006) and `RequestStack::getCurrentRequest()` is our `FiberRequestStack`
+(ADR-0011) — both stayed `alice` in the same responses that leaked. V-16 tested exactly those and
+never installed security-bundle; `bench/e8-symfony.sh` measures boot and throughput only.
+
+### The fix, and why it is two changes
+
+1. `Ignis\Symfony\FiberTokenStorage` — the token moves into `Ignis\Scope`, the same move ADR-0011
+   makes for the request stack. Installed at `security.token_storage` and
+   `security.untracked_token_storage` by `FiberScopePass`, registered by `Ignis\Symfony\IgnisBundle`.
+2. `Ignis\Scope::clear()`, called once per request in `Loop::admitRequest`'s outer `finally`. Without
+   it the fix is only half a fix: V-67 measured that a pooled fiber carries its scope into the *next*
+   request, so a request behind no firewall would inherit the previous user's token on that fiber.
+
+Re-measured with the bundle registered, same harness, same 5 pairs:
+
+```
+alice after: {"token_storage":"alice","security_getUser":"alice","is_admin":false}  leaked=false
+bob   after: {"token_storage":"bob",  "security_getUser":"bob",  "is_admin":true}   leaked=false
+== A-side leaks: 0 / 5
+```
+
+Authentication still works (bob is still an admin) — the fix scopes the token, it does not disable
+anything.
+
+Gates after the change: `cargo nextest` 9/9, `scripts/smoke.sh` **GREEN** (E1/E2/E6/E7/E11/E12/E13
+all within bars, E7 `differing=0`, hello 48,659 rps).
+
+**Not covered, and stated so:** one thread only; stateless `http_basic` only — no session-backed
+firewall, no `ContextListener`, no `UsageTrackingTokenStorage` in play; and the other stateful
+singletons are untouched — Doctrine's identity map, the translator's locale, profiler collectors,
+Monolog buffers. `$_SESSION` is separate and covered by V-67.
