@@ -130,9 +130,9 @@ jobs:
       # --prefer-source stays for revolt only: its DriverTest needs vendor/revolt/event-loop/test/,
       # which the dist archive does not carry.
       - name: composer install (E7 Revolt/AMPHP examples)
-        run: cd php/packages/revolt && timeout 600 composer install --prefer-source --no-interaction --quiet
+        run: cd php/packages/revolt && timeout 600 /opt/php85-zts/bin/php "$(command -v composer)" install --prefer-source --no-interaction --quiet
       - name: composer install (the php/ monorepo and its dev tooling)
-        run: cd php && timeout 900 composer install --no-interaction --quiet
+        run: cd php && timeout 900 /opt/php85-zts/bin/php "$(command -v composer)" install --no-interaction --quiet
       - name: smoke (every step under timeout)
         run: PGHOST=postgres timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
       - uses: actions/upload-artifact@v4
@@ -155,7 +155,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: composer install
-        run: cd php && timeout 900 composer install --no-interaction --no-progress
+        run: cd php && timeout 900 /opt/php85-zts/bin/php "$(command -v composer)" install --no-interaction --no-progress
       # php -l runs under the 8.5.10 ZTS build, the engine that actually runs this code. The vendor
       # tools run under the image's stock php: php-cs-fixer refuses to start above its supported max.
       # `find`, not `git ls-files` -- the latter fails in a container with "dubious ownership".
@@ -184,7 +184,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: composer install
-        run: cd php && timeout 900 composer install --no-interaction --no-progress
+        run: cd php && timeout 900 /opt/php85-zts/bin/php "$(command -v composer)" install --no-interaction --no-progress
       # Two hosts on purpose, and they are not redundant: the stock 8.3.6 proves the suite is
       # host-agnostic and that phpunit.xml is honoured, and the 8.5.10 ZTS build is the engine we
       # ship on, where the coverage number is therefore taken.
@@ -272,7 +272,7 @@ jobs:
       - name: Revolt DriverTest on IgnisDriver
         if: matrix.suite == 'revolt'
         run: |
-          (cd php/packages/revolt && timeout 600 composer install --prefer-source --no-interaction --quiet)
+          (cd php/packages/revolt && timeout 600 /opt/php85-zts/bin/php "$(command -v composer)" install --prefer-source --no-interaction --quiet)
           timeout 900 bench/e15-revolt.sh 2>&1 | tee /tmp/e15-revolt.log
           scripts/ci-gate.sh revolt /tmp/e15-revolt.log
       - name: Swoole swoole_runtime through the shim

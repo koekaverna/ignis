@@ -1,6 +1,15 @@
 {
     "name": "ignis/revolt",
     "description": "Revolt event-loop driver backed by the Ignis reactor (E7): AMPHP libraries run unchanged, every await is a parked fiber.",
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../runtime",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
     "require": {
         "php": ">=8.1",
         "revolt/event-loop": "^1.0",
