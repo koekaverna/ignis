@@ -83,12 +83,21 @@ Worse: we now depend on sdk-php's **internal** command model. `HostConnectionInt
 upstream promises they are stable. The mitigations are a pinned version, the conformance test as a
 gate, and offering the package upstream so the coupling becomes theirs to maintain.
 
-Also worse, and listed so nobody discovers it in production: queries, updates, cancellation, child
-workflows, local activities, heartbeats and `SideEffect`/`GetVersion` are **not translated yet** —
-each needs one arm in `CoreCodec` and, for those with no counterpart in our Rust translation layer,
-one `workflow_command::Variant` in `backend/temporal.rs`. `ext-grpc` is absent, so sdk-php's
-`WorkflowClient` cannot start workflows from PHP here; starting belongs on the Rust side, which
-already links `temporalio-client`.
+Scope, kept current (V-62 extended the first list): activities, timers, signals, **updates with
+their validator**, **local activities**, **queries** and **activity heartbeats** are translated and
+tested; cancellation and child workflows are translated but not yet exercised end to end;
+`SideEffect`, `GetVersion` (patches), `ContinueAsNew`, Nexus and external-workflow signal/cancel are
+not translated at all. `SideEffect` and `GetVersion` are the two that cannot be a simple arm —
+core-based SDKs have no `SideEffect` command, and `GetVersion` has to be answered inside the same
+activation from `NotifyHasPatch` plus a `SetPatchMarker`, which is a design question rather than a
+translation. `ext-grpc` is absent, so sdk-php's `WorkflowClient` cannot start workflows from PHP
+here; starting belongs on the Rust side, which already links `temporalio-client`.
+
+Three things were learned the hard way and are worth keeping in the ADR because they are what makes
+this more than renaming fields: an update's answer is a `ResponseInterface`, not a request, so a
+transport that filters on `RequestInterface` silently drops every update; core's update response
+wants a `protocol_instance_id` that sdk-php never sees; and query answers carry the **run** id, so
+several queries in one activation can only be matched by order.
 
 ## Kill criterion
 

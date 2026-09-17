@@ -2554,3 +2554,56 @@ E7 (`| grep … || true`). Filed as an observation, not fixed here.
 
 **Deleted, not deprecated:** the retired `php/symfony/worker.php` shim is gone rather than kept as a
 migration note — owner's call, no back-compat before the first stable release.
+
+## V-62 — updates, local activities, queries and heartbeats on the core transport (CONFIRMED)
+
+Date: 2026-09-17T13:0xZ. The owner mapped a real workflow against the transport and named what it
+needs: `#[SignalMethod]` (already working), `#[UpdateMethod]` ×3, `#[LocalActivityInterface]`, and
+the general "cancellation / child workflows / queries / heartbeats". All of those are now
+translated; the first four are tested.
+
+Build: `PROTOC=$HOME/.local/protoc/bin/protoc cargo build --release -p ignis --features temporal`
+(protoc was missing on this box entirely — with only the binary and no `include/`, prost fails on
+`google/protobuf/field_mask.proto`; the whole release directory is needed).
+
+**One defect, and it was mine.** sdk-php answers an update with `UpdateResponse`, which implements
+`ResponseInterface`, **not** `RequestInterface` — and `CoreCodec::encode()` filtered on
+`RequestInterface`. Every update was therefore dropped silently. That is exactly the failure mode the
+"throw by name" rule was written for, and it slipped through because the drop happened before the
+switch that throws.
+
+**New on the Rust side** (`backend/temporal.rs`, one `workflow_command::Variant` each):
+`ScheduleLocalActivity`, `UpdateAccepted`/`UpdateRejected`/`UpdateCompleted`, `RespondToQuery`,
+`CancelTimer`, `CancelActivity`, `CancelLocalActivity`, `StartChildWorkflow`,
+`CancelChildWorkflow`, `CancelWorkflow`; plus `ignis_temporal_heartbeat()`, which is synchronous and
+returns no op because core's `record_activity_heartbeat` only enqueues.
+
+**New on the PHP side**: the arms above, `CoreRpc` (sdk-php's third seam,
+`RPCConnectionInterface` — the only thing an activity body reaches on its own) and the optional
+`HeartbeatSink` a host implements to accept them.
+
+`bench/e20-sdkphp.sh`, temporal/sdk **v2.19**, 23 of 23 checks green **under the ignis binary and
+under stock PHP**. Scenario 2 drives a stock workflow with `#[UpdateMethod]` + its validator, a
+`#[LocalActivityInterface(prefix: 'projection.')]` activity, a `#[QueryMethod]`, and a heartbeat
+from a plain activity:
+
+| activation | completion |
+|---|---|
+| `InitializeWorkflow` (workflow parks on `Workflow::await`) | no commands |
+| `DoUpdate{id:u-1, protocol_instance_id:pi-1, run_validator:true}` | `UpdateAccepted{pi-1}`, `ScheduleLocalActivity{seq:1, activity_type:"projection.jobStarted"}` |
+| `QueryWorkflow{query_id:q-1, state}` | `RespondToQuery{q-1, "new"}` |
+| activity task, `is_local:true` | routed to sdk-php's **local** handler, result `"started:x"` |
+| `ResolveActivity{seq:1, is_local:true}` | `UpdateCompleted{pi-1, "ok:x"}`, `CompleteWorkflow{"ok:x"}` |
+| activity task calling `Activity::getCurrentContext()->heartbeat(['at'=>'beat'])` | the host received one heartbeat with the token and the detail |
+
+**Two correlations that are not renames**, recorded because they are the real content of this work:
+core's update response wants `protocol_instance_id`, which sdk-php never sees (the map lives in the
+codec); and every sdk-php response to a process-aware route carries the **run** id, so several
+queries in one activation are matched first-in-first-out — the same thing RoadRunner's protocol does
+with the same frames.
+
+**Still not claimed:** a live run against a Temporal server or a replay under this transport (no dev
+server on this box). Cancellation and child workflows are translated but not exercised end to end.
+`SideEffect` and `GetVersion` are not translated and are not simple arms — core-based SDKs have no
+`SideEffect`, and `GetVersion` must be answered inside the same activation from `NotifyHasPatch`
+plus `SetPatchMarker`.

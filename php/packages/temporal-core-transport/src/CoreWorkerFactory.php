@@ -1,7 +1,7 @@
 <?php
 
 /**
- * `WorkerFactory` with the codec swapped. `createCodec()` is private and picks Json/Proto from
+ * `WorkerFactory` with the codec and the RPC connection swapped. `createCodec()` is private and picks Json/Proto from
  * `$_SERVER['RR_CODEC']`, but `$codec` is a protected property, so a subclass can install its own
  * after construction — which is the whole reason this transport needs no fork of sdk-php.
  */
@@ -20,7 +20,7 @@ final class CoreWorkerFactory extends WorkerFactory
     public static function forSource(ActivationSource $source): self
     {
         /** @var self $factory */
-        $factory = self::create(DataConverter::createDefault());
+        $factory = self::create(DataConverter::createDefault(), new CoreRpc($source));
         $factory->coreCodec = new CoreCodec($factory->converter, $source->taskQueue(), $source->namespace());
         $factory->codec = $factory->coreCodec;
 

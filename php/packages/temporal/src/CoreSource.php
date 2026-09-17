@@ -22,17 +22,18 @@ namespace Ignis\Temporal;
 
 use Ignis\Loop;
 use Temporal\Worker\Transport\Core\ActivationSource;
+use Temporal\Worker\Transport\Core\HeartbeatSink;
 use Temporal\Worker\Transport\Core\CoreWorkerFactory;
 use Temporal\Worker\WorkerInterface;
 
 if (!\interface_exists(ActivationSource::class)) {
     // the package's own autoloader is not in play (SDKPHP_VENDOR points at another vendor/)
-    foreach (['ActivationSource', 'CoreCodec', 'CoreHost', 'CoreWorkerFactory'] as $class) {
+    foreach (['ActivationSource', 'HeartbeatSink', 'CoreCodec', 'CoreRpc', 'CoreHost', 'CoreWorkerFactory'] as $class) {
         require_once __DIR__ . "/../../temporal-core-transport/src/{$class}.php";
     }
 }
 
-final class CoreSource implements ActivationSource
+final class CoreSource implements ActivationSource, HeartbeatSink
 {
     public function __construct(
         private readonly int $worker,
@@ -63,6 +64,21 @@ final class CoreSource implements ActivationSource
         self::await($kind === self::ACTIVITY
             ? \ignis_temporal_complete_activity($this->worker, $json)
             : \ignis_temporal_complete($this->worker, $json));
+    }
+
+    /**
+     * Synchronous on purpose: core's `record_activity_heartbeat` only enqueues, so there is nothing
+     * to await and no fiber to park. The empty return says "still running" — core reports activity
+     * cancellation on the task stream, never through this call.
+     */
+    public function heartbeat(string $taskToken, array $details): array
+    {
+        \ignis_temporal_heartbeat($this->worker, \json_encode([
+            'task_token' => \array_values(\unpack('C*', $taskToken)),
+            'details' => $details,
+        ], \JSON_THROW_ON_ERROR));
+
+        return [];
     }
 
     public function taskQueue(): string

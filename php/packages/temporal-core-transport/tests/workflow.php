@@ -42,3 +42,71 @@ class GreetActivity
         return "Hello, {$name}!";
     }
 }
+
+/**
+ * The second fixture covers what a real workflow actually reaches for beyond activities and timers:
+ * an update with a validator, a **local** activity, a query, and a heartbeat from a plain activity.
+ * Still stock sdk-php — the point is that none of it knows about the transport.
+ */
+#[WorkflowInterface]
+class FeatureWorkflow
+{
+    private string $state = 'new';
+    private ?string $result = null;
+
+    #[WorkflowMethod]
+    public function handle()
+    {
+        yield Workflow::await(fn(): bool => $this->result !== null);
+
+        return $this->result;
+    }
+
+    #[Workflow\QueryMethod('state')]
+    public function state(): string
+    {
+        return $this->state;
+    }
+
+    #[Workflow\UpdateMethod('submit')]
+    public function submit(string $value)
+    {
+        $projection = Workflow::newActivityStub(
+            ProjectionActivity::class,
+            \Temporal\Activity\LocalActivityOptions::new()->withStartToCloseTimeout(5),
+        );
+        $started = yield $projection->jobStarted($value);
+        $this->state = $started;
+        $this->result = "ok:{$value}";
+
+        return $this->result;
+    }
+
+    #[Workflow\UpdateValidatorMethod('submit')]
+    public function validateSubmit(string $value): void
+    {
+        $value === '' and throw new \InvalidArgumentException('value must not be empty');
+    }
+}
+
+#[\Temporal\Activity\LocalActivityInterface(prefix: 'projection.')]
+class ProjectionActivity
+{
+    #[ActivityMethod]
+    public function jobStarted(string $value): string
+    {
+        return "started:{$value}";
+    }
+}
+
+#[ActivityInterface]
+class HeartbeatActivity
+{
+    #[ActivityMethod]
+    public function work(string $value): string
+    {
+        \Temporal\Activity::getCurrentContext()->heartbeat(['at' => $value]);
+
+        return "worked:{$value}";
+    }
+}

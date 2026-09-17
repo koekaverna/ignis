@@ -6,16 +6,22 @@
  * The two number things differently, and that is the whole job. sdk-php gives every outgoing
  * request one monotonic **id** and waits for the host to answer that id. sdk-core numbers commands
  * by **seq, per run**, and reports resolutions as activation *jobs*. So this codec keeps, per run,
- * `id -> seq` and `seq -> id`, and turns `resolveActivity{seq}` back into the success or failure
- * response for the id sdk-php used when it asked.
+ * `seq -> id` (to resolve) and `id -> seq` (to cancel), plus the kind of each, because cancelling
+ * an activity, a local activity, a timer and a child workflow are four different core commands.
  *
  * No protobuf ever reaches the wire here: payloads arrive as `{"metadata":{k:b64},"data":b64}` and
  * are handed to sdk-php as `Payload` objects built with setters, so the DataConverter still owns
  * decoding (custom converters and codecs keep working) without a serialize/parse round trip.
  *
- * Scope: what sdk-core's Rust side already translates (research 35 §4) — start, activities,
- * timers, completion, failure, eviction, signals. Anything else makes `encode()` throw by name
- * rather than silently drop a command, because a dropped command is a workflow that hangs.
+ * Two correlations have no id at all and are handled by name:
+ *
+ *   - **updates.** `DoUpdate` carries both the update id sdk-php will quote back and the
+ *     `protocol_instance_id` core wants in the response. sdk-php only knows the first, so the map
+ *     lives here.
+ *   - **queries.** Every sdk-php response to a process-aware route carries the *run* id, not a
+ *     query id, so several queries in one activation are indistinguishable by id. Core delivers
+ *     queries in their own activation and sdk-php answers them in registration order, so they are
+ *     matched first-in-first-out — the same thing RoadRunner's protocol does with the same frames.
  */
 
 declare(strict_types=1);
@@ -27,7 +33,9 @@ use Temporal\Api\Common\V1\Payloads;
 use Temporal\DataConverter\DataConverterInterface;
 use Temporal\DataConverter\EncodedValues;
 use Temporal\DataConverter\ValuesInterface;
+use Temporal\Exception\Failure\CanceledFailure;
 use Temporal\Worker\Transport\Codec\CodecInterface;
+use Temporal\Worker\Transport\Command\Client\UpdateResponse;
 use Temporal\Worker\Transport\Command\CommandInterface;
 use Temporal\Worker\Transport\Command\RequestInterface;
 use Temporal\Worker\Transport\Command\Server\FailureResponse;
@@ -39,7 +47,12 @@ final class CoreCodec implements CodecInterface
 {
     private const NS = 1_000_000_000;
 
-    /** @var array<string, array{seq:int, bySeq:array<int, int|string>}> run id => correlation state */
+    private const ACTIVITY = 'activity';
+    private const LOCAL_ACTIVITY = 'local_activity';
+    private const TIMER = 'timer';
+    private const CHILD = 'child';
+
+    /** @var array<string, array{seq:int, bySeq:array<int,array{id:int|string,kind:string}>, byId:array<int|string,array{seq:int,kind:string}>, childStart:array<int,int|string>, queries:list<string>, updates:array<string,string>}> */
     private array $runs = [];
 
     /** The batch being decoded/encoded right now; set by CoreHost before each dispatch. */
@@ -76,6 +89,17 @@ final class CoreCodec implements CodecInterface
             : $this->encodeCompletion($commands);
     }
 
+    /**
+     * The loop's last resort: sdk-php threw out of `dispatch()`. Answer the task with a failure
+     * rather than nothing, so core fails the run now instead of at its task timeout.
+     */
+    public function encodeFailure(\Throwable $error): string
+    {
+        return $this->kind === ActivationSource::ACTIVITY
+            ? \json_encode(['task_token' => $this->taskToken, 'result' => null, 'failure' => $error->getMessage()], \JSON_THROW_ON_ERROR)
+            : \json_encode(['run_id' => $this->runId, 'commands' => [['cmd' => 'FailWorkflow', 'message' => $error->getMessage()]]], \JSON_THROW_ON_ERROR);
+    }
+
     // ---------------------------------------------------------------- workflow activations
 
     /** @return list<ServerRequest|SuccessResponse|FailureResponse> */
@@ -98,7 +122,7 @@ final class CoreCodec implements CodecInterface
 
             switch ($name) {
                 case 'InitializeWorkflow':
-                    $this->runs[$runId] = ['seq' => 0, 'bySeq' => []];
+                    $this->reset($runId);
                     $out[] = new ServerRequest(
                         name: 'StartWorkflow',
                         info: $info,
@@ -115,19 +139,35 @@ final class CoreCodec implements CodecInterface
                     }
                     break;
 
+                // Local activities resolve through this job too, with `is_local` set; the seq map
+                // does not care which kind it was.
                 case 'ResolveActivity':
                     $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
+                    if ($id !== null) {
+                        $out[] = $this->resolution($d['result'] ?? [], $id, $info);
+                    }
+                    break;
+
+                case 'ResolveChildWorkflowExecutionStart':
+                    $seq = (int) ($d['seq'] ?? 0);
+                    $id = $this->runs[$runId]['childStart'][$seq] ?? null;
+                    unset($this->runs[$runId]['childStart'][$seq]);
                     if ($id === null) {
                         break;
                     }
-                    $status = $d['result']['status'] ?? [];
-                    if (isset($status['Completed'])) {
-                        $result = $status['Completed']['result'] ?? null;
-                        $out[] = new SuccessResponse($this->values($result === null ? [] : [$result]), $id, $info);
-                    } else {
-                        $kind = \array_key_first($status) ?? 'Failed';
-                        $message = $status[$kind]['failure']['message'] ?? 'activity ' . \strtolower((string) $kind);
-                        $out[] = new FailureResponse(new \RuntimeException($message), $id, $info);
+                    $status = \array_key_first($d['status'] ?? []) ?? 'Succeeded';
+                    $out[] = $status === 'Succeeded'
+                        ? new SuccessResponse(EncodedValues::fromValues([[
+                            'ID' => $d['status']['Succeeded']['child_workflow_id'] ?? '',
+                            'RunID' => $d['status']['Succeeded']['run_id'] ?? '',
+                        ]], $this->converter), $id, $info)
+                        : new FailureResponse(new \RuntimeException((string) ($d['status'][$status]['failure']['message'] ?? 'child workflow did not start')), $id, $info);
+                    break;
+
+                case 'ResolveChildWorkflowExecution':
+                    $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
+                    if ($id !== null) {
+                        $out[] = $this->resolution($d['result'] ?? [], $id, $info);
                     }
                     break;
 
@@ -137,6 +177,46 @@ final class CoreCodec implements CodecInterface
                         info: $info,
                         options: ['name' => $d['signal_name'] ?? '', 'runId' => $runId],
                         payloads: $this->values($d['input'] ?? []),
+                        id: $runId,
+                    );
+                    break;
+
+                case 'QueryWorkflow':
+                    $this->runs[$runId]['queries'][] = (string) ($d['query_id'] ?? '');
+                    $out[] = new ServerRequest(
+                        name: 'InvokeQuery',
+                        info: $info,
+                        options: ['name' => $d['query_type'] ?? '', 'runId' => $runId],
+                        payloads: $this->values($d['arguments'] ?? []),
+                        id: $runId,
+                    );
+                    break;
+
+                case 'DoUpdate':
+                    $updateId = (string) ($d['id'] ?? '');
+                    $this->runs[$runId]['updates'][$updateId] = (string) ($d['protocol_instance_id'] ?? $updateId);
+                    $out[] = new ServerRequest(
+                        name: 'InvokeUpdate',
+                        info: $info,
+                        options: [
+                            'updateId' => $updateId,
+                            'name' => $d['name'] ?? '',
+                            'runId' => $runId,
+                            // sdk-php reads this as "skip the validator"; core says so by clearing
+                            // run_validator during replay.
+                            'replay' => !($d['run_validator'] ?? true),
+                        ],
+                        payloads: $this->values($d['input'] ?? []),
+                        id: $runId,
+                    );
+                    break;
+
+                case 'CancelWorkflow':
+                    $out[] = new ServerRequest(
+                        name: 'CancelWorkflow',
+                        info: $info,
+                        options: ['runId' => $runId],
+                        payloads: $this->values($d['details'] ?? []),
                         id: $runId,
                     );
                     break;
@@ -151,8 +231,8 @@ final class CoreCodec implements CodecInterface
                     );
                     break;
 
-                // UpdateRandomSeed / NotifyHasPatch carry nothing sdk-php acts on here; queries,
-                // updates and cancellation are not translated yet (research 35 §5).
+                // UpdateRandomSeed / NotifyHasPatch carry nothing sdk-php acts on through this
+                // transport; Nexus is out of scope.
             }
         }
 
@@ -162,20 +242,47 @@ final class CoreCodec implements CodecInterface
     /** @param iterable<CommandInterface> $commands */
     private function encodeCompletion(iterable $commands): string
     {
+        $runId = $this->runId;
         $out = [];
+
         foreach ($commands as $c) {
-            if (!$c instanceof RequestInterface) {
-                continue;   // acks for StartWorkflow/DestroyWorkflow: core has no counterpart
+            // Updates answer with a ResponseInterface, not a request, so they must be matched
+            // before the request switch — this is exactly what made updates look untranslatable.
+            if ($c instanceof UpdateResponse) {
+                $out[] = $this->updateResponse($runId, $c);
+                continue;
             }
+
+            if (!$c instanceof RequestInterface) {
+                // A response to one of our ServerRequests. A query's answer is a real command;
+                // acks for StartWorkflow/InvokeSignal/DestroyWorkflow have no counterpart in core.
+                // The run's state is already gone after a RemoveFromCache job, and the ack for
+                // DestroyWorkflow arrives here — so read through it, never into it.
+                if (($this->runs[$runId]['queries'] ?? []) !== []) {
+                    $out[] = $this->queryResult((string) \array_shift($this->runs[$runId]['queries']), $c);
+                }
+                continue;
+            }
+
             $options = $c->getOptions();
 
             switch ($c->getName()) {
                 case 'ExecuteActivity':
                     $out[] = [
                         'cmd' => 'ScheduleActivity',
-                        'seq' => $this->nextSeq($this->runId, $c->getID()),
+                        'seq' => $this->nextSeq($runId, $c->getID(), self::ACTIVITY),
                         'activity_type' => (string) ($options['name'] ?? ''),
                         'task_queue' => (string) ($options['options']['TaskQueueName'] ?? $this->taskQueue),
+                        'args' => $this->payloads($c->getPayloads()),
+                        'start_to_close_sec' => $this->seconds($options['options']['StartToCloseTimeout'] ?? null, 30),
+                    ];
+                    break;
+
+                case 'ExecuteLocalActivity':
+                    $out[] = [
+                        'cmd' => 'ScheduleLocalActivity',
+                        'seq' => $this->nextSeq($runId, $c->getID(), self::LOCAL_ACTIVITY),
+                        'activity_type' => (string) ($options['name'] ?? ''),
                         'args' => $this->payloads($c->getPayloads()),
                         'start_to_close_sec' => $this->seconds($options['options']['StartToCloseTimeout'] ?? null, 30),
                     ];
@@ -184,17 +291,48 @@ final class CoreCodec implements CodecInterface
                 case 'NewTimer':
                     $out[] = [
                         'cmd' => 'StartTimer',
-                        'seq' => $this->nextSeq($this->runId, $c->getID()),
+                        'seq' => $this->nextSeq($runId, $c->getID(), self::TIMER),
                         'ms' => (int) ($options['ms'] ?? 0),
                     ];
+                    break;
+
+                case 'ExecuteChildWorkflow':
+                    $out[] = [
+                        'cmd' => 'StartChildWorkflow',
+                        'seq' => $this->nextSeq($runId, $c->getID(), self::CHILD),
+                        'workflow_type' => (string) ($options['name'] ?? ''),
+                        'workflow_id' => (string) ($options['options']['WorkflowID'] ?? \uniqid('child-', true)),
+                        'task_queue' => (string) ($options['options']['TaskQueueName'] ?? $this->taskQueue),
+                        'args' => $this->payloads($c->getPayloads()),
+                    ];
+                    break;
+
+                case 'GetChildWorkflowExecution':
+                    // No command: this one is answered when core reports the child has started.
+                    // It names the ExecuteChildWorkflow request it belongs to.
+                    $seq = $this->runs[$runId]['byId'][$options['id'] ?? '']['seq'] ?? null;
+                    if ($seq !== null) {
+                        $this->runs[$runId]['childStart'][$seq] = $c->getID();
+                    }
+                    break;
+
+                case 'Cancel':
+                    foreach ($options['ids'] ?? [] as $id) {
+                        $cmd = $this->cancelOf($runId, $id);
+                        if ($cmd !== null) {
+                            $out[] = $cmd;
+                        }
+                    }
                     break;
 
                 case 'CompleteWorkflow':
                     $failure = $this->failureOf($c);
                     $payloads = $this->payloads($c->getPayloads());
-                    $out[] = $failure === null
-                        ? ['cmd' => 'CompleteWorkflow', 'result' => $payloads[0] ?? null]
-                        : ['cmd' => 'FailWorkflow', 'message' => $failure->getMessage()];
+                    $out[] = match (true) {
+                        $failure === null => ['cmd' => 'CompleteWorkflow', 'result' => $payloads[0] ?? null],
+                        $failure instanceof CanceledFailure => ['cmd' => 'CancelWorkflow'],
+                        default => ['cmd' => 'FailWorkflow', 'message' => $failure->getMessage()],
+                    };
                     break;
 
                 case 'Panic':
@@ -205,13 +343,68 @@ final class CoreCodec implements CodecInterface
                     // Loud on purpose: a dropped command is a workflow that hangs until its task
                     // timeout, which is a much worse bug to find than this exception.
                     throw new \LogicException(\sprintf(
-                        'sdk-php asked the host for "%s"; this core transport does not translate it yet (research 35 §3).',
+                        'sdk-php asked the host for "%s"; this core transport does not translate it (research 35 §3).',
                         $c->getName(),
                     ));
             }
         }
 
-        return \json_encode(['run_id' => $this->runId, 'commands' => $out], \JSON_THROW_ON_ERROR);
+        return \json_encode(['run_id' => $runId, 'commands' => $out], \JSON_THROW_ON_ERROR);
+    }
+
+    /** `UpdateValidated`/`UpdateCompleted` -> core's accepted / rejected / completed. */
+    private function updateResponse(string $runId, UpdateResponse $c): array
+    {
+        $updateId = (string) ($c->getOptions()['id'] ?? '');
+        $instance = $this->runs[$runId]['updates'][$updateId] ?? $updateId;
+        $failure = $c->getFailure();
+
+        if ($failure !== null) {
+            return ['cmd' => 'UpdateRejected', 'protocol_instance_id' => $instance, 'message' => $failure->getMessage()];
+        }
+        if ($c->getCommand() === UpdateResponse::COMMAND_VALIDATED) {
+            return ['cmd' => 'UpdateAccepted', 'protocol_instance_id' => $instance];
+        }
+
+        $values = $c->getPayloads();
+
+        return [
+            'cmd' => 'UpdateCompleted',
+            'protocol_instance_id' => $instance,
+            'result' => $values === null ? null : ($this->payloads($values)[0] ?? null),
+        ];
+    }
+
+    private function queryResult(string $queryId, CommandInterface $c): array
+    {
+        $failure = $this->failureOf($c);
+        if ($failure !== null) {
+            return ['cmd' => 'RespondToQuery', 'query_id' => $queryId, 'failure' => $failure->getMessage()];
+        }
+
+        $values = \method_exists($c, 'getPayloads') ? $c->getPayloads() : null;
+
+        return [
+            'cmd' => 'RespondToQuery',
+            'query_id' => $queryId,
+            'result' => $values === null ? null : ($this->payloads($values)[0] ?? null),
+        ];
+    }
+
+    private function cancelOf(string $runId, int|string $id): ?array
+    {
+        $entry = $this->runs[$runId]['byId'][$id] ?? null;
+        if ($entry === null) {
+            return null;
+        }
+
+        return match ($entry['kind']) {
+            self::TIMER => ['cmd' => 'CancelTimer', 'seq' => $entry['seq']],
+            self::ACTIVITY => ['cmd' => 'CancelActivity', 'seq' => $entry['seq']],
+            self::LOCAL_ACTIVITY => ['cmd' => 'CancelLocalActivity', 'seq' => $entry['seq']],
+            self::CHILD => ['cmd' => 'CancelChildWorkflow', 'seq' => $entry['seq'], 'reason' => 'cancelled by the workflow'],
+            default => null,
+        };
     }
 
     // ---------------------------------------------------------------- activity tasks
@@ -228,7 +421,9 @@ final class CoreCodec implements CodecInterface
         $execution = $start['workflow_execution'] ?? [];
 
         return [new ServerRequest(
-            name: 'InvokeActivity',
+            // Core delivers local activities on this same stream, flagged; sdk-php routes them to
+            // a different handler, so the flag decides the route name.
+            name: ($start['is_local'] ?? false) ? 'InvokeLocalActivity' : 'InvokeActivity',
             info: new TickInfo(time: $this->timestamp($start['started_time'] ?? null)),
             options: [
                 'info' => [
@@ -273,34 +468,52 @@ final class CoreCodec implements CodecInterface
         return \json_encode($done, \JSON_THROW_ON_ERROR);
     }
 
-    /**
-     * The loop's last resort: sdk-php threw out of `dispatch()`. Answer the task with a failure
-     * rather than nothing, so core fails the run now instead of at its task timeout.
-     */
-    public function encodeFailure(\Throwable $error): string
-    {
-        return $this->kind === ActivationSource::ACTIVITY
-            ? \json_encode(['task_token' => $this->taskToken, 'result' => null, 'failure' => $error->getMessage()], \JSON_THROW_ON_ERROR)
-            : \json_encode(['run_id' => $this->runId, 'commands' => [['cmd' => 'FailWorkflow', 'message' => $error->getMessage()]]], \JSON_THROW_ON_ERROR);
-    }
-
     // ---------------------------------------------------------------- helpers
 
-    private function nextSeq(string $runId, int|string $id): int
+    private function reset(string $runId): void
     {
-        $this->runs[$runId] ??= ['seq' => 0, 'bySeq' => []];
+        $this->runs[$runId] = ['seq' => 0, 'bySeq' => [], 'byId' => [], 'childStart' => [], 'queries' => [], 'updates' => []];
+    }
+
+    private function nextSeq(string $runId, int|string $id, string $kind): int
+    {
+        isset($this->runs[$runId]) or $this->reset($runId);
         $seq = ++$this->runs[$runId]['seq'];
-        $this->runs[$runId]['bySeq'][$seq] = $id;
+        $this->runs[$runId]['bySeq'][$seq] = ['id' => $id, 'kind' => $kind];
+        $this->runs[$runId]['byId'][$id] = ['seq' => $seq, 'kind' => $kind];
 
         return $seq;
     }
 
     private function takeId(string $runId, int $seq): int|string|null
     {
-        $id = $this->runs[$runId]['bySeq'][$seq] ?? null;
-        unset($this->runs[$runId]['bySeq'][$seq]);
+        $entry = $this->runs[$runId]['bySeq'][$seq] ?? null;
+        if ($entry === null) {
+            return null;
+        }
+        unset($this->runs[$runId]['bySeq'][$seq], $this->runs[$runId]['byId'][$entry['id']]);
 
-        return $id;
+        return $entry['id'];
+    }
+
+    /** An ActivityResolution / ChildWorkflowResult -> the response sdk-php is waiting for. */
+    private function resolution(array $result, int|string $id, TickInfo $info): SuccessResponse|FailureResponse
+    {
+        $status = $result['status'] ?? [];
+        if (isset($status['Completed'])) {
+            $payload = $status['Completed']['result'] ?? null;
+
+            return new SuccessResponse($this->values($payload === null ? [] : [$payload]), $id, $info);
+        }
+
+        $kind = \array_key_first($status) ?? 'Failed';
+        $message = $status[$kind]['failure']['message'] ?? 'activity ' . \strtolower((string) $kind);
+
+        return new FailureResponse(
+            $kind === 'Cancelled' ? new CanceledFailure($message) : new \RuntimeException($message),
+            $id,
+            $info,
+        );
     }
 
     /**

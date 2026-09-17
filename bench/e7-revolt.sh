@@ -11,11 +11,34 @@ BIN=./target/release/ignis; EX=php/packages/revolt/vendor/revolt/event-loop/exam
 # other checkout the ini silently did not apply.
 mkdir -p /tmp/e7-revolt; sed "s#^auto_prepend_file=.*#auto_prepend_file=$PWD/php/packages/revolt/prepend.php#" php/packages/revolt/ignis.ini > /tmp/e7-revolt/ignis.ini
 export IGNIS_PHP_INI=/tmp/e7-revolt/ignis.ini
-run() { # driver script [stdin-file]
-  local d="$1" s="$2"; shift 2
-  if [ $# -gt 0 ]; then REVOLT_DRIVER="$d" timeout 30 $BIN "$s" < "$1" 2>&1; else REVOLT_DRIVER="$d" timeout 30 $BIN "$s" 2>&1 </dev/null; fi
-}
 SEL='Revolt\EventLoop\Driver\StreamSelectDriver'; IGN='Ignis\Revolt\IgnisDriver'
+
+# Revolt's own examples do `require __DIR__ . '/../vendor/autoload.php'` — the layout of a source
+# checkout OF revolt. Installed as a dependency it has no nested vendor/, and composer install
+# --prefer-source does not make one, so every example fataled here and the comparison was between
+# two identical fatals. The autoloader that actually has revolt (and amphp) is the outer one; point
+# their expected path at it rather than composer-installing a dependency's dev tree.
+NESTED=$EX/../vendor
+if [ ! -f "$NESTED/autoload.php" ]; then
+  mkdir -p "$NESTED"
+  printf '<?php\n// written by bench/e7-revolt.sh: revolt examples expect a nested vendor/\nrequire __DIR__ . "/../../../autoload.php";\n' > "$NESTED/autoload.php"
+fi
+
+# RUST_LOG=error: without it the runtime's own WARN lines carry a timestamp, so two runs of the
+# same program never compare equal (this is what `differing=6` used to be measuring).
+#
+# The control arm runs with universal park OFF, and that is not a convenience: park breaks
+# StreamSelectDriver. The gate in park.rs is "we are in some fiber", so a fiber that Revolt's own
+# driver started parks into our reactor, which nothing in that program is driving — Revolt then
+# reports "Event loop terminated without resuming the current suspension". Measured in V-63; the
+# defect is BACKLOG R-FOREIGN-FIBER and is fixed in park.rs, not here. The control's job is to say
+# what the program does on a stock event loop, so park has no business in it either way.
+run() { # driver script [stdin-file]
+  local d="$1" s="$2" off=""; shift 2
+  [ "$d" = "$SEL" ] && off=1
+  if [ $# -gt 0 ]; then IGNIS_NO_UNIVERSAL_PARK="$off" RUST_LOG=error REVOLT_DRIVER="$d" timeout 30 $BIN "$s" < "$1" 2>&1
+  else IGNIS_NO_UNIVERSAL_PARK="$off" RUST_LOG=error REVOLT_DRIVER="$d" timeout 30 $BIN "$s" 2>&1 </dev/null; fi
+}
 $BIN --threads 1 examples/hello_server.php >/dev/null 2>&1 & SRV=$!; up=0; for _ in $(seq 1 50); do curl -sf "http://$ADDR/" 2>/dev/null | grep -q "Hello, World!" && { up=1; break; }; sleep 0.1; done
 if [ "${up:-0}" != 1 ] || ! kill -0 $SRV 2>/dev/null; then
   echo "our server never answered on $ADDR (port taken? set IGNIS_LISTEN); see the server log"

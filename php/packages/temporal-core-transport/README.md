@@ -42,11 +42,22 @@ its own state: two batches must never overlap inside one factory. That is also R
 a workflow worker and activity workers are separate there. Concurrency is a pool of factories, one
 per activity in flight.
 
-## What it does not translate yet
+## What it translates
 
-Queries, updates, cancellation, child workflows, local activities, heartbeats, `SideEffect`,
-`GetVersion`. `CoreCodec::encode()` throws by name for anything outside the translated set rather
-than dropping it — a dropped command is a workflow that hangs until its task timeout.
+| | |
+|---|---|
+| activities, timers, completion and failure | yes |
+| signals | yes |
+| **updates**, including the validator handler | yes — the response carries core's `protocol_instance_id`, which sdk-php never sees, so the transport keeps the mapping |
+| **local activities** (`#[LocalActivityInterface]`) | yes — core delivers them on the activity stream with `is_local`, which selects sdk-php's local route |
+| **queries** | yes — matched first-in-first-out, because every sdk-php response to a process-aware route carries the *run* id and not a query id (the same thing RoadRunner's protocol does with the same frames) |
+| **activity heartbeats** | yes, through `RPCConnectionInterface`; a host opts in with `HeartbeatSink` |
+| cancellation of timers, activities, local activities, child workflows | translated, **not yet tested end to end** |
+| child workflows | translated, **not yet tested end to end** |
+| `SideEffect`, `GetVersion` (patches), `ContinueAsNew`, Nexus, external-workflow signal/cancel | no |
+
+`CoreCodec::encode()` throws by name for anything outside the translated set rather than dropping
+it — a dropped command is a workflow that hangs until its task timeout.
 
 ## Test
 
