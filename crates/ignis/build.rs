@@ -32,6 +32,7 @@ fn main() {
             "usleep",
             "sleep",
             "accept",
+            "flock",
             "accept4",
             "select",
             "ppoll",

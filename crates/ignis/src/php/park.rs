@@ -56,7 +56,7 @@ static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 /// libphp's audited groups (research 30: (a) ext/sockets, (b) sleep, (c) streams/network/openssl —
 /// every row lock-free). Anything libphp calls that is not listed stays `block`; `getaddrinfo`
 /// has no fd and is offload's, not park's.
-const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libcurl,libpq,libssl,libcrypto";
+const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libphp:flock,libcurl,libpq,libssl,libcrypto";
 
 /// Set only while the boot self-check probes: makes `site_parks` record which library each
 /// resolved call site came from, so the check can prove a third-party `.so` really binds to us.
@@ -830,6 +830,53 @@ pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: 
             return -1;
         }
         libc::syscall(libc::SYS_sendmsg, fd, msg, flags) as isize
+    }
+}
+
+/// How long a fiber waits between `flock(LOCK_NB)` attempts, doubling from the first to the second.
+/// Short enough that an uncontended-by-the-time-we-look lock costs little, long enough that a lock
+/// held for a whole request is not polled hundreds of times.
+const FLOCK_RETRY_FIRST_US: u64 = 200;
+const FLOCK_RETRY_MAX_US: u64 = 20_000;
+
+/// `flock` is the one blocking call in this set whose target is a regular file, and that is exactly
+/// why it needed a handler: a regular file cannot be registered with epoll (research 30 group (d)),
+/// so a blocking `LOCK_EX` inside a fiber cannot park and takes the OS thread down with it -- and
+/// because the loop can then never resume whoever holds the lock, it never comes back (V-58).
+///
+/// The shape is the one Symfony's cache lock uses by hand and V-58 already measured working:
+/// try `LOCK_NB`, and on contention park on a timer instead of blocking. The thread keeps serving,
+/// which is what lets the holder reach its own release.
+///
+/// Not `fcntl`: opcache's `zend_shared_alloc_lock` uses that one, and build.rs says so in capitals.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ignis_park_flock(ret: *const c_void, fd: c_int, operation: c_int) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with the arguments libc was given.
+    // `flock` takes no pointer, so there is nothing to dereference: the syscall is exactly the one
+    // the program asked for, issued with LOCK_NB added while we are willing to wait for it.
+    unsafe {
+        let blocking = operation & libc::LOCK_NB == 0 && operation & libc::LOCK_UN == 0;
+        let Some(_guard) = may_park(ret, "flock").filter(|_| blocking) else {
+            return libc::syscall(libc::SYS_flock, fd, operation) as c_int;
+        };
+
+        let mut wait_us = FLOCK_RETRY_FIRST_US;
+        loop {
+            let rc = libc::syscall(libc::SYS_flock, fd, operation | libc::LOCK_NB) as c_int;
+            if rc == 0 {
+                return 0;
+            }
+            if *libc::__errno_location() != libc::EWOULDBLOCK {
+                return rc;
+            }
+            if !park_sleep(wait_us) {
+                // Nothing to park on (no reactor, not in a fiber): do what the caller asked for and
+                // let the thread block, which is at least the behaviour it had before this existed.
+                park_failed("flock");
+                return libc::syscall(libc::SYS_flock, fd, operation) as c_int;
+            }
+            wait_us = (wait_us * 2).min(FLOCK_RETRY_MAX_US);
+        }
     }
 }
 

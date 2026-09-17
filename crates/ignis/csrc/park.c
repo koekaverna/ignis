@@ -18,6 +18,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <stddef.h>
+#include <sys/file.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -43,6 +44,7 @@ int ignis_park_ppoll(const void *ret, struct pollfd *fds, nfds_t n, const struct
 ssize_t ignis_park_recvmsg(const void *ret, int fd, struct msghdr *msg, int flags);
 ssize_t ignis_park_sendmsg(const void *ret, int fd, const struct msghdr *msg, int flags);
 ssize_t ignis_park_readv(const void *ret, int fd, const struct iovec *iov, int cnt);
+int ignis_park_flock(const void *ret, int fd, int operation);
 ssize_t ignis_park_writev(const void *ret, int fd, const struct iovec *iov, int cnt);
 
 ssize_t read(int fd, void *buf, size_t n) { return ignis_park_read(__builtin_return_address(0), fd, buf, n); }
@@ -60,6 +62,9 @@ int accept(int fd, struct sockaddr *addr, socklen_t *alen) { return ignis_park_a
 int accept4(int fd, struct sockaddr *addr, socklen_t *alen, int flags) { return ignis_park_accept4(__builtin_return_address(0), fd, addr, alen, flags); }
 int select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv) { return ignis_park_select(__builtin_return_address(0), n, r, w, e, tv); }
 int ppoll(struct pollfd *fds, nfds_t n, const struct timespec *ts, const sigset_t *mask) { return ignis_park_ppoll(__builtin_return_address(0), fds, n, ts, mask); }
+/* S1-FLOCK: a regular file cannot be parked on, so a blocking LOCK_EX inside a fiber took the whole
+ * OS thread down (V-58). NOT fcntl — opcache's zend_shared_alloc_lock uses that one. */
+int flock(int fd, int operation) { return ignis_park_flock(__builtin_return_address(0), fd, operation); }
 /* _FORTIFY_SOURCE builds call poll through this; same policy row as `poll`. */
 int __poll_chk(struct pollfd *fds, nfds_t n, int timeout, size_t fdslen) { (void)fdslen; return ignis_park_poll(__builtin_return_address(0), fds, n, timeout); }
 ssize_t recvmsg(int fd, struct msghdr *msg, int flags) { return ignis_park_recvmsg(__builtin_return_address(0), fd, msg, flags); }

@@ -141,6 +141,16 @@ awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || echo "  NOTE: over the 1
 echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 $T ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
 echo "== E13 (isolation)"; $T ./target/release/ignis bench/php/e13_isolation.php
 echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
+# S1-FLOCK (V-58): a blocking flock held across a yield used to take the OS thread down for good —
+# a regular file cannot be parked on, so the loop could never resume the holder. Interposed, it
+# becomes LOCK_NB plus a parked retry. The tick count is the evidence the thread kept serving.
+echo "== a blocking flock across a yield parks instead of killing the thread"
+fl=$($T ./target/release/ignis --threads 1 bench/php/flock_park.php | tail -1)
+echo "  $fl"
+ticks=$(sed -n 's/.*"ticks":\([0-9]*\).*/\1/p' <<<"$fl")
+grep -q '"waiter_acquired_ms":[0-9]' <<<"$fl" || { echo "flock FAILED: the waiter never got the lock"; exit 1; }
+[ "${ticks:-0}" -ge 30 ] || { echo "flock FAILED: the thread stopped serving (ticks=${ticks:-0})"; exit 1; }
+
 # R-STREAM-CANCEL: a streaming handler must learn the client left. The cancel guard used to be
 # disarmed when the *headers* went out, and the Loop dropped the request's fiber mapping at the same
 # moment, so a hang-up mid-body reached nobody and the producer kept working for an absent client.
