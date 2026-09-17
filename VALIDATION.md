@@ -3462,10 +3462,28 @@ The Symfony runner shrank to the same shape — `IgnisResponse::stream(fn (Strea
 $response->sendContent(); })` — and `sendContent()` needs no wrapper at all, because the first write
 binds this fiber's output.
 
+### Addendum — two types, not a union
+
+The first cut carried the producer in a second field, then in `string|\Closure $body`. The owner
+pushed twice, and the second push was right: a union in a field is a value check where a type belongs.
+
+`Ignis\Http\StreamedResponse extends Response` now, the way Symfony's does. The loop dispatches on
+`instanceof` rather than `is_string`, `Response::$body` is a string again with no narrowing needed
+anywhere, and the class name is at the call site — `new StreamedResponse(fn (Stream $out) => …)` says
+what the handler is doing before a reader gets to the body. `serve()`'s contract does not change,
+because a `StreamedResponse` **is** a `Response`.
+
+It also leaves room the union did not: a future `FileResponse` (sendfile) is another subclass, where
+in the union it would have been `string|\Closure|SplFileInfo`.
+
+Caught by the gate while making the change: the isolation probe's grouped `use` did not pick up the
+new class, and the arm reported `Class "StreamedResponse" not found` instead of passing on an empty
+body — the assertion strengthened earlier that run is what made it fail loudly.
+
 ### Gates
 
 `bench/e23-stream.sh` is six arms now; the new one asserts that a producer failing before its first
 byte answers **500**, which is the property the whole design exists for. `cargo nextest` 9/9, php
-suite 40/61, `bench/e21` GREEN, `bench/e23` GREEN, `scripts/smoke.sh` **GREEN**. Symfony path
+suite **41 tests / 66 assertions**, `bench/e21` GREEN, `bench/e23` GREEN, `scripts/smoke.sh` **GREEN**. Symfony path
 re-measured on both forms: `echo` ttfb 0.0030 s, `Ignis\write()` ttfb 0.0024 s, both `total` 0.906 s
 with the correct bodies.

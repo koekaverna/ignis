@@ -86,8 +86,8 @@ function write(string $chunk): void
  * signature rather than in a comment:
  *
  * - `Http\Response` — a whole body; the loop sends it;
- * - `Http\Response::stream(...)` — a body produced while the client reads (R-STREAM); the loop
- *   drives the producer and ends it;
+ * - `Http\StreamedResponse` — a body produced while the client reads (R-STREAM); the loop drives the
+ *   producer and ends it;
  * - `null` — answered through another channel entirely, such as a gRPC stream (E10).
  *
  * @param callable(Http\Request):(Http\Response|null) $handler

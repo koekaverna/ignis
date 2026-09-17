@@ -17,7 +17,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
-use Ignis\Http\{Request, Response, Stream};
+use Ignis\Http\{Request, Response, Stream, StreamedResponse};
 
 Ignis\serve(function (Request $r): Response {
     if ($r->path() === '/noise') {
@@ -25,7 +25,7 @@ Ignis\serve(function (Request $r): Response {
         return Response::text("noise sent\n");
     }
     // The first write binds this fiber's output to the response, so a plain `echo` leaves as a frame.
-    return Response::stream(static function (Stream $out): void {
+    return new StreamedResponse(static function (Stream $out): void {
         $out->write("A-1\n");
         Ignis\sleep(400);             // /noise runs entirely inside this park
         echo "A-2\n";                 // echo is framed too, and stays this response's

@@ -6,6 +6,7 @@ namespace Ignis\Symfony;
 use Ignis\Http\Request as IgnisRequest;
 use Ignis\Http\Response as IgnisResponse;
 use Ignis\Http\Stream;
+use Ignis\Http\StreamedResponse as IgnisStreamedResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -38,7 +39,7 @@ final class IgnisWorkerRunner implements RunnerInterface
                 // binds this fiber's output, which is why plain `echo` inside the callback is framed
                 // too; a callback that wants the client's back-pressure exactly calls `Ignis\write()`.
                 unset($headers['content-length']);   // no length yet; hyper frames it chunked
-                return IgnisResponse::stream(
+                return new IgnisStreamedResponse(
                     static function (Stream $out) use ($response): void {
                         $out->start();
                         $response->sendContent();

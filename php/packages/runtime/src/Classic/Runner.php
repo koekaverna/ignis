@@ -169,6 +169,7 @@ final class Runner
         self::$sent = null;
     }
 
+    /** Always a string body: classic mode writes through output and cannot stream. */
     private static function response(): Response
     {
         while (ob_get_level() > 1 && @ob_end_flush()) {}

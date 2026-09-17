@@ -484,10 +484,10 @@ final class Loop
                 Scope::set('ignis.request', null);
             }
             // What the handler returned IS the contract, and a reader sees it in the signature:
-            //   Response with a producer → the loop drives it and ends the body
-            //   Response                 → the loop sends it
-            //   null                     → answered through another channel entirely (gRPC, E10)
-            if ($answer instanceof Http\Response && $answer->producer !== null) {
+            //   StreamedResponse → the loop drives its producer and ends the body
+            //   Response         → the loop sends it
+            //   null             → answered through another channel (gRPC, E10)
+            if ($answer instanceof Http\StreamedResponse) {
                 self::produce($id, $answer);
             } elseif ($answer instanceof Http\Response) {
                 \ignis_respond($id, $answer->status, $answer->headers, $answer->body);
@@ -516,7 +516,7 @@ final class Loop
      * that fails early still answer `500` — once the headers are out, an error can only truncate,
      * which is all HTTP allows.
      */
-    private static function produce(int $id, Http\Response $response): void
+    private static function produce(int $id, Http\StreamedResponse $response): void
     {
         $out = new Http\Stream($id, $response->status, $response->headers);
         try {

@@ -14,6 +14,7 @@ require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 use Ignis\Http\Request;
 use Ignis\Http\Response;
 use Ignis\Http\Stream;
+use Ignis\Http\StreamedResponse;
 
 Ignis\serve(static function (Request $r): Response {
     if ($r->path() === '/tick') {
@@ -25,7 +26,7 @@ Ignis\serve(static function (Request $r): Response {
 
     $fail = $r->query('fail');
 
-    return Response::stream(static function (Stream $out) use ($n, $ms, $fail): void {
+    return new StreamedResponse(static function (Stream $out) use ($n, $ms, $fail): void {
         if ($fail === 'early') {
             throw new \RuntimeException('failed before writing anything');
         }
