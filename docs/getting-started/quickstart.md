@@ -46,7 +46,8 @@ environment variable, the file, the product default. Full key reference:
 entry = "examples/hello_server.php"
 listen = "127.0.0.1:8080"
 # threads = 4              # default: available parallelism
-# offload = 4              # synchronous workers for curl_*/PDO/SQLite3, default 0
+# offload = 4              # synchronous workers for what cannot park (SQLite3, file-backed PDO,
+#                           # CPU-bound calls); default 0. curl parks, it needs no worker.
 ```
 
 ## An async call, unmodified

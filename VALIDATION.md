@@ -2355,3 +2355,40 @@ the probe hit `Session cannot be started after headers have already been sent`
 (`php_embed_init()` pins `SG(headers_sent)`, which is why `php/classic.php` handles session cookies
 itself). The lock mechanism is measured above with `flock` directly; what an actual Symfony session
 does end to end still needs its own test before any claim is made about it.
+
+## V-59 — `curl_*` parks instead of routing to the offload pool (CONFIRMED)
+
+Date: 2026-09-17T06:19:52Z. Owner asked why curl "could not be parked". It could, and was (V-45) — but the
+**default configuration never sent it there**: ADR-0016's auto-routing claimed `curl_*` for the
+offload pool, a default written before universal park existed.
+
+Measured on one PHP thread, 100 concurrent `curl_exec` of a 200 ms endpoint
+(`e18_curl.php` with `php/offload/ignis-offload.php` loaded, `--offload 8`):
+
+| path | wall | `CURLOPT_WRITEFUNCTION` |
+|---|---|---|
+| **park** (`curl_*` reaches libcurl, its syscalls are interposed) | **328 ms** | in the calling fiber, 100 of 100 |
+| offload, 8 workers | **2,697 ms** | on a worker — `same_fiber=no`, 69 of 100 |
+| neither (control) | **20,346 ms** | — |
+
+Park is **8× faster than offload** here and **62× faster than blocking**, costs no worker thread and
+no argument copy, and keeps the write callback where the application expects it. `DEFAULT_FUNCTIONS`
+in `route.rs` is now empty; after the change the default run reads **312 ms, `same_fiber=yes`**, and
+`IGNIS_OFFLOAD_FUNCTIONS=curl_init,curl_setopt,curl_exec,…` restores the old behaviour at
+**2,707 ms** — the escape hatch is measured, not assumed.
+
+**Offload keeps what park cannot reach** and the docs now say exactly that: `SQLite3` and a
+file-backed `PDO` — a regular file is not epoll-able (ADR-0024) — and CPU-bound calls.
+`DEFAULT_CLASSES` stays `PDO,SQLite3`; a socket-backed PDO driver parks once the route declines.
+
+**A measurement error of mine, corrected here.** The first comparison in this session reported
+290 ms for "offload" and 284 ms for "park" and concluded they were equivalent. Both arms were park:
+auto-routing only engages when the PHP userland router is loaded (`ignis-offload.php` calls
+`ignis_route_enable(true)`), and `bench/php/e18_curl.php` does not load it — its own header says the
+driver must set `IGNIS_NO_OFFLOAD_ROUTE=1`, which describes a routing that was never on. The
+numbers did not add up (100 × 200 ms across 8 workers cannot finish in 300 ms) and that is what
+exposed it. The table above is from a script that loads the router.
+
+Gates: `cargo nextest` 9/9, `bench/app-check.sh` 7/7 against the owner's Symfony app,
+`scripts/smoke.sh` exit 0 (its `/offload` route still works — it drives the pool explicitly through
+`Ignis\offload()`, not through curl auto-routing).

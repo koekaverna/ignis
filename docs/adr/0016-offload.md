@@ -57,3 +57,15 @@ Affects E16, E18, M4-9 (cancelling an offload job on disconnect: unbuilt).
 
 **Kill criterion.** A routed library whose handle cannot be pinned (it migrates its own state
 between calls) — then it is `Ignis\offload()` only, never auto-routed.
+
+## Addendum (2026-09-17, V-59) — the default routing list is empty
+
+`curl_*` is no longer auto-routed here. It was, from before universal park existed; measured now,
+park beats this pool 8× for the same workload (328 ms against 2,697 ms for 100 × 200 ms on one
+thread), costs no worker thread and no copy, and keeps `CURLOPT_WRITEFUNCTION` in the calling fiber
+instead of running it on a worker. `DEFAULT_FUNCTIONS` is empty; `IGNIS_OFFLOAD_FUNCTIONS` restores
+the old behaviour.
+
+What this ADR is still the answer for is unchanged and is now the whole of it: calls that **cannot**
+park — `SQLite3` and a file-backed `PDO`, because `epoll` refuses regular files (ADR-0024) — and
+CPU-bound work, which no readiness wait can help. `DEFAULT_CLASSES` stays `PDO,SQLite3`.

@@ -29,7 +29,18 @@ thread_local! {
     static PASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-const DEFAULT_FUNCTIONS: &str = "curl_init,curl_setopt,curl_setopt_array,curl_exec,curl_getinfo,curl_error,curl_errno,curl_close,curl_reset,curl_pause,curl_multi_init,curl_multi_add_handle,curl_multi_exec,curl_multi_select,curl_multi_getcontent,curl_multi_remove_handle,curl_multi_close,curl_multi_info_read";
+/// Empty by default since 2026-09-17 (owner decision, V-59): `curl_*` used to be here, from before
+/// universal park existed. Park is better on every axis for curl — measured at 100 x 200 ms on one
+/// thread: **328 ms parked against 2,697 ms through an 8-worker offload pool** (and 20,346 ms with
+/// neither), and `CURLOPT_WRITEFUNCTION` stays in the calling fiber instead of running on a worker
+/// (`same_fiber=yes` against `no`). Offload costs a thread per concurrent call and copies the
+/// arguments; park costs a readiness wait. Restore the old behaviour with
+/// `IGNIS_OFFLOAD_FUNCTIONS=curl_init,curl_exec,...` if a build ever has a libcurl that must not
+/// park (research 27 cleared this one).
+const DEFAULT_FUNCTIONS: &str = "";
+/// `SQLite3` and `PDO` stay: SQLite talks to a **regular file**, which epoll refuses, so park can
+/// never apply to it (ADR-0024) — offload is the only mechanism it has. `PDO` covers that case too;
+/// a PDO driver that is socket-backed (pgsql, mysql) parks anyway once the route declines.
 const DEFAULT_CLASSES: &str = "PDO,SQLite3";
 
 unsafe fn cg() -> *mut sys::zend_compiler_globals {

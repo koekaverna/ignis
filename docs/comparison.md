@@ -50,8 +50,8 @@ run through Ignis instead of stock PHP or the tool each suite was written for:
 ## Offload pool bound, vs an unbounded blocking call (V-24)
 
 Not a comparison with another server, but the number that makes the offload pool's purpose
-concrete: 100 concurrent 200 ms blocking calls (`curl_*`/`PDO`/`SQLite3`-shaped work) through a pool
-of size N are bounded by the pool, never by the fiber thread:
+concrete: 100 concurrent 200 ms blocking calls (`SQLite3`-shaped work, i.e. the file-backed kind park
+cannot reach) through a pool of size N are bounded by the pool, never by the fiber thread:
 
 | offload pool size | wall time for 100 × 200 ms | bound |
 |---|---|---|
@@ -65,10 +65,15 @@ Copy-in/copy-out cost: 13 µs (no args) to 67 µs (1 KB array) per call, both wa
 `curl_exec` and `pdo_pgsql`, 100 concurrent 200 ms operations, one PHP thread, **no offload pool
 configured at all** — the call parks directly at the syscall boundary instead:
 
-| workload | park | no park (control) |
-|---|---|---|
-| `curl_exec` × 100 | **279 ms** | 20,337 ms |
-| `pdo_pgsql` × 100 | **296–333 ms** | 20,558 ms |
+| workload | park | offload, 8 workers | neither (control) |
+|---|---|---|---|
+| `curl_exec` × 100 | **279–328 ms** | 2,697–2,707 ms | 20,337 ms |
+| `pdo_pgsql` × 100 | **296–333 ms** | — | 20,558 ms |
+
+This is why `curl_*` stopped being auto-routed to the offload pool in 2026-09-17 (V-59): park is
+**8× faster** than offload here, costs no worker thread and no argument copy, and keeps
+`CURLOPT_WRITEFUNCTION` running in the calling fiber (`same_fiber=yes`) instead of on a worker.
+Offload keeps what park cannot reach: `SQLite3`, a file-backed `PDO`, and CPU-bound calls.
 
 ## A real Symfony app, not a synthetic route (V-53)
 

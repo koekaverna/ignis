@@ -172,3 +172,17 @@ blocking pool with the fiber suspended on it, handing back glibc's pointer untou
 `freeaddrinfo` needs no interposition. Writing our own resolver is rejected until measurement
 demands it, because its failure mode is wrong answers (nsswitch, ndots/search, AI_* flags, RFC 6724
 sorting), not slowness.
+
+## 2026-09-17T06:19:52Z — `curl_*` parks; the offload pool keeps only what cannot park (owner)
+
+Owner: "поменять на паркинг, убрать про офлоад из документации и сайта". `DEFAULT_FUNCTIONS` in
+`route.rs` is empty; `curl_*` reaches libcurl and parks (V-59: 328 ms against 2,697 ms through an
+8-worker pool, and the write callback stays in the calling fiber). `IGNIS_OFFLOAD_FUNCTIONS`
+restores the old routing for anyone who needs it.
+
+Offload was **not** removed from the documentation wholesale, and this is a deliberate deviation
+from the instruction as phrased: `SQLite3` and file-backed `PDO` cannot park at all — `epoll`
+refuses regular files (ADR-0024) — so offload is the only mechanism they have, and deleting it from
+the docs would leave a SQLite user with a blocked thread and no explanation. Every place that said
+"curl goes to offload" now says it parks, with the measured numbers; offload is documented only as
+the answer for what park cannot reach. Raised with the owner.
