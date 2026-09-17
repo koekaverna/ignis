@@ -434,7 +434,7 @@ behaviour for a shared session. A boot refusal would have forbidden a configurat
 V-58's rule is unaffected: it was measured with a raw `flock`, not through `ext/session`.
 **Replaced by S1-FLOCK**, which is where the real exposure turned out to be.
 
-### S1-FLOCK A blocking `flock` inside a fiber kills the thread, silently `main` `open — from V-80`
+### S1-FLOCK A blocking `flock` inside a fiber kills the thread, silently `main` `DONE 2026-09-18 — V-81`
 **What.** V-58's rule is real: a blocking `flock(LOCK_EX)` held across a yield takes the OS thread
 down for good, because a regular file is not epoll-able (research 30 group (d)) so the call cannot
 park. V-80 then showed the path everyone assumed — `ext/session`'s files handler — is not how you
@@ -455,6 +455,10 @@ with park off. The fallback, if the retry is judged too clever, is to count and 
 for the same file: both complete, the thread keeps serving, and the timing shows the second waited
 rather than spun. `IGNIS_PARK` gets a row so the behaviour can be turned off. The E15 phpt suites do
 not drop.
+**Done (V-81).** Interposed with a `LOCK_NB` + parked-retry loop, 200 us doubling to a 20 ms
+ceiling; `libphp:flock` is a `SEED` row. With the hook `{"holder_released_ms":401,
+"waiter_acquired_ms":405,"ticks":45}`; without the row, killed at the 20 s timeout with no
+output. `smoke.sh` gates on it and was verified to go red under the negative-control policy.
 
 ### S1-COOKIES `ignis_respond` cannot carry two headers with the same name `main` `open` — owner: change the boundary shape
 **What.** R-HEADERS-MULTI. The header map is `array<string, string>`, so a response with two

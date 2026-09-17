@@ -3730,3 +3730,47 @@ lists read, write, recv, send, recvfrom, sendto, poll, connect, nanosleep, uslee
 and no `flock`), so today that call blocks the thread with no warning, no `ignis_park_failed_total`
 increment, and nothing in the log. A boot refusal on a session setting would not have caught one of
 those; it would only have forbidden a configuration that demonstrably works.
+
+## V-81 — `flock` interposed: the exposure V-80 named is closed (CONFIRMED)
+
+V-80 ended by naming the real exposure: application code taking a blocking `flock(LOCK_EX)` inside
+a fiber. A regular file cannot be registered with epoll (research 30 group (d)), so the reactor had
+nothing to wait on — the call blocked the OS thread, and because the *holder* also lives on that
+thread, it could never be resumed to release the lock. Permanent, silent, one thread per occurrence.
+
+### The shape of the fix
+
+`flock` joins the interposed set (`csrc/park.c`, the symbol list in `build.rs`, and `libphp:flock`
+in the `SEED` policy of `park.rs`). A call that is genuinely blocking — no `LOCK_NB`, and not
+`LOCK_UN` — becomes `LOCK_NB` in a loop with a parked sleep between attempts, 200 us doubling to a
+20 ms ceiling. Everything else passes straight through. If the loop cannot park (no engine, no
+fiber), it increments `ignis_park_failed_total{symbol="flock"}` and makes the real blocking call —
+the same fallback every other interposed symbol uses.
+
+Polling rather than waiting is deliberate and is the only option: there is no epoll-able object
+here. The cost is bounded by the 20 ms ceiling; the alternative is a dead thread.
+
+### Measurement
+
+`bench/php/flock_park.php`: one fiber takes `LOCK_EX` and holds it across a 400 ms yield, a second
+fiber asks for the same lock, and a third fiber ticks every 10 ms — the tick count is the evidence
+that the thread kept serving.
+
+```
+LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis --threads 1 bench/php/flock_park.php
+```
+
+| | result |
+|---|---|
+| with the hook | `{"holder_released_ms":401,"waiter_acquired_ms":405,"ticks":45}` |
+| negative control — `IGNIS_PARK` = `SEED` minus `libphp:flock` | `rc=124`, killed at the 20 s timeout, **no output** |
+
+The waiter got the lock 4 ms after the holder let it go, and 45 ticks landed in the meantime: the
+thread served throughout. Without the policy row the process never printed anything and had to be
+killed — that is the V-58 deadlock reproduced on demand.
+
+### The gate
+
+`scripts/smoke.sh` runs the probe and asserts both halves — `"waiter_acquired_ms"` present *and*
+`ticks >= 30`. Verified to be a gate that can fail: re-run under the negative-control policy, the
+assertion goes red (the probe prints nothing at all). Machine: load 1.85, 851G free.
