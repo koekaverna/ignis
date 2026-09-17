@@ -514,8 +514,25 @@ malformed input — real behaviour change, roughly the size of the whole 2026-09
 **The trap.** PHPStan prints it itself: do not silence these with casts, `assert()` or inline
 `@var`. 349 findings closed by casts would make the types a lie and leave us worse off than an
 honest level 6.
+**Owner's question, 2026-09-18: can the `mixed` be typed at the language level instead?** Yes, and it
+is the better route. Two steps, and the first must be tried before the second:
+
+1. **The `mixed` is ours.** `ignis_poll(): array<int, mixed>` is a declaration we wrote in
+   `stubs/ignis.php`, not a fact about PHP. A completion is a tagged union with a known set of
+   shapes (Request, Slept, Ready, Error, Blob, Json). Declared as a union of array shapes with a
+   literal-string `kind` discriminator, PHPStan narrows on `match ($payload['kind'])` by itself.
+   Zero runtime cost, and most of those 122 accesses were never unchecked -- the type just could not
+   say so. **Measure how many of the 349 survive this before writing a single runtime check.**
+2. **Objects across the boundary**, if step 1 leaves a meaningful residue: `ignis_poll()` returning
+   typed objects rather than assoc arrays makes PHP's own type system do the work -- `instanceof`,
+   `match(true)`, no phpdoc at all. But building zend objects costs more than an array on the
+   hottest path in the system (one poll per loop tick, against E2's 4.5 µs per-fiber budget), so it
+   is a measured trade, not an obvious win. Same fork on the Rust side: `serde_json::Value` versus
+   typed structs.
+
 **Acceptance.** Level 9 clean with zero added casts whose only purpose is silence; every new throw
-covered by a test that feeds the malformed input.
+covered by a test that feeds the malformed input; and the count after step 1 recorded, so the case
+for or against step 2 rests on a number.
 
 ### S4-ANSWER-MAP One `HashMap<u64, Answer>` instead of three `main` `open`
 Already filed as R-ANSWER-MAP. Owner included it in this cycle. Lands with S2-STREAM-CANCEL and the
