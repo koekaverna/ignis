@@ -162,7 +162,7 @@ deadlock refutes the hazard model and is itself a finding.
 **Kill criterion (owner):** any OpenSSL or libcurl test failing under `park` with a lock in the
 trace — the E15 suites and `bench/e6-ssl.sh` run with `IGNIS_PARK=libcurl,libcrypto,libssl`.
 
-## H37 (E19) — the boot-heap snapshot can undo a request's writes for under 100 µs
+## H37 (E19) — the boot-heap snapshot can undo a request's writes for under 100 µs — CONFIRMED, epic rejected on other grounds (ADR-0039)
 
 **Statement.** A per-thread boot arena, write-barriered and restored at request end, costs < 100 µs per request at < 50 dirty pages (owner's acceptance).
 

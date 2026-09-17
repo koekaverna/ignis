@@ -193,3 +193,19 @@ Owner, asked how to solve it: "пока только обнови докумен
 gets a "Databases" section that works through the four cases an application can be in, the
 configuration reference gets a note explaining why `IGNIS_OFFLOAD_CLASSES` is per class and not per
 driver, and the designed fix is written down as BACKLOG R-PDO-SQLITE with its gate. No code.
+
+## 2026-09-17 — E19 boot-heap snapshot: rejected (owner)
+
+Owner, after seeing what `budget.fibers = 1` implies: "не подходит, ADR отвергаем". Recorded as
+ADR-0039 with status *rejected*, and deliberately with the measurements in it: the mechanism was
+affordable (71 µs against a 100 µs budget at the 11–12 dirty pages a real Symfony request writes,
+measured on `../symfony-ignis` — the owner pointed out the app was already on the box), and it was
+rejected for the constraint instead. Page rollback is per thread, so strict per-request isolation
+needs one request in flight per thread, which is php-fpm's concurrency model and switches off the
+parking this runtime exists for. The variant that keeps fibers — restore when the thread goes idle —
+bounds RSS but does not isolate, so it fails the acceptance's "identical response bytes".
+
+The answer for applications that are not worker-safe stays what it already was: make them
+worker-safe (`require_once`, no state in statics, a socket-backed session), which README, the
+compatibility table and the runbook document. The three measuring instruments are kept under
+`bench/e19/` so a future attempt starts from numbers.
