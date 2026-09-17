@@ -51,9 +51,6 @@ final class Stream
      */
     public static function open(Request $request, int $status = 200, array $headers = []): self
     {
-        if (!\function_exists('ignis_respond_start')) {
-            throw new \RuntimeException('this ignis binary has no streaming response support');
-        }
         if (!\ignis_respond_start($request->id, $status, $headers)) {
             throw new \RuntimeException('cannot stream request ' . $request->id . ': already answered, or the client is gone');
         }
@@ -63,6 +60,10 @@ final class Stream
 
     /**
      * Appends one frame, parking this fiber until the runtime has taken it.
+     *
+     * While the client keeps up this costs no reactor round trip at all: the chunk goes straight
+     * into the channel and `write()` returns. It only parks when the channel is full, which is
+     * exactly when the client is behind.
      *
      * @throws \RuntimeException when the client has hung up — the handler should stop producing
      */
@@ -75,9 +76,14 @@ final class Stream
             return;
         }
         $op = \ignis_respond_chunk($this->id, $chunk);
-        if ($op < 0) {
-            throw new \RuntimeException('stream ' . $this->id . ' is not open');
+        if ($op === 0) {
+            return;   // there was room: the runtime took it without an op to wait on
         }
+        if ($op < 0) {
+            $this->closed = true;
+            throw new \RuntimeException('stream ' . $this->id . ' is closed: the client is gone');
+        }
+        // The queue to the socket is full, so this is the back-pressure: park until it drains.
         $r = Loop::awaitOp($op);
         if (\is_array($r)) {
             $this->closed = true;   // the client is gone; there is nowhere to write

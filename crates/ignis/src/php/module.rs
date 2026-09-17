@@ -363,26 +363,7 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
         {
             return;
         }
-        let mut headers = Vec::new();
-        let mut pos: sys::HashPosition = 0;
-        sys::zend_hash_internal_pointer_reset_ex(ht, &mut pos);
-        loop {
-            let v = sys::zend_hash_get_current_data_ex(ht, &pos);
-            if v.is_null() {
-                break;
-            }
-            let mut skey: *mut sys::zend_string = ptr::null_mut();
-            let mut nkey: sys::zend_ulong = 0;
-            let kt = sys::zend_hash_get_current_key_ex(ht, &mut skey, &mut nkey, &pos);
-            if kt == sys::HASH_KEY_IS_STRING && zval::type_of(v) == sys::IS_STRING {
-                let k = zval::zstr_to_string(skey);
-                let val = zval::zstr_to_string((*v).value.str_);
-                headers.push((k, val));
-            } else {
-                tracing::warn!("ignis_respond: header entries must be string => string; skipped one");
-            }
-            sys::zend_hash_move_forward_ex(ht, &mut pos);
-        }
+        let headers = header_pairs(ht, "ignis_respond");
         let body = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(body as *const u8, body_len));
         let ok = reactor().respond(id as u64, HttpResponse { status: status.clamp(100, 599) as u16, headers, body: crate::reactor::ResponseBody::Full(body) });
         zval::set_bool(rv, ok);
@@ -419,6 +400,13 @@ unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(String, Strin
     headers
 }
 
+/// How many chunks may sit between PHP and the socket. Read once: it cannot change, and
+/// `respond_start` runs per streamed response.
+fn stream_chunks() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("IGNIS_STREAM_CHUNKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2usize))
+}
+
 /// `ignis_respond_start(int $id, int $status, array $headers): bool` — R-STREAM.
 ///
 /// Status and headers go out now; the body follows as chunks. hyper frames it `chunked`, so the
@@ -433,8 +421,7 @@ unsafe extern "C" fn zif_ignis_respond_start(ex: *mut sys::zend_execute_data, rv
             return;
         }
         let headers = header_pairs(ht, "ignis_respond_start");
-        let cap = std::env::var("IGNIS_STREAM_CHUNKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2usize);
-        zval::set_bool(rv, reactor().respond_start(id as u64, status.clamp(100, 599) as u16, headers, cap));
+        zval::set_bool(rv, reactor().respond_start(id as u64, status.clamp(100, 599) as u16, headers, stream_chunks()));
     }
 }
 
@@ -457,9 +444,25 @@ unsafe extern "C" fn zif_ignis_respond_chunk(ex: *mut sys::zend_execute_data, rv
             zval::set_long(rv, -1);
             return;
         };
+        // The fast path is the common one: while the client keeps up there is room in the channel,
+        // and `try_send` puts the chunk there with no future, no task and no reactor round trip —
+        // the round trip costs ~93 µs even unloaded (reactor.rs). `0` tells PHP there is nothing to
+        // await. Ordering is safe because a slow-path write is awaited before the next one starts.
+        let chunk = match tx.try_send(chunk) {
+            Ok(()) => {
+                zval::set_long(rv, 0);
+                return;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(c)) => c,
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                zval::set_long(rv, -1); // the client hung up
+                return;
+            }
+        };
+        // Full: now it is worth an op, because awaiting it is exactly the back-pressure.
         let op = reactor().submit(crate::reactor::Op::Custom(Box::pin(async move {
             match tx.send(chunk).await {
-                Ok(()) => crate::reactor::Outcome::Json("\"ok\"".into()),
+                Ok(()) => crate::reactor::Outcome::Ready,
                 // The receiver is gone: the client hung up. The handler sees it and can stop.
                 Err(_) => crate::reactor::Outcome::Failed("client gone".into()),
             }

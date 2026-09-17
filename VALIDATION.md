@@ -3291,3 +3291,31 @@ runner, the bench server, one unit test); `examples/` had none.
 Gates: `cargo nextest` 9/9, php suite **40 tests / 61 assertions** (one deleted with `detached()`),
 `bench/e21` GREEN (4 arms, controls still leak), `bench/e23` GREEN including the new shutdown arm,
 `scripts/smoke.sh` **GREEN**.
+
+### V-75 addendum — a chunk that fits costs nothing
+
+Date: 2026-09-17T20:2xZ. From the Rust review: `ignis_respond_chunk` always built a boxed future,
+spawned it and waited for a full reactor round trip — to discover that a two-slot channel had room.
+The round trip's own fixed cost is ~93 µs unloaded (`reactor.rs`).
+
+Now it is `try_send` first, and only a **full** channel — which is exactly when the client is behind —
+falls back to the op. `0` means "taken, nothing to await", so `Stream::write()` returns without
+touching the loop. Measured, 2000 one-byte chunks from a tight producer:
+
+| path | per chunk |
+|---|---|
+| every write through the reactor (`IGNIS_STREAM_CHUNKS=2`, producer outruns the client) | **42.7 µs** |
+| `try_send` succeeds (`IGNIS_STREAM_CHUNKS=4096`) | **0.11 µs** |
+
+The back-pressure semantics are unchanged: a producer that outruns the client still parks, because
+the channel still fills. What changed is that a producer that does *not* outrun it — the normal
+case, a row read then written — stops paying for a round trip it never needed.
+
+Three deletions in the same pass, all from the review: `zif_ignis_respond` was carrying a copy of
+`header_pairs` (the helper was extracted for `respond_start` and the old path never switched over),
+`rx_id` was a five-line function returning `.0` of a tuple destructured on the next line, and
+`ResponseBody::full` had no callers. `IGNIS_STREAM_CHUNKS` now reads through a `OnceLock` like every
+other tunable instead of hitting the environment per streamed response.
+
+Gates: `cargo nextest` 9/9, php suite 40/61, `bench/e23` GREEN (all four arms), `scripts/smoke.sh`
+**GREEN**.

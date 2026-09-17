@@ -70,12 +70,6 @@ pub enum ResponseBody {
     Stream(tokio::sync::mpsc::Receiver<Bytes>),
 }
 
-impl ResponseBody {
-    pub fn full(bytes: Bytes) -> Self {
-        Self::Full(bytes)
-    }
-}
-
 /// Result of an op. Plain data only.
 #[derive(Debug)]
 pub enum Outcome {
@@ -507,8 +501,8 @@ mod tests {
         assert_eq!(got.len(), 1);
         let Outcome::Request(req) = &got[0].outcome else { panic!("not a request") };
         assert_eq!(req.uri, "/x?y=1");
-        assert!(r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: ResponseBody::full(Bytes::new()) }));
-        assert!(!r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: ResponseBody::full(Bytes::new()) }));
+        assert!(r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
+        assert!(!r.respond(got[0].id, HttpResponse { status: 204, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
         let resp = rt.block_on(rx).unwrap();
         assert_eq!(resp.status, 204);
     }
