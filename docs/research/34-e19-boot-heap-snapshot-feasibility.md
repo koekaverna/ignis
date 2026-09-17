@@ -69,3 +69,50 @@ acceptable, and whether restoring a page can resurrect a pointer into a discarde
 The owner's kill criterion already names the first of these. None of it matters until the cost
 question has an answer, because a mechanism that costs 350 µs per request will not ship whatever
 its correctness.
+
+---
+
+## Addendum (2026-09-17) — the dirty count is measured, and it changes the answer
+
+The section above concluded that the proposed mechanism misses its budget by 3.5×. That conclusion
+was computed at the **assumed** 50 dirty pages from the owner's note. The owner pointed out that a
+real framework is already on this box — `../symfony-ignis` — so the assumption was measurable all
+along. It is now measured, and **it was conservative by a factor of four and a half**.
+
+`bench/e19/dirty-probe.php` boots the Symfony kernel under stock `php` (same libphp, no runtime
+noise), clears the kernel's soft-dirty marks, handles one request, and counts the process's
+anonymous writable pages that came back marked. No barrier, so the probe does not disturb what it
+measures.
+
+| | |
+|---|---|
+| boot heap, `memory_get_usage(true)` | **2.0 MiB → 6.0 MiB** after boot + first request |
+| process RSS | 23.8 MiB → 27.6 MiB |
+| anonymous writable pages in the process | 930 (3.6 MiB), 18 regions |
+| **dirty pages per request** | **20** on the first, then **11–12**, ten requests running |
+
+11 pages, not 50. Re-run of the same three mechanisms at the measured numbers (6 MiB arena):
+
+| | 11 dirty pages | 20 dirty pages |
+|---|---:|---:|
+| **A. `mprotect` + `SIGSEGV`** (the proposal) | **71.0 µs** | 118.3 µs |
+| B. whole-arena memcpy | 119.7 µs | 121.5 µs |
+| C. soft-dirty | 141.0 µs | 141.5 µs |
+
+**The owner's mechanism fits its own budget: 71 µs against 100.** It is also the *only* one of the
+three that does, at this arena size — B and C are both O(arena) and a 6 MiB boot heap already puts
+them over. The earlier verdict is withdrawn: it was arithmetic on an assumed input, and the input
+was wrong.
+
+Three caveats, so the number is not read as more than it is:
+
+1. This is one Symfony route returning JSON. Doctrine, sessions, Twig and a fuller service graph
+   will dirty more pages; the budget is met with 29 µs of headroom, which is ~4 more pages.
+2. The count is the whole process's anonymous pages, which over-counts the boot heap — so 11 is an
+   upper bound, and the real boot-heap figure can only be smaller.
+3. Nothing here says the mechanism is *correct*, only that it is affordable. Everything under "Not
+   measured here" still stands: extension C-state outside the arena, file descriptors opened during
+   a request, and the skipped destructors.
+
+E19-R2 is answered; the ADR is unblocked, and the mechanism it should specify is the one the owner
+specified.
