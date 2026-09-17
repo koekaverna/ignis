@@ -421,17 +421,40 @@ reason; with the history intact it still prints `REPLAY_OK`. Assert on the evict
 **Acceptance.** `scripts/ci-gate.sh frankenphp` passes, with the regressing test named and either
 fixed or re-baselined against evidence. Bisect over the 2026-09-17 16:50–18:26 window (V-76/V-77, E22).
 
-### S1-SESS Refuse to start on `session.save_handler=files` `main` `open` — owner chose ADR-0038 option 2
+### S1-SESS Refuse to start on `session.save_handler=files` `main` `NOT BUILT — premise refuted by V-80`
 **What.** The files handler takes a blocking `flock(LOCK_EX)` and holds it across a yield, so a
 second fiber blocks the OS thread and the loop can never resume the holder. Measured: two fibers,
 killed at 12 s, no progress (V-58). Owner's decision: turn the hang into a message at boot rather
 than build a session store tonight.
-**Acceptance.** Starting with `session.save_handler=files` exits non-zero with a message naming the
-handler, the reason and the supported alternatives (Redis, PDO). `IGNIS_ALLOW_FILE_SESSIONS=1`
-overrides it for anyone who knows their app never shares a session across fibers. `scripts/smoke.sh`
-still GREEN. **First, measure**: the backlog records that it is unknown whether a real Symfony
-session reaches that `flock` under the embed SAPI at all — the probe hit "headers already sent".
-Answer that before writing the refusal, and record it either way.
+**Outcome (V-80).** The measurement said no, so nothing was built. `ext/session` is a per-thread
+singleton: a second fiber's `session_start()` joins the first's session rather than taking a second
+lock, so there is no second `flock` to deadlock on. Across threads two requests on one session id
+serialise and both finish — 818 ms against a 401 ms baseline, no thread lost — which is php-fpm's
+behaviour for a shared session. A boot refusal would have forbidden a configuration that works.
+V-58's rule is unaffected: it was measured with a raw `flock`, not through `ext/session`.
+**Replaced by S1-FLOCK**, which is where the real exposure turned out to be.
+
+### S1-FLOCK A blocking `flock` inside a fiber kills the thread, silently `main` `open — from V-80`
+**What.** V-58's rule is real: a blocking `flock(LOCK_EX)` held across a yield takes the OS thread
+down for good, because a regular file is not epoll-able (research 30 group (d)) so the call cannot
+park. V-80 then showed the path everyone assumed — `ext/session`'s files handler — is not how you
+reach it. Application code taking its own lock is, and **`flock` is not in the interposed set**:
+`crates/ignis/build.rs` lists read, write, recv, send, recvfrom, sendto, poll, connect, nanosleep,
+usleep, sleep, accept and more, and no `flock`. So today that call blocks the thread with no
+warning, no `ignis_park_failed_total` increment and nothing in the log — the operator sees a worker
+stop and a supervisor respawn, with no cause.
+**Why this shape rather than a boot refusal.** A refusal keyed on a configuration value cannot see
+user code, and V-80 measured that the configuration it would have refused works fine.
+**The design, and it is a policy row rather than a mechanism** (CLAUDE.md's budget is untouched):
+interpose `flock`; outside a fiber pass through; inside one, turn a blocking `LOCK_EX` into
+`LOCK_NB` plus a parked retry on a timer. That is exactly what Symfony's cache does by hand, and
+V-58 already measured that shape working — 607 ms for three losers with park on, never finishing
+with park off. The fallback, if the retry is judged too clever, is to count and warn: increment
+`PARK_FAILED` and log the symbol once, so the cause is visible even when the thread dies.
+**Acceptance.** A probe that holds `flock(LOCK_EX)` across a yield in one fiber while another asks
+for the same file: both complete, the thread keeps serving, and the timing shows the second waited
+rather than spun. `IGNIS_PARK` gets a row so the behaviour can be turned off. The E15 phpt suites do
+not drop.
 
 ### S1-COOKIES `ignis_respond` cannot carry two headers with the same name `main` `open` — owner: change the boundary shape
 **What.** R-HEADERS-MULTI. The header map is `array<string, string>`, so a response with two
