@@ -322,3 +322,13 @@ pure-PHP int64 path needs it.
 Known limit, recorded so nobody meets it in production: `ContextInterface` metadata and deadlines
 are dropped, so API-key auth and TLS must live in the host's channel. Temporal Cloud therefore does
 not work over this path yet, and `ignis_grpc_call` needs a header argument before it can.
+
+## 2026-09-17 — code style is a rule, not a preference (owner)
+
+SOLID, DRY, KISS, YAGNI; no abbreviations in names; no comments inside a function body —
+anything that needs explaining is extracted into a method whose name is the explanation.
+Short doc blocks on methods stay. Recorded in CLAUDE.md under "Code style".
+
+The one carve-out is the comments the architecture already requires as contracts: `// SAFETY:`
+on every `unsafe` block and the ownership/lifetime/who-frees notes at the FFI boundary. Those
+are not commentary, and dropping them would weaken a rule the owner set earlier.

@@ -20,6 +20,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 BRIEF.md (owner's mission, immutable) → JOURNAL.md (timestamped line per stage transition) → HYPOTHESES.md (H-n, falsifiable, time-boxed) → docs/research/NN-*.md → docs/adr/NNNN-*.md (with a kill criterion) → VALIDATION.md (V-n: raw numbers, exact command, machine state) → STATUS.md (one screen, links to V-n) / GOALS.md / ROADMAP.md / DECISIONS.md. docs/pain-map.md is re-read and re-statused at every REASSESS.
 
+## Code style (owner, 2026-09-17)
+
+- SOLID, DRY, KISS, YAGNI — in that order of blame when a review finds bloat.
+- No abbreviations in names. `request`, not `req`; `connection`, not `conn`. Established
+  domain spellings that are not abbreviations of anything are fine (`zval`, `php`, `http`).
+- No comments inside a function body. If a block needs explaining, extract it into a
+  method whose name is the explanation. The method name, the argument names and the
+  variable names carry the meaning; a comment is a hint that one of them is wrong.
+- Doc blocks on methods, types and public functions are allowed: one or two lines, what
+  and why, not how.
+- Exceptions, because the architecture demands them: the `// SAFETY:` line on every
+  `unsafe` block, the ownership/lifetime/who-frees notes at the FFI boundary, and
+  `ponytail:` markers naming a deliberate ceiling. These are contracts, not commentary.
+
 ## Build and test
 
 Everything needs PHP 8.5.10 ZTS+embed at `/opt/php85-zts`; `PHP_CONFIG` (default `/opt/php85-zts/bin/php-config`) drives `crates/ignis-sys/build.rs` bindgen and linking, and `LD_LIBRARY_PATH=/opt/php85-zts/lib` is needed at runtime.
