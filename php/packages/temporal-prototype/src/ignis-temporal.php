@@ -87,11 +87,38 @@ final class Context
 
 final class Worker
 {
+    /** `RemoveFromCache.EvictionReason.NONDETERMINISM` as prost numbers it. */
+    private const EVICTION_NONDETERMINISM = 3;
+
     public static int $activations = 0;
     public static int $evictionErrors = 0;
     public static int $activityTasks = 0;
     /** @var array<string,WorkflowRun> */
     private array $runs = [];
+
+    /**
+     * An eviction that means the workflow was rejected, as opposed to routine cache pressure.
+     *
+     * The comparison is spelling-insensitive on purpose. Until 2026-09-18 this matched
+     * 'Nondeterminism' and the wire carried `NONDETERMINISM`, so `bench/e9-temporal.sh`'s negative
+     * control -- the one whose whole job is to fail on a mutated history -- had been reporting
+     * REPLAY_OK while sdk-core evicted for nondeterminism in the same log. The spelling changed when
+     * V-65 replaced our own schema with core's protojson, which renders enums in SCREAMING_SNAKE.
+     * A numeric reason is still accepted: protojson emits the name, prost emits the tag.
+     */
+    private static function isEvictionAnError(mixed $reason): bool
+    {
+        if (is_int($reason)) {
+            return $reason === self::EVICTION_NONDETERMINISM;
+        }
+        if (!is_string($reason)) {
+            return false;
+        }
+        $normalised = strtoupper(str_replace(['_', '-', ' '], '', $reason));
+
+        return in_array($normalised, ['NONDETERMINISM', 'LANGFAIL', 'FATAL'], true);
+    }
+
 
     /**
      * @param array<string, callable(Context, mixed...): mixed> $workflows
@@ -195,7 +222,7 @@ final class Worker
                     $evicted = true;
                     $reason = (string) ($data['reason'] ?? 'Unspecified');
                     fwrite(STDERR, sprintf("  evicted: reason=%s %s\n", $reason, $data['message'] ?? ''));
-                    if (in_array($reason, ['Nondeterminism', 'LangFail', 'Fatal'], true) || (int) ($data['reason'] ?? 0) === 3) {
+                    if (self::isEvictionAnError($data['reason'] ?? null)) {
                         self::$evictionErrors++;
                     }
                     break;
