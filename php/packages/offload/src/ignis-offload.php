@@ -56,116 +56,126 @@ namespace Ignis\Offload {
             \ignis_route_enable(true);
         }
 
-        /** Called by the runtime trampoline for a routed function. */
-        public static function dispatch(string $fn, array $args): mixed
+        /**
+         * Called by the runtime trampoline for a routed function. A call with no proxy argument is
+         * not one of ours, and `ignis_route_pass()` runs the original instead.
+         * @param list<mixed> $args
+         */
+        public static function dispatch(string $function, array $args): mixed
         {
             $affinity = self::affinityOf($args);
-            if ($affinity === null && !\in_array($fn, ['curl_init', 'curl_multi_init', 'curl_share_init'], true)) {
-                \ignis_route_pass(); // not one of ours (no proxy argument): run the original
+            if ($affinity === null && !\in_array($function, ['curl_init', 'curl_multi_init', 'curl_share_init'], true)) {
+                \ignis_route_pass();
                 return null;
             }
             self::$routed++;
-            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['fn:' . $fn, self::unwrap($args)], $affinity ?? self::pick()));
+            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['fn:' . $function, self::unwrap($args)], $affinity ?? self::pick()));
         }
 
-        /** `new Class(...)` inside a fiber (from the proxy constructor). */
+        /**
+         * `new Class(...)` inside a fiber (from the proxy constructor). A temporary proxy carrying
+         * the handle must give it up, or its destructor releases the handle we are returning.
+         * @param list<mixed> $args
+         */
         public static function construct(string $class, array $args): Handle
         {
             self::$routed++;
-            $r = self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['new:' . $class, self::unwrap($args)], self::pick()));
-            if ($r instanceof Handle) {
-                return $r;
+            $constructed = self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['new:' . $class, self::unwrap($args)], self::pick()));
+            if ($constructed instanceof Handle) {
+                return $constructed;
             }
-            if (\is_object($r) && isset($r->__ignisHandle)) {
-                $h = $r->__ignisHandle;
-                $r->__ignisHandle = null; // the temporary proxy must not release it
-                return $h;
+            if (\is_object($constructed) && isset($constructed->__ignisHandle)) {
+                $handle = $constructed->__ignisHandle;
+                $constructed->__ignisHandle = null;
+                return $handle;
             }
             throw new \RuntimeException("offload: constructing $class did not return a handle");
         }
 
-        public static function method(Handle $h, string $method, array $args): mixed
+        /** @param list<mixed> $args */
+        public static function method(Handle $handle, string $method, array $args): mixed
         {
             self::$routed++;
-            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['method:' . $method, self::unwrap(array_merge([$h], $args))], $h->worker));
+            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['method:' . $method, self::unwrap(array_merge([$handle], $args))], $handle->worker));
         }
 
-        public static function release(Handle $h): void
+        /** Fire-and-forget: nobody waits for the release, and the loop drops its completion. */
+        public static function release(Handle $handle): void
         {
-            // Fire-and-forget: nobody waits; the loop drops the completion.
-            \ignis_offload_submit('Ignis\Offload\WorkerRuntime::routed', serialize(['free', [['__ref' => [$h->worker, $h->id, $h->class]]]]), $h->worker);
+            \ignis_offload_submit('Ignis\Offload\WorkerRuntime::routed', serialize(['free', [['__ref' => [$handle->worker, $handle->id, $handle->class]]]]), $handle->worker);
         }
 
         private static function pick(): int
         {
-            $n = max(1, (int) (\ignis_offload_stats()['workers'] ?? 1));
-            return self::$rr++ % $n;
+            $workers = max(1, (int) (\ignis_offload_stats()['workers'] ?? 1));
+            return self::$rr++ % $workers;
         }
 
+        /**
+         * The worker a proxy argument already lives on, so a handle never crosses workers.
+         * @param list<mixed> $args
+         */
         private static function affinityOf(array $args): ?int
         {
-            foreach ($args as $a) {
-                if ($a instanceof Handle) {
-                    return $a->worker;
+            foreach ($args as $argument) {
+                if ($argument instanceof Handle) {
+                    return $argument->worker;
                 }
-                if (\is_object($a) && isset($a->__ignisHandle)) {
-                    return $a->__ignisHandle->worker;
+                if (\is_object($argument) && isset($argument->__ignisHandle)) {
+                    return $argument->__ignisHandle->worker;
                 }
             }
             return null;
         }
 
         /** Proxies → ['__ref' => ...] for the wire (closures are handled by Client). */
-        private static function unwrap(mixed $v): mixed
+        private static function unwrap(mixed $value): mixed
         {
-            if ($v instanceof Handle) {
-                return ['__ref' => [$v->worker, $v->id, $v->class]];
+            if ($value instanceof Handle) {
+                return ['__ref' => [$value->worker, $value->id, $value->class]];
             }
-            if (\is_object($v) && isset($v->__ignisHandle)) {
-                return self::unwrap($v->__ignisHandle);
+            if (\is_object($value) && isset($value->__ignisHandle)) {
+                return self::unwrap($value->__ignisHandle);
             }
-            if (\is_array($v)) {
-                foreach ($v as $k => $x) {
-                    $v[$k] = self::unwrap($x);
+            if (\is_array($value)) {
+                foreach ($value as $key => $element) {
+                    $value[$key] = self::unwrap($element);
                 }
             }
-            return $v;
+            return $value;
         }
 
         /** @internal refs in callback arguments → handles/proxies */
-        public static function wrapRefs(mixed $v): mixed
+        public static function wrapRefs(mixed $value): mixed
         {
-            return self::wrap($v);
-        }
-
-        /** ['__ref' => [worker, id, class]] → Handle or a class proxy. */
-        private static function wrap(mixed $v): mixed
-        {
-            if (\is_array($v)) {
-                if (isset($v['__ref']) && \count($v) === 1) {
-                    [$w, $id, $class] = $v['__ref'];
-                    $h = new Handle($w, $id, $class);
-                    $proxy = 'Ignis\Offload\Proxy\\' . $class;
-                    if (!class_exists($proxy, false) && class_exists($class, false) && !(new \ReflectionClass($class))->isFinal()) {
-                        self::proxyClass($class); // e.g. SQLite3Result, PDOStatement: proxied on first sight
-                    }
-                    if (class_exists($proxy, false)) {
-                        return $proxy::fromHandle($h);
-                    }
-                    return $h; // final classes (CurlHandle): a Handle with __call forwarding
-                }
-                foreach ($v as $k => $x) {
-                    $v[$k] = self::wrap($x);
-                }
-            }
-            return $v;
+            return self::wrap($value);
         }
 
         /**
-         * Declare Ignis\Offload\Proxy\<Class> extends <Class>: every public method forwards to the
-         * worker (signature copied by reflection so the override is LSP-compatible); constants and
-         * `instanceof` come from the parent for free.
+         * ['__ref' => [worker, id, class]] → a class proxy, or a bare Handle with `__call`
+         * forwarding for a final class (CurlHandle) that cannot be subclassed. A class seen for the
+         * first time here — SQLite3Result, PDOStatement — gets its proxy declared now.
          */
+        private static function wrap(mixed $value): mixed
+        {
+            if (\is_array($value)) {
+                if (isset($value['__ref']) && \count($value) === 1) {
+                    [$worker, $id, $class] = $value['__ref'];
+                    $handle = new Handle($worker, $id, $class);
+                    $proxy = 'Ignis\Offload\Proxy\\' . $class;
+                    if (!class_exists($proxy, false) && class_exists($class, false) && !(new \ReflectionClass($class))->isFinal()) {
+                        self::proxyClass($class);
+                    }
+                    return class_exists($proxy, false) ? $proxy::fromHandle($handle) : $handle;
+                }
+                foreach ($value as $key => $element) {
+                    $value[$key] = self::wrap($element);
+                }
+            }
+            return $value;
+        }
+
+        /** One reflection type back to source, with class names absolute and self/static resolved. */
         private static function typeString(\ReflectionType $t, string $class): string
         {
             if ($t instanceof \ReflectionUnionType) {
@@ -185,6 +195,11 @@ namespace Ignis\Offload {
             return $t->allowsNull() && !\in_array($n, ['mixed', 'null'], true) && !str_contains($s, '|') ? '?' . $s : $s;
         }
 
+        /**
+         * Declare Ignis\Offload\Proxy\<Class> extends <Class>: every public method forwards to the
+         * worker (signature copied by reflection so the override is LSP-compatible); constants and
+         * `instanceof` come from the parent for free.
+         */
         public static function proxyClass(string $class): void
         {
             if (!class_exists($class, false) || class_exists('Ignis\Offload\Proxy\\' . $class, false)) {
@@ -219,16 +234,16 @@ namespace Ignis\Offload {
         }
     }
 
-    // (Router helper) reflection type → source, with class names absolute and self/static resolved.
-    // Declared as a Router method below via closure binding to keep the class body compact.
-
     final class Handle
     {
         private bool $released = false;
 
         public function __construct(public readonly int $worker, public readonly int $id, public readonly string $class) {}
 
-        /** Method calls on a handle of a final class (no proxy subclass possible) forward as well. */
+        /**
+         * Method calls on a handle of a final class (no proxy subclass possible) forward as well.
+         * @param list<mixed> $args
+         */
         public function __call(string $method, array $args): mixed
         {
             return Router::method($this, $method, $args);
@@ -251,46 +266,52 @@ namespace Ignis\Offload {
         private static bool $hooked = false;
         public static int $callbacksRun = 0;
 
-        public static function call(string $fn, array $args, ?int $affinity = null): mixed
+        /**
+         * Runs a named function on a worker and parks this fiber until its answer comes back.
+         * @param list<mixed> $args
+         */
+        public static function call(string $function, array $args, ?int $affinity = null): mixed
         {
             self::hook();
-            $cbs = [];
-            $args = self::extractCallbacks($args, $cbs);
-            $ser = serialize($args);
-            $op = \ignis_offload_submit($fn, $ser, $affinity ?? -1);
+            $callbacks = [];
+            $args = self::extractCallbacks($args, $callbacks);
+            $op = \ignis_offload_submit($function, serialize($args), $affinity ?? -1);
             if (!\is_int($op)) {
                 throw new \RuntimeException('offload: no pool (start ignis with --offload N)');
             }
-            if ($cbs !== []) {
-                self::$callbacks[$op] = $cbs; // keyed by op: the callback payload carries the job's op? no: the job id
+            if ($callbacks !== []) {
+                self::$callbacks[$op] = $callbacks;
             }
-            $r = Loop::awaitOp($op);
+            $answer = Loop::awaitOp($op);
             unset(self::$callbacks[$op]);
-            if (\is_array($r) && ($r['kind'] ?? '') === 'error') {
-                throw new \RuntimeException('offload: ' . $r['message']);
+            if (\is_array($answer) && ($answer['kind'] ?? '') === 'error') {
+                throw new \RuntimeException('offload: ' . $answer['message']);
             }
-            $u = unserialize($r, ['allowed_classes' => true]);
-            if (isset($u['err'])) {
-                throw new RemoteException($u['err'][0], $u['err'][1], (int) $u['err'][2], $u['err'][3] ?? '');
+            $result = unserialize($answer, ['allowed_classes' => true]);
+            if (isset($result['err'])) {
+                throw new RemoteException($result['err'][0], $result['err'][1], (int) $result['err'][2], $result['err'][3] ?? '');
             }
-            return $u['ok'] ?? null;
+            return $result['ok'] ?? null;
         }
 
-        /** Closures anywhere in $args become CallbackRef; the closures are kept per call. */
-        private static function extractCallbacks(mixed $v, array &$cbs): mixed
+        /**
+         * Closures anywhere in $args become CallbackRef; the closures are kept per call.
+         * @param array<int, \Closure> $callbacks
+         */
+        private static function extractCallbacks(mixed $value, array &$callbacks): mixed
         {
-            if ($v instanceof \Closure) {
+            if ($value instanceof \Closure) {
                 $id = self::$nextCb++;
-                $cbs[$id] = $v;
-                self::$pending[$id] = $v;
+                $callbacks[$id] = $value;
+                self::$pending[$id] = $value;
                 return new CallbackRef($id);
             }
-            if (\is_array($v)) {
-                foreach ($v as $k => $x) {
-                    $v[$k] = self::extractCallbacks($x, $cbs);
+            if (\is_array($value)) {
+                foreach ($value as $key => $element) {
+                    $value[$key] = self::extractCallbacks($element, $callbacks);
                 }
             }
-            return $v;
+            return $value;
         }
 
         /** @var array<int, \Closure> callback id => closure (ids are unique per process) */
@@ -302,25 +323,32 @@ namespace Ignis\Offload {
                 return;
             }
             self::$hooked = true;
-            Loop::$offloadCallbackHandler = static function (array $p): void {
-                // Run the closure in its own fiber so it may itself await; answer when it returns.
-                Loop::spawn(static function () use ($p): void {
-                    $cb = self::$pending[(int) $p['cb']] ?? null;
-                    try {
-                        if ($cb === null) {
-                            throw new \RuntimeException('unknown callback ' . $p['cb']);
-                        }
-                        $args = Router::wrapRefs(unserialize($p['args'], ['allowed_classes' => true]));
-                        $out = serialize(['ok' => $cb(...$args)]);
-                    } catch (\Throwable $e) {
-                        $out = serialize(['err' => [$e::class, $e->getMessage(), $e->getCode()]]);
-                    }
-                    self::$callbacksRun++;
-                    \ignis_offload_cb_result((int) $p['job'], (int) $p['seq'], $out);
-                });
+            Loop::$offloadCallbackHandler = static function (array $payload): void {
+                Loop::spawn(self::runCallback(...), $payload);
             };
         }
 
+        /**
+         * Runs one worker callback in its own fiber, so it may itself await, and answers when it returns.
+         * @param array<string, mixed> $payload
+         */
+        private static function runCallback(array $payload): void
+        {
+            $callback = self::$pending[(int) $payload['cb']] ?? null;
+            try {
+                if ($callback === null) {
+                    throw new \RuntimeException('unknown callback ' . $payload['cb']);
+                }
+                $args = Router::wrapRefs(unserialize($payload['args'], ['allowed_classes' => true]));
+                $out = serialize(['ok' => $callback(...$args)]);
+            } catch (\Throwable $e) {
+                $out = serialize(['err' => [$e::class, $e->getMessage(), $e->getCode()]]);
+            }
+            self::$callbacksRun++;
+            \ignis_offload_cb_result((int) $payload['job'], (int) $payload['seq'], $out);
+        }
+
+        /** @return array<string, mixed> */
         public static function stats(): array
         {
             return \ignis_offload_stats();
@@ -336,8 +364,8 @@ namespace Ignis\Offload {
 
 namespace Ignis {
     /** Run a named function (or "Class::method") on the offload pool; the current fiber parks. */
-    function offload(string $fn, mixed ...$args): mixed
+    function offload(string $function, mixed ...$args): mixed
     {
-        return Offload\Client::call($fn, $args);
+        return Offload\Client::call($function, $args);
     }
 }

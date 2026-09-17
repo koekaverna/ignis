@@ -9,17 +9,27 @@ declare(strict_types=1);
 
 namespace Ignis\Offload;
 
-/** Serializable stand-in for a caller-side closure; the worker turns it into a stub that calls back. */
-final class CallbackRef
-{
-    public function __construct(public readonly int $id) {}
+/**
+ * Serializable stand-in for a caller-side closure; the worker turns it into a stub that calls back.
+ *
+ * Guarded like the identical pair in `ignis-offload.php`, and for the same reason: a worker thread
+ * evaluates this file with nothing else loaded, but anything that has already required the caller
+ * side (a prelude, a test) would otherwise hit "cannot redeclare".
+ */
+if (!class_exists(CallbackRef::class, false)) {
+    final class CallbackRef
+    {
+        public function __construct(public readonly int $id) {}
+    }
 }
 
-final class RemoteException extends \RuntimeException
-{
-    public function __construct(public readonly string $remoteClass, string $message, int $code, public readonly string $remoteTrace = '')
+if (!class_exists(RemoteException::class, false)) {
+    final class RemoteException extends \RuntimeException
     {
-        parent::__construct($message, $code);
+        public function __construct(public readonly string $remoteClass, string $message, int $code, public readonly string $remoteTrace = '')
+        {
+            parent::__construct($message, $code);
+        }
     }
 }
 
@@ -58,7 +68,11 @@ final class WorkerRuntime
     private static int $nextHandle = 1;
     private const ROUTABLE = ['CurlHandle', 'CurlMultiHandle', 'CurlShareHandle', 'PDO', 'PDOStatement', 'SQLite3', 'SQLite3Stmt', 'SQLite3Result'];
 
-    /** Auto-routed call from a fiber thread: "fn:name" / "new:Class" / "method:name" / "free". */
+    /**
+     * Auto-routed call from a fiber thread: "fn:name" / "new:Class" / "method:name" / "free".
+     *
+     * @param array<int|string, mixed> $args
+     */
     public static function routed(string $what, array $args): mixed
     {
         if ($what === 'free') {
@@ -76,6 +90,7 @@ final class WorkerRuntime
         return self::registerObjects($result);
     }
 
+    /** @param array<int|string, mixed> $args */
     private static function callMethod(mixed $obj, string $method, array $args): mixed
     {
         if (!\is_object($obj)) {
@@ -146,4 +161,9 @@ final class WorkerRuntime
     }
 }
 
-WorkerRuntime::run();
+// The job channel only exists inside the ignis binary, which is also the only place that evaluates
+// this file (crates/ignis/src/main.rs `include_str!`s it onto every offload thread). Guarding the
+// call is what lets a test require the file for WorkerRuntime alone.
+if (\function_exists('ignis_offload_next')) {
+    WorkerRuntime::run();
+}

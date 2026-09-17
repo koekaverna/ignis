@@ -19,8 +19,9 @@ use Temporal\Workflow\WorkflowMethod;
 #[WorkflowInterface]
 class GreetWorkflow
 {
+    /** @return \Generator<mixed, mixed, mixed, string> */
     #[WorkflowMethod]
-    public function handle(string $name)
+    public function handle(string $name): \Generator
     {
         $stub = Workflow::newActivityStub(
             GreetActivity::class,
@@ -54,8 +55,9 @@ class FeatureWorkflow
     private string $state = 'new';
     private ?string $result = null;
 
+    /** @return \Generator<mixed, mixed, mixed, string|null> */
     #[WorkflowMethod]
-    public function handle()
+    public function handle(): \Generator
     {
         yield Workflow::await(fn(): bool => $this->result !== null);
 
@@ -68,8 +70,9 @@ class FeatureWorkflow
         return $this->state;
     }
 
+    /** @return \Generator<mixed, mixed, mixed, string> */
     #[Workflow\UpdateMethod('submit')]
-    public function submit(string $value)
+    public function submit(string $value): \Generator
     {
         $projection = Workflow::newActivityStub(
             ProjectionActivity::class,

@@ -17,6 +17,7 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(Request::class)]
 final class RequestTest extends TestCase
 {
+    /** @param array<string, string> $headers */
     private static function get(string $uri, array $headers = []): Request
     {
         return new Request('GET', $uri, $headers, '');
@@ -103,6 +104,7 @@ final class RequestTest extends TestCase
         self::assertSame(['a' => '1'], $post);
     }
 
+    /** @return iterable<string, array{0: string}> */
     public static function boundarySpellings(): iterable
     {
         yield 'plain' => ['multipart/form-data; boundary=BNDRY'];
@@ -167,6 +169,63 @@ final class RequestTest extends TestCase
         $body = self::multipart([['name' => '', 'value' => 'v'], ['name' => 'ok', 'value' => '1']]);
         [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
         self::assertSame(['ok' => '1'], $post);
+    }
+
+    /**
+     * `path()`, `query()` and `superglobals()` each scan the URI for `?` on their own, and
+     * `superglobals()` then runs `parse_str()` a second time over the same bytes that `query()`
+     * already parsed. The three have to agree; these pin what "agree" means before the refactor
+     * that collapses them into one scan.
+     */
+    public function testTheThreeQuestionMarkScansAgreeOnWhereTheQueryStarts(): void
+    {
+        $r = self::get('/a?b=1?c=2');
+        [$server, $get] = $r->superglobals();
+
+        self::assertSame('/a', $r->path(), 'the first ? ends the path');
+        self::assertSame('b=1?c=2', $server['QUERY_STRING'], 'every later ? belongs to the query string');
+        self::assertSame('1?c=2', $r->query('b'));
+        self::assertSame(['b' => '1?c=2'], $get, 'the lazy query() cache and the eager $_GET parse must not diverge');
+    }
+
+    public function testAQueryThatIsEmptyOrAbsentLooksTheSameEverywhere(): void
+    {
+        foreach (['/a?' => '/a', '/a' => '/a', '?x=1' => ''] as $uri => $path) {
+            $r = self::get($uri);
+            [$server, $get] = $r->superglobals();
+
+            self::assertSame($path, $r->path(), $uri);
+            self::assertSame(ltrim(strstr($uri, '?') ?: '', '?'), $server['QUERY_STRING'], $uri);
+            self::assertSame($r->query('x'), $get['x'] ?? null, $uri);
+        }
+    }
+
+    /**
+     * DEFECT (pinned). `query()` is `?string`, but `parse_str()` gives an array for `x[]=…`, and the
+     * `(string)` cast then warns "Array to string conversion" and hands back the literal `Array`.
+     * `$_GET` from the same URI has the real list. A caller cannot tell the two apart.
+     */
+    public function testARepeatedParameterStringifiesToTheWordArrayBug(): void
+    {
+        $r = self::get('/a?x[]=1&x[]=2');
+        [, $get] = $r->superglobals();
+        self::assertSame(['1', '2'], $get['x'], '$_GET has the list');
+
+        $warnings = [];
+        set_error_handler(static function (int $number, string $message) use (&$warnings): bool {
+            $warnings[] = $message;
+
+            return true;
+        });
+
+        try {
+            $value = $r->query('x');
+        } finally {
+            restore_error_handler();
+        }
+
+        self::assertSame('Array', $value, 'query() casts the array to a string');
+        self::assertSame(['Array to string conversion'], $warnings);
     }
 
     /** @param list<array{name:string,value:string,filename?:string}> $parts */

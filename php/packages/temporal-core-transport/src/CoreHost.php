@@ -42,6 +42,7 @@ final class CoreHost implements HostConnectionInterface
         return new CommandBatch($task, ['taskQueue' => $this->source->taskQueue()]);
     }
 
+    /** @param array<string, mixed> $headers */
     public function send(string $frame, array $headers = []): void
     {
         ++$this->handled;

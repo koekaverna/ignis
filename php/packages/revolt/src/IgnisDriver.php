@@ -61,6 +61,7 @@ final class IgnisDriver extends AbstractDriver
         return (float) \hrtime(true) / 1_000_000_000;
     }
 
+    /** @param array<string, DriverCallback> $callbacks */
     protected function activate(array $callbacks): void
     {
         foreach ($callbacks as $callback) {

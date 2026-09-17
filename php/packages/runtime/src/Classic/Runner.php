@@ -43,12 +43,16 @@ final class Runner
         return self::$sent === null ? $response : null;   // already written straight to the socket
     }
 
-    /** @var list<array{0:int,1:array}> requests handed over by the loop, one at a time */
+    /** @var list<array{0: int, 1: array<string, mixed>}> requests handed over by the loop, one at a time */
     private static array $inbox = [];
     private static ?int $current = null;
     private static ?string $currentSid = null;
 
-    /** `Loop::$rawRequestHandler`: runs on the loop's own stack, so it only parks the request. */
+    /**
+     * `Loop::$rawRequestHandler`: runs on the loop's own stack, so it only parks the request.
+     *
+     * @param array<string, mixed> $raw
+     */
     public static function queue(int $id, array $raw): void
     {
         self::$inbox[] = [$id, $raw];
@@ -124,7 +128,7 @@ final class Runner
             return [null, '', ''];
         }
         $script = '';
-        foreach (array_filter($segments, 'strlen') as $segment) {
+        foreach (array_filter($segments, static fn(string $segment): bool => $segment !== '') as $segment) {
             $script .= '/' . $segment;
             if (is_file(self::$docroot . $script)) {
                 return [self::$docroot . $script, $script, substr($path, strlen($script))];
@@ -137,6 +141,16 @@ final class Runner
         return self::$index !== null && is_file(self::$docroot . $index) ? [self::$docroot . $index, $index, ''] : [null, '', ''];
     }
 
+    /**
+     * An empty session cookie parameter is not the same as an unset one: setcookie() reads an empty
+     * path as "the current directory", and session.cookie_path may legitimately be set to empty.
+     */
+    private static function orFallback(string $value, string $fallback): string
+    {
+        return $value !== '' ? $value : $fallback;
+    }
+
+    /** @return array<string, string> */
     private static function server(Request $req, string $file, string $script, string $pathInfo): array
     {
         [$name, $port] = array_pad(explode(':', $req->headers['host'] ?? 'localhost', 2), 2, '80');
@@ -183,11 +197,27 @@ final class Runner
         return new Response((string) ob_get_contents(), \is_int($code) && $code >= 100 ? $code : 200, $headers);
     }
 
-    /** headers_list() as name => value. A repeated name (several Set-Cookie) gets case variants: Ignis responses are maps and hyper lower-cases names on the wire. */
+    /**
+     * headers_list() as name => value. A repeated name (several Set-Cookie) gets case variants:
+     * Ignis responses are maps and hyper lower-cases names on the wire.
+     * @return array<string, string>
+     */
     public static function headerMap(): array
     {
+        return self::parseHeaderLines(headers_list());
+    }
+
+    /**
+     * The pure half of headerMap(): `headers_list()` returns `[]` under php-cli, so the parsing is
+     * split out to be testable without a SAPI.
+     *
+     * @param  list<string>          $lines
+     * @return array<string, string>
+     */
+    public static function parseHeaderLines(array $lines): array
+    {
         $map = [];
-        foreach (headers_list() as $line) {
+        foreach ($lines as $line) {
             $colon = strpos($line, ':');
             if ($colon === false || $colon === 0) {
                 continue; // header('Invalid') is stored by PHP but not sendable
@@ -221,7 +251,11 @@ final class Runner
         session_write_close();
         if ($sid !== $cookieSid) {
             $p = session_get_cookie_params();
-            setcookie(session_name(), $sid, ['path' => $p['path'] ?: '/', 'httponly' => $p['httponly'], 'samesite' => $p['samesite'] ?: 'Lax']);
+            setcookie(session_name(), $sid, [
+                'path' => self::orFallback($p['path'], '/'),
+                'httponly' => $p['httponly'],
+                'samesite' => self::orFallback($p['samesite'], 'Lax'),
+            ]);
         }
     }
 }

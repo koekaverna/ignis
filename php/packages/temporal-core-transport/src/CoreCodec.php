@@ -80,6 +80,7 @@ final class CoreCodec implements CodecInterface
         $this->taskToken = null;
     }
 
+    /** @param array<string, mixed> $headers */
     public function decode(string $batch, array $headers = []): iterable
     {
         $data = \json_decode($batch, true, 512, \JSON_THROW_ON_ERROR);
@@ -109,7 +110,10 @@ final class CoreCodec implements CodecInterface
 
     // ---------------------------------------------------------------- workflow activations
 
-    /** @return list<ServerRequest|SuccessResponse|FailureResponse> */
+    /**
+     * @param  array<string, mixed> $act
+     * @return list<ServerRequest|SuccessResponse|FailureResponse>
+     */
     private function decodeActivation(array $act): array
     {
         $this->runId = $runId = (string) ($act['runId'] ?? '');
@@ -369,7 +373,10 @@ final class CoreCodec implements CodecInterface
         return \json_encode(['runId' => $runId, 'successful' => ['commands' => $out]], \JSON_THROW_ON_ERROR);
     }
 
-    /** `UpdateValidated`/`UpdateCompleted` -> core's accepted / rejected / completed. */
+    /**
+     * `UpdateValidated`/`UpdateCompleted` -> core's accepted / rejected / completed.
+     * @return array<string, mixed>
+     */
     private function updateResponse(string $runId, UpdateResponse $c): array
     {
         $updateId = (string) ($c->getOptions()['id'] ?? '');
@@ -391,6 +398,7 @@ final class CoreCodec implements CodecInterface
         ]];
     }
 
+    /** @return array<string, mixed> */
     private function queryResult(string $queryId, CommandInterface $c): array
     {
         $failure = $this->failureOf($c);
@@ -406,6 +414,7 @@ final class CoreCodec implements CodecInterface
         ]];
     }
 
+    /** @return null|array<string, mixed> */
     private function cancelOf(string $runId, int|string $id): ?array
     {
         $entry = $this->runs[$runId]['byId'][$id] ?? null;
@@ -424,7 +433,10 @@ final class CoreCodec implements CodecInterface
 
     // ---------------------------------------------------------------- activity tasks
 
-    /** @return list<ServerRequest> */
+    /**
+     * @param  array<string, mixed> $task
+     * @return list<ServerRequest>
+     */
     private function decodeActivityTask(array $task): array
     {
         $this->taskToken = $task['taskToken'] ?? null;
@@ -511,7 +523,10 @@ final class CoreCodec implements CodecInterface
         return $entry['id'];
     }
 
-    /** An ActivityResolution / ChildWorkflowResult -> the response sdk-php is waiting for. */
+    /**
+     * An ActivityResolution / ChildWorkflowResult -> the response sdk-php is waiting for.
+     * @param array<string, mixed> $result
+     */
     private function resolution(array $result, int|string $id, TickInfo $info): SuccessResponse|FailureResponse
     {
         if (isset($result['completed'])) {
@@ -534,24 +549,27 @@ final class CoreCodec implements CodecInterface
      * `StartWorkflow` options are unmarshalled into `Temporal\Workflow\WorkflowInfo`, so these keys
      * are fixed by that class's `#[Marshal]` names, and the timeouts by DateIntervalType's default
      * unit — nanoseconds.
+     *
+     * @param  array<string, mixed> $start the activation's `startWorkflow` job
+     * @return array<string, mixed>
      */
-    private function workflowInfo(string $runId, array $d, TickInfo $info): array
+    private function workflowInfo(string $runId, array $start, TickInfo $info): array
     {
         return [
-            'WorkflowExecution' => ['ID' => (string) ($d['workflowId'] ?? ''), 'RunID' => $runId],
-            'WorkflowType' => ['Name' => (string) ($d['workflowType'] ?? '')],
+            'WorkflowExecution' => ['ID' => (string) ($start['workflowId'] ?? ''), 'RunID' => $runId],
+            'WorkflowType' => ['Name' => (string) ($start['workflowType'] ?? '')],
             'TaskQueueName' => $this->taskQueue,
             'Namespace' => $this->namespace,
-            'Attempt' => (int) ($d['attempt'] ?? 1),
-            'WorkflowExecutionTimeout' => $this->nanos($d['workflowExecutionTimeout'] ?? null),
-            'WorkflowRunTimeout' => $this->nanos($d['workflowRunTimeout'] ?? null),
-            'WorkflowTaskTimeout' => $this->nanos($d['workflowTaskTimeout'] ?? null),
+            'Attempt' => (int) ($start['attempt'] ?? 1),
+            'WorkflowExecutionTimeout' => $this->nanos($start['workflowExecutionTimeout'] ?? null),
+            'WorkflowRunTimeout' => $this->nanos($start['workflowRunTimeout'] ?? null),
+            'WorkflowTaskTimeout' => $this->nanos($start['workflowTaskTimeout'] ?? null),
             'HistoryLength' => $info->historyLength,
             'HistorySize' => $info->historySize,
             'ShouldContinueAsNew' => $info->continueAsNewSuggested,
-            'CronSchedule' => $d['cronSchedule'] ?? null,
-            'ContinuedExecutionRunID' => $d['continuedFromExecutionRunId'] ?? null,
-            'FirstRunID' => $d['firstExecutionRunId'] ?? $runId,
+            'CronSchedule' => $start['cronSchedule'] ?? null,
+            'ContinuedExecutionRunID' => $start['continuedFromExecutionRunId'] ?? null,
+            'FirstRunID' => $start['firstExecutionRunId'] ?? $runId,
             'OriginalRunID' => $runId,
         ];
     }
@@ -636,7 +654,10 @@ final class CoreCodec implements CodecInterface
         return \rtrim(\rtrim(\sprintf('%.3f', $ms / 1000), '0'), '.') . 's';
     }
 
-    /** sdk-php's marshalled RetryOptions -> core's temporal.api.common.v1.RetryPolicy. */
+    /**
+     * sdk-php's marshalled RetryOptions -> core's temporal.api.common.v1.RetryPolicy.
+     * @return null|array<string, mixed>
+     */
     private function retryPolicy(mixed $policy): ?array
     {
         if (!\is_array($policy)) {

@@ -51,6 +51,7 @@ namespace {
     {
         return \Swoole\Coroutine::create($fn, ...$args);
     }
+    /** @param array<string, mixed> $settings */
     function swoole_async_set(array $settings): void {}
     function swoole_cpu_num(): int
     {
@@ -92,7 +93,7 @@ namespace Swoole {
         private static int $next = 0;
         /** @var array<int,\Ignis\Future> live coroutines */
         private static array $live = [];
-        /** @var array<int,\Fiber> parked by yield() */
+        /** @var array<int,\Fiber<mixed,mixed,mixed,mixed>> parked by yield() */
         private static array $parked = [];
         /** @var array<int,list<callable>> */
         private static array $defers = [];
@@ -139,12 +140,14 @@ namespace Swoole {
         {
             self::$defers[self::getCid()][] = $fn;
         }
+        /** @param array<string, mixed> $options */
         public static function set(array $options): void
         {
             if (isset($options['hook_flags'])) {
                 Runtime::$configured = (int) $options['hook_flags'];
             }
         }
+        /** @return array<string, int> */
         public static function stats(): array
         {
             return ['coroutine_num' => \count(self::$live), 'coroutine_peak_num' => self::$next];
@@ -256,7 +259,7 @@ namespace Swoole {
 
     final class Timer
     {
-        /** @var array<int,bool> id => alive */
+        /** @var array<int, true> ids of timers that clear() has not removed */
         private static array $timers = [];
 
         public static function tick(int $ms, callable $fn, mixed ...$args): int
@@ -269,28 +272,57 @@ namespace Swoole {
         }
         public static function clear(int $id): bool
         {
-            if (!isset(self::$timers[$id])) {
+            if (!self::isLive($id)) {
                 return false;
-            } unset(self::$timers[$id]);
+            }
+            unset(self::$timers[$id]);
             return true;
         }
 
+        /** A timer that `clear()` has not removed. */
+        private static function isLive(int $id): bool
+        {
+            return isset(self::$timers[$id]);
+        }
+
+        /**
+         * A timer is a live coroutine, so Coroutine::stats() counts it and run() waits for it.
+         * @param list<mixed> $args
+         */
         private static function start(int $ms, callable $fn, array $args, bool $repeat): int
         {
             static $next = 0;
             $id = ++$next;
             self::$timers[$id] = true;
-            Coroutine::create(static function () use ($id, $ms, $fn, $args, $repeat): void { // a timer is a live coroutine
-                do {
-                    \Ignis\sleep(\max(1, $ms));
-                    if (!isset(self::$timers[$id])) {
-                        return;
-                    }
-                    $fn($id, ...$args);
-                } while ($repeat && isset(self::$timers[$id]));
-                unset(self::$timers[$id]);
-            });
+            Coroutine::create(self::runTimer(...), $id, $ms, $fn, $args, $repeat);
             return $id;
+        }
+
+        /**
+         * The timer coroutine: sleep, check, fire, repeat. `clear()` during the sleep ends it
+         * without touching the table, which the clear already emptied.
+         * @param list<mixed> $args
+         */
+        private static function runTimer(int $id, int $ms, callable $fn, array $args, bool $repeat): void
+        {
+            do {
+                \Ignis\sleep(\max(1, $ms));
+                if (!self::isLive($id)) {
+                    return;
+                }
+            } while (self::fireTick($id, $fn, $args) && $repeat);
+            unset(self::$timers[$id]);
+        }
+
+        /**
+         * Runs one tick and reports whether the timer survived it: a callback is allowed to clear
+         * its own timer, and that is how a repeating `tick()` is cancelled from inside.
+         * @param list<mixed> $args
+         */
+        private static function fireTick(int $id, callable $fn, array $args): bool
+        {
+            $fn($id, ...$args);
+            return self::isLive($id);
         }
     }
 }
@@ -316,7 +348,7 @@ namespace Swoole\Coroutine {
     /** Parks the current fiber until $ready(); from {main} drives the loop instead. False on timeout. */
     trait Parking
     {
-        /** @var list<\Fiber> */
+        /** @var list<\Fiber<mixed,mixed,mixed,mixed>> */
         private array $waiters = [];
 
         private function park(callable $ready, float $timeout): bool
@@ -355,6 +387,7 @@ namespace Swoole\Coroutine {
     final class Channel
     {
         use Parking;
+        /** @var list<mixed> */
         private array $queue = [];
         private bool $closed = false;
         public int $errCode = 0;

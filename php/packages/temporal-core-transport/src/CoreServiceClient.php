@@ -42,7 +42,20 @@ final class CoreServiceClient implements GrpcClientInterceptor
     public static function for(ServiceCall $call): ServiceClientInterface
     {
         return (new ServiceClient(static fn(): \Grpc\BaseStub => new DetachedStub()))
-            ->withInterceptorPipeline(Pipeline::prepare([new self($call)]));
+            ->withInterceptorPipeline(self::pipelineOf([new self($call)]));
+    }
+
+    /**
+     * `Pipeline::prepare()` infers its interceptor type from what it is handed, and `BaseClient`
+     * wants a pipeline of `GrpcClientInterceptor` rather than one of this class — so the element
+     * type is stated here instead of being inferred at the call.
+     *
+     * @param  list<GrpcClientInterceptor>             $interceptors
+     * @return Pipeline<GrpcClientInterceptor, object>
+     */
+    private static function pipelineOf(array $interceptors): Pipeline
+    {
+        return Pipeline::prepare($interceptors);
     }
 
     public function interceptCall(string $method, object $arg, ContextInterface $ctx, callable $next): object

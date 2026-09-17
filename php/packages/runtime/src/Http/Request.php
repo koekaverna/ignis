@@ -6,6 +6,7 @@ namespace Ignis\Http;
 
 final class Request
 {
+    /** @var null|array<string, mixed> parsed from the URI on the first query() call */
     private ?array $query = null;
 
     /** @param array<string,string> $headers lower-cased names */
@@ -44,7 +45,7 @@ final class Request
 
     /**
      * CGI-style superglobals for this request: [$_SERVER, $_GET, $_POST, $_COOKIE].
-     * @return array{0:array,1:array,2:array,3:array}
+     * @return array{0:array<string,mixed>,1:array<string,mixed>,2:array<string,mixed>,3:array<string,string>}
      */
     public function superglobals(): array
     {
@@ -108,8 +109,6 @@ final class Request
      */
     private static function multipartQuery(string $body, string $boundary): string
     {
-        // Only at a line start (or the very beginning), which is what makes a value holding the
-        // boundary text survive.
         $parts = \preg_split('#(?:\r\n|\n|^)--' . \preg_quote($boundary, '#') . '#', $body);
         if ($parts === false) {
             return '';
@@ -117,7 +116,7 @@ final class Request
 
         $pairs = [];
         foreach ($parts as $part) {
-            if ($part === '' || \str_starts_with($part, '--')) {   // the closing `--boundary--`
+            if ($part === '' || \str_starts_with($part, '--')) {
                 continue;
             }
             $part = \ltrim($part, "\r\n");
@@ -129,7 +128,6 @@ final class Request
             if (\str_contains($headers, 'filename=')) {
                 continue;
             }
-            // `name="x"` or bare `name=x` up to a `;` or the end of the line.
             if (\preg_match('#\bname=(?:"([^"]*)"|([^;\r\n]*))#i', $headers, $m) !== 1) {
                 continue;
             }

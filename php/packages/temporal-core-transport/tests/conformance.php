@@ -36,16 +36,17 @@ require __DIR__ . '/workflow.php';
 /** Plays a recorded script; a host only ever gets the tasks of its own kind, in order. */
 final class RecordedSource implements ActivationSource, \Temporal\Worker\Transport\Core\HeartbeatSink
 {
-    /** @var list<array{token:string,details:array}> */
+    /** @var list<array{token: string, details: array<int|string, mixed>}> */
     public array $heartbeats = [];
 
-    /** @var list<array{0:string,1:array}> */
+    /** @var list<array{0: string, 1: array<string, mixed>}> */
     private array $script;
-    /** @var list<array{0:string,1:array}> */
+    /** @var list<array{0: string, 1: array<string, mixed>}> */
     public array $completions = [];
     /** @var list<string> exactly what went to the host — what the Rust side has to accept */
     public array $raw = [];
 
+    /** @param list<array{0: string, 1: array<string, mixed>}> $script */
     public function __construct(array $script)
     {
         $this->script = $script;
@@ -86,6 +87,7 @@ final class RecordedSource implements ActivationSource, \Temporal\Worker\Transpo
     }
 }
 
+/** @return array{metadata: array{encoding: string}, data: string} */
 function payload(mixed $value): array
 {
     return [
@@ -94,13 +96,23 @@ function payload(mixed $value): array
     ];
 }
 
-/** protojson flattens a oneof to its field name, so a job is just `{fieldName: {...}}`. */
+/**
+ * protojson flattens a oneof to its field name, so a job is just `{fieldName: {...}}`.
+ *
+ * @param array<string, mixed> $data
+ *
+ * @return array<string, array<string, mixed>>
+ */
 function job(string $name, array $data): array
 {
     return [$name => $data];
 }
 
-/** The command name of a protojson command, and its body. */
+/**
+ * The command name of a protojson command, and its body.
+ *
+ * @param array<string, mixed> $command
+ */
 function cmdName(array $command): string
 {
     return (string) \array_key_first($command);
@@ -148,12 +160,16 @@ $factory->run($wf);
 $factory->run($act);
 $factory->run($wf);
 
-$failures = 0;
+/** A counter rather than a `global`, so what increments it is visible from where it is read. */
+final class Failures
+{
+    public static int $count = 0;
+}
+
 function check(string $what, mixed $got, mixed $want): void
 {
-    global $failures;
     $ok = $got === $want;
-    $failures += $ok ? 0 : 1;
+    Failures::$count += $ok ? 0 : 1;
     \printf("%-46s %s\n", $what, $ok ? 'ok' : \sprintf("FAIL\n    got  %s\n    want %s", \json_encode($got), \json_encode($want)));
 }
 
@@ -327,5 +343,5 @@ if (\getenv('CORE_DUMP_RAW')) {
     }
 }
 
-\printf("\n%s\n", $failures === 0 ? 'core transport: GREEN' : "core transport: {$failures} FAILED");
-exit($failures === 0 ? 0 : 1);
+\printf("\n%s\n", Failures::$count === 0 ? 'core transport: GREEN' : \sprintf('core transport: %d FAILED', Failures::$count));
+exit(Failures::$count === 0 ? 0 : 1);

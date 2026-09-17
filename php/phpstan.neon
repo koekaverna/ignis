@@ -46,3 +46,20 @@ parameters:
     # which a loaded stub satisfies — and then calls ignis_offload_stats(), which throws.
     scanFiles:
         - packages/runtime/stubs/ignis.php
+        # The fake reactor declares Ignis\Tests\FakeReactor and StopLoop, which every Loop test
+        # names. Its filename does not match the Ignis\Tests\ PSR-4 rule, so nothing else can
+        # resolve them. Scanned, not analysed: the reason tests/ stays out of `paths` -- the fake's
+        # discarded return values become result-unused findings -- does not apply to scanFiles.
+        - tests/fake-reactor.php
+
+    # One entry, not a baseline: the incompatibility is upstream and no annotation satisfies both
+    # sides. Persistence\Mapping\ClassMetadataFactory is @template T of ClassMetadata (invariant)
+    # while ORM narrows it, so ObjectManager's phpdoc return and the native ORM return cannot both
+    # be honoured. Doctrine's own EntityManagerDecorator::getMetadataFactory() reports the identical
+    # error when analysed, which is what proves it is not ours. Named by identifier, path and count,
+    # so it cannot quietly grow to cover anything else.
+    ignoreErrors:
+        -
+            identifier: method.childReturnType
+            path: packages/doctrine/src/FiberEntityManager.php
+            count: 1

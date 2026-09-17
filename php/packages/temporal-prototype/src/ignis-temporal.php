@@ -19,11 +19,13 @@ final class Payloads
 {
     private const ENC = 'json/plain';
 
+    /** @return array{metadata: array<string, string>, data: string} */
     public static function encode(mixed $value): array
     {
         return ['metadata' => ['encoding' => base64_encode(self::ENC)], 'data' => base64_encode(json_encode($value, JSON_THROW_ON_ERROR))];
     }
 
+    /** @param null|array<string, mixed> $payload */
     public static function decode(?array $payload): mixed
     {
         if ($payload === null || !isset($payload['data'])) {
@@ -36,11 +38,12 @@ final class Payloads
 /** Per-run state: the workflow fiber, pending awaits and the commands recorded since the last completion. */
 final class WorkflowRun
 {
+    /** @var null|\Fiber<mixed,mixed,mixed,mixed> */
     public ?\Fiber $fiber = null;
     public int $seq = 0;
-    /** @var array<int,\Fiber> seq => fiber waiting for that command's resolution */
+    /** @var array<int,\Fiber<mixed,mixed,mixed,mixed>> seq => fiber waiting for that command's resolution */
     public array $waiting = [];
-    /** @var list<array> commands to send in the next completion */
+    /** @var list<array<string, mixed>> commands to send in the next completion */
     public array $commands = [];
     public mixed $result = null;
     public bool $done = false;
@@ -54,6 +57,7 @@ final class Context
 {
     public function __construct(private readonly WorkflowRun $run, private readonly string $taskQueue) {}
 
+    /** @param list<mixed> $args */
     public function activity(string $type, array $args = [], int $startToCloseSec = 30): mixed
     {
         $seq = ++$this->run->seq;
@@ -95,7 +99,7 @@ final class Worker
      */
     public function __construct(private readonly int $worker, private readonly string $taskQueue, private readonly array $workflows, private readonly array $activities) {}
 
-    /** @return mixed payload string (JSON) or throws on error */
+    /** The op's payload as JSON; a reactor error payload becomes a RuntimeException. */
     private static function call(int $opId): string
     {
         $r = Loop::awaitOp($opId);
@@ -149,6 +153,10 @@ final class Worker
         }
     }
 
+    /**
+     * @param  array<string, mixed> $act
+     * @return array<string, mixed>
+     */
     private function handleActivation(array $act): array
     {
         $runId = $act['runId'];

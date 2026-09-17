@@ -9,7 +9,7 @@ final class Future
     private bool $done = false;
     private mixed $value = null;
     private ?\Throwable $error = null;
-    /** @var list<\Fiber> */
+    /** @var list<\Fiber<mixed,mixed,mixed,mixed>> */
     private array $waiters = [];
 
     public function isDone(): bool
@@ -54,12 +54,7 @@ final class Future
         if (!$this->done) {
             $fiber = \Fiber::getCurrent();
             if ($fiber === null) {
-                Loop::runUntil(fn() => $this->done);
-                if (!$this->done) {
-                    // The loop went idle (nothing in flight, nothing waiting) with this future unsettled:
-                    // a fiber is stuck on something the loop does not know about. Say so instead of returning null.
-                    throw new \LogicException('Ignis\Future::await(): the loop stopped with this future unsettled (a fiber is parked on an op the loop never completes)');
-                }
+                $this->driveLoopUntilSettled();
             } else {
                 $this->waiters[] = $fiber;
                 \Fiber::suspend();
@@ -77,5 +72,18 @@ final class Future
             throw $this->error;
         }
         return $this->value;
+    }
+
+    /**
+     * {main} has no fiber to park, so it drives the loop instead. A loop that goes idle — nothing
+     * in flight, nothing waiting — with this future still unsettled means a fiber is stuck on
+     * something the loop does not know about; say so instead of returning null.
+     */
+    private function driveLoopUntilSettled(): void
+    {
+        Loop::runUntil(fn() => $this->done);
+        if (!$this->done) {
+            throw new \LogicException('Ignis\Future::await(): the loop stopped with this future unsettled (a fiber is parked on an op the loop never completes)');
+        }
     }
 }

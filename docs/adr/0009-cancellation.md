@@ -42,6 +42,24 @@ at every throw site including the C-parked path (V-30). Watches and sleeps are c
 5. An unawaited rejected Future is surfaced **at once** through a loop error handler. *Gap: today it
    is surfaced when the loop stops (V-22: rethrown instead of swallowed).*
 
+## Absorbing the injected exception
+
+`Fiber::throw()` on a fiber that has no handler for the exception re-throws it straight back out at
+the caller. Unguarded user code is the normal case, so without absorption the cancellation walked
+back up through `Loop::cancelRequest()` into the event loop and killed the whole worker thread's
+script — **one disconnected client took out a quarter of the server's capacity**. Found by the A3
+soak: **6 dead threads in 10,081,952 requests** (V-30), and without `--supervise` the process
+itself died.
+
+`Loop::throwAndAbsorb()` therefore swallows exactly the exception it injected and nothing else:
+anything *other* than that object — a `finally` that throws while unwinding, say — is a genuine
+user error and is kept for the unobserved-error report rather than swallowed.
+
+The `ignis_cancel_parked_any()` path is guarded the same way and for a sharper reason: that is the
+path that actually killed the worker threads. `zend_fiber_resume_exception` leaves the throwable
+pending in C when the fiber has no handler, so it surfaces on return into PHP with no `throwInto`
+frame in the trace — which is why guarding `Fiber::throw()` alone did not help.
+
 **Options rejected.** Signals into Zend (`zend_signal`) for cancellation — a signal cannot switch
 a fiber and libraries are not signal-safe; killing the thread (the pre-V-30 behaviour, by
 accident) — one client took a quarter of the server.

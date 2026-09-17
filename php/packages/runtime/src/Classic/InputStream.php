@@ -43,7 +43,7 @@ final class InputStream
             return fseek($this->inner, $offset, $whence) === 0;
         }
         $this->pos = match ($whence) {
-            SEEK_SET => $offset, SEEK_CUR => $this->pos + $offset, default => \strlen(self::$body) + $offset
+            SEEK_SET => $offset, SEEK_CUR => $this->pos + $offset, default => \strlen(self::$body) + $offset,
         };
         return true;
     }
@@ -59,6 +59,7 @@ final class InputStream
     {
         return $this->inner ? (int) ftell($this->inner) : $this->pos;
     }
+    /** @return array<int|string, int>|false */
     public function stream_stat(): array|false
     {
         return $this->inner ? fstat($this->inner) : ['size' => strlen(self::$body)];

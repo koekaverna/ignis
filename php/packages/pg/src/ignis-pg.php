@@ -37,54 +37,60 @@ final class Pool
         $leaseId = \is_array($r)
             ? (int) $r['lease'] // idle connection: no reactor hop
             : (int) json_decode(self::result(Loop::awaitOp($r)), true, 8, JSON_THROW_ON_ERROR)['lease'];
-        $lease = new Lease($this, $leaseId, $key);
+        $lease = new Lease($leaseId, $key);
         Scope::set($key, $lease);
         return $lease;
     }
 
-    /** One statement on a fresh lease: acquire → query → release. @return list<array<string,mixed>> */
+    /**
+     * One statement on a fresh lease: acquire → query → release.
+     * @param  array<array-key, mixed> $params
+     * @return list<array<string,mixed>>
+     */
     public function query(string $sql, array $params = []): array
     {
-        $l = $this->acquire();
+        $lease = $this->acquire();
         try {
-            return $l->query($sql, $params);
+            return $lease->query($sql, $params);
         } finally {
-            $l->release();
+            $lease->release();
         }
     }
 
+    /** @param array<array-key, mixed> $params */
     public function exec(string $sql, array $params = []): int
     {
-        $l = $this->acquire();
+        $lease = $this->acquire();
         try {
-            return $l->exec($sql, $params);
+            return $lease->exec($sql, $params);
         } finally {
-            $l->release();
+            $lease->release();
         }
     }
 
     /** Runs $fn(Lease) inside BEGIN/COMMIT on one leased connection; any throwable rolls back. */
     public function transaction(callable $fn): mixed
     {
-        $l = $this->acquire();
+        $lease = $this->acquire();
         try {
-            $l->exec('BEGIN');
+            $lease->exec('BEGIN');
             try {
-                $r = $fn($l);
-                $l->exec('COMMIT');
-                return $r;
+                $result = $fn($lease);
+                $lease->exec('COMMIT');
+                return $result;
             } catch (\Throwable $e) {
                 try {
-                    $l->exec('ROLLBACK');
+                    $lease->exec('ROLLBACK');
                 } catch (\Throwable) { /* reset on release rolls back anyway */
                 }
                 throw $e;
             }
         } finally {
-            $l->release();
+            $lease->release();
         }
     }
 
+    /** @return null|array<string, mixed> [idle, created, available]; null when the pool id is unknown. */
     public function stats(): ?array
     {
         return \ignis_pg_stats($this->id);
@@ -106,14 +112,18 @@ final class Lease
     private bool $released = false;
 
     /** @internal */
-    public function __construct(private readonly Pool $pool, public readonly int $id, private readonly string $scopeKey) {}
+    public function __construct(public readonly int $id, private readonly string $scopeKey) {}
 
-    /** @return list<array<string,mixed>> */
+    /**
+     * @param  array<array-key, mixed> $params
+     * @return list<array<string,mixed>>
+     */
     public function query(string $sql, array $params = []): array
     {
         return $this->run($sql, $params)['rows'];
     }
 
+    /** @param array<array-key, mixed> $params */
     public function exec(string $sql, array $params = []): int
     {
         return (int) $this->run($sql, $params)['affected'];
@@ -145,6 +155,12 @@ final class Lease
         }
     }
 
+    /**
+     * `array_values` because the wire format is positional: an associative array would encode as a
+     * JSON object and PostgreSQL would see no parameters at all.
+     * @param  array<array-key, mixed> $params
+     * @return array{rows: list<array<string,mixed>>, affected: int}
+     */
     private function run(string $sql, array $params): array
     {
         if ($this->released) {
