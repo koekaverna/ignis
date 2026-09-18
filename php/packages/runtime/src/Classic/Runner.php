@@ -264,13 +264,16 @@ final class Runner
         while (ob_get_level() > 1 && @ob_end_flush()) {
         }
         $headers = self::headerMap();
-        $headers['content-type'] ??= ini_get('default_mimetype') . '; charset=' . ini_get('default_charset');
+        if (!isset(array_change_key_case($headers)['content-type'])) {
+            $headers['Content-Type'] = ini_get('default_mimetype') . '; charset=' . ini_get('default_charset');
+        }
         $code = http_response_code();
         return new Response((string) ob_get_contents(), \is_int($code) && $code >= 100 ? $code : 200, $headers);
     }
 
     /**
-     * headers_list() as lower-cased name => list of values; hyper lower-cases names on the wire.
+     * headers_list() as name => list of values, in the spelling PHP stored: `apache_response_headers()`
+     * hands it back to the script, and hyper lower-cases names on the wire anyway.
      * @return array<string, list<string>>
      */
     public static function headerMap(): array
@@ -296,7 +299,7 @@ final class Runner
             if ($colon === false || $colon === 0) {
                 continue;
             }
-            $map[strtolower(trim(substr($line, 0, $colon)))][] = ltrim(substr($line, $colon + 1));
+            $map[trim(substr($line, 0, $colon))][] = ltrim(substr($line, $colon + 1));
         }
         return $map;
     }

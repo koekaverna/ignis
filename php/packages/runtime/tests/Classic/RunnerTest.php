@@ -153,11 +153,12 @@ final class RunnerTest extends TestCase
 
     // ---- parseHeaderLines() ----------------------------------------------------------------
 
-    public function testHeaderLinesBecomeALowerCasedNameToValuesMap(): void
+    public function testHeaderLinesBecomeANameToValuesMap(): void
     {
         self::assertSame(
-            ['content-type' => ['text/html'], 'x-empty' => ['']],
+            ['Content-Type' => ['text/html'], 'X-Empty' => ['']],
             Runner::parseHeaderLines(['Content-Type: text/html', 'X-Empty:']),
+            'the spelling PHP stored is kept: apache_response_headers() hands this map back to the script',
         );
     }
 
@@ -175,7 +176,7 @@ final class RunnerTest extends TestCase
     {
         $map = Runner::parseHeaderLines(['Set-Cookie: a=1', 'Set-Cookie: b=2', 'Set-Cookie: c=3']);
 
-        self::assertSame(['set-cookie' => ['a=1', 'b=2', 'c=3']], $map);
+        self::assertSame(['Set-Cookie' => ['a=1', 'b=2', 'c=3']], $map);
     }
 
     // ---- requestFrom() (the raw request off the loop) --------------------------------------
