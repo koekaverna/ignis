@@ -108,6 +108,95 @@ final class ClientTest extends TestCase
         self::assertSame(['workers' => 2, 'this' => 0], Client::stats());
     }
 
+    public function testAnAnswerThatIsNeitherAnErrorNorAStringIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed completion payload');
+        $job->resume(42);
+    }
+
+    public function testAnErrorCompletionWithNoMessageStillNamesItselfAnError(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: unknown error');
+        $job->resume(['kind' => 'error']);
+    }
+
+    public function testAResultThatDoesNotUnserializeToAnArrayIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed result payload');
+        $job->resume(serialize('not an envelope'));
+    }
+
+    public function testARemoteErrorThatIsNotAThreeElementArrayIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed error payload');
+        $job->resume(serialize(['err' => 'boom']));
+    }
+
+    public function testARemoteErrorWhoseClassIsNotAStringIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed error payload');
+        $job->resume(serialize(['err' => [42, 'bad row', 7]]));
+    }
+
+    public function testACallbackEnvelopeWithNoIntJobOrSequenceThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed callback envelope');
+
+        self::runCallback(['job' => 'not-an-id', 'seq' => 1, 'cb' => 1, 'args' => serialize([])]);
+    }
+
+    public function testACallbackPayloadWithAMalformedCallbackIdAnswersWithAnError(): void
+    {
+        self::runCallback(['job' => 1, 'seq' => 2, 'cb' => 'not-an-id', 'args' => serialize([])]);
+
+        self::assertSame('offload: malformed callback payload', self::lastCallbackErrorMessage());
+    }
+
+    public function testCallbackArgumentsThatDoNotUnserializeToAnArrayAnswerWithAnError(): void
+    {
+        self::set('pending', [5 => static fn(): null => null]);
+
+        self::runCallback(['job' => 1, 'seq' => 2, 'cb' => 5, 'args' => serialize('not-a-list')]);
+
+        self::assertSame('offload: malformed callback arguments', self::lastCallbackErrorMessage());
+    }
+
+    private static function lastCallbackErrorMessage(): string
+    {
+        $result = unserialize(FakeOffload::$callbackResults[0]['result']);
+        if (!\is_array($result) || !\is_array($result['err'] ?? null) || !\is_string($result['err'][1] ?? null)) {
+            self::fail('the callback result did not carry the expected error envelope');
+        }
+        return $result['err'][1];
+    }
+
+    /** @param array<string, mixed> $payload */
+    private static function runCallback(array $payload): void
+    {
+        (new \ReflectionMethod(Client::class, 'runCallback'))->invoke(null, $payload);
+    }
+
     /** @param list<mixed> $args */
     private static function extract(array $args, mixed &$callbacks): mixed
     {

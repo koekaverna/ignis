@@ -96,6 +96,22 @@ final class WorkerRuntimeTest extends TestCase
         self::call('resolveRefs', [['__ref' => [3, 12, 'CurlHandle']]]);
     }
 
+    public function testAHandleReferenceWhoseIdIsNotAnIntIsMalformed(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed handle reference');
+
+        self::call('resolveRefs', [['__ref' => [3, 'not-an-id', 'CurlHandle']]]);
+    }
+
+    public function testFreeingAMalformedReferenceIsRejected(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed free request');
+
+        WorkerRuntime::routed('free', [['__ref' => 'not-an-array']]);
+    }
+
     public function testAKnownHandleResolvesToTheObjectThisWorkerHolds(): void
     {
         $object = new \ArrayObject([1, 2, 3]);
@@ -171,6 +187,28 @@ final class WorkerRuntimeTest extends TestCase
         $this->expectExceptionMessage('offload: ArrayObject is not a routed class');
 
         WorkerRuntime::routed('new:ArrayObject', [[1, 2, 3]]);
+    }
+
+    public function testACallbackAnswerThatDoesNotUnserializeToAnArrayThrows(): void
+    {
+        FakeOffload::$callbackAnswer = serialize('not an envelope');
+        $stub = WorkerRuntime::bindCallbacks(new CallbackRef(1));
+        self::assertInstanceOf(\Closure::class, $stub);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed callback answer');
+        $stub();
+    }
+
+    public function testACallbackErrorThatIsNotShapedLikeOneThrows(): void
+    {
+        FakeOffload::$callbackAnswer = serialize(['err' => 'boom']);
+        $stub = WorkerRuntime::bindCallbacks(new CallbackRef(1));
+        self::assertInstanceOf(\Closure::class, $stub);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed callback error');
+        $stub();
     }
 
     public function testAnUnknownRoutedKindIsRejected(): void

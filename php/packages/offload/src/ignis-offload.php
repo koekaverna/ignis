@@ -168,19 +168,31 @@ namespace Ignis\Offload {
         {
             if (\is_array($value)) {
                 if (isset($value['__ref']) && \count($value) === 1) {
-                    [$worker, $id, $class] = $value['__ref'];
-                    $handle = new Handle($worker, $id, $class);
-                    $proxy = 'Ignis\Offload\Proxy\\' . $class;
-                    if (!class_exists($proxy, false) && class_exists($class, false) && !(new \ReflectionClass($class))->isFinal()) {
-                        self::proxyClass($class);
-                    }
-                    return class_exists($proxy, false) ? $proxy::fromHandle($handle) : $handle;
+                    return self::wrapReference($value['__ref']);
                 }
                 foreach ($value as $key => $element) {
                     $value[$key] = self::wrap($element);
                 }
             }
             return $value;
+        }
+
+        /** Turns the `[worker, id, class]` wire tuple behind a `__ref` key into a handle or class proxy. */
+        private static function wrapReference(mixed $reference): object
+        {
+            if (!\is_array($reference) || \count($reference) !== 3) {
+                throw new \RuntimeException('offload: malformed handle reference on the wire');
+            }
+            [$worker, $id, $class] = $reference;
+            if (!\is_int($worker) || !\is_int($id) || !\is_string($class)) {
+                throw new \RuntimeException('offload: malformed handle reference on the wire');
+            }
+            $handle = new Handle($worker, $id, $class);
+            $proxy = 'Ignis\Offload\Proxy\\' . $class;
+            if (!class_exists($proxy, false) && class_exists($class, false) && !(new \ReflectionClass($class))->isFinal()) {
+                self::proxyClass($class);
+            }
+            return class_exists($proxy, false) ? $proxy::fromHandle($handle) : $handle;
         }
 
         /** One reflection type back to source, with class names absolute and self/static resolved. */
@@ -298,13 +310,36 @@ namespace Ignis\Offload {
                 }
             }
             if (\is_array($answer) && ($answer['kind'] ?? '') === 'error') {
-                throw new \RuntimeException('offload: ' . $answer['message']);
+                $message = $answer['message'] ?? null;
+                throw new \RuntimeException('offload: ' . (\is_string($message) ? $message : 'unknown error'));
+            }
+            if (!\is_string($answer)) {
+                throw new \RuntimeException('offload: malformed completion payload');
             }
             $result = unserialize($answer, ['allowed_classes' => true]);
+            if (!\is_array($result)) {
+                throw new \RuntimeException('offload: malformed result payload');
+            }
             if (isset($result['err'])) {
-                throw new RemoteException($result['err'][0], $result['err'][1], (int) $result['err'][2], $result['err'][3] ?? '');
+                throw self::remoteExceptionFrom($result['err']);
             }
             return $result['ok'] ?? null;
+        }
+
+        /** Rebuilds the exception a worker reported, after validating the envelope it serialized. */
+        private static function remoteExceptionFrom(mixed $error): RemoteException
+        {
+            if (!\is_array($error)) {
+                throw new \RuntimeException('offload: malformed error payload');
+            }
+            $remoteClass = $error[0] ?? null;
+            $message = $error[1] ?? null;
+            if (!\is_string($remoteClass) || !\is_string($message)) {
+                throw new \RuntimeException('offload: malformed error payload');
+            }
+            $code = $error[2] ?? 0;
+            $trace = $error[3] ?? null;
+            return new RemoteException($remoteClass, $message, \is_scalar($code) ? (int) $code : 0, \is_string($trace) ? $trace : '');
         }
 
         /**
@@ -343,18 +378,31 @@ namespace Ignis\Offload {
          */
         private static function runCallback(array $payload): void
         {
-            $callback = self::$pending[(int) $payload['cb']] ?? null;
+            $jobId = $payload['job'] ?? null;
+            $sequence = $payload['seq'] ?? null;
+            if (!\is_int($jobId) || !\is_int($sequence)) {
+                throw new \RuntimeException('offload: malformed callback envelope');
+            }
             try {
-                if ($callback === null) {
-                    throw new \RuntimeException('unknown callback ' . $payload['cb']);
+                $callbackId = $payload['cb'] ?? null;
+                $serializedArguments = $payload['args'] ?? null;
+                if (!\is_int($callbackId) || !\is_string($serializedArguments)) {
+                    throw new \RuntimeException('offload: malformed callback payload');
                 }
-                $args = Router::wrapRefs(unserialize($payload['args'], ['allowed_classes' => true]));
+                $callback = self::$pending[$callbackId] ?? null;
+                if ($callback === null) {
+                    throw new \RuntimeException('unknown callback ' . $callbackId);
+                }
+                $args = Router::wrapRefs(unserialize($serializedArguments, ['allowed_classes' => true]));
+                if (!\is_array($args)) {
+                    throw new \RuntimeException('offload: malformed callback arguments');
+                }
                 $out = serialize(['ok' => $callback(...$args)]);
             } catch (\Throwable $e) {
                 $out = serialize(['err' => [$e::class, $e->getMessage(), $e->getCode()]]);
             }
             self::$callbacksRun++;
-            \ignis_offload_cb_result((int) $payload['job'], (int) $payload['seq'], $out);
+            \ignis_offload_cb_result($jobId, $sequence, $out);
         }
 
         /** @return array<string, mixed> */

@@ -72,6 +72,22 @@ final class RouterTest extends TestCase
         self::assertSame(42, $handle->id);
     }
 
+    public function testWrapThrowsWhenTheReferenceIsNotATriple(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed handle reference on the wire');
+
+        self::call('wrap', ['__ref' => [1, 5]]);
+    }
+
+    public function testWrapThrowsWhenTheReferenceHoldsTheWrongTypes(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed handle reference on the wire');
+
+        self::call('wrap', ['__ref' => ['not-a-worker', 5, 'CurlHandle']]);
+    }
+
     public function testWrapRecursesAndLeavesAnythingThatIsNotARefAlone(): void
     {
         $wrapped = self::call('wrap', ['rows' => [['__ref' => [0, 1, 'CurlHandle']], ['__ref' => [0, 1, 'CurlHandle'], 'extra' => 1]]]);

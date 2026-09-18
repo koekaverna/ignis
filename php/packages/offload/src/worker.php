@@ -43,16 +43,11 @@ final class WorkerRuntime
         if ($v instanceof CallbackRef) {
             $id = $v->id;
             return static function (mixed ...$args) use ($id): mixed {
-                // Handles among the callback arguments (curl gives the CurlHandle) travel as refs.
-                $r = \ignis_offload_callback(self::$job, $id, serialize(self::registerObjects($args)));
-                if ($r === false) {
+                $answer = \ignis_offload_callback(self::$job, $id, serialize(self::registerObjects($args)));
+                if ($answer === false) {
                     throw new \RuntimeException('offload callback failed (caller gone)');
                 }
-                $u = unserialize($r);
-                if (isset($u['err'])) {
-                    throw new RemoteException($u['err'][0], 'callback threw: ' . $u['err'][1], (int) $u['err'][2]);
-                }
-                return $u['ok'] ?? null;
+                return self::unpackCallbackAnswer($answer);
             };
         }
         if (\is_array($v)) {
@@ -61,6 +56,29 @@ final class WorkerRuntime
             }
         }
         return $v;
+    }
+
+    /** Rebuilds the caller's answer to a callback, after validating the envelope it serialized. */
+    private static function unpackCallbackAnswer(string $answer): mixed
+    {
+        $unpacked = unserialize($answer, ['allowed_classes' => true]);
+        if (!\is_array($unpacked)) {
+            throw new \RuntimeException('offload: malformed callback answer');
+        }
+        if (isset($unpacked['err'])) {
+            $error = $unpacked['err'];
+            if (!\is_array($error)) {
+                throw new \RuntimeException('offload: malformed callback error');
+            }
+            $remoteClass = $error[0] ?? null;
+            $message = $error[1] ?? null;
+            if (!\is_string($remoteClass) || !\is_string($message)) {
+                throw new \RuntimeException('offload: malformed callback error');
+            }
+            $code = $error[2] ?? 0;
+            throw new RemoteException($remoteClass, 'callback threw: ' . $message, \is_scalar($code) ? (int) $code : 0);
+        }
+        return $unpacked['ok'] ?? null;
     }
 
     /** @var array<int, object> remote objects held for proxies on the fiber threads */
@@ -79,10 +97,10 @@ final class WorkerRuntime
     public static function routed(string $what, array $args): mixed
     {
         if ($what === 'free') {
-            unset(self::$handles[(int) ($args[0]['__ref'][1] ?? 0)]);
+            self::free($args[0] ?? null);
             return null;
         }
-        $args = self::resolveRefs($args);
+        $args = self::resolveArgumentRefs($args);
         [$kind, $name] = explode(':', $what, 2);
         $result = match ($kind) {
             'fn' => self::callFunction($name, $args),
@@ -132,22 +150,54 @@ final class WorkerRuntime
         return $obj->$method(...$args);
     }
 
+    /**
+     * @param array<int|string, mixed> $args
+     * @return array<int|string, mixed>
+     */
+    private static function resolveArgumentRefs(array $args): array
+    {
+        foreach ($args as $key => $value) {
+            $args[$key] = self::resolveRefs($value);
+        }
+        return $args;
+    }
+
     /** ['__ref' => [worker, id, class]] → the real object held here; unknown ids are an error. */
     private static function resolveRefs(mixed $v): mixed
     {
         if (\is_array($v)) {
             if (isset($v['__ref']) && \count($v) === 1) {
-                $id = (int) $v['__ref'][1];
-                if (!isset(self::$handles[$id])) {
-                    throw new \RuntimeException("offload: unknown handle $id on this worker");
-                }
-                return self::$handles[$id];
+                return self::resolveHandle($v['__ref']);
             }
             foreach ($v as $k => $x) {
                 $v[$k] = self::resolveRefs($x);
             }
         }
         return $v;
+    }
+
+    /** @param mixed $reference the wire tuple `[worker, id, class]` naming a handle held here */
+    private static function resolveHandle(mixed $reference): object
+    {
+        $id = \is_array($reference) ? ($reference[1] ?? null) : null;
+        if (!\is_int($id)) {
+            throw new \RuntimeException('offload: malformed handle reference');
+        }
+        if (!isset(self::$handles[$id])) {
+            throw new \RuntimeException("offload: unknown handle $id on this worker");
+        }
+        return self::$handles[$id];
+    }
+
+    /** @param mixed $reference the wire tuple `['__ref' => [worker, id, class]]` naming the handle to drop */
+    private static function free(mixed $reference): void
+    {
+        $ref = \is_array($reference) ? ($reference['__ref'] ?? null) : null;
+        $id = \is_array($ref) ? ($ref[1] ?? null) : null;
+        if (!\is_int($id)) {
+            throw new \RuntimeException('offload: malformed free request');
+        }
+        unset(self::$handles[$id]);
     }
 
     /** Objects of routable classes stay here; the caller gets a reference. */
