@@ -153,10 +153,10 @@ final class RunnerTest extends TestCase
 
     // ---- parseHeaderLines() ----------------------------------------------------------------
 
-    public function testHeaderLinesBecomeANameValueMap(): void
+    public function testHeaderLinesBecomeALowerCasedNameToValuesMap(): void
     {
         self::assertSame(
-            ['Content-Type' => 'text/html', 'X-Empty' => ''],
+            ['content-type' => ['text/html'], 'x-empty' => ['']],
             Runner::parseHeaderLines(['Content-Type: text/html', 'X-Empty:']),
         );
     }
@@ -166,13 +166,16 @@ final class RunnerTest extends TestCase
         self::assertSame([], Runner::parseHeaderLines(['Invalid', ': no name', '']), "header('Invalid') is stored by PHP but is not sendable");
     }
 
-    public function testARepeatedNameGetsCaseVariantsSoNothingIsLost(): void
+    /**
+     * `setcookie()` twice is one name twice, and RFC 7230 names `Set-Cookie` as the header that must
+     * not be comma-joined. Until 2026-09-18 the map was flat and the repeats were smuggled through
+     * as case variants of the name, which ran out after `strlen($name)` of them.
+     */
+    public function testARepeatedNameKeepsOneValuePerLine(): void
     {
         $map = Runner::parseHeaderLines(['Set-Cookie: a=1', 'Set-Cookie: b=2', 'Set-Cookie: c=3']);
 
-        self::assertSame(['a=1', 'b=2', 'c=3'], array_values($map), 'three cookies survive a flat map');
-        self::assertCount(3, $map);
-        self::assertSame(['Set-Cookie', 'Set-cookie', 'SEt-cookie'], array_keys($map), 'the loop upper-cases one more leading character per collision; hyper lower-cases the name again on the wire');
+        self::assertSame(['set-cookie' => ['a=1', 'b=2', 'c=3']], $map);
     }
 
     // ---- requestFrom() (the raw request off the loop) --------------------------------------

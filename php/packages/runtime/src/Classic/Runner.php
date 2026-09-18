@@ -264,17 +264,14 @@ final class Runner
         while (ob_get_level() > 1 && @ob_end_flush()) {
         }
         $headers = self::headerMap();
-        if (!isset(array_change_key_case($headers)['content-type'])) {
-            $headers['Content-Type'] = ini_get('default_mimetype') . '; charset=' . ini_get('default_charset');
-        }
+        $headers['content-type'] ??= ini_get('default_mimetype') . '; charset=' . ini_get('default_charset');
         $code = http_response_code();
         return new Response((string) ob_get_contents(), \is_int($code) && $code >= 100 ? $code : 200, $headers);
     }
 
     /**
-     * headers_list() as name => value. A repeated name (several Set-Cookie) gets case variants:
-     * Ignis responses are maps and hyper lower-cases names on the wire.
-     * @return array<string, string>
+     * headers_list() as lower-cased name => list of values; hyper lower-cases names on the wire.
+     * @return array<string, list<string>>
      */
     public static function headerMap(): array
     {
@@ -284,10 +281,12 @@ final class Runner
     /**
      * The pure half of headerMap(): `headers_list()` returns `[]` under php-cli, so the parsing is
      * split out to be testable without a SAPI. A line with no colon, or a colon at position 0, is a
-     * header PHP stored but cannot send (`header('Invalid')`), and is skipped.
+     * header PHP stored but cannot send (`header('Invalid')`), and is skipped. A name PHP sent more
+     * than once (several `Set-Cookie`) keeps one entry per line, which is what `ignis_respond`
+     * turns into one header line each.
      *
-     * @param  list<string>          $lines
-     * @return array<string, string>
+     * @param  list<string>                $lines
+     * @return array<string, list<string>>
      */
     public static function parseHeaderLines(array $lines): array
     {
@@ -297,11 +296,7 @@ final class Runner
             if ($colon === false || $colon === 0) {
                 continue;
             }
-            $name = trim(substr($line, 0, $colon));
-            for ($i = 1, $key = $name; isset($map[$key]) && $i <= strlen($name); $i++) {
-                $key = strtoupper(substr($name, 0, $i)) . strtolower(substr($name, $i));
-            }
-            $map[$key] = ltrim(substr($line, $colon + 1));
+            $map[strtolower(trim(substr($line, 0, $colon)))][] = ltrim(substr($line, $colon + 1));
         }
         return $map;
     }

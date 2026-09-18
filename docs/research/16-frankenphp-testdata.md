@@ -118,9 +118,10 @@ Measured with `target/release/ignis` on probe scripts before writing `php/packag
    would share the previous session. The adapter runs `unset($_SESSION); session_id($_COOKIE['PHPSESSID'] ?? '')`
    before the script (an empty id makes `php_session_initialize()` create a fresh one). `session-leak.php`
    (three clients, no jar) passes.
-8. `ignis_respond()` takes `name => value` headers, so a repeated header (two `Set-Cookie`) cannot be expressed.
-   The adapter emits repeats under case variants of the name (`Set-Cookie`, `Set-cookie`, …); hyper lower-cases
-   names on the wire. A list-valued header API in the runtime would make this unnecessary.
+8. A repeated header (two `Set-Cookie`) used to be inexpressible: `ignis_respond()` took `name => value`, and the
+   adapter smuggled repeats through as case variants of the name (`Set-Cookie`, `Set-cookie`, …), which ran out
+   after `strlen($name)` of them. Since `4a4bf67` (S1-COOKIES) a value may be a list, so `parseHeaderLines()` keys
+   the map by the lower-cased name and appends one entry per line; hyper writes one header line per entry.
 9. Output buffering: `output_buffering=0`, so the adapter installs one permanent, non-removable
    (`PHP_OUTPUT_HANDLER_CLEANABLE` only) buffer per thread; `flush.php`'s `while (@ob_end_flush());` stops at it
    instead of dumping the response to the process stdout. Output buffers are per thread, not per fiber: a classic
