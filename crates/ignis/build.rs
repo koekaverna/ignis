@@ -8,9 +8,14 @@ fn main() {
     if std::env::var("DEP_PHP_HAS_ASYNC_ABI").as_deref() == Ok("1") {
         println!("cargo:rustc-cfg=php_async_abi");
     }
-    // E18 (ADR-0020): the interposed libc symbols live in csrc/park.c, one object file so the
-    // linker pulls every symbol with the first one std references; each is forced in (-u) and
-    // exported from the executable (--export-dynamic-symbol) so libraries loaded later bind to it.
+    configure_universal_park();
+    forward_temporal_descriptor_path();
+}
+
+/// E18 (ADR-0020): the interposed libc symbols live in csrc/park.c, one object file so the linker
+/// pulls every symbol with the first one std references; each is forced in (-u) and exported from
+/// the executable (--export-dynamic-symbol) so libraries loaded later bind to it.
+fn configure_universal_park() {
     if std::env::var_os("CARGO_FEATURE_UNIVERSAL_PARK").is_some() {
         println!("cargo:rerun-if-changed=csrc/park.c");
         cc::Build::new().file("csrc/park.c").opt_level(2).flag("-fno-builtin").compile("ignispark");
@@ -46,11 +51,13 @@ fn main() {
             println!("cargo:rustc-link-arg=-Wl,--export-dynamic-symbol={s}");
         }
     }
+}
 
-    // ADR-0040: temporalio-protos declares `links`, so its build script's `cargo:descriptor_path`
-    // reaches us as DEP_TEMPORALIO_PROTOS_DESCRIPTOR_PATH. Handing the path on to the crate lets
-    // the Temporal boundary decode protojson against the real descriptor pool instead of prost's
-    // serde derive, which is not protojson.
+/// ADR-0040: temporalio-protos declares `links`, so its build script's `cargo:descriptor_path`
+/// reaches us as DEP_TEMPORALIO_PROTOS_DESCRIPTOR_PATH. Handing the path on to the crate lets the
+/// Temporal boundary decode protojson against the real descriptor pool instead of prost's serde
+/// derive, which is not protojson.
+fn forward_temporal_descriptor_path() {
     if let Ok(path) = std::env::var("DEP_TEMPORALIO_PROTOS_DESCRIPTOR_PATH") {
         println!("cargo:rustc-env=IGNIS_TEMPORAL_DESCRIPTORS={path}");
         println!("cargo:rerun-if-changed={path}");

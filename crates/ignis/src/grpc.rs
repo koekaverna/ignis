@@ -61,9 +61,13 @@ impl Decoder for RawDecoder {
 }
 
 /// True for requests that must be framed as gRPC.
-pub fn is_grpc<B>(req: &http::Request<B>) -> bool {
-    req.method() == http::Method::POST
-        && req.headers().get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| ct.starts_with("application/grpc"))
+pub fn is_grpc<B>(request: &http::Request<B>) -> bool {
+    request.method() == http::Method::POST
+        && request
+            .headers()
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("application/grpc"))
 }
 
 /// The response stream PHP fills through the reactor; dropping it before the
@@ -81,9 +85,9 @@ impl futures_core::Stream for PhpStream {
         match self.rx.poll_recv(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(Ok(b))) => Poll::Ready(Some(Ok(b))),
-            Poll::Ready(Some(Err((code, msg)))) => {
+            Poll::Ready(Some(Err((code, message)))) => {
                 self.done = true;
-                Poll::Ready(Some(Err(Status::new(Code::from_i32(code), msg))))
+                Poll::Ready(Some(Err(Status::new(Code::from_i32(code), message))))
             }
             Poll::Ready(None) => {
                 self.done = true;
@@ -113,23 +117,23 @@ impl ServerStreamingService<Bytes> for PhpGrpc {
     type ResponseStream = PhpStream;
     type Future = Ready<Result<tonic::Response<PhpStream>, Status>>;
     fn call(&mut self, request: tonic::Request<Bytes>) -> Self::Future {
-        let req = HttpRequest {
+        let http_request = HttpRequest {
             method: "POST".to_string(),
             uri: std::mem::take(&mut self.uri),
             headers: std::mem::take(&mut self.headers),
             body: request.into_inner(),
         };
-        let (id, rx) = self.reactor.deliver_stream_request(req);
+        let (id, rx) = self.reactor.deliver_stream_request(http_request);
         ready(Ok(tonic::Response::new(PhpStream { reactor: self.reactor.clone(), id, rx, done: false })))
     }
 }
 
 /// Serve one gRPC request (unary or server-streaming: PHP decides how many messages to send).
-pub async fn serve(reactor: Arc<Reactor>, req: http::Request<hyper::body::Incoming>) -> http::Response<tonic::body::Body> {
-    let (headers, uri) = crate::http::request_parts(&req);
-    let svc = PhpGrpc { reactor, uri, headers };
+pub async fn serve(reactor: Arc<Reactor>, request: http::Request<hyper::body::Incoming>) -> http::Response<tonic::body::Body> {
+    let (headers, uri) = crate::http::request_parts(&request);
+    let service = PhpGrpc { reactor, uri, headers };
     let mut grpc = tonic::server::Grpc::new(RawCodec);
-    grpc.server_streaming(svc, req).await
+    grpc.server_streaming(service, request).await
 }
 
 /// Wrap a plain HTTP body so one hyper service can return both kinds of response.
@@ -164,7 +168,7 @@ fn failed(what: &str, s: Status) -> Outcome {
 
 /// `Op::Custom` future for `ignis_grpc_call`: unary → `Blob(Some(reply))`;
 /// server-streaming → `Json({"stream": handle})`.
-pub fn call(url: String, path: String, msg: Bytes, streaming: bool) -> Pin<Box<dyn Future<Output = Outcome> + Send>> {
+pub fn call(url: String, path: String, message: Bytes, streaming: bool) -> Pin<Box<dyn Future<Output = Outcome> + Send>> {
     Box::pin(async move {
         let ch = match channel(&url) {
             Ok(c) => c,
@@ -179,21 +183,21 @@ pub fn call(url: String, path: String, msg: Bytes, streaming: bool) -> Pin<Box<d
             return failed("ready", Status::unavailable(s.to_string()));
         }
         if streaming {
-            match g.server_streaming(tonic::Request::new(msg), path, RawCodec).await {
-                Ok(resp) => {
+            match g.server_streaming(tonic::Request::new(message), path, RawCodec).await {
+                Ok(response) => {
                     let id = NEXT_STREAM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     STREAMS
                         .get_or_init(|| Mutex::new(HashMap::new()))
                         .lock()
                         .unwrap()
-                        .insert(id, Arc::new(tokio::sync::Mutex::new(resp.into_inner())));
+                        .insert(id, Arc::new(tokio::sync::Mutex::new(response.into_inner())));
                     Outcome::Json(format!("{{\"stream\":{id}}}"))
                 }
                 Err(s) => failed("server_streaming", s),
             }
         } else {
-            match g.unary(tonic::Request::new(msg), path, RawCodec).await {
-                Ok(resp) => Outcome::Blob(Some(resp.into_inner())),
+            match g.unary(tonic::Request::new(message), path, RawCodec).await {
+                Ok(response) => Outcome::Blob(Some(response.into_inner())),
                 Err(s) => failed("unary", s),
             }
         }

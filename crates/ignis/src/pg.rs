@@ -22,14 +22,14 @@ use crate::reactor::Outcome;
 
 /// A connection plus its prepared-statement cache (kept across leases because the
 /// session reset below deliberately leaves prepared statements alone).
-struct Conn {
+struct Connection {
     client: Client,
     stmts: HashMap<String, Statement>,
 }
 
 struct Pool {
     dsn: String,
-    idle: Mutex<Vec<Conn>>,
+    idle: Mutex<Vec<Connection>>,
     sem: Arc<Semaphore>,
     created: AtomicU64,
     /// M4-12: the capacity the first opener asked for, so a later opener with a different `max`
@@ -88,7 +88,7 @@ impl Breaker {
 
 struct Lease {
     pool: Arc<Pool>,
-    conn: Conn,
+    connection: Connection,
     _permit: OwnedSemaphorePermit,
     /// M4-1: when the lease was handed out, so a held connection is visible (oldest age in `stats`)
     /// and logged (`release` warns past `IGNIS_PG_LEASE_WARN_MS`).
@@ -129,8 +129,8 @@ fn owners() -> &'static Mutex<HashMap<u64, usize>> {
 fn by_dsn() -> &'static Mutex<HashMap<String, u64>> {
     BY_DSN.get_or_init(|| Mutex::new(HashMap::new()))
 }
-fn failed(msg: String) -> Outcome {
-    Outcome::Failed(format!("pg: {msg}"))
+fn failed(message: String) -> Outcome {
+    Outcome::Failed(format!("pg: {message}"))
 }
 
 /// M4-12: the pool already open for this DSN, if any. Every worker thread runs the same script and
@@ -172,9 +172,9 @@ pub fn open(dsn: String, max: usize) -> u64 {
 
 /// A new connection. The spawned task owns the socket and ends when the client is dropped.
 async fn connect(pool: &Pool) -> Result<Client, tokio_postgres::Error> {
-    let (client, conn) = tokio_postgres::connect(&pool.dsn, NoTls).await?;
+    let (client, connection) = tokio_postgres::connect(&pool.dsn, NoTls).await?;
     tokio::spawn(async move {
-        if let Err(e) = conn.await {
+        if let Err(e) = connection.await {
             tracing::debug!(error = %e, "pg connection ended");
         }
     });
@@ -212,15 +212,18 @@ async fn lease_from(pool: Arc<Pool>, owner: usize) -> Outcome {
         Err(_) => return failed("pool closed".into()),
     };
     let idle = pool.idle.lock().unwrap().pop();
-    let conn = match idle {
+    let connection = match idle {
         Some(c) if !c.client.is_closed() => c,
         _ => match connect(&pool).await {
-            Ok(c) => Conn { client: c, stmts: HashMap::new() },
+            Ok(c) => Connection { client: c, stmts: HashMap::new() },
             Err(e) => return failed(format!("connect: {e}")),
         },
     };
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: Instant::now() }))));
+    leases()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, connection, _permit: permit, since: Instant::now() }))));
     owners().lock().unwrap().insert(id, owner);
     Outcome::Json(format!("{{\"lease\":{id}}}"))
 }
@@ -232,7 +235,7 @@ async fn lease_from(pool: Arc<Pool>, owner: usize) -> Outcome {
 pub fn try_acquire(pool_id: u64, owner: usize) -> Option<u64> {
     let pool = pools().lock().unwrap().get(&pool_id).cloned()?;
     let permit = pool.sem.clone().try_acquire_owned().ok()?;
-    let conn = {
+    let connection = {
         let mut idle = pool.idle.lock().unwrap();
         loop {
             match idle.pop() {
@@ -243,7 +246,10 @@ pub fn try_acquire(pool_id: u64, owner: usize) -> Option<u64> {
         }
     };
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: Instant::now() }))));
+    leases()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, connection, _permit: permit, since: Instant::now() }))));
     owners().lock().unwrap().insert(id, owner);
     Some(id)
 }
@@ -259,14 +265,14 @@ pub fn query(lease_id: u64, sql: String, params_json: String) -> Fut {
             Ok(_) => return failed("params must be a JSON array".into()),
             Err(e) => return failed(format!("params json: {e}")),
         };
-        let stmt = match lease.conn.stmts.get(&sql) {
+        let stmt = match lease.connection.stmts.get(&sql) {
             Some(s) => s.clone(),
-            None => match lease.conn.client.prepare(&sql).await {
+            None => match lease.connection.client.prepare(&sql).await {
                 Ok(s) => {
-                    if lease.conn.stmts.len() >= STMT_CACHE_MAX {
-                        lease.conn.stmts.clear();
+                    if lease.connection.stmts.len() >= STMT_CACHE_MAX {
+                        lease.connection.stmts.clear();
                     }
-                    lease.conn.stmts.insert(sql.clone(), s.clone());
+                    lease.connection.stmts.insert(sql.clone(), s.clone());
                     s
                 }
                 Err(e) => return failed(format!("prepare: {e}")),
@@ -284,12 +290,12 @@ pub fn query(lease_id: u64, sql: String, params_json: String) -> Fut {
         }
         let refs: Vec<&(dyn ToSql + Sync)> = bound.iter().map(|b| &**b as &(dyn ToSql + Sync)).collect();
         if stmt.columns().is_empty() {
-            return match lease.conn.client.execute(&stmt, &refs).await {
+            return match lease.connection.client.execute(&stmt, &refs).await {
                 Ok(n) => Outcome::Json(json!({"rows": [], "affected": n}).to_string()),
                 Err(e) => failed(format!("execute: {e}")),
             };
         }
-        let rows = match lease.conn.client.query(&stmt, &refs).await {
+        let rows = match lease.connection.client.query(&stmt, &refs).await {
             Ok(r) => r,
             Err(e) => return failed(format!("query: {e}")),
         };
@@ -311,18 +317,18 @@ pub fn release(lease_id: u64, reset: bool) -> Fut {
         owners().lock().unwrap().remove(&lease_id);
         let Some(slot) = leases().lock().unwrap().remove(&lease_id) else { return failed("unknown or released lease".into()) };
         let Some(lease) = slot.lock().await.take() else { return failed("lease released".into()) };
-        let Lease { pool, conn, _permit, since } = lease;
+        let Lease { pool, connection, _permit, since } = lease;
         let held_ms = since.elapsed().as_millis() as u64;
         if held_ms >= lease_warn_ms() {
             tracing::warn!(lease = lease_id, held_ms, "pg lease held longer than IGNIS_PG_LEASE_WARN_MS");
         }
         if reset {
-            match conn.client.batch_execute(RESET_SQL).await {
-                Ok(()) => pool.idle.lock().unwrap().push(conn),
+            match connection.client.batch_execute(RESET_SQL).await {
+                Ok(()) => pool.idle.lock().unwrap().push(connection),
                 Err(e) => tracing::warn!(error = %e, "pg reset failed; connection dropped"),
             }
         } else {
-            pool.idle.lock().unwrap().push(conn);
+            pool.idle.lock().unwrap().push(connection);
         }
         drop(_permit);
         Outcome::Ready
@@ -413,19 +419,21 @@ fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// The exact integer first; the float fallback runs only when that fails, so an out-of-range
+/// value errors instead of silently saturating (a float-to-int `as` saturates).
+fn integral_value(n: &serde_json::Number) -> Option<i64> {
+    n.as_i64().or_else(|| n.as_f64().map(|f| f as i64))
+}
+
 fn bind(v: &Value, ty: &Type) -> Result<Box<dyn ToSql + Sync + Send>, String> {
-    macro_rules! num {
+    macro_rules! numeric {
         ($t:ty) => {{
             if v.is_null() {
                 return Ok(Box::new(None::<$t>));
             }
             let n: $t = match v {
                 Value::Number(n) => {
-                    // The fallback has to come BEFORE the range check, not after it: as_f64 always
-                    // succeeds and a float-to-int `as` saturates, so with the two the other way
-                    // round an out-of-range number silently became i16::MAX on the wire instead of
-                    // an error, while the same value as a *string* errored correctly.
-                    let whole = n.as_i64().or_else(|| n.as_f64().map(|f| f as i64));
+                    let whole = integral_value(n);
                     whole.and_then(|x| <$t>::try_from(x).ok()).ok_or("number out of range")?
                 }
                 Value::String(s) => s.parse::<$t>().map_err(|_| format!("'{s}' is not a {}", ty.name()))?,
@@ -436,9 +444,9 @@ fn bind(v: &Value, ty: &Type) -> Result<Box<dyn ToSql + Sync + Send>, String> {
         }};
     }
     match *ty {
-        Type::INT2 => num!(i16),
-        Type::INT4 => num!(i32),
-        Type::INT8 => num!(i64),
+        Type::INT2 => numeric!(i16),
+        Type::INT4 => numeric!(i32),
+        Type::INT8 => numeric!(i64),
         Type::FLOAT4 => {
             if v.is_null() {
                 return Ok(Box::new(None::<f32>));
@@ -541,9 +549,9 @@ mod tests {
     /// What the wire would carry for `value` bound as `ty`: `None` for SQL NULL.
     fn encode(value: &Value, ty: &Type) -> Result<Option<BytesMut>, String> {
         let bound = bind(value, ty)?;
-        let mut buf = BytesMut::new();
-        match bound.to_sql_checked(ty, &mut buf) {
-            Ok(IsNull::No) => Ok(Some(buf)),
+        let mut buffer = BytesMut::new();
+        match bound.to_sql_checked(ty, &mut buffer) {
+            Ok(IsNull::No) => Ok(Some(buffer)),
             Ok(IsNull::Yes) => Ok(None),
             Err(err) => Err(err.to_string()),
         }
@@ -559,18 +567,17 @@ mod tests {
         assert_eq!(encode(&json!(-1), &Type::INT8).unwrap().unwrap()[..], [255; 8]);
     }
 
+    /// Until 2026-09-17 these two saturated to 32767 / -32768 and were written to the row: the
+    /// range check ran before the float fallback, and a float-to-int `as` saturates. A JSON
+    /// number and a JSON string of the same value must both be refused, in range or not.
     #[test]
     fn int2_rejects_an_out_of_range_value_whichever_json_type_it_arrives_as() {
         let from_string = bind(&json!("70000"), &Type::INT2).unwrap_err();
         assert!(from_string.contains("is not a int2"), "{from_string}");
 
-        // Until 2026-09-17 these two saturated to 32767 / -32768 and were written to the row: the
-        // range check ran before the float fallback, and a float-to-int `as` saturates. A JSON
-        // number and a JSON string of the same value must both be refused.
         assert!(bind(&json!(70000), &Type::INT2).unwrap_err().contains("number out of range"));
         assert!(bind(&json!(-70000), &Type::INT2).unwrap_err().contains("number out of range"));
 
-        // In range, and still accepted from a float the way it always was.
         assert_eq!(encode(&json!(32767), &Type::INT2).unwrap().unwrap()[..], [0x7f, 0xff]);
         assert_eq!(encode(&json!(7.9), &Type::INT2).unwrap().unwrap()[..], [0x00, 0x07]);
     }

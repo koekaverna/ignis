@@ -43,9 +43,10 @@ fn max_body_bytes() -> usize {
 
 /// The header pairs and the path+query (`/a/b?x=1`, `/` when the URI carries neither) that the
 /// reactor hands to PHP. Shared by the HTTP and the gRPC front doors, which see the same request.
-pub fn request_parts<B>(req: &Request<B>) -> (Vec<(String, String)>, String) {
-    let headers = req.headers().iter().map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
-    let uri = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
+pub fn request_parts<B>(request: &Request<B>) -> (Vec<(String, String)>, String) {
+    let headers =
+        request.headers().iter().map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
+    let uri = request.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
     (headers, uri)
 }
 
@@ -174,9 +175,9 @@ pub fn unregister(reactor: &Arc<Reactor>) {
 }
 
 /// Registers the calling thread's reactor as a request target and, on the
-/// first call, binds `addr` and serves it forever on the runtime. Returns the
+/// first call, binds `address` and serves it forever on the runtime. Returns the
 /// bound address. Later calls (other PHP threads) only register.
-pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> Result<SocketAddr> {
+pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, address: &str) -> Result<SocketAddr> {
     let registry = REGISTRY.get_or_init(|| Arc::new(Registry { reactors: Mutex::new(Vec::new()), next: AtomicUsize::new(0) }));
     let mut bound = BOUND.lock().unwrap();
     if let Some(b) = *bound {
@@ -184,8 +185,8 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
         registry.reactors.lock().unwrap().push(reactor);
         return Ok(b);
     }
-    let addr: SocketAddr = addr.parse().with_context(|| format!("bad listen address {addr:?}"))?;
-    let listener = rt.block_on(TcpListener::bind(addr)).with_context(|| format!("bind {addr}"))?;
+    let address: SocketAddr = address.parse().with_context(|| format!("bad listen address {address:?}"))?;
+    let listener = rt.block_on(TcpListener::bind(address)).with_context(|| format!("bind {address}"))?;
     let local = listener.local_addr()?;
     *bound = Some(local);
     drop(bound);
@@ -258,31 +259,31 @@ async fn serve_connection(
     let _permit = permit;
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let activity = last_activity.clone();
-    let svc = service_fn(move |req| {
+    let service = service_fn(move |request| {
         *activity.lock().unwrap() = Instant::now();
         let r = registry.pick();
         async move {
             match r {
-                Some(r) => handle(r, req).await,
+                Some(r) => handle(r, request).await,
                 None => Ok(simple(StatusCode::SERVICE_UNAVAILABLE, "no php thread registered\n")),
             }
         }
     });
     let mut builder = auto::Builder::new(TokioExecutor::new());
     builder.http1().timer(TokioTimer::new()).header_read_timeout(header_timeout);
-    let conn = builder.serve_connection(TokioIo::new(stream), svc);
-    tokio::pin!(conn);
+    let connection = builder.serve_connection(TokioIo::new(stream), service);
+    tokio::pin!(connection);
     loop {
         let idle_for = last_activity.lock().unwrap().elapsed();
         if idle_for >= idle_timeout {
-            conn.as_mut().graceful_shutdown();
-            if let Err(e) = conn.as_mut().await {
+            connection.as_mut().graceful_shutdown();
+            if let Err(e) = connection.as_mut().await {
                 tracing::debug!(error = %e, "connection ended with error");
             }
             return;
         }
         tokio::select! {
-            res = conn.as_mut() => {
+            res = connection.as_mut() => {
                 if let Err(e) = res {
                     tracing::debug!(error = %e, "connection ended with error");
                 }
@@ -349,18 +350,18 @@ impl Drop for CancelOnDrop {
 /// One request: the runtime's own `/_ignis/*` routes first, then gRPC (E10, ADR-0014 — it shares
 /// this listener, tonic frames it and PHP serves it), then PHP. A responder dropped without an
 /// answer means the handler crashed hard, and the client gets a 500 rather than a hung connection.
-async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Response<tonic::body::Body>, hyper::Error> {
-    match req.uri().path() {
+async fn handle(reactor: Arc<Reactor>, request: Request<Incoming>) -> Result<Response<tonic::body::Body>, hyper::Error> {
+    match request.uri().path() {
         "/_ignis/health" => return Ok(health()),
         "/_ignis/metrics" => return Ok(metrics()),
         _ => {}
     }
-    if crate::grpc::is_grpc(&req) {
-        return Ok(crate::grpc::serve(reactor, req).await);
+    if crate::grpc::is_grpc(&request) {
+        return Ok(crate::grpc::serve(reactor, request).await);
     }
-    let (headers, uri) = request_parts(&req);
-    let method = req.method().as_str().to_string();
-    let body = match collect_body(req.into_body()).await {
+    let (headers, uri) = request_parts(&request);
+    let method = request.method().as_str().to_string();
+    let body = match collect_body(request.into_body()).await {
         Ok(b) => b,
         Err((status, message)) => return Ok(simple(status, message)),
     };
@@ -368,11 +369,9 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
     let mut guard = CancelOnDrop { reactor: reactor.clone(), id: request_id, answered: false };
     let out = rx.await;
     match out {
-        // Disarmed here only for a whole-body answer. A streamed one hands the guard to the body,
-        // which is what stays alive while PHP is still producing.
         Ok(r) => {
             let streamed = matches!(r.body, crate::reactor::ResponseBody::Stream(_));
-            guard.answered = !streamed;
+            guard.answered = disarmed_for_this_answer(streamed);
             Ok(php_response(r, guard))
         }
         Err(_) => {
@@ -380,6 +379,12 @@ async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Respons
             Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n"))
         }
     }
+}
+
+/// A streamed body outlives this match arm — the guard travels with it (see `ChannelBody`) and
+/// disarms here only for a whole-body answer.
+fn disarmed_for_this_answer(streamed: bool) -> bool {
+    !streamed
 }
 
 /// Reads the request body, capped at `max_body_bytes()`. `Limited` errors as soon as one frame
@@ -434,18 +439,23 @@ impl hyper::body::Body for ChannelBody {
         if matches!(frame, std::task::Poll::Ready(None))
             && let Some(guard) = self.guard.as_mut()
         {
-            guard.answered = true; // PHP ended the stream; nothing left to cancel
+            disarm_on_stream_end(guard);
         }
 
         frame.map(|o| o.map(|b| Ok(hyper::body::Frame::data(b))))
     }
 }
 
-fn simple(status: StatusCode, msg: &'static str) -> Response<tonic::body::Body> {
+/// The stream ended because PHP finished it, not because the client left — nothing left to cancel.
+fn disarm_on_stream_end(guard: &mut CancelOnDrop) {
+    guard.answered = true;
+}
+
+fn simple(status: StatusCode, message: &'static str) -> Response<tonic::body::Body> {
     Response::builder()
         .status(status)
         .header("content-type", "text/plain")
-        .body(crate::grpc::plain_body(Bytes::from_static(msg.as_bytes())))
+        .body(crate::grpc::plain_body(Bytes::from_static(message.as_bytes())))
         .unwrap()
 }
 
@@ -479,16 +489,16 @@ mod tests {
 
     #[test]
     fn request_parts_carries_the_headers_and_the_path_with_its_query() {
-        let req = Request::builder().uri("/a/b?x=1").header("x-one", "1").header("x-two", "2").body(()).unwrap();
-        let (headers, uri) = request_parts(&req);
+        let request = Request::builder().uri("/a/b?x=1").header("x-one", "1").header("x-two", "2").body(()).unwrap();
+        let (headers, uri) = request_parts(&request);
         assert_eq!(uri, "/a/b?x=1");
         assert_eq!(headers, vec![("x-one".to_string(), "1".to_string()), ("x-two".to_string(), "2".to_string())]);
     }
 
     #[test]
     fn a_uri_without_a_path_becomes_a_slash() {
-        let req = Request::builder().method("CONNECT").uri("example.com:443").body(()).unwrap();
-        let (_, uri) = request_parts(&req);
+        let request = Request::builder().method("CONNECT").uri("example.com:443").body(()).unwrap();
+        let (_, uri) = request_parts(&request);
         assert_eq!(uri, "/");
     }
 
