@@ -33,7 +33,12 @@ final class FiberTokenStorage implements TokenStorageInterface, ResetInterface
 
     public function getToken(): ?TokenInterface
     {
-        return Scope::get($this->key);
+        $token = Scope::get($this->key);
+        if ($token !== null && !$token instanceof TokenInterface) {
+            throw new \LogicException('Ignis\\Symfony\\FiberTokenStorage: scope key "' . $this->key . '" holds something other than a security token');
+        }
+
+        return $token;
     }
 
     public function setToken(?TokenInterface $token): void

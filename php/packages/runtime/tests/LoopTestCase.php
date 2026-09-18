@@ -58,9 +58,9 @@ abstract class LoopTestCase extends TestCase
         return (new \ReflectionProperty(Loop::class, $property))->getValue();
     }
 
-    protected static function call(string $method, mixed ...$args): mixed
+    protected static function call(string $method, mixed ...$arguments): mixed
     {
-        return (new \ReflectionMethod(Loop::class, $method))->invoke(null, ...$args);
+        return (new \ReflectionMethod(Loop::class, $method))->invoke(null, ...$arguments);
     }
 
     /**

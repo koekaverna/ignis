@@ -98,4 +98,23 @@ final class FiberRequestStackTest extends TestCase
         $other->resume();
         self::assertNull($other->getReturn(), 'and this fiber\'s request was invisible there');
     }
+
+    /** The scope slot is a generic bag, so anything other than a list of Request is a bug, not a `mixed` to trust. */
+    public function testANonArrayScopeValueIsRejected(): void
+    {
+        Scope::set('symfony.request_stack', 'not-an-array');
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('holds something other than an array');
+        (new FiberRequestStack())->getCurrentRequest();
+    }
+
+    public function testAScopeArrayHoldingSomethingOtherThanARequestIsRejected(): void
+    {
+        Scope::set('symfony.request_stack', ['not-a-request']);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('holds something other than a Request');
+        (new FiberRequestStack())->getCurrentRequest();
+    }
 }

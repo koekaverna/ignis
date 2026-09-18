@@ -45,8 +45,8 @@ final class Pool
         }
         $r = \ignis_pg_acquire($this->id);
         $leaseId = \is_array($r)
-            ? (int) $r['lease'] // idle connection: no reactor hop
-            : (int) json_decode(self::orThrow(Loop::awaitOp($r), PoolError::class), true, 8, JSON_THROW_ON_ERROR)['lease'];
+            ? self::leaseIdFromCompletion($r) // idle connection: no reactor hop
+            : self::leaseIdFromCompletion(self::decodedJson(self::orThrow(Loop::awaitOp($r), PoolError::class), PoolError::class));
         $lease = new Lease($leaseId, $key);
         Scope::set($key, $lease);
         return $lease;
@@ -120,10 +120,64 @@ final class Pool
     public static function orThrow(mixed $payload, string $error): mixed
     {
         if (\is_array($payload) && ($payload['kind'] ?? '') === 'error') {
-            throw new $error((string) $payload['message']);
+            $message = $payload['message'] ?? null;
+            throw new $error(\is_string($message) ? $message : 'the reactor reported an error with no message');
         }
 
         return $payload;
+    }
+
+    /**
+     * A completion that is not an error is JSON off the wire, never a fact about its shape.
+     * @param class-string<\Throwable> $error
+     * @return array<string, mixed>
+     * @internal
+     */
+    public static function decodedJson(mixed $payload, string $error): array
+    {
+        if (!\is_string($payload)) {
+            throw new $error('expected a JSON string from the reactor, got ' . get_debug_type($payload));
+        }
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        if (!\is_array($decoded)) {
+            throw new $error('expected a JSON object from the reactor, got ' . get_debug_type($decoded));
+        }
+
+        return self::withStringKeys($decoded, $error);
+    }
+
+    /**
+     * A JSON object always decodes to string keys, except the one PHP itself breaks: a key that
+     * looks like an integer is silently rekeyed as one. Rebuilding the array is what turns
+     * "every key happened to be a string" into a fact PHPStan can carry forward.
+     * @param array<array-key, mixed> $object
+     * @param class-string<\Throwable> $error
+     * @return array<string, mixed>
+     *
+     * @internal
+     */
+    public static function withStringKeys(array $object, string $error): array
+    {
+        $out = [];
+        foreach ($object as $field => $value) {
+            if (!\is_string($field)) {
+                throw new $error('expected a JSON object with string keys, found ' . get_debug_type($field) . ' ' . $field);
+            }
+            $out[$field] = $value;
+        }
+
+        return $out;
+    }
+
+    /** @param array<string, mixed> $completion */
+    private static function leaseIdFromCompletion(array $completion): int
+    {
+        $lease = $completion['lease'] ?? null;
+        if (!\is_int($lease)) {
+            throw new PoolError('malformed pg_acquire completion: missing or non-int "lease"');
+        }
+
+        return $lease;
     }
 }
 
@@ -152,7 +206,12 @@ final class Lease
 
     public function backendPid(): int
     {
-        return (int) $this->query('SELECT pg_backend_pid() AS pid')[0]['pid'];
+        $pid = $this->query('SELECT pg_backend_pid() AS pid')[0]['pid'];
+        if (!\is_int($pid)) {
+            throw new QueryError('pg_backend_pid() did not return an integer');
+        }
+
+        return $pid;
     }
 
     /** Return the connection; `reset` runs ROLLBACK; DISCARD ALL on the runtime side first. */
@@ -188,7 +247,33 @@ final class Lease
             throw new LeaseError('lease already released');
         }
         $json = json_encode(array_values($params), JSON_THROW_ON_ERROR);
-        $r = Pool::result(Loop::awaitOp(\ignis_pg_query($this->id, $sql, $json)));
-        return json_decode($r, true, 512, JSON_THROW_ON_ERROR);
+        $decoded = Pool::decodedJson(Pool::result(Loop::awaitOp(\ignis_pg_query($this->id, $sql, $json))), QueryError::class);
+
+        return self::asQueryResult($decoded);
+    }
+
+    /**
+     * @param array<string, mixed> $decoded
+     * @return array{rows: list<array<string, mixed>>, affected: int}
+     */
+    private static function asQueryResult(array $decoded): array
+    {
+        $rows = $decoded['rows'] ?? null;
+        $affected = $decoded['affected'] ?? null;
+        if (!\is_array($rows) || !\is_int($affected)) {
+            throw new QueryError('malformed query completion: expected {rows: array, affected: int}');
+        }
+
+        return ['rows' => array_values(array_map(self::asRow(...), $rows)), 'affected' => $affected];
+    }
+
+    /** @return array<string, mixed> */
+    private static function asRow(mixed $row): array
+    {
+        if (!\is_array($row)) {
+            throw new QueryError('malformed query completion: a row is not an array');
+        }
+
+        return Pool::withStringKeys($row, QueryError::class);
     }
 }

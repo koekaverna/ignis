@@ -1,7 +1,9 @@
 # Comparison
 
 Only numbers that exist in VALIDATION.md are used here. Anywhere a comparable number does not
-exist, the table says **not measured** — never an estimate.
+exist, the table says **not measured** — never an estimate. Everything below was measured on one
+4 vCPU box, mostly on 2026-09-15/16 (`bench/results/compare.md`); hello-world throughput on this box
+varies **±6.7 %** run to run (V-82) — treat a delta smaller than that as noise, not a result.
 
 ## Hello-world throughput and latency (V-6)
 
@@ -34,18 +36,67 @@ V-6's), least-inflight dispatch:
 | `/cpu` p99 | **12.37–12.75 ms** | 15.6 ms |
 | hello req/s | **112,511** (p99 2.41 ms) | 16,583 |
 
-## Compat-suite pass rates vs stock PHP (V-23)
+## gRPC unary calls vs RoadRunner and the pure-tonic ceiling (V-20)
+
+`ghz -c 64 -n 100000 --connections 8` on the same 4-vCPU box, PHP unary handler on the shared
+hyper/h2 listener (`examples/grpc_server.php`), all six rows answering 100000/100000 OK:
+
+| server | req/s | avg | p99 | max |
+|---|---|---|---|---|
+| **Ignis, PHP handler, 1 PHP thread** | **16.7k** | 2.90 ms | **7.8 ms** | 15.8 ms |
+| Ignis, PHP handler, 4 PHP threads | 17.6k | 2.74 ms | 8.0 ms | 16.7 ms |
+| pure tonic, Rust handler, same codec + listener code — the ceiling | 21.1k | 2.02 ms | 6.3 ms | 12.4 ms |
+| RoadRunner v2025 grpc plugin, 1 PHP worker | 5.1k | 12.3 ms | 17.8 ms | 28.0 ms |
+| RoadRunner grpc plugin, 4 PHP workers | 10.2k | 5.57 ms | 12.6 ms | 26.6 ms |
+| RoadRunner grpc plugin, 16 PHP workers | 11.4k | 4.50 ms | 13.4 ms | 45.6 ms |
+
+Ignis with a full PHP handler in the path is 79% of the pure-Rust ceiling's throughput at 1.23× its
+p99; RoadRunner needs 16 PHP workers to reach 54% of that same ceiling, at 2.1× the p99. 1 vs 4 PHP
+threads on Ignis is a 5% difference (16.7k vs 17.6k) — inside this box's ±6.7% noise band (above), so
+read it as "the PHP hop is not the bottleneck here", not as a scaling result.
+
+100 concurrent calls to a handler that sleeps 200 ms (`-c 100 -n 100`):
+
+| server | total | slowest | avg |
+|---|---|---|---|
+| **Ignis, 1 PHP thread** (`Ignis\sleep` parks the fiber) | **215 ms** | 209 ms | 204 ms |
+| RoadRunner, 4 workers (`usleep` blocks the worker) | 5.03 s | 5.02 s | 2.61 s |
+| RoadRunner, 16 workers | 1.43 s | 1.42 s | 756 ms |
+
+A client call out of PHP parks the fiber too: 100 concurrent `Ignis\Grpc\Client` calls to the same
+server, 1 PHP thread, **217 ms** total (three runs: 218.9 / 217.4 / 217.6 ms) against a sequential
+20 s.
+
+**ext-grpc was evaluated as a fourth comparison server and could not be one.** It does build and load
+on PHP 8.5.10 ZTS (`grpc module version => 1.85.0dev`; the C-core build alone took 77 minutes at
+`nice -j2`), but it ships no supported server runtime and no PHP server codegen upstream —
+`Grpc\Server`'s `requestCall` is a blocking single-threaded completion-queue pull, with nothing that
+generates handler stubs from a `.proto` file. That is not a benchmark still to run; there is no
+server for `ghz` to point at (V-20 + corrections).
+
+## Compat-suite pass rates vs stock PHP (V-23, refreshed)
 
 Not a throughput comparison, but the honest count of what still works when the same test suites
-run through Ignis instead of stock PHP or the tool each suite was written for:
+run through Ignis instead of stock PHP or the tool each suite was written for. Counts below are
+`bench/results/e15-phpt/summary.md` / `summary.tsv` as committed 2026-09-18 (commit `da4af2a`, this
+4-vCPU WSL2 box) — four suites gained since V-23's original run, none lost a PASS. Suite sizes differ
+from a run on a different box (CI's, or the one V-23 itself used) because more of each suite runs
+here or there; that is an environment/kernel difference, not an Ignis effect (research 21).
 
 | suite | stock / baseline | Ignis (main mode) | Ignis (fiber mode) |
 |---|---|---|---|
-| Zend/tests/fibers (110) | 108 pass | **108 pass (100%)** | 77 pass |
-| ext/sockets/tests (118) | 80 pass | **80 pass (100%)** | 75 pass |
-| ext/standard/tests/streams (160) | 138 pass | **131 pass (94.9%)** | 116 pass |
+| Zend/tests/fibers (110) | 108 pass | **108 pass (100%)** | 78 pass* |
+| ext/sockets/tests (118) | 91 pass | **91 pass (100%)** | 85 pass |
+| ext/standard/tests/streams (160) | 140 pass | **134 pass (95.7%)** | 126 pass |
 | Revolt `DriverTest` (81 tests, 222 assertions), vs `StreamSelectDriver` | 1 error, 8 skipped | — | **identical: 1 error, 0 failures, 8 skipped** |
 | FrankenPHP `testdata/*.php` through `php/packages/runtime/src/classic.php` | — | **29 passed / 4 failed / 33 skipped** | — |
+
+\* **Open (S0-FIBER):** a same-box re-run on 2026-09-18 found `Zend/tests/fibers/gh9916-009.phpt`
+newly failing in fiber mode — 77/110, identical across the HEAD binary and one rebuilt at this
+branch's start point, so it is not this cycle's work, and unexplained (the same engine reported 78
+earlier the same day). The gate is deliberately left red rather than re-baselined to 77, so the
+number above is the last one with a known-good cause, not a claim that the fiber-mode gate is clean
+today.
 
 ## Offload pool bound, vs an unbounded blocking call (V-24)
 

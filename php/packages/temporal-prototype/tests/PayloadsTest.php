@@ -66,4 +66,37 @@ final class PayloadsTest extends TestCase
 
         Payloads::encode(\NAN);
     }
+
+    public function testADataFieldThatIsNotAStringIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('a payload "data" field must be a base64 string, got int');
+
+        Payloads::decode(['data' => 42]);
+    }
+
+    public function testDecodeListRoundTripsEachElement(): void
+    {
+        self::assertSame(['hello', null, 'world'], Payloads::decodeList([
+            Payloads::encode('hello'),
+            null,
+            Payloads::encode('world'),
+        ]));
+    }
+
+    public function testDecodeListRejectsSomethingThatIsNotAList(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('a payload list must be an array, got string');
+
+        Payloads::decodeList('not-a-list');
+    }
+
+    public function testDecodeListRejectsAnElementThatIsNeitherNullNorAnObject(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('a payload list element must be an object or null, got string');
+
+        Payloads::decodeList(['not-a-payload']);
+    }
 }

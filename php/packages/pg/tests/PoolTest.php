@@ -225,4 +225,62 @@ final class PoolTest extends TestCase
         Pool::result(['kind' => 'error', 'message' => 'syntax error at or near "slect"']);
     }
 
+    /**
+     * S4-MIXED: every completion is data off the reactor, and orThrow() used to hand a non-string
+     * "message" straight to the exception constructor without looking at it first.
+     */
+    public function testAnErrorPayloadWithNoUsableMessageGetsAGenericOne(): void
+    {
+        $this->expectException(QueryError::class);
+        $this->expectExceptionMessage('the reactor reported an error with no message');
+        Pool::result(['kind' => 'error']);
+    }
+
+    public function testDecodedJsonRejectsAPayloadThatIsNotAString(): void
+    {
+        $this->expectException(PoolError::class);
+        $this->expectExceptionMessage('expected a JSON string from the reactor, got int');
+        Pool::decodedJson(42, PoolError::class);
+    }
+
+    public function testDecodedJsonRejectsAJsonValueThatIsNotAnObject(): void
+    {
+        $this->expectException(PoolError::class);
+        $this->expectExceptionMessage('expected a JSON object from the reactor, got string');
+        Pool::decodedJson('"just a string"', PoolError::class);
+    }
+
+    public function testWithStringKeysRejectsANonStringKey(): void
+    {
+        $this->expectException(PoolError::class);
+        Pool::withStringKeys([0 => 'value'], PoolError::class);
+    }
+
+    public function testAnAcquireCompletionMissingAnIntLeaseIsAPoolError(): void
+    {
+        $this->expectException(PoolError::class);
+        (new \ReflectionMethod(Pool::class, 'leaseIdFromCompletion'))->invoke(null, ['lease' => 'not-an-int']);
+    }
+
+    public function testAQueryCompletionMissingRowsOrAffectedIsAQueryError(): void
+    {
+        $this->expectException(QueryError::class);
+        (new \ReflectionMethod(Lease::class, 'asQueryResult'))->invoke(null, ['rows' => []]);
+    }
+
+    public function testAQueryCompletionWhoseRowIsNotAnArrayIsAQueryError(): void
+    {
+        $this->expectException(QueryError::class);
+        (new \ReflectionMethod(Lease::class, 'asRow'))->invoke(null, 'not-a-row');
+    }
+
+    public function testBackendPidRejectsAColumnThatIsNotAnInt(): void
+    {
+        FakePg::$queryRow = ['pid' => '4821'];
+        $lease = (new Pool('postgres://x'))->acquire();
+
+        $this->expectException(QueryError::class);
+        $this->expectExceptionMessage('pg_backend_pid() did not return an integer');
+        $lease->backendPid();
+    }
 }

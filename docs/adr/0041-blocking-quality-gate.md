@@ -1,8 +1,15 @@
 # ADR-0041 — A blocking quality gate, and what it costs
 
-Status: **proposed** (main agent, 2026-09-17). Becomes accepted when §7's gate is green in CI on
-`main`. Owner decisions that led here: the code style rules in CLAUDE.md (2026-09-17), and
-"gates blocking immediately" rather than a warning period.
+Status: **accepted** (main agent, 2026-09-18) — §7's gate went green in CI on `main` with the
+night-2 merge (`b6c3936`), which is the trigger this ADR set for itself. Owner decisions that led
+here: the code style rules in CLAUDE.md (2026-09-17), and "gates blocking immediately" rather than
+a warning period.
+
+**What the gate reached, against §1's before-numbers:** PHPStan **0 errors at level 8** (was 123 at
+level 6), undocumented `unsafe` blocks **101 → 0** and now under `--all-features` too, Rust **60
+tests / 29.95 %** line coverage (63 with `--all-features`), PHP **209 tests / 36.60 %** floored at
+31.6 % in CI (V-78, V-79 + addenda 1–3). The level and the `--all-features` reach both exceed what
+§7 asked for; the coverage floor is the mechanism §6 specified.
 
 Every count below was measured on this tree on 2026-09-17, not estimated. Where a number came from
 a prior agent's run and my own re-run disagreed, mine is the one recorded and the disagreement is

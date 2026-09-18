@@ -1,6 +1,8 @@
 # ADR-0020 — Universal park: the binary interposes the blocking libc calls behind a fiber gate
 
-Status: **accepted** (2026-09-16, research 26/27/28; H32–H36 open). Owner's expectation E18
+Status: **accepted** (2026-09-16, research 26/27/28). Of H32–H36, only **H34 (`getaddrinfo`)
+is still open** (BACKLOG `R-DNS`): it has no fd to watch, so it is offload's problem, not park's.
+H36 is CONFIRMED below (V-51); H32/H33/H35 are measured in STATUS.md's E18 row. Owner's expectation E18
 (BRIEF.md, 2026-09-16, "ADR first").
 Affects pain-map items: Swoole 5 (incomplete hooks — this is the general answer), PHP-FPM 1
 (in-process C I/O that never touches php_stream: libcurl, libpq), RoadRunner 1 (state discipline:

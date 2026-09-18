@@ -12,7 +12,7 @@ three functions the server side uses.
 
 ```php
 <?php
-require 'vendor/ignis/runtime/ignis.php';
+require 'vendor/autoload.php';  // composer require ignis/runtime — its autoloader needs nothing else
 
 sleep(1);                       // top level: no fiber, so this blocks the thread — as it should
 

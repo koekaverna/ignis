@@ -22,21 +22,21 @@ final class Future
         $this->settle($value, null);
     }
 
-    public function reject(\Throwable $e): void
+    public function reject(\Throwable $exception): void
     {
-        $this->settle(null, $e);
+        $this->settle(null, $exception);
     }
 
-    private function settle(mixed $value, ?\Throwable $e): void
+    private function settle(mixed $value, ?\Throwable $exception): void
     {
         if ($this->done) {
             throw new \LogicException('Future already settled');
         }
         $this->done = true;
         $this->value = $value;
-        $this->error = $e;
-        if ($e !== null && $this->waiters === []) {
-            $this->rememberUnobserved($e);
+        $this->error = $exception;
+        if ($exception !== null && $this->waiters === []) {
+            $this->rememberUnobserved($exception);
         }
         foreach ($this->waiters as $fiber) {
             Loop::markReady($fiber, null);
@@ -47,10 +47,10 @@ final class Future
     private ?\Throwable $unobservedError = null;
 
     /** Nobody is waiting yet, so the loop holds the rejection until someone does (V-22). */
-    private function rememberUnobserved(\Throwable $e): void
+    private function rememberUnobserved(\Throwable $exception): void
     {
-        Loop::$unobserved[] = $e;
-        $this->unobservedError = $e;
+        Loop::$unobserved[] = $exception;
+        $this->unobservedError = $exception;
     }
 
     /** Awaiting a rejection is observing it, so it leaves the loop's report. */
@@ -61,7 +61,7 @@ final class Future
             return;
         }
         $this->unobservedError = null;
-        Loop::$unobserved = array_values(array_filter(Loop::$unobserved, static fn(\Throwable $e): bool => $e !== $error));
+        Loop::$unobserved = array_values(array_filter(Loop::$unobserved, static fn(\Throwable $exception): bool => $exception !== $error));
     }
 
     /** Suspends the current fiber until settled; rethrows on rejection. */

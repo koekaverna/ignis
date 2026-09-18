@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Caller side of the offload pool (E16, ADR-0016): Ignis\offload(fn, ...args) runs a NAMED function
+ * Caller side of the offload pool (E16, ADR-0016): Ignis\offload(function, ...arguments) runs a NAMED function
  * on a synchronous worker thread; scalar/array arguments are copied in (serialize), the result is
  * copied back; the calling fiber parks meanwhile. Closures among the arguments become callbacks
  * that run on this thread when the worker invokes them.
@@ -45,42 +45,49 @@ namespace Ignis\Offload {
                 return;
             }
             self::$enabled = true;
-            // Mirror the runtime's IGNIS_OFFLOAD_CLASSES (route.rs): proxy only what it routes,
-            // or a `new PDO('pgsql:…')` would become a proxy for a class the runtime lets through.
+            self::proxyConfiguredClasses();
+            \ignis_route_enable(true);
+        }
+
+        /**
+         * Mirrors the runtime's IGNIS_OFFLOAD_CLASSES (route.rs): proxy only what it routes, or a
+         * `new PDO('pgsql:…')` would become a proxy for a class the runtime lets through.
+         */
+        private static function proxyConfiguredClasses(): void
+        {
             foreach (explode(',', getenv('IGNIS_OFFLOAD_CLASSES') ?: 'SQLite3') as $class) {
                 $class = trim($class);
                 if ($class !== '' && class_exists($class, false)) {
                     self::proxyClass($class);
                 }
             }
-            \ignis_route_enable(true);
         }
 
         /**
          * Called by the runtime trampoline for a routed function. A call with no proxy argument is
          * not one of ours, and `ignis_route_pass()` runs the original instead.
-         * @param list<mixed> $args
+         * @param list<mixed> $arguments
          */
-        public static function dispatch(string $function, array $args): mixed
+        public static function dispatch(string $function, array $arguments): mixed
         {
-            $affinity = self::affinityOf($args);
+            $affinity = self::affinityOf($arguments);
             if ($affinity === null && !\in_array($function, ['curl_init', 'curl_multi_init', 'curl_share_init'], true)) {
                 \ignis_route_pass();
                 return null;
             }
             self::$routed++;
-            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['fn:' . $function, self::unwrap($args)], $affinity ?? self::pick()));
+            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['fn:' . $function, self::unwrap($arguments)], $affinity ?? self::pick()));
         }
 
         /**
          * `new Class(...)` inside a fiber (from the proxy constructor). A temporary proxy carrying
          * the handle must give it up, or its destructor releases the handle we are returning.
-         * @param list<mixed> $args
+         * @param list<mixed> $arguments
          */
-        public static function construct(string $class, array $args): Handle
+        public static function construct(string $class, array $arguments): Handle
         {
             self::$routed++;
-            $constructed = self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['new:' . $class, self::unwrap($args)], self::pick()));
+            $constructed = self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['new:' . $class, self::unwrap($arguments)], self::pick()));
             if ($constructed instanceof Handle) {
                 return $constructed;
             }
@@ -92,11 +99,11 @@ namespace Ignis\Offload {
             throw new \RuntimeException("offload: constructing $class did not return a handle");
         }
 
-        /** @param list<mixed> $args */
-        public static function method(Handle $handle, string $method, array $args): mixed
+        /** @param list<mixed> $arguments */
+        public static function method(Handle $handle, string $method, array $arguments): mixed
         {
             self::$routed++;
-            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['method:' . $method, self::unwrap(array_merge([$handle], $args))], $handle->worker));
+            return self::wrap(Client::call('Ignis\Offload\WorkerRuntime::routed', ['method:' . $method, self::unwrap(array_merge([$handle], $arguments))], $handle->worker));
         }
 
         /**
@@ -121,11 +128,11 @@ namespace Ignis\Offload {
 
         /**
          * The worker a proxy argument already lives on, so a handle never crosses workers.
-         * @param list<mixed> $args
+         * @param list<mixed> $arguments
          */
-        private static function affinityOf(array $args): ?int
+        private static function affinityOf(array $arguments): ?int
         {
-            foreach ($args as $argument) {
+            foreach ($arguments as $argument) {
                 if ($argument instanceof Handle) {
                     return $argument->worker;
                 }
@@ -168,13 +175,7 @@ namespace Ignis\Offload {
         {
             if (\is_array($value)) {
                 if (isset($value['__ref']) && \count($value) === 1) {
-                    [$worker, $id, $class] = $value['__ref'];
-                    $handle = new Handle($worker, $id, $class);
-                    $proxy = 'Ignis\Offload\Proxy\\' . $class;
-                    if (!class_exists($proxy, false) && class_exists($class, false) && !(new \ReflectionClass($class))->isFinal()) {
-                        self::proxyClass($class);
-                    }
-                    return class_exists($proxy, false) ? $proxy::fromHandle($handle) : $handle;
+                    return self::wrapReference($value['__ref']);
                 }
                 foreach ($value as $key => $element) {
                     $value[$key] = self::wrap($element);
@@ -183,24 +184,42 @@ namespace Ignis\Offload {
             return $value;
         }
 
-        /** One reflection type back to source, with class names absolute and self/static resolved. */
-        private static function typeString(\ReflectionType $t, string $class): string
+        /** Turns the `[worker, id, class]` wire tuple behind a `__ref` key into a handle or class proxy. */
+        private static function wrapReference(mixed $reference): object
         {
-            if ($t instanceof \ReflectionUnionType) {
-                return implode('|', array_map(static fn($x) => self::typeString($x, $class), $t->getTypes()));
+            if (!\is_array($reference) || \count($reference) !== 3) {
+                throw new \RuntimeException('offload: malformed handle reference on the wire');
             }
-            if ($t instanceof \ReflectionIntersectionType) {
-                return implode('&', array_map(static fn($x) => self::typeString($x, $class), $t->getTypes()));
+            [$worker, $id, $class] = $reference;
+            if (!\is_int($worker) || !\is_int($id) || !\is_string($class)) {
+                throw new \RuntimeException('offload: malformed handle reference on the wire');
             }
-            /** @var \ReflectionNamedType $t */
-            $n = $t->getName();
-            $s = match (true) {
-                $n === 'self' => '\\' . $class,
-                $n === 'static' => 'static',
-                $t->isBuiltin() => $n,
-                default => '\\' . $n,
+            $handle = new Handle($worker, $id, $class);
+            $proxy = 'Ignis\Offload\Proxy\\' . $class;
+            if (!class_exists($proxy, false) && class_exists($class, false) && !(new \ReflectionClass($class))->isFinal()) {
+                self::proxyClass($class);
+            }
+            return class_exists($proxy, false) ? $proxy::fromHandle($handle) : $handle;
+        }
+
+        /** One reflection type back to source, with class names absolute and self/static resolved. */
+        private static function typeString(\ReflectionType $type, string $class): string
+        {
+            if ($type instanceof \ReflectionUnionType) {
+                return implode('|', array_map(static fn($member) => self::typeString($member, $class), $type->getTypes()));
+            }
+            if ($type instanceof \ReflectionIntersectionType) {
+                return implode('&', array_map(static fn($member) => self::typeString($member, $class), $type->getTypes()));
+            }
+            /** @var \ReflectionNamedType $type */
+            $name = $type->getName();
+            $resolvedName = match (true) {
+                $name === 'self' => '\\' . $class,
+                $name === 'static' => 'static',
+                $type->isBuiltin() => $name,
+                default => '\\' . $name,
             };
-            return $t->allowsNull() && !\in_array($n, ['mixed', 'null'], true) && !str_contains($s, '|') ? '?' . $s : $s;
+            return $type->allowsNull() && !\in_array($name, ['mixed', 'null'], true) && !str_contains($resolvedName, '|') ? '?' . $resolvedName : $resolvedName;
         }
 
         /**
@@ -213,30 +232,30 @@ namespace Ignis\Offload {
             if (!class_exists($class, false) || class_exists('Ignis\Offload\Proxy\\' . $class, false)) {
                 return;
             }
-            $rc = new \ReflectionClass($class);
+            $reflectionClass = new \ReflectionClass($class);
             $methods = '';
-            foreach ($rc->getMethods(\ReflectionMethod::IS_PUBLIC) as $m) {
-                if ($m->isStatic() || $m->isFinal() || $m->getName() === '__construct') {
+            foreach ($reflectionClass->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+                if ($method->isStatic() || $method->isFinal() || $method->getName() === '__construct') {
                     continue;
                 }
-                $params = [];
-                $pass = [];
-                foreach ($m->getParameters() as $p) {
-                    $decl = ($p->isVariadic() ? '...' : '') . ($p->isPassedByReference() ? '&' : '') . '$' . $p->getName();
-                    if ($p->isOptional() && !$p->isVariadic()) {
-                        $decl .= ' = ' . ($p->isDefaultValueAvailable() ? var_export($p->getDefaultValue(), true) : 'null');
+                $parameters = [];
+                $forwardedArguments = [];
+                foreach ($method->getParameters() as $parameter) {
+                    $declaration = ($parameter->isVariadic() ? '...' : '') . ($parameter->isPassedByReference() ? '&' : '') . '$' . $parameter->getName();
+                    if ($parameter->isOptional() && !$parameter->isVariadic()) {
+                        $declaration .= ' = ' . ($parameter->isDefaultValueAvailable() ? var_export($parameter->getDefaultValue(), true) : 'null');
                     }
-                    $params[] = $decl;
-                    $pass[] = ($p->isVariadic() ? '...' : '') . '$' . $p->getName();
+                    $parameters[] = $declaration;
+                    $forwardedArguments[] = ($parameter->isVariadic() ? '...' : '') . '$' . $parameter->getName();
                 }
-                $rt = $m->getReturnType() ?? $m->getTentativeReturnType();
-                $ret = $rt === null ? '' : ': ' . self::typeString($rt, $class);
-                $body = $rt instanceof \ReflectionNamedType && $rt->getName() === 'void'
-                    ? sprintf("\\Ignis\\Offload\\Router::method(\$this->__ignisHandle, %s, [%s]);", var_export($m->getName(), true), implode(', ', $pass))
-                    : sprintf("return \\Ignis\\Offload\\Router::method(\$this->__ignisHandle, %s, [%s]);", var_export($m->getName(), true), implode(', ', $pass));
-                $methods .= sprintf("    public function %s(%s)%s { %s }\n", $m->getName(), implode(', ', $params), $ret, $body);
+                $returnType = $method->getReturnType() ?? $method->getTentativeReturnType();
+                $returnTypeDeclaration = $returnType === null ? '' : ': ' . self::typeString($returnType, $class);
+                $body = $returnType instanceof \ReflectionNamedType && $returnType->getName() === 'void'
+                    ? sprintf("\\Ignis\\Offload\\Router::method(\$this->__ignisHandle, %s, [%s]);", var_export($method->getName(), true), implode(', ', $forwardedArguments))
+                    : sprintf("return \\Ignis\\Offload\\Router::method(\$this->__ignisHandle, %s, [%s]);", var_export($method->getName(), true), implode(', ', $forwardedArguments));
+                $methods .= sprintf("    public function %s(%s)%s { %s }\n", $method->getName(), implode(', ', $parameters), $returnTypeDeclaration, $body);
             }
-            $code = sprintf('namespace Ignis\Offload\Proxy; #[\AllowDynamicProperties] class %1$s extends \%1$s { public $__ignisHandle; public function __construct(...$args) { $this->__ignisHandle = \Ignis\Offload\Router::construct(%2$s, $args); } public static function fromHandle(\Ignis\Offload\Handle $h): static { $o = (new \ReflectionClass(static::class))->newInstanceWithoutConstructor(); $o->__ignisHandle = $h; return $o; } public function __destruct() { if ($this->__ignisHandle !== null) { \Ignis\Offload\Router::release($this->__ignisHandle); } }
+            $code = sprintf('namespace Ignis\Offload\Proxy; #[\AllowDynamicProperties] class %1$s extends \%1$s { public $__ignisHandle; public function __construct(...$arguments) { $this->__ignisHandle = \Ignis\Offload\Router::construct(%2$s, $arguments); } public static function fromHandle(\Ignis\Offload\Handle $handle): static { $proxy = (new \ReflectionClass(static::class))->newInstanceWithoutConstructor(); $proxy->__ignisHandle = $handle; return $proxy; } public function __destruct() { if ($this->__ignisHandle !== null) { \Ignis\Offload\Router::release($this->__ignisHandle); } }
 %3$s }', $class, var_export($class, true), $methods);
             eval($code);
         }
@@ -251,11 +270,11 @@ namespace Ignis\Offload {
 
         /**
          * Method calls on a handle of a final class (no proxy subclass possible) forward as well.
-         * @param list<mixed> $args
+         * @param list<mixed> $arguments
          */
-        public function __call(string $method, array $args): mixed
+        public function __call(string $method, array $arguments): mixed
         {
-            return Router::method($this, $method, $args);
+            return Router::method($this, $method, $arguments);
         }
 
         public function __destruct()
@@ -278,14 +297,14 @@ namespace Ignis\Offload {
          * A variadic `Ignis\offload()` call carries named arguments through as string keys, which
          * is why this is not a list.
          *
-         * @param array<int|string, mixed> $args
+         * @param array<int|string, mixed> $arguments
          */
-        public static function call(string $function, array $args, ?int $affinity = null): mixed
+        public static function call(string $function, array $arguments, ?int $affinity = null): mixed
         {
             self::hook();
             $callbacks = [];
-            $args = self::extractCallbacks($args, $callbacks);
-            $opId = \ignis_offload_submit($function, serialize($args), $affinity ?? -1);
+            $arguments = self::extractCallbacks($arguments, $callbacks);
+            $opId = \ignis_offload_submit($function, serialize($arguments), $affinity ?? -1);
             if (!\is_int($opId)) {
                 throw new \RuntimeException('offload: no pool (start ignis with --offload N)');
             }
@@ -298,17 +317,40 @@ namespace Ignis\Offload {
                 }
             }
             if (\is_array($answer) && ($answer['kind'] ?? '') === 'error') {
-                throw new \RuntimeException('offload: ' . $answer['message']);
+                $message = $answer['message'] ?? null;
+                throw new \RuntimeException('offload: ' . (\is_string($message) ? $message : 'unknown error'));
+            }
+            if (!\is_string($answer)) {
+                throw new \RuntimeException('offload: malformed completion payload');
             }
             $result = unserialize($answer, ['allowed_classes' => true]);
+            if (!\is_array($result)) {
+                throw new \RuntimeException('offload: malformed result payload');
+            }
             if (isset($result['err'])) {
-                throw new RemoteException($result['err'][0], $result['err'][1], (int) $result['err'][2], $result['err'][3] ?? '');
+                throw self::remoteExceptionFrom($result['err']);
             }
             return $result['ok'] ?? null;
         }
 
+        /** Rebuilds the exception a worker reported, after validating the envelope it serialized. */
+        private static function remoteExceptionFrom(mixed $error): RemoteException
+        {
+            if (!\is_array($error)) {
+                throw new \RuntimeException('offload: malformed error payload');
+            }
+            $remoteClass = $error[0] ?? null;
+            $message = $error[1] ?? null;
+            if (!\is_string($remoteClass) || !\is_string($message)) {
+                throw new \RuntimeException('offload: malformed error payload');
+            }
+            $code = $error[2] ?? 0;
+            $trace = $error[3] ?? null;
+            return new RemoteException($remoteClass, $message, \is_scalar($code) ? (int) $code : 0, \is_string($trace) ? $trace : '');
+        }
+
         /**
-         * Closures anywhere in $args become CallbackRef; `call()` owns how long the real ones live.
+         * Closures anywhere in $arguments become CallbackRef; `call()` owns how long the real ones live.
          * @param array<int, \Closure> $callbacks
          */
         private static function extractCallbacks(mixed $value, array &$callbacks): mixed
@@ -343,18 +385,31 @@ namespace Ignis\Offload {
          */
         private static function runCallback(array $payload): void
         {
-            $callback = self::$pending[(int) $payload['cb']] ?? null;
+            $jobId = $payload['job'] ?? null;
+            $sequence = $payload['seq'] ?? null;
+            if (!\is_int($jobId) || !\is_int($sequence)) {
+                throw new \RuntimeException('offload: malformed callback envelope');
+            }
             try {
-                if ($callback === null) {
-                    throw new \RuntimeException('unknown callback ' . $payload['cb']);
+                $callbackId = $payload['cb'] ?? null;
+                $serializedArguments = $payload['args'] ?? null;
+                if (!\is_int($callbackId) || !\is_string($serializedArguments)) {
+                    throw new \RuntimeException('offload: malformed callback payload');
                 }
-                $args = Router::wrapRefs(unserialize($payload['args'], ['allowed_classes' => true]));
-                $out = serialize(['ok' => $callback(...$args)]);
+                $callback = self::$pending[$callbackId] ?? null;
+                if ($callback === null) {
+                    throw new \RuntimeException('unknown callback ' . $callbackId);
+                }
+                $arguments = Router::wrapRefs(unserialize($serializedArguments, ['allowed_classes' => true]));
+                if (!\is_array($arguments)) {
+                    throw new \RuntimeException('offload: malformed callback arguments');
+                }
+                $out = serialize(['ok' => $callback(...$arguments)]);
             } catch (\Throwable $e) {
                 $out = serialize(['err' => [$e::class, $e->getMessage(), $e->getCode()]]);
             }
             self::$callbacksRun++;
-            \ignis_offload_cb_result((int) $payload['job'], (int) $payload['seq'], $out);
+            \ignis_offload_cb_result($jobId, $sequence, $out);
         }
 
         /** @return array<string, mixed> */
@@ -373,8 +428,8 @@ namespace Ignis\Offload {
 
 namespace Ignis {
     /** Run a named function (or "Class::method") on the offload pool; the current fiber parks. */
-    function offload(string $function, mixed ...$args): mixed
+    function offload(string $function, mixed ...$arguments): mixed
     {
-        return Offload\Client::call($function, $args);
+        return Offload\Client::call($function, $arguments);
     }
 }

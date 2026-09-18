@@ -26,7 +26,7 @@ VALIDATION.md entry that measured it. Nothing here is a claim without a number b
 | a script that declares a function at top level without a guard | **fatals on the second request** (`Cannot redeclare`, uncatchable; the thread is respawned). Use `require_once` or `function_exists()` — the rule in every worker runtime | V-53, V-54 |
 | PHP 8.5.10 ZTS + embed SAPI build itself | builds and links here, all target extensions present | V-0, V-1 |
 | a hostname lookup (`fsockopen('tcp://host:port')`, `gethostbyname()`, libpq connecting by name) | **blocks the OS thread** for the whole resolve — `getaddrinfo()` has no fd to park on. `curl_*` is unaffected (threaded resolver). Run a local caching resolver; tracked as R-DNS | research 26, 27, 31 |
-| `session.save_handler = files` (PHP's and Symfony's default) | **do not use** — the handler holds a blocking `flock` for the whole request, and held across an await that deadlocks the thread. Use PostgreSQL/Redis/PDO | V-58, ADR-0038 |
+| `session.save_handler = files` (PHP's and Symfony's default) | **works** — `flock` is interposed (V-81): a blocking lock inside a fiber parks (`LOCK_NB` plus a backing-off retry) instead of blocking the thread, closing the deadlock this row used to warn about. Two fibers on the same thread sharing a session id never even contend (`ext/session` is a per-thread singleton, V-80); across threads a shared session id serialises and completes, exactly like php-fpm | V-80, V-81, V-58, ADR-0038 |
 | Symfony's cache (`LockRegistry` stampede protection) | works, and only because `usleep` parks: non-blocking `flock` + a 100 ms poll, thread stays free | V-58 |
 
 ## Hook-off controls
@@ -35,9 +35,11 @@ Every hook has an off switch — a claim about a hook is only made against a run
 disabled, never assumed: `IGNIS_NO_STREAM_HOOK`, `IGNIS_NO_SLEEP_HOOK`, `IGNIS_NO_SUPERGLOBALS`,
 `IGNIS_NO_OFFLOAD_ROUTE`, `IGNIS_NO_UNIVERSAL_PARK`. `IGNIS_PARK` is the universal-park policy
 table ([ADR-0037](adr/0037-three-mechanisms.md)): comma-separated `lib` or `lib:symbol` rows
-naming what may park; unset means the built-in seed
-(`libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto`), empty means
-nothing parks.
+naming what may park; unset means the built-in seed — 16 `libphp:` symbols (the sleep family;
+`select`, `accept`, `poll`, `recv`, `send`, `recvfrom`, `sendto`, `recvmsg`, `sendmsg`, `connect`,
+`read`, `write`; `flock` since V-81) plus `libcurl`, `libpq`, `libssl`, `libcrypto` — confirmed by
+running `ignis serve`, which prints the resolved policy in its startup banner
+(`park=libcurl,libpq,libssl,libcrypto,libphp:16 symbols`); empty means nothing parks.
 
 ## Databases: what parks, what is pooled, and the one choice you have to make
 

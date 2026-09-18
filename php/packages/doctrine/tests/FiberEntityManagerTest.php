@@ -10,6 +10,7 @@ use Ignis\Doctrine\FiberEntityManager;
 use Ignis\Scope;
 use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 
@@ -77,14 +78,12 @@ final class FiberEntityManagerTest extends TestCase
      */
     public function testResetRollsBackEveryOpenTransactionAndDropsTheManager(): void
     {
-        $open = 2;
+        $transactionActive = [true, true, false];
         $connection = $this->createMock(Connection::class);
-        $connection->method('isTransactionActive')->willReturnCallback(static function () use (&$open): bool {
-            return $open > 0;
+        $connection->method('isTransactionActive')->willReturnCallback(static function () use (&$transactionActive): bool {
+            return array_shift($transactionActive) ?? false;
         });
-        $connection->expects($this->exactly(2))->method('rollBack')->willReturnCallback(static function () use (&$open): void {
-            --$open;
-        });
+        $connection->expects($this->exactly(2))->method('rollBack');
 
         $inner = $this->openManager();
         $inner->method('getConnection')->willReturn($connection);
@@ -124,7 +123,7 @@ final class FiberEntityManagerTest extends TestCase
     }
 
     /** @param list<EntityManagerInterface> $managers */
-    private function locatorReturning(array $managers): ContainerInterface
+    private function locatorReturning(array $managers): MockObject&ContainerInterface
     {
         $next = 0;
         $locator = $this->createMock(ContainerInterface::class);
@@ -135,7 +134,7 @@ final class FiberEntityManagerTest extends TestCase
         return $locator;
     }
 
-    private function openManager(): EntityManagerInterface
+    private function openManager(): MockObject&EntityManagerInterface
     {
         $manager = $this->createMock(EntityManagerInterface::class);
         $manager->method('isOpen')->willReturn(true);
@@ -145,6 +144,11 @@ final class FiberEntityManagerTest extends TestCase
 
     private static function em(FiberEntityManager $manager): EntityManagerInterface
     {
-        return (new \ReflectionMethod(FiberEntityManager::class, 'em'))->invoke($manager);
+        $inner = (new \ReflectionMethod(FiberEntityManager::class, 'em'))->invoke($manager);
+        if (!$inner instanceof EntityManagerInterface) {
+            throw new \LogicException('FiberEntityManager::em() returned ' . get_debug_type($inner));
+        }
+
+        return $inner;
     }
 }

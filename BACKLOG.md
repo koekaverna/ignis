@@ -398,6 +398,24 @@ that are not in it. `max_connections` is also ADR-0025's connection cap, which M
 `serve_to_legacy_args` the way `budget` already is, env still winning over the file; a test in
 `config.rs` covering the precedence for at least one of them; `ignis.toml.example` updated.
 
+### R-HELP The binary has no `--help` `agent` `open`
+**What.** Found 2026-09-18 while refreshing the site documentation against the code.
+`LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis --help` does not print usage: the flag is
+taken for an entry script and the engine fatals with `Failed opening required '--help'` (exit 255).
+`ignis serve --help` answers `ignis serve: entry script --help does not exist` (exit 2). Only
+`--version` works, printing `ignis 0.1.0-rc.1`.
+**Why.** The CLI surface cannot be discovered from the program, so `docs/reference/cli.md` has to be
+transcribed by hand from `main.rs` and re-verified by a human at every change — the documentation
+cannot be checked against the binary, which is how it drifted in the first place. A user's first
+reflex on an unknown command fails with a PHP fatal error about a file they never named.
+**Files.** `crates/ignis/src/main.rs`, `crates/ignis/src/config.rs` (`serve_to_legacy_args`).
+**Acceptance.** `ignis --help`, `ignis -h` and `ignis serve --help` print usage listing every
+subcommand and flag, and exit 0; an unknown leading flag prints usage to stderr and exits 2.
+**Constraints.** Argument parsing is hand-rolled here and a script's own `--` arguments must keep
+passing through untouched (A5/V-32 php-cli parity) — a flag after the script path belongs to the
+script, not to `ignis`. Exit statuses are *not* part of this item: they were measured and are
+already correct (`exit(7)` → 7, a fatal → 255, `serve` with a missing entry → 2).
+
 ## Cycle 2026-09-18 — bugs, stabilisation, production readiness (owner)
 
 Framing the owner set: "production readiness" is the question *what stops someone running this
@@ -416,6 +434,30 @@ reason; with the history intact it still prints `REPLAY_OK`. Assert on the evict
 **Done.** `Temporal\isEvictionAnError()` now asserts on the eviction itself, spelling-insensitive
 (`strtoupper` plus separator strip, because protojson renders the enum SCREAMING_SNAKE while the
 PHP constant reads `Nondeterminism`) and accepting the bare prost tag `3`. `E9 temporal` is green.
+
+### S0-FIBER `gh9916-009.phpt` fails in fiber mode and the cause is not in this repository `main` `open — measured 2026-09-18`
+**What.** `bench/e15-phpt.sh` reports `phpt.fiber.Zend_tests_fibers=77` against a baseline of 78, and
+`scripts/ci-gate.sh` names the test: `Zend/tests/fibers/gh9916-009.phpt`. It covers entering the
+shutdown sequence with a fiber suspended inside a Generator; the run prints `Not executed` where the
+engine should raise `Cannot use "yield from" in a force-closed generator`. So the generator's
+`finally` runs past a `yield from` that ought to have been refused.
+**What it is not, and this was measured rather than assumed.** Not tonight's work: the full fibers
+suite gives **77 with the HEAD binary and 77 with the binary rebuilt at night-3's branch point** —
+identical. Restoring `php/packages/runtime` to its pre-night state does not change it either. Not a
+flake: 77 across four independent suite runs and 5/5 in isolation.
+**The part that is honestly unexplained.** The same crates and the same PHP library reported **78**
+earlier on 2026-09-18, and `/home/koe/php-src` is on the same commit with a clean tree and
+`/opt/php85-zts` has not been rebuilt since 2026-09-17. I cannot account for that observation and am
+recording it as unexplained rather than inventing a cause. The committed baseline `.tsv` dates from
+**2026-09-16**, which is before the engine was rebuilt with the toolchain extensions — so the most
+likely story is that this test broke with the engine rebuild and the earlier 78 was the anomaly, but
+that is a hypothesis with no measurement behind it yet.
+**Deliberately left red.** The new `.tsv` was **not** committed. `check_set` compares against the one
+in HEAD, so committing a run where this test FAILED would make the gate stop reporting it forever —
+which is the exact defect this cycle has now found six times.
+**Acceptance.** Either a cause named with a measurement, or a conscious re-baseline that records why
+the test may fail here. Start with: run it against the stock `php` binary in fiber mode, and against
+an engine built without the toolchain extensions.
 
 ### S0-FRANK One frankenphp test regressed and nobody knows which `main` `HALF DONE 2026-09-18 — gate green, test still unnamed`
 **What.** `passed=28` against baseline 29. The arithmetic pins it at exactly one test: 28+5+33 and

@@ -13,13 +13,13 @@ use PHPUnit\Framework\TestCase;
  */
 final class StubsMatchTheBinaryTest extends TestCase
 {
+    /** A scan that finds nothing would pass silently, which is the one way this test could rot. */
     public function testEveryIgnisFunctionCalledInThisRepositoryHasAStub(): void
     {
         $declared = $this->declaredStubs();
         $callSites = $this->callSites();
         $missing = [];
 
-        // A scan that finds nothing would pass silently, which is the one way this test could rot.
         self::assertGreaterThan(20, count($declared), 'the stub file was not read');
         self::assertGreaterThan(10, count($callSites), 'no call sites found -- the scan is broken');
 
@@ -52,6 +52,9 @@ final class StubsMatchTheBinaryTest extends TestCase
         foreach ([$root . '/php/packages', $root . '/examples'] as $directory) {
             $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory));
             foreach ($files as $file) {
+                if (!$file instanceof \SplFileInfo) {
+                    continue;
+                }
                 if ($file->getExtension() !== 'php' || str_contains($file->getPathname(), '/vendor/')) {
                     continue;
                 }

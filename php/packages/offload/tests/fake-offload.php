@@ -47,10 +47,10 @@ namespace Ignis\Tests\Offload {
             self::$passed = 0;
         }
 
-        public static function submit(string $fn, string $args, int $affinity): int
+        public static function submit(string $function, string $arguments, int $affinity): int
         {
             $op = self::$nextOp++;
-            self::$submitted[] = ['fn' => $fn, 'args' => $args, 'affinity' => $affinity, 'op' => $op];
+            self::$submitted[] = ['fn' => $function, 'args' => $arguments, 'affinity' => $affinity, 'op' => $op];
 
             return $op;
         }
@@ -61,9 +61,9 @@ namespace {
     use Ignis\Tests\Offload\FakeOffload;
 
     if (!function_exists('ignis_offload_submit')) {
-        function ignis_offload_submit(string $fn, string $serializedArgs, int $affinity = -1): int|false
+        function ignis_offload_submit(string $function, string $serializedArguments, int $affinity = -1): int|false
         {
-            return FakeOffload::$noPool ? false : FakeOffload::submit($fn, $serializedArgs, $affinity);
+            return FakeOffload::$noPool ? false : FakeOffload::submit($function, $serializedArguments, $affinity);
         }
     }
 
@@ -76,18 +76,18 @@ namespace {
     }
 
     if (!function_exists('ignis_offload_callback')) {
-        function ignis_offload_callback(int $job, int $cb, string $serializedArgs): string|false
+        function ignis_offload_callback(int $job, int $callbackId, string $serializedArguments): string|false
         {
-            FakeOffload::$callbacks[] = ['job' => $job, 'cb' => $cb, 'args' => $serializedArgs];
+            FakeOffload::$callbacks[] = ['job' => $job, 'cb' => $callbackId, 'args' => $serializedArguments];
 
             return FakeOffload::$callbackFails ? false : FakeOffload::$callbackAnswer;
         }
     }
 
     if (!function_exists('ignis_offload_cb_result')) {
-        function ignis_offload_cb_result(int $job, int $seq, string $serializedResult): bool
+        function ignis_offload_cb_result(int $job, int $sequence, string $serializedResult): bool
         {
-            FakeOffload::$callbackResults[] = ['job' => $job, 'seq' => $seq, 'result' => $serializedResult];
+            FakeOffload::$callbackResults[] = ['job' => $job, 'seq' => $sequence, 'result' => $serializedResult];
 
             return true;
         }

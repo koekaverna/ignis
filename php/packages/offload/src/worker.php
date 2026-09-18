@@ -38,29 +38,47 @@ final class WorkerRuntime
     public static int $job = 0;
 
     /** Replace CallbackRef values (any depth) by closures that call back into the calling thread. */
-    public static function bindCallbacks(mixed $v): mixed
+    public static function bindCallbacks(mixed $value): mixed
     {
-        if ($v instanceof CallbackRef) {
-            $id = $v->id;
-            return static function (mixed ...$args) use ($id): mixed {
-                // Handles among the callback arguments (curl gives the CurlHandle) travel as refs.
-                $r = \ignis_offload_callback(self::$job, $id, serialize(self::registerObjects($args)));
-                if ($r === false) {
+        if ($value instanceof CallbackRef) {
+            $id = $value->id;
+            return static function (mixed ...$arguments) use ($id): mixed {
+                $answer = \ignis_offload_callback(self::$job, $id, serialize(self::registerObjects($arguments)));
+                if ($answer === false) {
                     throw new \RuntimeException('offload callback failed (caller gone)');
                 }
-                $u = unserialize($r);
-                if (isset($u['err'])) {
-                    throw new RemoteException($u['err'][0], 'callback threw: ' . $u['err'][1], (int) $u['err'][2]);
-                }
-                return $u['ok'] ?? null;
+                return self::unpackCallbackAnswer($answer);
             };
         }
-        if (\is_array($v)) {
-            foreach ($v as $k => $x) {
-                $v[$k] = self::bindCallbacks($x);
+        if (\is_array($value)) {
+            foreach ($value as $key => $element) {
+                $value[$key] = self::bindCallbacks($element);
             }
         }
-        return $v;
+        return $value;
+    }
+
+    /** Rebuilds the caller's answer to a callback, after validating the envelope it serialized. */
+    private static function unpackCallbackAnswer(string $answer): mixed
+    {
+        $unpacked = unserialize($answer, ['allowed_classes' => true]);
+        if (!\is_array($unpacked)) {
+            throw new \RuntimeException('offload: malformed callback answer');
+        }
+        if (isset($unpacked['err'])) {
+            $error = $unpacked['err'];
+            if (!\is_array($error)) {
+                throw new \RuntimeException('offload: malformed callback error');
+            }
+            $remoteClass = $error[0] ?? null;
+            $message = $error[1] ?? null;
+            if (!\is_string($remoteClass) || !\is_string($message)) {
+                throw new \RuntimeException('offload: malformed callback error');
+            }
+            $code = $error[2] ?? 0;
+            throw new RemoteException($remoteClass, 'callback threw: ' . $message, \is_scalar($code) ? (int) $code : 0);
+        }
+        return $unpacked['ok'] ?? null;
     }
 
     /** @var array<int, object> remote objects held for proxies on the fiber threads */
@@ -74,41 +92,41 @@ final class WorkerRuntime
      * The name is data that arrived from another thread, so `fn:` and `new:` are answered only for
      * the names the runtime itself routes — anything else reaching this channel is a bug or worse.
      *
-     * @param array<int|string, mixed> $args
+     * @param array<int|string, mixed> $arguments
      */
-    public static function routed(string $what, array $args): mixed
+    public static function routed(string $what, array $arguments): mixed
     {
         if ($what === 'free') {
-            unset(self::$handles[(int) ($args[0]['__ref'][1] ?? 0)]);
+            self::free($arguments[0] ?? null);
             return null;
         }
-        $args = self::resolveRefs($args);
+        $arguments = self::resolveArgumentRefs($arguments);
         [$kind, $name] = explode(':', $what, 2);
         $result = match ($kind) {
-            'fn' => self::callFunction($name, $args),
-            'new' => self::construct($name, $args),
-            'method' => self::callMethod(array_shift($args), $name, $args),
+            'fn' => self::callFunction($name, $arguments),
+            'new' => self::construct($name, $arguments),
+            'method' => self::callMethod(array_shift($arguments), $name, $arguments),
             default => throw new \InvalidArgumentException("bad routed call $what"),
         };
         return self::registerObjects($result);
     }
 
-    /** @param array<int|string, mixed> $args */
-    private static function callFunction(string $function, array $args): mixed
+    /** @param array<int|string, mixed> $arguments */
+    private static function callFunction(string $function, array $arguments): mixed
     {
         if (!\in_array($function, self::routedNames('IGNIS_OFFLOAD_FUNCTIONS', ''), true) || !\is_callable($function)) {
             throw new \InvalidArgumentException("offload: $function is not a routed function");
         }
-        return $function(...$args);
+        return $function(...$arguments);
     }
 
-    /** @param array<int|string, mixed> $args */
-    private static function construct(string $class, array $args): object
+    /** @param array<int|string, mixed> $arguments */
+    private static function construct(string $class, array $arguments): object
     {
         if (!\in_array($class, self::routedNames('IGNIS_OFFLOAD_CLASSES', 'SQLite3'), true) || !class_exists($class)) {
             throw new \InvalidArgumentException("offload: $class is not a routed class");
         }
-        return new $class(...$args);
+        return new $class(...$arguments);
     }
 
     /**
@@ -123,50 +141,82 @@ final class WorkerRuntime
         return array_values(array_filter(array_map('trim', explode(',', $configured ?: $fallback))));
     }
 
-    /** @param array<int|string, mixed> $args */
-    private static function callMethod(mixed $obj, string $method, array $args): mixed
+    /** @param array<int|string, mixed> $arguments */
+    private static function callMethod(mixed $object, string $method, array $arguments): mixed
     {
-        if (!\is_object($obj)) {
+        if (!\is_object($object)) {
             throw new \RuntimeException("routed method $method on a non-object");
         }
-        return $obj->$method(...$args);
+        return $object->$method(...$arguments);
+    }
+
+    /**
+     * @param array<int|string, mixed> $arguments
+     * @return array<int|string, mixed>
+     */
+    private static function resolveArgumentRefs(array $arguments): array
+    {
+        foreach ($arguments as $key => $value) {
+            $arguments[$key] = self::resolveRefs($value);
+        }
+        return $arguments;
     }
 
     /** ['__ref' => [worker, id, class]] → the real object held here; unknown ids are an error. */
-    private static function resolveRefs(mixed $v): mixed
+    private static function resolveRefs(mixed $value): mixed
     {
-        if (\is_array($v)) {
-            if (isset($v['__ref']) && \count($v) === 1) {
-                $id = (int) $v['__ref'][1];
-                if (!isset(self::$handles[$id])) {
-                    throw new \RuntimeException("offload: unknown handle $id on this worker");
-                }
-                return self::$handles[$id];
+        if (\is_array($value)) {
+            if (isset($value['__ref']) && \count($value) === 1) {
+                return self::resolveHandle($value['__ref']);
             }
-            foreach ($v as $k => $x) {
-                $v[$k] = self::resolveRefs($x);
+            foreach ($value as $key => $element) {
+                $value[$key] = self::resolveRefs($element);
             }
         }
-        return $v;
+        return $value;
+    }
+
+    /** @param mixed $reference the wire tuple `[worker, id, class]` naming a handle held here */
+    private static function resolveHandle(mixed $reference): object
+    {
+        $id = \is_array($reference) ? ($reference[1] ?? null) : null;
+        if (!\is_int($id)) {
+            throw new \RuntimeException('offload: malformed handle reference');
+        }
+        if (!isset(self::$handles[$id])) {
+            throw new \RuntimeException("offload: unknown handle $id on this worker");
+        }
+        return self::$handles[$id];
+    }
+
+    /** @param mixed $reference the wire tuple `['__ref' => [worker, id, class]]` naming the handle to drop */
+    private static function free(mixed $reference): void
+    {
+        $ref = \is_array($reference) ? ($reference['__ref'] ?? null) : null;
+        $id = \is_array($ref) ? ($ref[1] ?? null) : null;
+        if (!\is_int($id)) {
+            throw new \RuntimeException('offload: malformed free request');
+        }
+        unset(self::$handles[$id]);
     }
 
     /** Objects of routable classes stay here; the caller gets a reference. */
-    private static function registerObjects(mixed $v): mixed
+    private static function registerObjects(mixed $value): mixed
     {
-        if (\is_object($v)) {
-            $class = $v::class;
-            if (\in_array($class, self::ROUTABLE, true) || $v instanceof \PDO || $v instanceof \PDOStatement) {
+        if (\is_object($value)) {
+            $class = $value::class;
+            if (\in_array($class, self::ROUTABLE, true) || $value instanceof \PDO || $value instanceof \PDOStatement) {
                 $id = self::$nextHandle++;
-                self::$handles[$id] = $v;
-                return ['__ref' => [self::$worker, $id, $v instanceof \PDOStatement ? 'PDOStatement' : ($v instanceof \PDO ? 'PDO' : $class)]];
+                self::$handles[$id] = $value;
+                return ['__ref' => [self::$worker, $id, $value instanceof \PDOStatement ? 'PDOStatement' : ($value instanceof \PDO ? 'PDO' : $class)]];
             }
         }
-        if (\is_array($v)) {
-            foreach ($v as $k => $x) {
-                $v[$k] = self::registerObjects($x);
+        if (\is_array($value)) {
+            foreach ($value as $key => $element) {
+                $value[$key] = self::registerObjects($element);
             }
         }
-        return $v;
+        return $value;
     }
 
     public static int $worker = 0;
@@ -179,12 +229,18 @@ final class WorkerRuntime
         }
         self::$worker = (int) (\ignis_offload_stats()['this'] ?? 0);
         while (($job = \ignis_offload_next()) !== null) {
-            [$id, $fn, $argsSer] = $job;
+            [$id, $function, $serializedArguments] = $job;
             self::$job = $id;
             try {
-                $args = self::bindCallbacks(unserialize($argsSer, ['allowed_classes' => true]));
-                $callable = str_contains($fn, '::') ? explode('::', $fn, 2) : $fn;
-                $result = $callable(...$args);
+                $arguments = self::bindCallbacks(unserialize($serializedArguments, ['allowed_classes' => true]));
+                if (!is_array($arguments)) {
+                    throw new \RuntimeException('offload: argument list is ' . get_debug_type($arguments) . ', expected an array');
+                }
+                $callable = str_contains($function, '::') ? explode('::', $function, 2) : $function;
+                if (!is_callable($callable)) {
+                    throw new \RuntimeException("offload: {$function} is not callable in this worker");
+                }
+                $result = $callable(...$arguments);
                 $out = serialize(['ok' => $result]);
             } catch (\Throwable $e) {
                 $out = serialize(['err' => [$e::class, $e->getMessage(), $e->getCode(), $e->getTraceAsString()]]);

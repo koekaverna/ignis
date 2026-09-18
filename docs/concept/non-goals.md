@@ -43,12 +43,12 @@ a real-time scheduler.
 
 ## Blocking calls on regular files are never made async
 
-Epoll refuses regular files, so universal park forwards file I/O and the OS thread waits for it.
-This covers `file_get_contents()` reading a local file, the opcache file cache, and `ext/session`'s
-`flock()` on the session file. It is not a gap that got missed — making it async needs a fourth
-mechanism (io_uring, or an offload route for file I/O specifically) and would get its own ADR
-before landing; see [The three mechanisms](mechanisms.md) for what the existing three already
-cover.
+Epoll refuses regular files, so universal park forwards a plain `read`/`write`/`fsync` on one and
+the OS thread waits for it. This covers `file_get_contents()` reading a local file and the opcache
+file cache. (`flock()` is the exception with a mechanism of its own — see "Locks on files", below.)
+It is not a gap that got missed — making file I/O itself async needs a fourth mechanism (io_uring,
+or an offload route for file I/O specifically) and would get its own ADR before landing; see
+[The three mechanisms](mechanisms.md) for what the existing three already cover.
 
 ## Linux-only
 
@@ -70,10 +70,26 @@ reproducing `nsswitch.conf`, `/etc/hosts`, `resolv.conf`'s search list and `ndot
 and RFC 6724 address sorting is a surface where being almost right means connecting to the wrong
 address or failing to resolve a Kubernetes service — a worse failure than a slow one.
 
-## Locks on files are not fiber-safe
+## Locks on files, held across a yield, used to deadlock a thread — closed by default now
 
-A blocking `flock()` held across an await deadlocks the OS thread: the waiter cannot park (a regular
-file is not epoll-able), so the holder can never be resumed to release it. PHP's default session
-handler does exactly this, so it must not be used — put the session on PostgreSQL or Redis, where
-the wait is a socket and parks. Non-blocking locks with a `usleep` poll are fine, and are what
-Symfony's cache already does. The rule and the measurements are [ADR-0038](../adr/0038-locks-across-a-fiber-boundary.md).
+A regular file cannot be registered with `epoll`, so before this cycle a blocking `flock()` held
+across a yield deadlocked the OS thread outright: the waiter could not park, and the holder — also
+parked on that same thread — could never be resumed to release it (V-58,
+[ADR-0038](../adr/0038-locks-across-a-fiber-boundary.md)).
+
+`flock()` is itself interposed now (V-81): a genuinely blocking call becomes non-blocking, retried
+on a parked sleep that doubles from 200 µs to a 20 ms ceiling, so by default the fiber pays the
+wait, not the thread. Turning `libphp:flock` off in `IGNIS_PARK` (or setting
+`IGNIS_NO_UNIVERSAL_PARK=1`) brings the old deadlock back.
+
+PHP's default (files) session handler was the case ADR-0038 named as reaching this the most, and
+measurement found it does not, independent of the fix above (V-80): on one thread `ext/session` is
+a per-thread singleton, so a second fiber sharing a session joins the first fiber's session instead
+of taking a second lock; across threads, two concurrent requests on the same session id simply
+serialise and both complete — exactly like php-fpm. The boot-time refusal ADR-0038 considered for
+`session.save_handler=files` was therefore never built, and files-based sessions are not refused or
+unsupported.
+
+Non-blocking locks with a `usleep` poll remain the recommended shape for application code that
+locks a file directly (Symfony's cache already does this) — the general rule from ADR-0038, don't
+hold a lock across a yield without a mechanism under it, is what `flock` itself now follows too.

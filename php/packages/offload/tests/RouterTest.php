@@ -72,9 +72,26 @@ final class RouterTest extends TestCase
         self::assertSame(42, $handle->id);
     }
 
+    public function testWrapThrowsWhenTheReferenceIsNotATriple(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed handle reference on the wire');
+
+        self::call('wrap', ['__ref' => [1, 5]]);
+    }
+
+    public function testWrapThrowsWhenTheReferenceHoldsTheWrongTypes(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed handle reference on the wire');
+
+        self::call('wrap', ['__ref' => ['not-a-worker', 5, 'CurlHandle']]);
+    }
+
     public function testWrapRecursesAndLeavesAnythingThatIsNotARefAlone(): void
     {
-        $wrapped = self::call('wrap', ['rows' => [['__ref' => [0, 1, 'CurlHandle']], ['__ref' => [0, 1, 'CurlHandle'], 'extra' => 1]]]);
+        $wrapped = self::callArray('wrap', ['rows' => [['__ref' => [0, 1, 'CurlHandle']], ['__ref' => [0, 1, 'CurlHandle'], 'extra' => 1]]]);
+        self::assertIsArray($wrapped['rows']);
 
         self::assertInstanceOf(Handle::class, $wrapped['rows'][0]);
         self::assertSame(['__ref' => [0, 1, 'CurlHandle'], 'extra' => 1], $wrapped['rows'][1], 'a ref is a ref only when it is the single key');
@@ -116,7 +133,10 @@ final class RouterTest extends TestCase
             $type = (new \ReflectionMethod($subject, $method))->getReturnType();
             self::assertNotNull($type);
 
-            return self::call('typeString', $type, $subject);
+            $rendered = self::call('typeString', $type, $subject);
+            self::assertIsString($rendered);
+
+            return $rendered;
         };
 
         self::assertSame('string', $returns('plain'), 'a builtin stays bare');
@@ -160,10 +180,11 @@ final class RouterTest extends TestCase
         self::assertNull($proxy->getMethod('untyped')->getReturnType(), 'no return type on the parent means none on the override');
     }
 
+    /** The second call must be idempotent — a second eval of the same class name would be a fatal. */
     public function testProxyClassIsIdempotentAndIgnoresAClassThatIsNotLoaded(): void
     {
         Router::proxyClass(\IgnisOffloadProxySubject::class);
-        Router::proxyClass(\IgnisOffloadProxySubject::class);   // a second eval of the same name would be a fatal
+        Router::proxyClass(\IgnisOffloadProxySubject::class);
         Router::proxyClass('NoSuchClassAnywhere');
 
         self::assertFalse(class_exists('Ignis\Offload\Proxy\NoSuchClassAnywhere', false));
@@ -201,8 +222,20 @@ final class RouterTest extends TestCase
         );
     }
 
-    private static function call(string $method, mixed ...$args): mixed
+    private static function call(string $method, mixed ...$arguments): mixed
     {
-        return (new \ReflectionMethod(Router::class, $method))->invoke(null, ...$args);
+        return (new \ReflectionMethod(Router::class, $method))->invoke(null, ...$arguments);
+    }
+
+    /** The same reflection call, narrowed: these callers index the result.
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function callArray(string $method, mixed ...$arguments): array
+    {
+        $result = self::call($method, ...$arguments);
+        self::assertIsArray($result);
+
+        return $result;
     }
 }

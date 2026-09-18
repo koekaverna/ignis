@@ -33,10 +33,12 @@ final class ShimTest extends TestCase
         self::resetStatics();
     }
 
+    /**
+     * The shim registers Swoole\Event::shutdown() as a shutdown function; a coroutine left alive
+     * here would make it drive a loop at the end of the PHPUnit process.
+     */
     protected function tearDown(): void
     {
-        // The shim registers Swoole\Event::shutdown() as a shutdown function; a coroutine left
-        // alive here would make it drive a loop at the end of the PHPUnit process.
         self::resetStatics();
     }
 
@@ -83,13 +85,14 @@ final class ShimTest extends TestCase
         self::assertTrue($group->wait(), 'a counter that is already zero does not wait');
     }
 
+    /** One done() too many is the classic misuse, and it must say so. */
     public function testAWaitGroupRefusesToGoNegative(): void
     {
         $group = new WaitGroup();
 
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('WaitGroup misuse: negative counter');
-        $group->done();   // one done() too many is the classic misuse, and it must say so
+        $group->done();
     }
 
     public function testATimerCanBeClearedExactlyOnce(): void
@@ -125,6 +128,9 @@ final class ShimTest extends TestCase
         Coroutine::defer(static function (): void {});
 
         $defers = (new \ReflectionProperty(Coroutine::class, 'defers'))->getValue();
+        self::assertIsArray($defers);
+        self::assertArrayHasKey(4, $defers);
+        self::assertIsArray($defers[4]);
         self::assertCount(2, $defers[4], 'they run in reverse at the end of coroutine 4');
     }
 

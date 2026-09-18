@@ -26,7 +26,13 @@ use Ignis\Http\Response;  // → E4
 // ---------------------------------------------------------------------------
 // 1. Structured concurrency inside one request: ✓ (E1/E2, V-2/V-3)
 // ---------------------------------------------------------------------------
-/** @return array{profile: array<string, mixed>, orders: list<array<string, mixed>>, recommendations: list<string>} */
+/**
+ * The three upstreams, fetched concurrently. Keyed `mixed` because `Ignis\all()` over futures of
+ * different shapes can only say `mixed` per value -- a precise shape here would be a promise this
+ * function does not keep (V-84).
+ *
+ * @return array<string, mixed>
+ */
 function fetchDashboard(int $userId): array
 {
     // Three independent waits run concurrently on one OS thread; the fiber
@@ -67,7 +73,29 @@ function usersFromDb(\PDO $pdo): array
     return $rows->fetchAll(\PDO::FETCH_ASSOC);
 }
 
-/** @return array<string, mixed> */
+/**
+ * One integer column of a row. A column value is `mixed` because SQL says so, and an example that
+ * casts it teaches the wrong habit.
+ *
+ * @param array<string, mixed> $row
+ */
+function intColumn(array $row, string $column): int
+{
+    $value = $row[$column] ?? null;
+    if (!is_numeric($value)) {
+        throw new \RuntimeException("column {$column} is " . get_debug_type($value) . ', expected a number');
+    }
+
+    return (int) $value;
+}
+
+/**
+ * The decoded upstream document. Keyed `mixed` because that is what JSON gives back: the only
+ * caller hands it straight to `Response::json()`, so promising string keys was a lie that bought
+ * nothing.
+ *
+ * @return array<mixed, mixed>
+ */
 function upstreamJson(string $url): array
 {
     $body = file_get_contents($url);
@@ -75,7 +103,12 @@ function upstreamJson(string $url): array
         throw new \RuntimeException("upstream {$url} could not be read");
     }
 
-    return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+    $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($decoded)) {
+        throw new \RuntimeException("upstream {$url} returned " . get_debug_type($decoded) . ', expected a JSON object');
+    }
+
+    return $decoded;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,10 +165,11 @@ function dbDemo(): array
         return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
     }
     $pool ??= new Ignis\Pg\Pool($dsn, 10);
+
     return $pool->transaction(static fn(Ignis\Pg\Lease $l) => [
         'backend' => $l->backendPid(),
         'now' => $l->query('SELECT now()::text AS t')[0]['t'],
-        'sleep_ms' => (int) $l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0]['d'],
+        'sleep_ms' => intColumn($l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0], 'd'),
         'pool' => $pool->stats(),
     ]);
 }

@@ -3,7 +3,7 @@
 #
 # Two stages. The build stage starts from the PHP builder image (docker/php.Dockerfile: PHP 8.5.10
 # ZTS + embed at /opt/php85-zts, clang for bindgen) and adds only a Rust toolchain. The runtime
-# stage is a bare ubuntu:24.04 with the six libraries libphp.so needs, libphp.so itself at the same
+# stage is a bare ubuntu:24.04 with the seven libraries libphp.so needs, libphp.so itself at the same
 # path the binary's rpath names — so no LD_LIBRARY_PATH — the binary, and the PHP userland.
 #
 # `docker build -f docker/Dockerfile .` from the repo root.

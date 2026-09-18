@@ -135,7 +135,7 @@ final class RunnerTest extends TestCase
 
         self::assertSame('prod', $server['APP_ENV'], '$extra wins over $env');
         self::assertSame('/root', $server['HOME'], '$env fills in what $extra does not set');
-        self::assertSame('Ignis', $server['SERVER_SOFTWARE'], 'the CGI entries win over both: `$s + $extra + $env`');
+        self::assertSame('Ignis', $server['SERVER_SOFTWARE'], 'the CGI entries win over both: `$server + $extra + $env`');
     }
 
     public function testPathInfoAndPathTranslatedAppearOnlyWhenThereIsPathInfo(): void
@@ -175,12 +175,52 @@ final class RunnerTest extends TestCase
         self::assertSame(['Set-Cookie', 'Set-cookie', 'SEt-cookie'], array_keys($map), 'the loop upper-cases one more leading character per collision; hyper lower-cases the name again on the wire');
     }
 
+    // ---- requestFrom() (the raw request off the loop) --------------------------------------
+
+    public function testARequestCompletionWithANonStringMethodIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        self::requestFrom(1, ['method' => 7, 'uri' => '/', 'headers' => [], 'body' => '']);
+    }
+
+    public function testARequestCompletionMissingAFieldIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        self::requestFrom(1, ['method' => 'GET', 'uri' => '/', 'headers' => []]);
+    }
+
+    public function testARequestCompletionWithANonStringHeaderValueIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        self::requestFrom(1, ['method' => 'GET', 'uri' => '/', 'headers' => ['x' => 7], 'body' => '']);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
+
+    /** @param array<string, mixed> $raw */
+    private static function requestFrom(int $id, array $raw): Request
+    {
+        $result = (new \ReflectionMethod(Runner::class, 'requestFrom'))->invoke(null, $id, $raw);
+        if (!$result instanceof Request) {
+            throw new \LogicException('Runner::requestFrom() did not return a Request');
+        }
+
+        return $result;
+    }
 
     /** @return array{0:?string,1:string,2:string} */
     private static function resolve(string $path): array
     {
-        return (new \ReflectionMethod(Runner::class, 'resolve'))->invoke(null, $path);
+        $result = (new \ReflectionMethod(Runner::class, 'resolve'))->invoke(null, $path);
+        if (!\is_array($result) || !\array_is_list($result) || \count($result) !== 3) {
+            throw new \LogicException('Runner::resolve() did not return the expected tuple');
+        }
+        [$file, $script, $pathInfo] = $result;
+        if (($file !== null && !\is_string($file)) || !\is_string($script) || !\is_string($pathInfo)) {
+            throw new \LogicException('Runner::resolve() did not return the expected tuple');
+        }
+
+        return [$file, $script, $pathInfo];
     }
 
     /**
@@ -190,8 +230,26 @@ final class RunnerTest extends TestCase
     private static function server(array $headers, string $script = '/index.php', string $pathInfo = ''): array
     {
         $request = new Request('GET', '/', $headers, '');
-
-        return (new \ReflectionMethod(Runner::class, 'server'))
+        $result = (new \ReflectionMethod(Runner::class, 'server'))
             ->invoke(null, $request, Runner::$docroot . $script, $script, $pathInfo);
+
+        return self::asStringKeyedArray($result);
+    }
+
+    /** @return array<string, mixed> */
+    private static function asStringKeyedArray(mixed $value): array
+    {
+        if (!\is_array($value)) {
+            throw new \LogicException('Runner::server() did not return an array');
+        }
+        $out = [];
+        foreach ($value as $key => $item) {
+            if (!\is_string($key)) {
+                throw new \LogicException('Runner::server() did not return a string-keyed array');
+            }
+            $out[$key] = $item;
+        }
+
+        return $out;
     }
 }

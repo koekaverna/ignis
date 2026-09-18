@@ -19,7 +19,7 @@ use Temporal\Workflow\WorkflowMethod;
 #[WorkflowInterface]
 class GreetWorkflow
 {
-    /** @return \Generator<mixed, mixed, mixed, string> */
+    /** @return \Generator<mixed, mixed, string, string> */
     #[WorkflowMethod]
     public function handle(string $name): \Generator
     {
@@ -70,7 +70,7 @@ class FeatureWorkflow
         return $this->state;
     }
 
-    /** @return \Generator<mixed, mixed, mixed, string> */
+    /** @return \Generator<mixed, mixed, string, string> */
     #[Workflow\UpdateMethod('submit')]
     public function submit(string $value): \Generator
     {

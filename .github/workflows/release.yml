@@ -102,7 +102,7 @@ jobs:
                                               if libphp.so is placed there, otherwise set
                                               LD_LIBRARY_PATH to wherever you put it.
 
-          The host must also provide these six runtime libraries (Ubuntu/Debian package
+          The host must also provide these seven runtime libraries (Ubuntu/Debian package
           names below; find the equivalent on other distros) — everything libphp.so needs
           beyond libc, per docker/Dockerfile:
             libssl3t64      OpenSSL
@@ -110,6 +110,7 @@ jobs:
             libcurl4t64     curl
             libonig5        Oniguruma (mbstring)
             libpq5          libpq (Postgres client)
+            libxml2         libxml2 (dom, xml, simplexml, xmlreader, xmlwriter)
             zlib1g          zlib
 
           Also needs ca-certificates for TLS verification (outbound https/ssl:// streams).

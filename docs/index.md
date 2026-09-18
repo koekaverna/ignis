@@ -5,10 +5,12 @@ requests per OS thread on native Fibers. Every wait — a timer, a socket, TLS, 
 is owned by a tokio reactor, so the thread serves other requests while one is stuck waiting.
 Unmodified synchronous PHP becomes non-blocking: `file_get_contents`, `fsockopen`, `sleep()` and
 `ext/sockets` and `curl_*` park the fiber instead of the thread — libcurl's own blocking calls are
-interposed too, so there is no worker thread and no copy. What genuinely cannot be parked
-(`SQLite3`, a file-backed `PDO` — `epoll` refuses regular files) is routed to a pool of synchronous
-worker threads with no code change. It replaces
-php-fpm, FrankenPHP or RoadRunner in front of a Symfony or Laravel app.
+interposed too, so there is no worker thread and no copy. What genuinely cannot be parked because
+`epoll` refuses regular files — `SQLite3` — is routed to a pool of synchronous worker threads with
+no code change; a file-backed `PDO` (`sqlite:`) blocks the OS thread by default instead, because the
+driver only appears in the DSN, after routing has already decided — set
+`IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to route it too. It replaces php-fpm, FrankenPHP or RoadRunner
+in front of a Symfony app today; Laravel support is on the roadmap, not yet built.
 
 ## The pitch
 
@@ -27,8 +29,10 @@ threads — and the numbers below are what that architecture measures out to tod
 - **10,000 concurrent fibers**, each doing `Ignis\sleep(1000)`, finish in **1,168–1,178 ms wall**
   on a single OS thread — the 1-second sleep plus about 170 ms of fiber lifecycle overhead, not
   10,000× it (V-2).
-- RSS stayed **flat within 3%** (26.9 → 26.2 MB) over **4.6 million requests** in worker mode, with
-  the PHP heap flat to the byte — no leak hiding behind a long-lived process (V-10).
+- RSS stayed **flat within 1.2%** (44.4 → 43.9 MB) over **1.15 million** hello requests in worker
+  mode, PHP heap flat to the byte across seven samples — no leak hiding behind a long-lived
+  process. (The original absolutes here predate an engine rebuild and are stale; the drift is what
+  this gates on, and it reproduced — V-10 + addendum, V-82.)
 
 ## Where to go next
 
@@ -37,5 +41,5 @@ threads — and the numbers below are what that architecture measures out to tod
 - [Install](getting-started/install.md) and [Quickstart](getting-started/quickstart.md) — running
   it in minutes.
 - [Compatibility](compatibility.md) — what works unchanged, and what does not.
-- [Classic mode](classic-mode.md) — running a legacy docroot, and which of its two entry points
-  gives an entry script real top-level globals (V-53).
+- [Legacy apps](getting-started/legacy.md) — running a legacy docroot in the classic worker loop,
+  and why only a top-level `include` gives an entry script real top-level globals (V-53, V-54).

@@ -51,18 +51,18 @@ fn jobs() -> &'static Mutex<HashMap<u64, JobCaller>> {
 }
 
 /// Create the pool with `n` worker slots (threads are started by main.rs).
-pub fn init(n: usize) {
+pub fn initialize(n: usize) {
     let (shared_tx, shared_rx) = unbounded();
     let pinned = (0..n).map(|_| unbounded()).collect();
     let _ = POOL.set(Pool { shared_tx, shared_rx, pinned, busy: AtomicUsize::new(0), done: AtomicU64::new(0) });
 }
 
 /// Calling thread: submit a job; the returned op id completes with `Outcome::Blob(result)`.
+/// Everything refusable is refused before an op is reserved — reserving first leaked the entry in
+/// `JOBS` and left `Reactor::inflight` permanently raised on every rejected submit, which also
+/// costs `poll()` its empty-reactor fast path for the rest of the thread's life.
 pub fn submit(caller: Arc<Reactor>, func: String, args: Bytes, affinity: Option<usize>) -> Result<u64, &'static str> {
     let pool = POOL.get().ok_or("no offload pool (start ignis with --offload N)")?;
-    // Everything that can be refused is refused before an op is reserved. Reserving first leaked the
-    // entry in JOBS and left Reactor::inflight permanently raised on every rejected submit, which
-    // also costs poll() its empty-reactor fast path for the rest of the thread's life.
     let sender = match affinity {
         Some(worker) if worker < pool.pinned.len() => &pool.pinned[worker].0,
         Some(_) => return Err("no such offload worker"),
@@ -155,7 +155,7 @@ mod tests {
     /// The whole E16 mechanism with no PHP: submit, take the job off the queue, answer it.
     #[test]
     fn a_job_travels_from_caller_to_worker_and_back() {
-        init(1);
+        initialize(1);
         let (_runtime, reactor) = caller();
 
         let op = submit(reactor.clone(), "strtoupper".into(), Bytes::from_static(b"hi"), None).unwrap();
@@ -185,14 +185,12 @@ mod tests {
 
     #[test]
     fn affinity_outside_the_worker_range_is_rejected() {
-        init(2);
+        initialize(2);
         let (_runtime, reactor) = caller();
         assert!(submit(reactor.clone(), "f".into(), Bytes::new(), Some(1)).is_ok());
         let inflight_after_the_accepted_job = reactor.inflight();
 
         assert_eq!(submit(reactor.clone(), "f".into(), Bytes::new(), Some(2)), Err("no such offload worker"));
-        // A refused submit must cost nothing. Reserving the op before the range check left an entry
-        // in JOBS and raised inflight forever, which also costs poll() its empty-reactor fast path.
         assert_eq!(reactor.inflight(), inflight_after_the_accepted_job, "a refused submit reserved an op");
 
         assert_eq!(stats().3, 0, "a pinned job never reaches the shared queue");
@@ -201,14 +199,14 @@ mod tests {
 
     #[test]
     fn a_worker_stops_at_the_shutdown_poison() {
-        init(1);
+        initialize(1);
         shutdown();
         assert!(next(0).is_none());
     }
 
     #[test]
     fn unknown_ids_are_rejected_rather_than_panicking() {
-        init(1);
+        initialize(1);
         assert!(!done(404, Bytes::new()));
         assert!(!callback_result(404, 1, Bytes::new()));
         assert!(next(7).is_none(), "there is no worker 7");

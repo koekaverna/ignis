@@ -65,7 +65,7 @@
     },
     "scripts-descriptions": {
         "lint": "php -l over every tracked PHP file (find, not git ls-files: git refuses to run in the container).",
-        "stan": "PHPStan level 6 over every package, then the 8.1 override for ignis/revolt.",
+        "stan": "PHPStan level 9 over every package, then the 8.1 override for ignis/revolt.",
         "cs": "php-cs-fixer dry run; run under the stock 8.3 php, it refuses to start above its supported max.",
         "rector": "Dry run only — rector is a local one-shot tool here, never a CI gate.",
         "check": "What CI runs: lint, stan, cs, test."

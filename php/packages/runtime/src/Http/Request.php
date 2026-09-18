@@ -21,8 +21,8 @@ final class Request
 
     public function path(): string
     {
-        $q = strpos($this->uri, '?');
-        return $q === false ? $this->uri : substr($this->uri, 0, $q);
+        $queryPosition = strpos($this->uri, '?');
+        return $queryPosition === false ? $this->uri : substr($this->uri, 0, $queryPosition);
     }
 
     /**
@@ -43,8 +43,8 @@ final class Request
     /** Everything after the first `?`; every later `?` belongs to the query string itself. */
     private function queryString(): string
     {
-        $q = strpos($this->uri, '?');
-        return $q === false ? '' : substr($this->uri, $q + 1);
+        $queryPosition = strpos($this->uri, '?');
+        return $queryPosition === false ? '' : substr($this->uri, $queryPosition + 1);
     }
 
     public function header(string $name): ?string
@@ -83,13 +83,13 @@ final class Request
         $type = $this->headers['content-type'] ?? '';
         if ($this->method === 'POST' && str_starts_with($type, 'application/x-www-form-urlencoded')) {
             parse_str($this->body, $post);
-        } elseif ($this->method === 'POST' && preg_match('#^multipart/form-data\b.*boundary="?([^";]+)"?#i', $type, $m) === 1) {
-            parse_str(self::multipartQuery($this->body, $m[1]), $post);
+        } elseif ($this->method === 'POST' && preg_match('#^multipart/form-data\b.*boundary="?([^";]+)"?#i', $type, $matches) === 1) {
+            parse_str(self::multipartQuery($this->body, $matches[1]), $post);
         }
         $cookie = [];
         foreach (explode(';', $this->headers['cookie'] ?? '') as $pair) {
-            if (($eq = strpos($pair, '=')) !== false) {
-                $cookie[trim(substr($pair, 0, $eq))] = urldecode(trim(substr($pair, $eq + 1)));
+            if (($equalsPosition = strpos($pair, '=')) !== false) {
+                $cookie[trim(substr($pair, 0, $equalsPosition))] = urldecode(trim(substr($pair, $equalsPosition + 1)));
             }
         }
         return [$server, $get, $post, $cookie];
@@ -136,10 +136,10 @@ final class Request
             if (\str_contains($headers, 'filename=')) {
                 continue;
             }
-            if (\preg_match('#\bname=(?:"([^"]*)"|([^;\r\n]*))#i', $headers, $m) !== 1) {
+            if (\preg_match('#\bname=(?:"([^"]*)"|([^;\r\n]*))#i', $headers, $matches) !== 1) {
                 continue;
             }
-            $name = $m[1] !== '' ? $m[1] : ($m[2] ?? '');
+            $name = $matches[1] !== '' ? $matches[1] : ($matches[2] ?? '');
             $pairs[] = \rawurlencode($name) . '=' . \rawurlencode(\preg_replace('#\r\n$|\n$#', '', $value) ?? $value);
         }
 

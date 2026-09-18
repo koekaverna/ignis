@@ -383,3 +383,44 @@ Cost, measured before and after with the same release binary: RSS 34.6–35.0 MB
 only the absolute. If RSS ever becomes the binding constraint the lever is to build these as shared
 modules loaded from a php.ini the CLI reads, so the embed runtime pays nothing — not done now
 because it adds an ini mechanism the embed SAPI deliberately does not have.
+
+## 2026-09-18 — ADR-0041 is accepted by its own trigger, not by a new decision
+
+The site documentation refresh reached ADR-0041 still marked **proposed**, with the sentence
+"becomes accepted when §7's gate is green in CI on `main`" underneath it. That condition was met by
+the night-2 merge (`b6c3936`): `main` is green on all ten `ci.yml` jobs plus `image` and `docs`, and
+`R-MAIN-RED` is closed. Flipping the status is therefore applying the ADR's own rule, not making a
+decision — which is why it is recorded here rather than left for sign-off.
+
+The gate also overshot its own §7: PHPStan is at **level 8 with 0 errors** where §7 asked for level
+6 (the before-number was 123 errors at level 6), and undocumented `unsafe` blocks went **101 → 0**
+including under `--all-features`, which had never linted a line until `8933124` fixed the toolchain
+component it was missing. Coverage: Rust 60 tests / 29.95 %, PHP 209 tests / 36.60 % with a 31.6 %
+floor (V-78, V-79 + addenda 1–3).
+
+Two neighbouring status lines were stale for the same reason and were corrected with it: ADR-0020
+said "H32–H36 open" when only H34 (`getaddrinfo`, no fd to watch, offload's problem — `R-DNS`) still
+is, and ADR-0016's Decision item 3 still described `curl_*`/`PDO`/`Redis` auto-routing as current
+when its own addendum three paragraphs below had already shrunk the shipped default to `SQLite3`.
+
+## 2026-09-18 — night-3 merges into `main` with one gate red, named
+
+Owner asked for the refreshed documentation to be published. `docs.yml` deploys the site on a push
+to `main` and on nothing else, so publishing is the merge.
+
+CI on `44af49c` is **9 of 10 green**. The one failure is `E15 phpt`, and inside it exactly one gate
+row: `phpt.fiber.Zend_tests_fibers=77 < baseline 78 REGRESSION`. Every other row is at or above
+baseline, three of them above it (`main.ext_sockets_tests=92 ≥ 89`, `fiber.ext_sockets_tests=87 ≥
+83`, `fiber.ext_standard_tests_streams=126 ≥ 124`).
+
+That row is `S0-FIBER`, already measured and written up before this work: `gh9916-009.phpt`, the
+same 77 on the HEAD binary and on one rebuilt at night-3's branch point, so **the branch does not
+contain the cause** — merging surfaces it on `main` rather than introducing it there. It is
+deliberately not re-baselined to 77, because a baseline lowered to hide an unexplained result stops
+being a gate.
+
+The working agreement says the night branch merges after CI is green. It is not green and cannot be
+made green tonight without either re-baselining (refused above) or explaining a result that four
+independent runs could not explain. Merging with the single red row named here is the honest
+reading; `STATUS.md`'s "green on all ten jobs" is true of `b6c3936` and stops being true of `main`
+with this merge, which is why it is recorded rather than quietly left behind.

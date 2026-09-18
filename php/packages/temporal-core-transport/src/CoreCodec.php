@@ -87,6 +87,9 @@ final class CoreCodec implements CodecInterface
     public function decode(string $batch, array $headers = []): iterable
     {
         $data = \json_decode($batch, true, 512, \JSON_THROW_ON_ERROR);
+        if (!\is_array($data)) {
+            throw new \LogicException('the core document is not a JSON object');
+        }
 
         return $this->kind === ActivationSource::ACTIVITY
             ? $this->decodeActivityTask($data)
@@ -114,112 +117,118 @@ final class CoreCodec implements CodecInterface
     // ---------------------------------------------------------------- workflow activations
 
     /**
-     * @param  array<string, mixed> $act
+     * UpdateRandomSeed and NotifyHasPatch jobs carry nothing sdk-php acts on through this
+     * transport and have no case below; Nexus is out of scope.
+     *
+     * @param  array<array-key, mixed> $activation
      * @return list<ServerRequest|SuccessResponse|FailureResponse>
      */
-    private function decodeActivation(array $act): array
+    private function decodeActivation(array $activation): array
     {
-        $this->runId = $runId = self::required($act['runId'] ?? null, 'runId');
-        $info = new TickInfo(
-            time: $this->timestamp($act['timestamp'] ?? null),
-            historyLength: \max(0, (int) ($act['historyLength'] ?? 0)),
-            historySize: \max(0, (int) ($act['historySizeBytes'] ?? 0)),
-            continueAsNewSuggested: (bool) ($act['continueAsNewSuggested'] ?? false),
-            isReplaying: (bool) ($act['isReplaying'] ?? false),
+        $this->runId = $runId = self::required($activation['runId'] ?? null, 'runId');
+        $tickInformation = new TickInfo(
+            time: $this->timestamp($activation['timestamp'] ?? null),
+            historyLength: \max(0, self::intField($activation, 'historyLength') ?? 0),
+            historySize: \max(0, self::intField($activation, 'historySizeBytes') ?? 0),
+            continueAsNewSuggested: (bool) ($activation['continueAsNewSuggested'] ?? false),
+            isReplaying: (bool) ($activation['isReplaying'] ?? false),
         );
 
         $out = [];
-        foreach ($act['jobs'] ?? [] as $job) {
-            // protojson flattens a oneof to its field name, so the job IS its single key.
-            $name = \array_key_first($job);
-            $d = $job[$name] ?? [];
+        foreach (self::listOfArraysField($activation, 'jobs') as $job) {
+            $name = self::jobDiscriminator($job);
+            if ($name === null) {
+                continue;
+            }
+            $jobData = self::arrayField($job, $name);
 
             switch ($name) {
                 case 'initializeWorkflow':
                     $this->reset($runId);
                     $out[] = new ServerRequest(
                         name: 'StartWorkflow',
-                        info: $info,
-                        options: ['info' => $this->workflowInfo($runId, $d, $info)],
-                        payloads: $this->values($d['arguments'] ?? []),
+                        info: $tickInformation,
+                        options: ['info' => $this->workflowInfo($runId, $jobData, $tickInformation)],
+                        payloads: $this->values(self::payloadListField($jobData, 'arguments', 'jobs.initializeWorkflow.arguments')),
                         id: $runId,
                     );
                     break;
 
                 case 'fireTimer':
-                    $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
+                    $id = $this->takeId($runId, self::intField($jobData, 'seq') ?? 0);
                     if ($id !== null) {
-                        $out[] = new SuccessResponse(null, $id, $info);
+                        $out[] = new SuccessResponse(null, $id, $tickInformation);
                     }
                     break;
 
-                    // Local activities resolve through this job too, with `is_local` set; the seq map
-                    // does not care which kind it was.
                 case 'resolveActivity':
-                    $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
-                    if ($id !== null) {
-                        $out[] = $this->resolution($d['result'] ?? [], $id, $info);
+                    $response = $this->resolvedActivityResponse($runId, $jobData, $tickInformation);
+                    if ($response !== null) {
+                        $out[] = $response;
                     }
                     break;
 
                 case 'resolveChildWorkflowExecutionStart':
-                    $seq = (int) ($d['seq'] ?? 0);
+                    $seq = self::intField($jobData, 'seq') ?? 0;
                     $id = $this->runs[$runId]['childStart'][$seq] ?? null;
                     unset($this->runs[$runId]['childStart'][$seq]);
                     if ($id === null) {
                         break;
                     }
-                    $out[] = isset($d['succeeded'])
+                    $succeeded = self::arrayField($jobData, 'succeeded');
+                    $out[] = isset($jobData['succeeded'])
                         ? new SuccessResponse(EncodedValues::fromValues([[
-                            'ID' => $d['succeeded']['childWorkflowId'] ?? '',
-                            'RunID' => $d['succeeded']['runId'] ?? '',
-                        ]], $this->converter), $id, $info)
-                        : new FailureResponse(new \RuntimeException((string) ($d['failed']['failure']['message'] ?? $d['cancelled']['failure']['message'] ?? 'child workflow did not start')), $id, $info);
+                            'ID' => self::stringField($succeeded, 'childWorkflowId') ?? '',
+                            'RunID' => self::stringField($succeeded, 'runId') ?? '',
+                        ]], $this->converter), $id, $tickInformation)
+                        : new FailureResponse(new \RuntimeException(
+                            self::stringField(self::arrayField($jobData, 'failed'), 'failure')
+                                ?? self::stringField(self::arrayField($jobData, 'cancelled'), 'failure')
+                                ?? 'child workflow did not start',
+                        ), $id, $tickInformation);
                     break;
 
                 case 'resolveChildWorkflowExecution':
-                    $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
+                    $id = $this->takeId($runId, self::intField($jobData, 'seq') ?? 0);
                     if ($id !== null) {
-                        $out[] = $this->resolution($d['result'] ?? [], $id, $info);
+                        $out[] = $this->resolution(self::arrayField($jobData, 'result'), $id, $tickInformation);
                     }
                     break;
 
                 case 'signalWorkflow':
                     $out[] = new ServerRequest(
                         name: 'InvokeSignal',
-                        info: $info,
-                        options: ['name' => $d['signalName'] ?? '', 'runId' => $runId],
-                        payloads: $this->values($d['input'] ?? []),
+                        info: $tickInformation,
+                        options: ['name' => self::stringField($jobData, 'signalName') ?? '', 'runId' => $runId],
+                        payloads: $this->values(self::payloadListField($jobData, 'input', 'jobs.signalWorkflow.input')),
                         id: $runId,
                     );
                     break;
 
                 case 'queryWorkflow':
-                    $this->runs[$runId]['queries'][] = (string) ($d['queryId'] ?? '');
+                    $this->runs[$runId]['queries'][] = self::stringField($jobData, 'queryId') ?? '';
                     $out[] = new ServerRequest(
                         name: 'InvokeQuery',
-                        info: $info,
-                        options: ['name' => $d['queryType'] ?? '', 'runId' => $runId],
-                        payloads: $this->values($d['arguments'] ?? []),
+                        info: $tickInformation,
+                        options: ['name' => self::stringField($jobData, 'queryType') ?? '', 'runId' => $runId],
+                        payloads: $this->values(self::payloadListField($jobData, 'arguments', 'jobs.queryWorkflow.arguments')),
                         id: $runId,
                     );
                     break;
 
                 case 'doUpdate':
-                    $updateId = (string) ($d['id'] ?? '');
-                    $this->runs[$runId]['updates'][$updateId] = (string) ($d['protocolInstanceId'] ?? $updateId);
+                    $updateId = self::stringField($jobData, 'id') ?? '';
+                    $this->runs[$runId]['updates'][$updateId] = self::stringField($jobData, 'protocolInstanceId') ?? $updateId;
                     $out[] = new ServerRequest(
                         name: 'InvokeUpdate',
-                        info: $info,
+                        info: $tickInformation,
                         options: [
                             'updateId' => $updateId,
-                            'name' => $d['name'] ?? '',
+                            'name' => self::stringField($jobData, 'name') ?? '',
                             'runId' => $runId,
-                            // sdk-php reads this as "skip the validator"; core says so by clearing
-                            // run_validator during replay.
-                            'replay' => !($d['runValidator'] ?? true),
+                            'replay' => self::isReplay($jobData),
                         ],
-                        payloads: $this->values($d['input'] ?? []),
+                        payloads: $this->values(self::payloadListField($jobData, 'input', 'jobs.doUpdate.input')),
                         id: $runId,
                     );
                     break;
@@ -227,9 +236,9 @@ final class CoreCodec implements CodecInterface
                 case 'cancelWorkflow':
                     $out[] = new ServerRequest(
                         name: 'CancelWorkflow',
-                        info: $info,
+                        info: $tickInformation,
                         options: ['runId' => $runId],
-                        payloads: $this->values($d['details'] ?? []),
+                        payloads: $this->values(self::payloadListField($jobData, 'details', 'jobs.cancelWorkflow.details')),
                         id: $runId,
                     );
                     break;
@@ -238,18 +247,46 @@ final class CoreCodec implements CodecInterface
                     unset($this->runs[$runId]);
                     $out[] = new ServerRequest(
                         name: 'DestroyWorkflow',
-                        info: $info,
+                        info: $tickInformation,
                         options: ['runId' => $runId],
                         id: $runId,
                     );
                     break;
-
-                    // UpdateRandomSeed / NotifyHasPatch carry nothing sdk-php acts on through this
-                    // transport; Nexus is out of scope.
             }
         }
 
         return $out;
+    }
+
+    /**
+     * protojson flattens a oneof to its field name, so a job is identified by its one key.
+     * @param array<array-key, mixed> $job
+     */
+    private static function jobDiscriminator(array $job): int|string|null
+    {
+        return \array_key_first($job);
+    }
+
+    /**
+     * Local activities resolve through this same job too, flagged only by `isLocal`; the seq
+     * map does not care which kind of activity it was.
+     * @param array<array-key, mixed> $jobData
+     */
+    private function resolvedActivityResponse(string $runId, array $jobData, TickInfo $tickInformation): SuccessResponse|FailureResponse|null
+    {
+        $id = $this->takeId($runId, self::intField($jobData, 'seq') ?? 0);
+
+        return $id !== null ? $this->resolution(self::arrayField($jobData, 'result'), $id, $tickInformation) : null;
+    }
+
+    /**
+     * sdk-php reads this as "skip the validator"; core says so by clearing run_validator during
+     * replay.
+     * @param array<array-key, mixed> $jobData
+     */
+    private static function isReplay(array $jobData): bool
+    {
+        return !($jobData['runValidator'] ?? true);
     }
 
     /**
@@ -261,100 +298,92 @@ final class CoreCodec implements CodecInterface
         $runId = $this->runId;
         $out = [];
 
-        foreach ($commands as $c) {
-            // Updates answer with a ResponseInterface, not a request, so they must be matched
-            // before the request switch — this is exactly what made updates look untranslatable.
-            if ($c instanceof UpdateResponse) {
-                $out[] = $this->updateResponse($runId, $c);
+        foreach ($commands as $command) {
+            $updateResponse = $this->encodeIfUpdateResponse($runId, $command);
+            if ($updateResponse !== null) {
+                $out[] = $updateResponse;
                 continue;
             }
 
-            if (!$c instanceof RequestInterface) {
-                // A response to one of our ServerRequests. A query's answer is a real command;
-                // acks for StartWorkflow/InvokeSignal/DestroyWorkflow have no counterpart in core.
-                // The run's state is already gone after a RemoveFromCache job, and the ack for
-                // DestroyWorkflow arrives here — so read through it, never into it.
-                if (($this->runs[$runId]['queries'] ?? []) !== []) {
-                    $out[] = $this->queryResult((string) \array_shift($this->runs[$runId]['queries']), $c);
+            if (!$command instanceof RequestInterface) {
+                $queryResponse = $this->encodeIfQueryResponse($runId, $command);
+                if ($queryResponse !== null) {
+                    $out[] = $queryResponse;
                 }
                 continue;
             }
 
-            $options = $c->getOptions();
+            $options = $command->getOptions();
+            $suboptions = self::arrayField($options, 'options');
 
-            switch ($c->getName()) {
+            switch ($command->getName()) {
                 case 'ExecuteActivity':
-                    $seq = $this->nextSeq($runId, $c->getID(), self::ACTIVITY);
+                    $seq = $this->nextSeq($runId, $command->getID(), self::ACTIVITY);
                     $out[] = ['scheduleActivity' => \array_filter([
                         'seq' => $seq,
                         'activityId' => (string) $seq,
-                        'activityType' => (string) ($options['name'] ?? ''),
-                        'taskQueue' => (string) ($options['options']['TaskQueueName'] ?? $this->taskQueue),
-                        'arguments' => $this->payloads($c->getPayloads()),
-                        'startToCloseTimeout' => $this->duration($options['options']['StartToCloseTimeout'] ?? null, 30),
-                        'scheduleToCloseTimeout' => $this->duration($options['options']['ScheduleToCloseTimeout'] ?? null),
-                        'scheduleToStartTimeout' => $this->duration($options['options']['ScheduleToStartTimeout'] ?? null),
-                        'heartbeatTimeout' => $this->duration($options['options']['HeartbeatTimeout'] ?? null),
-                        'retryPolicy' => $this->retryPolicy($options['options']['RetryPolicy'] ?? null),
+                        'activityType' => self::stringField($options, 'name') ?? '',
+                        'taskQueue' => self::stringField($suboptions, 'TaskQueueName') ?? $this->taskQueue,
+                        'arguments' => $this->payloads($command->getPayloads()),
+                        'startToCloseTimeout' => $this->duration($suboptions['StartToCloseTimeout'] ?? null, 30),
+                        'scheduleToCloseTimeout' => $this->duration($suboptions['ScheduleToCloseTimeout'] ?? null),
+                        'scheduleToStartTimeout' => $this->duration($suboptions['ScheduleToStartTimeout'] ?? null),
+                        'heartbeatTimeout' => $this->duration($suboptions['HeartbeatTimeout'] ?? null),
+                        'retryPolicy' => $this->retryPolicy($suboptions['RetryPolicy'] ?? null),
                     ], static fn($v): bool => $v !== null && $v !== [])];
                     break;
 
                 case 'ExecuteLocalActivity':
-                    $seq = $this->nextSeq($runId, $c->getID(), self::LOCAL_ACTIVITY);
+                    $seq = $this->nextSeq($runId, $command->getID(), self::LOCAL_ACTIVITY);
                     $out[] = ['scheduleLocalActivity' => \array_filter([
                         'seq' => $seq,
                         'activityId' => (string) $seq,
-                        'activityType' => (string) ($options['name'] ?? ''),
-                        'arguments' => $this->payloads($c->getPayloads()),
-                        'startToCloseTimeout' => $this->duration($options['options']['StartToCloseTimeout'] ?? null, 30),
-                        'scheduleToCloseTimeout' => $this->duration($options['options']['ScheduleToCloseTimeout'] ?? null),
-                        'retryPolicy' => $this->retryPolicy($options['options']['RetryPolicy'] ?? null),
+                        'activityType' => self::stringField($options, 'name') ?? '',
+                        'arguments' => $this->payloads($command->getPayloads()),
+                        'startToCloseTimeout' => $this->duration($suboptions['StartToCloseTimeout'] ?? null, 30),
+                        'scheduleToCloseTimeout' => $this->duration($suboptions['ScheduleToCloseTimeout'] ?? null),
+                        'retryPolicy' => $this->retryPolicy($suboptions['RetryPolicy'] ?? null),
                     ], static fn($v): bool => $v !== null && $v !== [])];
                     break;
 
                 case 'NewTimer':
                     $out[] = ['startTimer' => [
-                        'seq' => $this->nextSeq($runId, $c->getID(), self::TIMER),
-                        'startToFireTimeout' => $this->durationMs((int) ($options['ms'] ?? 0)),
+                        'seq' => $this->nextSeq($runId, $command->getID(), self::TIMER),
+                        'startToFireTimeout' => $this->durationMs(self::intField($options, 'ms') ?? 0),
                     ]];
                     break;
 
                 case 'ExecuteChildWorkflow':
-                    $seq = $this->nextSeq($runId, $c->getID(), self::CHILD);
+                    $seq = $this->nextSeq($runId, $command->getID(), self::CHILD);
                     $out[] = ['startChildWorkflowExecution' => \array_filter([
                         'seq' => $seq,
-                        'workflowId' => (string) ($options['options']['WorkflowID'] ?? \uniqid('child-', true)),
-                        'workflowType' => (string) ($options['name'] ?? ''),
-                        'taskQueue' => (string) ($options['options']['TaskQueueName'] ?? $this->taskQueue),
-                        'input' => $this->payloads($c->getPayloads()),
-                        'workflowExecutionTimeout' => $this->duration($options['options']['WorkflowExecutionTimeout'] ?? null),
-                        'workflowRunTimeout' => $this->duration($options['options']['WorkflowRunTimeout'] ?? null),
-                        'workflowTaskTimeout' => $this->duration($options['options']['WorkflowTaskTimeout'] ?? null),
-                        'retryPolicy' => $this->retryPolicy($options['options']['RetryPolicy'] ?? null),
+                        'workflowId' => self::stringField($suboptions, 'WorkflowID') ?? \uniqid('child-', true),
+                        'workflowType' => self::stringField($options, 'name') ?? '',
+                        'taskQueue' => self::stringField($suboptions, 'TaskQueueName') ?? $this->taskQueue,
+                        'input' => $this->payloads($command->getPayloads()),
+                        'workflowExecutionTimeout' => $this->duration($suboptions['WorkflowExecutionTimeout'] ?? null),
+                        'workflowRunTimeout' => $this->duration($suboptions['WorkflowRunTimeout'] ?? null),
+                        'workflowTaskTimeout' => $this->duration($suboptions['WorkflowTaskTimeout'] ?? null),
+                        'retryPolicy' => $this->retryPolicy($suboptions['RetryPolicy'] ?? null),
                     ], static fn($v): bool => $v !== null && $v !== [])];
                     break;
 
                 case 'GetChildWorkflowExecution':
-                    // No command: this one is answered when core reports the child has started.
-                    // It names the ExecuteChildWorkflow request it belongs to.
-                    $seq = $this->runs[$runId]['byId'][$options['id'] ?? '']['seq'] ?? null;
-                    if ($seq !== null) {
-                        $this->runs[$runId]['childStart'][$seq] = $c->getID();
-                    }
+                    $this->rememberChildStartWaiter($runId, $options, $command->getID());
                     break;
 
                 case 'Cancel':
-                    foreach ($options['ids'] ?? [] as $id) {
-                        $cmd = $this->cancelOf($runId, $id);
-                        if ($cmd !== null) {
-                            $out[] = $cmd;
+                    foreach (self::listOfKeysField($options, 'ids') as $id) {
+                        $cancelCommand = $this->cancelOf($runId, $id);
+                        if ($cancelCommand !== null) {
+                            $out[] = $cancelCommand;
                         }
                     }
                     break;
 
                 case 'CompleteWorkflow':
-                    $failure = $this->failureOf($c);
-                    $payloads = $this->payloads($c->getPayloads());
+                    $failure = $this->failureOf($command);
+                    $payloads = $this->payloads($command->getPayloads());
                     $out[] = match (true) {
                         $failure === null => ['completeWorkflowExecution' => \array_filter(['result' => $payloads[0] ?? null])],
                         $failure instanceof CanceledFailure => ['cancelWorkflowExecution' => new \stdClass()],
@@ -363,16 +392,11 @@ final class CoreCodec implements CodecInterface
                     break;
 
                 case 'Panic':
-                    $out[] = ['failWorkflowExecution' => ['failure' => ['message' => $this->failureOf($c)?->getMessage() ?? 'workflow panic']]];
+                    $out[] = ['failWorkflowExecution' => ['failure' => ['message' => $this->failureOf($command)?->getMessage() ?? 'workflow panic']]];
                     break;
 
                 default:
-                    // Loud on purpose: a dropped command is a workflow that hangs until its task
-                    // timeout, which is a much worse bug to find than this exception.
-                    throw new \LogicException(\sprintf(
-                        'sdk-php asked the host for "%s"; this core transport does not translate it (research 35 §3).',
-                        $c->getName(),
-                    ));
+                    $this->rejectUntranslatedCommand($command);
             }
         }
 
@@ -380,23 +404,72 @@ final class CoreCodec implements CodecInterface
     }
 
     /**
+     * Updates answer with a ResponseInterface, not a request, so they must be matched before the
+     * request switch below — this is exactly what made updates look untranslatable.
+     * @return null|array<string, mixed>
+     */
+    private function encodeIfUpdateResponse(string $runId, CommandInterface $command): ?array
+    {
+        return $command instanceof UpdateResponse ? $this->updateResponse($runId, $command) : null;
+    }
+
+    /**
+     * A response to one of our ServerRequests. Only a query answers with a real command here;
+     * acks for StartWorkflow/InvokeSignal/DestroyWorkflow have none, and this can fire after the
+     * run's queries are already gone (a RemoveFromCache job), so it reads through that state
+     * rather than into it.
+     * @return null|array<string, mixed>
+     */
+    private function encodeIfQueryResponse(string $runId, CommandInterface $command): ?array
+    {
+        return ($this->runs[$runId]['queries'] ?? []) !== []
+            ? $this->queryResult((string) \array_shift($this->runs[$runId]['queries']), $command)
+            : null;
+    }
+
+    /**
+     * No command: this resolves when core reports the child has started, naming the
+     * ExecuteChildWorkflow request it belongs to.
+     * @param array<array-key, mixed> $options
+     */
+    private function rememberChildStartWaiter(string $runId, array $options, int|string $id): void
+    {
+        $seq = $this->runs[$runId]['byId'][self::stringField($options, 'id') ?? '']['seq'] ?? null;
+        if ($seq !== null) {
+            $this->runs[$runId]['childStart'][$seq] = $id;
+        }
+    }
+
+    /**
+     * Loud on purpose: a dropped command is a workflow that hangs until its task timeout, which
+     * is a much worse bug to find than this exception.
+     */
+    private function rejectUntranslatedCommand(RequestInterface $command): never
+    {
+        throw new \LogicException(\sprintf(
+            'sdk-php asked the host for "%s"; this core transport does not translate it (research 35 §3).',
+            $command->getName(),
+        ));
+    }
+
+    /**
      * `UpdateValidated`/`UpdateCompleted` -> core's accepted / rejected / completed.
      * @return array<string, mixed>
      */
-    private function updateResponse(string $runId, UpdateResponse $c): array
+    private function updateResponse(string $runId, UpdateResponse $command): array
     {
-        $updateId = (string) ($c->getOptions()['id'] ?? '');
+        $updateId = (string) ($command->getOptions()['id'] ?? '');
         $instance = $this->runs[$runId]['updates'][$updateId] ?? $updateId;
-        $failure = $c->getFailure();
+        $failure = $command->getFailure();
 
         if ($failure !== null) {
             return ['updateResponse' => ['protocolInstanceId' => $instance, 'rejected' => ['message' => $failure->getMessage()]]];
         }
-        if ($c->getCommand() === UpdateResponse::COMMAND_VALIDATED) {
+        if ($command->getCommand() === UpdateResponse::COMMAND_VALIDATED) {
             return ['updateResponse' => ['protocolInstanceId' => $instance, 'accepted' => new \stdClass()]];
         }
 
-        $values = $c->getPayloads();
+        $values = $command->getPayloads();
 
         return ['updateResponse' => [
             'protocolInstanceId' => $instance,
@@ -405,14 +478,14 @@ final class CoreCodec implements CodecInterface
     }
 
     /** @return array<string, mixed> */
-    private function queryResult(string $queryId, CommandInterface $c): array
+    private function queryResult(string $queryId, CommandInterface $command): array
     {
-        $failure = $this->failureOf($c);
+        $failure = $this->failureOf($command);
         if ($failure !== null) {
             return ['respondToQuery' => ['queryId' => $queryId, 'failed' => ['message' => $failure->getMessage()]]];
         }
 
-        $values = \method_exists($c, 'getPayloads') ? $c->getPayloads() : null;
+        $values = \method_exists($command, 'getPayloads') ? $command->getPayloads() : null;
 
         return ['respondToQuery' => [
             'queryId' => $queryId,
@@ -440,47 +513,65 @@ final class CoreCodec implements CodecInterface
     // ---------------------------------------------------------------- activity tasks
 
     /**
-     * @param  array<string, mixed> $task
+     * @param  array<array-key, mixed> $task
      * @return list<ServerRequest>
      */
     private function decodeActivityTask(array $task): array
     {
-        $this->taskToken = $task['taskToken'] ?? null;
-        $start = $task['start'] ?? null;
-        if ($start === null) {
-            return [];   // a cancellation: not translated yet
+        $this->taskToken = self::stringField($task, 'taskToken');
+        if (self::isActivityCancellation($task)) {
+            return [];
         }
+        $start = self::arrayField($task, 'start');
 
-        $execution = $start['workflowExecution'] ?? [];
+        $execution = self::arrayField($start, 'workflowExecution');
         $activityId = self::required($start['activityId'] ?? null, 'start.activityId');
 
         return [new ServerRequest(
-            // Core delivers local activities on this same stream, flagged; sdk-php routes them to
-            // a different handler, so the flag decides the route name.
-            name: ($start['isLocal'] ?? false) ? 'InvokeLocalActivity' : 'InvokeActivity',
+            name: self::activityRouteName($start),
             info: new TickInfo(time: $this->timestamp($start['startedTime'] ?? null)),
             options: [
                 'info' => [
                     'TaskToken' => $this->tokenBase64(),
                     'ActivityID' => $activityId,
-                    'ActivityType' => ['Name' => (string) ($start['activityType'] ?? '')],
+                    'ActivityType' => ['Name' => self::stringField($start, 'activityType') ?? ''],
                     'TaskQueue' => $this->taskQueue,
                     'WorkflowNamespace' => $this->namespace,
-                    'WorkflowType' => ['Name' => (string) ($start['workflowType'] ?? '')],
+                    'WorkflowType' => ['Name' => self::stringField($start, 'workflowType') ?? ''],
                     'WorkflowExecution' => [
-                        'ID' => (string) ($execution['workflowId'] ?? ''),
-                        'RunID' => (string) ($execution['runId'] ?? ''),
+                        'ID' => self::stringField($execution, 'workflowId') ?? '',
+                        'RunID' => self::stringField($execution, 'runId') ?? '',
                     ],
-                    'Attempt' => (int) ($start['attempt'] ?? 1),
+                    'Attempt' => self::intField($start, 'attempt') ?? 1,
                     'HeartbeatTimeout' => $this->nanos($start['heartbeatTimeout'] ?? null),
                     'ScheduledTime' => $this->rfc3339($start['scheduledTime'] ?? null),
                     'StartedTime' => $this->rfc3339($start['startedTime'] ?? null),
                     'Deadline' => $this->rfc3339($start['scheduledTime'] ?? null),
                 ],
             ],
-            payloads: $this->values($start['input'] ?? []),
+            payloads: $this->values(self::payloadListField($start, 'input', 'start.input')),
             id: $activityId,
         )];
+    }
+
+    /**
+     * A cancellation notice; this transport does not translate cancellations yet.
+     * @param array<array-key, mixed> $task
+     */
+    private static function isActivityCancellation(array $task): bool
+    {
+        return !isset($task['start']);
+    }
+
+    /**
+     * Core delivers local activities on this same stream, flagged only by `isLocal`; sdk-php
+     * routes them to a different handler, so the flag decides the route name.
+     * @param array<array-key, mixed> $start
+     * @return non-empty-string
+     */
+    private static function activityRouteName(array $start): string
+    {
+        return ($start['isLocal'] ?? false) ? 'InvokeLocalActivity' : 'InvokeActivity';
     }
 
     /**
@@ -490,14 +581,14 @@ final class CoreCodec implements CodecInterface
     private function encodeActivityResult(iterable $commands): string
     {
         $result = ['completed' => new \stdClass()];
-        foreach ($commands as $c) {
-            $failure = $this->failureOf($c);
+        foreach ($commands as $command) {
+            $failure = $this->failureOf($command);
             if ($failure !== null) {
                 $result = ['failed' => ['failure' => ['message' => $failure->getMessage()]]];
                 break;
             }
-            if (\method_exists($c, 'getPayloads')) {
-                $payload = $this->payloads($c->getPayloads())[0] ?? null;
+            if (\method_exists($command, 'getPayloads')) {
+                $payload = $this->payloads($command->getPayloads())[0] ?? null;
                 $result = ['completed' => $payload === null ? new \stdClass() : ['result' => $payload]];
             }
         }
@@ -525,12 +616,150 @@ final class CoreCodec implements CodecInterface
      */
     private static function required(mixed $name, string $field): string
     {
-        $value = (string) $name;
+        $value = self::stringOrNull($name) ?? '';
         if ($value === '') {
             throw new \LogicException(\sprintf('the core document has no "%s"', $field));
         }
 
         return $value;
+    }
+
+    // ---------------------------------------------------------------- reading a wire document
+    //
+    // protojson omits a field entirely once it is absent or the zero value, so the wire never
+    // distinguishes "not sent" from "sent as the default". Every field below is read through one
+    // of these rather than indexed directly: each mirrors the `?? default` a direct read would
+    // have used, but only after confirming the value is what it claims to be.
+
+    private static function stringOrNull(mixed $value): ?string
+    {
+        return \is_string($value) || \is_int($value) ? (string) $value : null;
+    }
+
+    private static function intOrNull(mixed $value): ?int
+    {
+        if (\is_int($value)) {
+            return $value;
+        }
+
+        return \is_string($value) && \is_numeric($value) ? (int) $value : null;
+    }
+
+    private static function stringField(mixed $source, int|string $key): ?string
+    {
+        return self::stringOrNull(\is_array($source) ? ($source[$key] ?? null) : null);
+    }
+
+    private static function intField(mixed $source, int|string $key): ?int
+    {
+        return self::intOrNull(\is_array($source) ? ($source[$key] ?? null) : null);
+    }
+
+    /** @return array<array-key, mixed> */
+    private static function arrayField(mixed $source, int|string $key): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+
+        return \is_array($value) ? $value : [];
+    }
+
+    /** @return list<array<array-key, mixed>> */
+    private static function listOfArraysField(mixed $source, int|string $key): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+        if (!\is_array($value)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            if (\is_array($item)) {
+                $out[] = $item;
+            }
+        }
+
+        return $out;
+    }
+
+    /** @return list<int|string> */
+    private static function listOfKeysField(mixed $source, int|string $key): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+        if (!\is_array($value)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            if (\is_int($item) || \is_string($item)) {
+                $out[] = $item;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * A payload is core's own `{metadata, data}` document, and a list of them is core's own
+     * encoding of a `Payloads` message; unlike a scalar field, that shape is never optional-by-
+     * omission, so anything else found here is a malformed document rather than a value to default
+     * away.
+     *
+     * @return list<array{metadata?: array<string, string>, data?: string}>
+     */
+    private static function payloadListField(mixed $source, int|string $key, string $field): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+        if ($value === null) {
+            return [];
+        }
+        if (!\is_array($value)) {
+            throw new \LogicException(\sprintf('the core document\'s "%s" is not a list of payloads', $field));
+        }
+
+        return \array_values(\array_map(
+            static fn(mixed $payload): array => self::payloadOf($payload, $field),
+            $value,
+        ));
+    }
+
+    /** @return array{metadata?: array<string, string>, data?: string} */
+    private static function payloadOf(mixed $payload, string $field): array
+    {
+        if (!\is_array($payload)) {
+            throw new \LogicException(\sprintf('a payload in "%s" is not an object', $field));
+        }
+
+        $out = [];
+        if (isset($payload['metadata'])) {
+            $out['metadata'] = self::stringMapOf($payload['metadata'], $field);
+        }
+        if (isset($payload['data'])) {
+            if (!\is_string($payload['data'])) {
+                throw new \LogicException(\sprintf('the "data" of a payload in "%s" is not a base64 string', $field));
+            }
+            $out['data'] = $payload['data'];
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, string> */
+    private static function stringMapOf(mixed $map, string $field): array
+    {
+        if (!\is_array($map)) {
+            throw new \LogicException(\sprintf('the metadata of a payload in "%s" is not an object', $field));
+        }
+
+        $out = [];
+        foreach ($map as $key => $value) {
+            if (!\is_string($key) || !\is_string($value)) {
+                throw new \LogicException(\sprintf('the metadata of a payload in "%s" has a non-string key or value', $field));
+            }
+            $out[$key] = $value;
+        }
+
+        return $out;
     }
 
     private function reset(string $runId): void
@@ -567,23 +796,24 @@ final class CoreCodec implements CodecInterface
 
     /**
      * An ActivityResolution / ChildWorkflowResult -> the response sdk-php is waiting for.
-     * @param array<string, mixed> $result
+     * @param array<array-key, mixed> $result
      */
-    private function resolution(array $result, int|string $id, TickInfo $info): SuccessResponse|FailureResponse
+    private function resolution(array $result, int|string $id, TickInfo $tickInformation): SuccessResponse|FailureResponse
     {
         if (isset($result['completed'])) {
-            $payload = $result['completed']['result'] ?? null;
+            $payload = self::arrayField($result, 'completed')['result'] ?? null;
 
-            return new SuccessResponse($this->values($payload === null ? [] : [$payload]), $id, $info);
+            return new SuccessResponse($this->values($payload === null ? [] : [self::payloadOf($payload, 'result')]), $id, $tickInformation);
         }
 
         $kind = \array_key_first($result) ?? 'failed';
-        $message = $result[$kind]['failure']['message'] ?? 'activity ' . $kind;
+        $message = self::stringField(self::arrayField(self::arrayField($result, $kind), 'failure'), 'message')
+            ?? ('activity ' . $kind);
 
         return new FailureResponse(
             $kind === 'cancelled' ? new CanceledFailure($message) : new \RuntimeException($message),
             $id,
-            $info,
+            $tickInformation,
         );
     }
 
@@ -592,23 +822,23 @@ final class CoreCodec implements CodecInterface
      * are fixed by that class's `#[Marshal]` names, and the timeouts by DateIntervalType's default
      * unit — nanoseconds.
      *
-     * @param  array<string, mixed> $start the activation's `startWorkflow` job
+     * @param  array<array-key, mixed> $start the activation's `startWorkflow` job
      * @return array<string, mixed>
      */
-    private function workflowInfo(string $runId, array $start, TickInfo $info): array
+    private function workflowInfo(string $runId, array $start, TickInfo $tickInformation): array
     {
         return [
-            'WorkflowExecution' => ['ID' => (string) ($start['workflowId'] ?? ''), 'RunID' => $runId],
-            'WorkflowType' => ['Name' => (string) ($start['workflowType'] ?? '')],
+            'WorkflowExecution' => ['ID' => self::stringField($start, 'workflowId') ?? '', 'RunID' => $runId],
+            'WorkflowType' => ['Name' => self::stringField($start, 'workflowType') ?? ''],
             'TaskQueueName' => $this->taskQueue,
             'Namespace' => $this->namespace,
-            'Attempt' => (int) ($start['attempt'] ?? 1),
+            'Attempt' => self::intField($start, 'attempt') ?? 1,
             'WorkflowExecutionTimeout' => $this->nanos($start['workflowExecutionTimeout'] ?? null),
             'WorkflowRunTimeout' => $this->nanos($start['workflowRunTimeout'] ?? null),
             'WorkflowTaskTimeout' => $this->nanos($start['workflowTaskTimeout'] ?? null),
-            'HistoryLength' => $info->historyLength,
-            'HistorySize' => $info->historySize,
-            'ShouldContinueAsNew' => $info->continueAsNewSuggested,
+            'HistoryLength' => $tickInformation->historyLength,
+            'HistorySize' => $tickInformation->historySize,
+            'ShouldContinueAsNew' => $tickInformation->continueAsNewSuggested,
             'CronSchedule' => $start['cronSchedule'] ?? null,
             'ContinuedExecutionRunID' => $start['continuedFromExecutionRunId'] ?? null,
             'FirstRunID' => $start['firstExecutionRunId'] ?? $runId,
@@ -624,14 +854,14 @@ final class CoreCodec implements CodecInterface
         }
 
         $protos = [];
-        foreach ($payloads as $p) {
+        foreach ($payloads as $payload) {
             $metadata = [];
-            foreach ($p['metadata'] ?? [] as $k => $v) {
+            foreach ($payload['metadata'] ?? [] as $k => $v) {
                 $metadata[$k] = \base64_decode((string) $v);
             }
             $proto = new Payload();
             $proto->setMetadata($metadata);
-            $proto->setData(\base64_decode((string) ($p['data'] ?? '')));
+            $proto->setData(\base64_decode((string) ($payload['data'] ?? '')));
             $protos[] = $proto;
         }
 
@@ -641,27 +871,38 @@ final class CoreCodec implements CodecInterface
     /** @return list<array{metadata:array<string,string>,data:string}> */
     private function payloads(ValuesInterface $values): array
     {
-        // sdk-php builds its own responses with `EncodedValues::fromValues()` and no converter,
-        // and `toPayloads()` then refuses. The converter is ours to supply.
-        if ($values instanceof EncodedValues) {
-            $values->setDataConverter($this->converter);
-        }
+        $values = $this->withConverterAttached($values);
 
         $out = [];
-        foreach ($values->toPayloads()->getPayloads() as $p) {
+        foreach ($values->toPayloads()->getPayloads() as $payload) {
             $metadata = [];
-            foreach ($p->getMetadata() as $k => $v) {
-                $metadata[$k] = \base64_encode((string) $v);
+            foreach ($payload->getMetadata() as $k => $v) {
+                if (\is_string($k) && \is_string($v)) {
+                    $metadata[$k] = \base64_encode($v);
+                }
             }
-            $out[] = ['metadata' => $metadata, 'data' => \base64_encode($p->getData())];
+            $out[] = ['metadata' => $metadata, 'data' => \base64_encode($payload->getData())];
         }
 
         return $out;
     }
 
-    private function failureOf(CommandInterface $c): ?\Throwable
+    /**
+     * sdk-php builds its own responses with `EncodedValues::fromValues()` and no converter, and
+     * `toPayloads()` then refuses. The converter is ours to supply.
+     */
+    private function withConverterAttached(ValuesInterface $values): ValuesInterface
     {
-        return \method_exists($c, 'getFailure') ? $c->getFailure() : null;
+        if ($values instanceof EncodedValues) {
+            $values->setDataConverter($this->converter);
+        }
+
+        return $values;
+    }
+
+    private function failureOf(CommandInterface $command): ?\Throwable
+    {
+        return \method_exists($command, 'getFailure') ? $command->getFailure() : null;
     }
 
     /** protojson carries `bytes` as base64, which is also what sdk-php's ActivityInfo wants. */
@@ -683,7 +924,7 @@ final class CoreCodec implements CodecInterface
     /** sdk-php marshals every timeout as nanoseconds; protojson wants seconds with a suffix. */
     private function duration(mixed $nanoseconds, ?int $defaultSeconds = null): ?string
     {
-        $ns = (int) $nanoseconds;
+        $ns = self::intOrNull($nanoseconds) ?? 0;
         if ($ns <= 0) {
             return $defaultSeconds === null ? null : $defaultSeconds . 's';
         }

@@ -15,14 +15,15 @@ final class InputStream
     public $context;
     /** @var resource|null */
     private $inner = null;
-    private int $pos = 0;
+    private int $position = 0;
 
+    /** Restores the real `php://` wrapper around the actual fopen() -- re-registering ours here too would cost ~160 B of request heap per open (a zend resource). */
     public function stream_open(string $path, string $mode, int $options, ?string &$opened): bool
     {
         if (strcasecmp($path, 'php://input') === 0) {
             return true;
         }
-        stream_wrapper_restore('php'); // re-registering below costs ~160 B of request heap per open (a zend resource)
+        stream_wrapper_restore('php');
         try {
             $this->inner = @fopen($path, $mode, false, $this->context) ?: null;
         } finally {
@@ -31,13 +32,13 @@ final class InputStream
         }
         return $this->inner !== null;
     }
-    public function stream_read(int $n): string|false
+    public function stream_read(int $length): string|false
     {
-        if ($n < 1) {
+        if ($length < 1) {
             return '';
         }
-        $chunk = $this->inner ? fread($this->inner, $n) : substr(self::$body, $this->pos, $n);
-        $this->pos += \strlen((string) $chunk);
+        $chunk = $this->inner ? fread($this->inner, $length) : substr(self::$body, $this->position, $length);
+        $this->position += \strlen((string) $chunk);
         return $chunk;
     }
     public function stream_seek(int $offset, int $whence = SEEK_SET): bool
@@ -45,8 +46,8 @@ final class InputStream
         if ($this->inner) {
             return fseek($this->inner, $offset, $whence) === 0;
         }
-        $this->pos = match ($whence) {
-            SEEK_SET => $offset, SEEK_CUR => $this->pos + $offset, default => \strlen(self::$body) + $offset,
+        $this->position = match ($whence) {
+            SEEK_SET => $offset, SEEK_CUR => $this->position + $offset, default => \strlen(self::$body) + $offset,
         };
         return true;
     }
@@ -56,11 +57,11 @@ final class InputStream
     }
     public function stream_eof(): bool
     {
-        return $this->inner ? feof($this->inner) : $this->pos >= strlen(self::$body);
+        return $this->inner ? feof($this->inner) : $this->position >= strlen(self::$body);
     }
     public function stream_tell(): int
     {
-        return $this->inner ? (int) ftell($this->inner) : $this->pos;
+        return $this->inner ? (int) ftell($this->inner) : $this->position;
     }
     /** @return array<int|string, int>|false */
     public function stream_stat(): array|false

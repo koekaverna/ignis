@@ -18,8 +18,8 @@ use std::process::ExitCode;
 /// Worker thread restarts performed by the supervisor (ADR-0012).
 pub static RESTARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-// mimalloc is the production allocator; miri cannot execute its C code, so
-// tests under miri fall back to the system allocator.
+/// mimalloc is the production allocator; miri cannot execute its C code, so tests under miri fall
+/// back to the system allocator.
 #[cfg(not(miri))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -37,7 +37,7 @@ fn main() -> ExitCode {
         Ok(v) => v,
         Err(code) => return code,
     };
-    init_logging();
+    initialize_logging();
 
     let flags = parse_runtime_flags(&mut args);
     let inline = match take_inline_code(&mut args) {
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
     php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
 
     metrics::mark_start();
-    let mut engine = match init_php_engine(&args) {
+    let mut engine = match initialize_php_engine(&args) {
         Ok(e) => e,
         Err(code) => return code,
     };
@@ -101,7 +101,7 @@ fn bridge_serve_config(raw: Vec<String>) -> Result<Vec<String>, ExitCode> {
 /// output was being discarded). `info` and below stay opt-in. The phpt harness sets RUST_LOG=error
 /// itself, because run-tests compares output byte for byte and a single warning fails a test —
 /// raising the floor without that cost fibers main 108 -> 72 before it was caught.
-fn init_logging() {
+fn initialize_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
@@ -205,7 +205,7 @@ fn install_signal_drain(rt: &tokio::runtime::Runtime) {
 
 /// Main thread = PHP thread 0 (`php_embed_init` runs here). PHP's argv is `[script, args...]` like
 /// php-cli, so `$argv[0]` is the script (the E15 harnesses rely on it).
-fn init_php_engine(args: &[String]) -> Result<php::embed::Engine, ExitCode> {
+fn initialize_php_engine(args: &[String]) -> Result<php::embed::Engine, ExitCode> {
     php::embed::Engine::init(args).map_err(|e| {
         eprintln!("{e:#}");
         ExitCode::from(1)
@@ -265,7 +265,7 @@ fn spawn_offload_workers(offload: usize) -> Vec<std::thread::JoinHandle<()>> {
     if offload == 0 {
         return Vec::new();
     }
-    offload::init(offload);
+    offload::initialize(offload);
     (0..offload)
         .map(|i| {
             std::thread::Builder::new()

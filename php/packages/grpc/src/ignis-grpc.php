@@ -135,27 +135,53 @@ final class Client
 
     public function unary(string $method, string $message): string
     {
-        return self::result(Loop::awaitOp(\ignis_grpc_call($this->url, $method, $message, false)));
+        return self::resultMessage(Loop::awaitOp(\ignis_grpc_call($this->url, $method, $message, false)));
     }
 
     /** @return \Generator<int, string> one item per server message, in order */
     public function serverStream(string $method, string $message): \Generator
     {
-        $r = self::result(Loop::awaitOp(\ignis_grpc_call($this->url, $method, $message, true)));
-        $stream = (int) (json_decode($r, true, 8, JSON_THROW_ON_ERROR)['stream'] ?? 0);
+        $r = self::resultMessage(Loop::awaitOp(\ignis_grpc_call($this->url, $method, $message, true)));
+        $stream = self::streamIdFromJson($r);
         while (true) {
             $msg = self::result(Loop::awaitOp(\ignis_grpc_recv($stream)));
             if ($msg === null) {
                 return;
             }
+            if (!\is_string($msg)) {
+                throw new StatusException(Status::UNKNOWN, 'expected a stream message, got ' . get_debug_type($msg));
+            }
             yield $msg;
         }
+    }
+
+    private static function streamIdFromJson(string $json): int
+    {
+        $decoded = json_decode($json, true, 8, JSON_THROW_ON_ERROR);
+        $stream = \is_array($decoded) ? ($decoded['stream'] ?? null) : null;
+        if (!\is_int($stream)) {
+            throw new StatusException(Status::UNKNOWN, 'expected {"stream": int} from the reactor, got ' . $json);
+        }
+
+        return $stream;
+    }
+
+    /** A unary or stream-open call always answers with the message itself, never a bare op status. */
+    private static function resultMessage(mixed $payload): string
+    {
+        $result = self::result($payload);
+        if (!\is_string($result)) {
+            throw new StatusException(Status::UNKNOWN, 'expected a message, got ' . get_debug_type($result));
+        }
+
+        return $result;
     }
 
     private static function result(mixed $payload): mixed
     {
         if (\is_array($payload) && ($payload['kind'] ?? '') === 'error') {
-            $m = (string) $payload['message'];
+            $message = $payload['message'] ?? null;
+            $m = \is_string($message) ? $message : 'the reactor reported an error with no message';
             $code = preg_match('/code=(\d+)/', $m, $mm) ? (int) $mm[1] : Status::UNKNOWN;
             throw new StatusException($code, $m);
         }

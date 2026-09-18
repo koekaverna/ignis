@@ -27,6 +27,8 @@ namespace Ignis\Tests\Pg {
         public static array $releases = [];
         /** sql => the error message it answers with instead of rows */
         public static ?string $failSql = null;
+        /** @var array<string, mixed>|null overrides the default {sql, params} row when set */
+        public static ?array $queryRow = null;
         /** @var array<string, mixed>|null */
         public static ?array $stats = null;
 
@@ -39,6 +41,7 @@ namespace Ignis\Tests\Pg {
             self::$statements = [];
             self::$releases = [];
             self::$failSql = null;
+            self::$queryRow = null;
             self::$stats = ['idle' => 4, 'leased' => 0];
         }
 
@@ -69,6 +72,7 @@ namespace {
     }
 
     if (!function_exists('ignis_pg_acquire')) {
+        /** @return int|array{lease: int} */
         function ignis_pg_acquire(int $pool): int|array
         {
             $lease = FakePg::nextLease();
@@ -85,7 +89,9 @@ namespace {
                 return FakePg::completed(['kind' => 'error', 'message' => 'ERROR: ' . $sql]);
             }
 
-            return FakePg::completed(json_encode(['rows' => [['sql' => $sql, 'params' => $paramsJson]], 'affected' => 1]));
+            $row = FakePg::$queryRow ?? ['sql' => $sql, 'params' => $paramsJson];
+
+            return FakePg::completed(json_encode(['rows' => [$row], 'affected' => 1]));
         }
     }
 

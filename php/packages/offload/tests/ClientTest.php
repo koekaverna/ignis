@@ -43,6 +43,8 @@ final class ClientTest extends TestCase
 
         self::assertSame('SELECT 1', $sent[0]);
         self::assertSame(7, $sent[2]);
+        self::assertIsArray($sent[1]);
+        self::assertIsArray($sent[1]['on']);
         self::assertInstanceOf(CallbackRef::class, $sent[1]['on']['row'], 'a closure cannot be serialized, so it travels as a handle');
         self::assertInstanceOf(CallbackRef::class, $sent[1]['on']['end']);
         self::assertSame([1, 2], [$sent[1]['on']['row']->id, $sent[1]['on']['end']->id], 'ids are handed out in traversal order');
@@ -52,9 +54,9 @@ final class ClientTest extends TestCase
 
     public function testArgumentsWithNoClosureInThemAreHandedOverUnchanged(): void
     {
-        $args = ['a', 1, null, true, ['nested' => ['deep' => 'value']]];
+        $arguments = ['a', 1, null, true, ['nested' => ['deep' => 'value']]];
 
-        self::assertSame($args, self::extract($args, $callbacks));
+        self::assertSame($arguments, self::extract($arguments, $callbacks));
         self::assertSame([], $callbacks);
     }
 
@@ -70,7 +72,9 @@ final class ClientTest extends TestCase
         $job = new \Fiber(static fn(): mixed => Client::call('work', [static fn(): string => $payload]));
         $job->start();
 
-        self::assertCount(1, self::get('pending'), 'the worker may call back for as long as the job runs');
+        $pending = self::get('pending');
+        self::assertIsArray($pending);
+        self::assertCount(1, $pending, 'the worker may call back for as long as the job runs');
 
         $job->resume(serialize(['ok' => 'done']));
 
@@ -108,12 +112,109 @@ final class ClientTest extends TestCase
         self::assertSame(['workers' => 2, 'this' => 0], Client::stats());
     }
 
-    /** @param list<mixed> $args */
-    private static function extract(array $args, mixed &$callbacks): mixed
+    public function testAnAnswerThatIsNeitherAnErrorNorAStringIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed completion payload');
+        $job->resume(42);
+    }
+
+    public function testAnErrorCompletionWithNoMessageStillNamesItselfAnError(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: unknown error');
+        $job->resume(['kind' => 'error']);
+    }
+
+    public function testAResultThatDoesNotUnserializeToAnArrayIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed result payload');
+        $job->resume(serialize('not an envelope'));
+    }
+
+    public function testARemoteErrorThatIsNotAThreeElementArrayIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed error payload');
+        $job->resume(serialize(['err' => 'boom']));
+    }
+
+    public function testARemoteErrorWhoseClassIsNotAStringIsRejected(): void
+    {
+        $job = new \Fiber(static fn(): mixed => Client::call('work', []));
+        $job->start();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed error payload');
+        $job->resume(serialize(['err' => [42, 'bad row', 7]]));
+    }
+
+    public function testACallbackEnvelopeWithNoIntJobOrSequenceThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('offload: malformed callback envelope');
+
+        self::runCallback(['job' => 'not-an-id', 'seq' => 1, 'cb' => 1, 'args' => serialize([])]);
+    }
+
+    public function testACallbackPayloadWithAMalformedCallbackIdAnswersWithAnError(): void
+    {
+        self::runCallback(['job' => 1, 'seq' => 2, 'cb' => 'not-an-id', 'args' => serialize([])]);
+
+        self::assertSame('offload: malformed callback payload', self::lastCallbackErrorMessage());
+    }
+
+    public function testCallbackArgumentsThatDoNotUnserializeToAnArrayAnswerWithAnError(): void
+    {
+        self::set('pending', [5 => static fn(): null => null]);
+
+        self::runCallback(['job' => 1, 'seq' => 2, 'cb' => 5, 'args' => serialize('not-a-list')]);
+
+        self::assertSame('offload: malformed callback arguments', self::lastCallbackErrorMessage());
+    }
+
+    private static function lastCallbackErrorMessage(): string
+    {
+        $result = unserialize(FakeOffload::$callbackResults[0]['result']);
+        if (!\is_array($result) || !\is_array($result['err'] ?? null) || !\is_string($result['err'][1] ?? null)) {
+            self::fail('the callback result did not carry the expected error envelope');
+        }
+        return $result['err'][1];
+    }
+
+    /** @param array<string, mixed> $payload */
+    private static function runCallback(array $payload): void
+    {
+        (new \ReflectionMethod(Client::class, 'runCallback'))->invoke(null, $payload);
+    }
+
+    /** @param list<mixed> $arguments */
+    /**
+     * The job as it would be sent to a worker. Narrowed here because every caller indexes it.
+     *
+     * @param  array<array-key, mixed> $arguments
+     * @return array<array-key, mixed>
+     */
+    private static function extract(array $arguments, mixed &$callbacks): array
     {
         $callbacks = [];
+        $sent = (new \ReflectionMethod(Client::class, 'extractCallbacks'))->invokeArgs(null, [$arguments, &$callbacks]);
+        self::assertIsArray($sent);
 
-        return (new \ReflectionMethod(Client::class, 'extractCallbacks'))->invokeArgs(null, [$args, &$callbacks]);
+        return $sent;
     }
 
     private static function set(string $property, mixed $value): void

@@ -38,9 +38,10 @@ final class OutputTest extends TestCase
         self::assertFalse(Output::isHeld());
     }
 
+    /** $level is not zero: the test runner has buffers of its own. */
     public function testAThrowingEmitterStillReleasesTheLock(): void
     {
-        $level = \ob_get_level();   // not zero: the test runner has buffers of its own
+        $level = \ob_get_level();
 
         try {
             Output::capture(static function (): void {

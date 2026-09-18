@@ -3924,3 +3924,89 @@ on this box, so 128k → 62k is the box and not the code; what remained unbisect
 `git bisect run` gated on it would follow noise and name an innocent commit with full confidence.
 Recorded as undecidable on this box rather than run. It becomes decidable on a quiet machine, or
 with a metric that has a 0.6 %-class noise floor the way startup RSS does.
+
+## V-83 — the published image is 84 MB, not the 64 MB the documentation promised (CONFIRMED)
+
+Date: 2026-09-18. Found by the documentation agent while refreshing the site against the code, and
+**re-run by me before it was allowed to stand** (C15) — the entry as first written described itself
+as my run, which it was not. My run reproduces it to the byte.
+
+`docker image inspect` and `docker images` disagree on this host (84 MB against 328 MB) because the
+containerd image store reports content size in one and unpacked snapshot size in the other, so
+neither is quoted here. The authoritative number for "what a user downloads" is the sum of the
+compressed layer blobs plus the config in the registry manifest:
+
+```
+docker manifest inspect --verbose ghcr.io/koekaverna/ignis:latest
+# amd64 entry, OCIManifest: sum(layers[].size) + config.size
+```
+
+| | bytes | |
+|---|---|---|
+| amd64 compressed layers | 29 764 116 + 20 513 058 + 23 270 007 + 10 294 374 + 169 918 + 13 659 + 703 + 1 157 + 32 | **nine** layers, summing to 84 027 024 |
+| plus the config blob | 3 855 | |
+| **download total** | **84 030 879** | **84.0 MB / 80.1 MiB** |
+
+The row above is corrected too: the first version listed eight layer sizes and labelled the ninth
+(32 bytes) as the config, so the table did not add up to its own total even though the total was
+right. The config blob is 3 855 bytes.
+
+Unpacked, `docker history` sums to 244.1 MB, of which the debian base is 87.6 MB, the `apt-get`
+runtime-library layer 51 MB, `libphp.so` 65.2 MB and the `ignis` binary 38.7 MB.
+
+**Against the record:** V-39 and V-57 measured 62–64 MB, and `docs/getting-started/install.md` still
+said 64 MB. The growth is the toolchain extensions (DECISIONS.md 2026-09-17): `libphp.so` went
+50.3 → 67.5 MB unstripped there, and `bffcd99` had to add `libxml2` to the runtime library list
+after the pushed image died on `libxml2.so.2`. So this is the already-accepted cost of that
+decision arriving in the artefact, not a new regression — but M2's "image, serving in <2 min"
+acceptance was written against the smaller number and the documentation was quoting it.
+
+**Live check on the same pull, same session:** the image serves — `/_ignis/health` answers
+`200 {"status":"ok",…}` and `ldd` inside the container reports no missing objects, which is the
+`libxml2` fix confirmed on the published artefact rather than on a local build.
+
+Not measured here: the release tarball (V-57's 29 795 977 B) has not been re-cut since, and the
+`v0.1.0-rc.1` tag's image is a separate, older artefact from `latest`.
+
+## V-84 — a generic `Ignis\Future<T>` does not land honestly, and the reason is worth keeping (S4-MIXED)
+
+Date: 2026-09-18. The owner's question of 2026-09-18 — "can the `mixed` be typed at the language
+level instead of checked at every use site?" — was answered "yes" for `ignis_poll()`'s completion
+union (349 → 307 findings at zero runtime cost, S4-MIXED step 1). This entry answers the same
+question for the other `mixed` in the API, `Future::await()`, and the answer is **no**.
+
+### What it would have bought
+
+Three of the last four level-9 findings: `examples/app.php:45` and `hello_server.php:51` read a
+future's value, and `Ignis\async()` is the library's core API, so typing `await()` types every
+caller in every downstream application.
+
+### Why it does not land
+
+| step | result |
+|---|---|
+| `@template TValue` on the class, `await(): TValue` | level 8 **0 → 11**: every holder of a `Future` must now name the parameter |
+| annotate those eleven (`Future<mixed>` in `Loop`, `Output`, the Swoole shim) | level 8 back to **0**, level 9 **4 → 4** |
+| `all()` over futures of different shapes | still fails: `Future<A>|Future<B>` is not `Future<A|B>` under invariance |
+| `@template-covariant TValue` | fixes `all()`, and PHPStan then **correctly** refuses it: `resolve()` is a setter, so TValue occurs in a contravariant position |
+| `Future::pending()` named constructor | "template type T is not referenced in a parameter" — PHPStan cannot infer from nothing |
+
+The only remaining route was an inline `@var` at the one site where `new Future()` becomes
+`Future<TValue>`. That is precisely the silencing this item forbids, written by the person who wrote
+the rule, so it was reverted rather than bent. Net effect of the whole attempt: **4 findings became
+7**, and the branch was thrown away.
+
+### What was done instead
+
+The three call sites now declare what is true rather than what would be convenient:
+`Ignis\all()` over heterogeneous futures yields `mixed` per value and `fetchDashboard()` says so;
+a SQL column value is `mixed` because SQL says so, and `examples/app.php` grows an `intColumn()`
+that throws on a non-number instead of casting.
+
+### The transferable part
+
+This is the second time this cycle the language-level route was measured rather than assumed, and
+the two answers differ: a **tagged union of array shapes** types beautifully, because the
+discriminator is data PHPStan can read; a **generic container** does not, because the type has to
+flow through a constructor call PHPStan cannot see. That is the rule to carry forward, not
+"generics are bad".

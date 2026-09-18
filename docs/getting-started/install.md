@@ -2,8 +2,11 @@
 
 ## Docker image (recommended)
 
-The published image is 64 MB, built and smoke-tested by CI on every push to `main`, and serves the
-bundled hello-world entry on its own:
+The published image (`ghcr.io/koekaverna/ignis:latest`) is **84 MB** to download — 84,030,879 bytes
+of compressed layers in the registry manifest, 244 MB unpacked (V-83, 2026-09-18). That is up from
+V-39's 64 MB, because the engine now carries the toolchain extensions and `libxml2` (`bffcd99`). It
+is built and smoke-tested by CI on every push to `main`, and serves the bundled hello-world entry on
+its own:
 
 ```
 docker run -p 8080:8080 ghcr.io/koekaverna/ignis
@@ -26,9 +29,13 @@ userland scheduler lives at `/opt/ignis/php` inside the image.
 ## Binary
 
 A static binary is not shipped yet — `libphp` pulls in roughly 35 shared libraries through
-`libcurl` alone, so the Docker image is the distributable artifact for now
-([ADR-0027](../adr/0027-build-and-distribution.md)). Building from source (below) is how you get
-the `ignis` binary directly, for example to run it outside a container or to use the [CLI](../reference/cli.md).
+`libcurl` alone, so the Docker image is the primary distributable artifact
+([ADR-0027](../adr/0027-build-and-distribution.md)). Each tagged release (`v0.1.0-rc.1` today) also
+publishes a tarball of the binary plus `libphp.so`, extracted from that same image, on its GitHub
+Release — a stopgap for a host without Docker, not a static build; see
+[Releasing](../release.md#verify-the-published-release) for the runtime libraries it still needs.
+Building from source (below) is how you get the `ignis` binary directly, for example to run it
+outside a container or to use the [CLI](../reference/cli.md).
 
 ## Build from source
 

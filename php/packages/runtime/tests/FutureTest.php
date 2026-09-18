@@ -28,31 +28,31 @@ final class FutureTest extends TestCase
 
     public function testResolveSettlesOnce(): void
     {
-        $f = new Future();
-        $f->resolve(42);
-        self::assertTrue($f->isDone());
+        $future = new Future();
+        $future->resolve(42);
+        self::assertTrue($future->isDone());
 
         $this->expectException(\LogicException::class);
-        $f->resolve(43);
+        $future->resolve(43);
     }
 
     public function testRejectAlsoSettles(): void
     {
-        $f = new Future();
-        $f->reject(new \RuntimeException('no'));
-        self::assertTrue($f->isDone());
+        $future = new Future();
+        $future->reject(new \RuntimeException('no'));
+        self::assertTrue($future->isDone());
 
         $this->expectException(\LogicException::class);
-        $f->reject(new \RuntimeException('again'));
+        $future->reject(new \RuntimeException('again'));
     }
 
     /** A rejection nobody is waiting for must be visible to the loop rather than swallowed. */
     public function testARejectionWithNoWaiterIsRecorded(): void
     {
-        $e = new \RuntimeException('unobserved');
-        (new Future())->reject($e);
+        $exception = new \RuntimeException('unobserved');
+        (new Future())->reject($exception);
 
-        self::assertSame([$e], Loop::$unobserved);
+        self::assertSame([$exception], Loop::$unobserved);
     }
 
     public function testResolvingRecordsNothing(): void

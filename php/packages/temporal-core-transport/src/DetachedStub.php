@@ -10,14 +10,13 @@ namespace Temporal\Worker\Transport\Core;
  */
 final class DetachedStub extends \Grpc\BaseStub
 {
-    public function __construct()
-    {
-        // deliberately does not call the parent: no channel, no extension, no connection
-    }
+    /** Deliberately does not call the parent: no channel, no extension, no connection. */
+    public function __construct() {}
 
+    /** Always READY — nothing to connect. */
     public function getConnectivityState($try_to_connect = false)
     {
-        return 2;   // READY — nothing to connect
+        return 2;
     }
 
     public function close(): void {}

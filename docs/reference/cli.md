@@ -20,7 +20,19 @@ ignis [--threads N] [--offload N] [--supervise] -- [args...]      # script read 
 ```
 
 `--version`/`-V` must be the very first argument; it prints `ignis <CARGO_PKG_VERSION>` and exits
-0 without doing anything else (no engine init, no config load).
+0 without doing anything else (no engine init, no config load). Confirmed against the built binary:
+`ignis --version` prints exactly `ignis 0.1.0-rc.1`.
+
+**There is no `--help`.** `main.rs` only special-cases `--version`/`-V` before the usage message; any
+other unrecognised leading token — `--help` included — falls through to `parse_runtime_flags` (which
+ignores it, since it is not `--threads`/`--offload`/`--supervise`) and is then treated as the script
+path. `ignis --help` therefore tries to run a PHP script literally named `--help`, fails to open it,
+prints a PHP fatal error and **exits 255**; `ignis serve --help` fails the entry-resolution step
+instead and **exits 2** with `entry script --help does not exist`. Verified directly:
+`LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis --help` → `Fatal error: Failed opening
+required '--help'`, exit status 255; `... ignis serve --help` → `ignis serve: entry script --help
+does not exist`, exit status 2. Running with no arguments at all is the way to see the usage
+message (below), which is the closest thing to help this binary has.
 
 ### `ignis serve [--config PATH] [entry.php] [args...]`
 
@@ -43,6 +55,11 @@ looks for `./ignis.toml` and falls back to built-in defaults if that isn't there
 Note `serve` does **not** accept `--threads`/`--offload`/`--supervise` as its own CLI flags — those
 are `ignis.toml` keys (`threads`, `offload`, `supervise`) or `IGNIS_THREADS`/`IGNIS_OFFLOAD`
 environment variables under `serve`. They're CLI flags only on the raw form below.
+
+Once the engine is up and the boot self-check (below) has passed, `ignis serve` prints one line to
+stderr: `ignis <version> — threads=<N> listen=<addr> park=<summary> — ready` (`main.rs`,
+`print_ready_banner`). The raw `ignis <script.php>` form prints nothing on a clean start — this
+banner exists specifically so `serve` has a visible sign of life at the default `warn` log floor.
 
 ### `ignis [--threads N] [--offload N] [--supervise] <script.php> [args...]`
 
@@ -86,9 +103,10 @@ alongside `threads - 1` additional worker threads, and the process exits once al
 | Code | When |
 |---|---|
 | `0` | `--version`/`-V`; or a normal run where every thread (and, under `--supervise`, the supervisor loop) reports 0. |
-| `1` | PHP engine initialization failed (`Engine::init` error, printed to stderr); or `-r`/`--` code errored without producing a numeric status; or the worst exit status among worker threads when no thread explicitly reported a higher code. |
+| `1` | PHP engine initialisation failed (`Engine::init` error, printed to stderr). A worker thread whose `WorkerThread::attach()` call fails also reports `1` for itself, which then feeds into the `1..=255` row below like any other worker exit status. |
 | `2` | Usage error: no script/`-r`/`--` given (usage message printed); `ignis serve` config/entry error (see above, two distinct messages); or — only in builds with the `universal-park` feature — the boot self-check (`park::selfcheck()`) found a policy library that never bound through the interposer (V-52), printed as `ignis: <message>`. |
-| `1..=255` | Otherwise, the worst (`max`) exit status across all worker threads (and the main-thread script under non-`--supervise` runs), each individually clamped to `0..=255`. Under `--supervise` the reported exit code is always `1` regardless of why the loop stopped (the loop itself only stops when every worker slot has exhausted its restart budget). |
+| `255` | `-r <code>` / `--` (stdin): the code ran but did not finish cleanly — a parse error, an uncaught exception, or an explicit `exit(255)` — which `Engine::eval` cannot tell apart (its sentinel only distinguishes an explicit `exit(N)` from no `exit()` at all; anything else that fails is reported as `255`). Confirmed against the binary: `ignis -r 'nonexistentfunc();'` prints the uncaught-error trace and exits 255, while `ignis -r 'exit(7);'` exits exactly 7. |
+| `1..=255` | Otherwise, the worst (`max`) exit status across all worker threads (and the main-thread script under non-`--supervise` runs, including a plain script's own `exit(N)` or an unhandled fatal error, which PHP reports as `255`), each individually clamped to `0..=255`. Under `--supervise` the reported exit code is always `1` regardless of why the loop stopped (the loop itself only stops when every worker slot has exhausted its restart budget). |
 
 ## Not a flag: `ignis.toml` / environment
 

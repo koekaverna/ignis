@@ -44,7 +44,7 @@ final class IgnisWorkerRunnerTest extends TestCase
     public function testACookieBecomesASetCookieHeader(): void
     {
         $response = new Response();
-        $response->headers->setCookie(Cookie::create('session', 'abc123', 0, '/', null, false, true, false, 'Lax'));
+        $response->headers->setCookie(Cookie::create('session', 'abc123', 0, '/', null, false, true, false, Cookie::SAMESITE_LAX));
 
         $setCookie = self::headers($response)['set-cookie'];
 
@@ -97,6 +97,6 @@ final class IgnisWorkerRunnerTest extends TestCase
     /** @return array<string, list<string>> */
     private static function headers(Response $response): array
     {
-        return (new \ReflectionMethod(IgnisWorkerRunner::class, 'headers'))->invoke(null, $response);
+        return IgnisWorkerRunner::headers($response);
     }
 }
