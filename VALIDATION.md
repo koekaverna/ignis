@@ -286,6 +286,37 @@ E3 target "±2% over 1M requests": RSS did not grow at all over 1.5M requests (i
 
 Caveat: 1 thread, ~7 minutes of traffic, no PDO/streams yet; E3 must be re-run when E6 (streams) and E13 (state swap) land, since those add per-request allocations.
 
+### V-10 addendum — re-run 2026-09-18, my own, after the toolchain extensions landed
+
+Date: 2026-09-18T0x:xxZ. Same command (`bench/rss-1m.sh`, 1 PHP thread, release). Re-run because
+the entry's absolute numbers predate building the toolchain extensions into `/opt/php85-zts`
+(DECISIONS 2026-09-17); the *flatness* claim is what E3 gates on and it is unchanged.
+
+```
+sample 0 (post warm-up, 266k requests):  rss_kb=44396  mem=1693216
+sample 1  (+159k, total 159k):           rss_kb=44044  mem=1693336
+sample 4  (+169k, total 654k):           rss_kb=43920  mem=1693336
+sample 7  (+166k, total 1 150k):         rss_kb=43868  mem=1693336
+/sleep?ms=1, 500 conns, 20s (833k reqs): rss_kb=63084  mem=10727352  fibers=500
+/cpu 5s (17k reqs):                      rss_kb=56064
+hello again 3s (140k reqs):              rss_kb=51432
+```
+
+| | V-10 (2026-09-16) | this run | verdict |
+|---|---|---|---|
+| RSS drift over > 1 M hello | −2.5 % | **−1.2 %** (44 396 → 43 868 kB) | **CONFIRMED again**, well inside ±2 % |
+| PHP heap across samples | flat to the byte | **flat to the byte** (1 693 336 B, samples 1–7) | unchanged |
+| absolute post-warm-up RSS | 26.9 MB | **43.4 MB** | stale, and decomposed in **V-82** |
+| hello throughput | ~152k req/s | ~52k req/s | **do not quote either**: V-46 addendum 3 and V-82 |
+
+Two things this run makes explicit. **The flatness claim survives and the absolute does not** — E3
+is a drift gate, and the drift is what reproduced. **The throughput figure in the original entry
+("131k req/s on one PHP thread" for the sleep workload) is a box artefact**, not a code claim; this
+run gives 41k for the same workload and V-82 measures the box's own spread at ±6.7 %. The
+`/stats` field the heap column comes from has been renamed `mem_this_thread` since (S3-STATS-SCOPE):
+the Zend MM heap is thread-local under ZTS, so at `--threads 1` — every E3 run to date — it is the
+whole PHP side, and at `--threads N` it would have been one worker's.
+
 ## V-11 — H13 (E13): fiber-scoped superglobals via the fiber-switch observer (CONFIRMED)
 
 Date: 2026-09-16T01:4xZ. Build: release, observer registered at MINIT (`IGNIS_NO_SUPERGLOBALS=1` disables it). Saved state lives in `zend_fiber_context.reserved[slot]` (slot from `zend_get_resource_handle`), a HashMap version was measured first and replaced.
@@ -3675,6 +3706,25 @@ one of them states why it is sound. After: **0**, verified by
 (`php/tsrm.rs`) along the way, which removed three of the 92 by deleting the code rather than
 documenting it three times.
 
+### V-79 addendum 2 — the number the CI floor is set from
+
+Date: 2026-09-18T0x:xxZ, my own run, same command and same engine (`scripts/test-php.sh
+--coverage`, PHP 8.5.10 ZTS + PCOV 1.0.12).
+
+| | tests | assertions | lines | **covered** |
+|---|---|---|---|---|
+| addendum 1 | 187 | 474 | 636 / 1,991 | 31.94 % |
+| **this run** | **209** | **519** | **751 / 2,052** | **36.60 %** |
+
+The 22 extra tests and 61 extra source lines are the work that landed after addendum 1 was written.
+
+`scripts/ci-coverage-gate.sh` is wired into the `php-unit` job with `FLOOR=31.6` — `achieved − 5`
+off **this** number, not off the stale one. It is a fixed floor, raised by hand in the commit that
+earns it, never a ratchet. Proved it can fail three ways before it was wired in: below the floor
+(`rc=1`), above it (`rc=0`), and **on a log with no coverage summary at all (`rc=1`)** — that last
+one is the case that matters, because "the gate ran and found nothing" is exactly how the PHP suite
+stayed green in CI for months without ever executing.
+
 ## V-80 — `ext/session` on files does NOT deadlock a thread; the rule it was cited for still stands (REFUTES part of R-SESS)
 
 Date: 2026-09-18T01:0xZ. Cycle item S1-SESS. The owner chose ADR-0038 option 2 — refuse to boot on
@@ -3774,3 +3824,85 @@ killed — that is the V-58 deadlock reproduced on demand.
 `scripts/smoke.sh` runs the probe and asserts both halves — `"waiter_acquired_ms"` present *and*
 `ticks >= 30`. Verified to be a gate that can fail: re-run under the negative-control policy, the
 assertion goes red (the probe prints nothing at all). Machine: load 1.85, 851G free.
+
+## V-82 — where the RSS drift actually came from, and what it is not (S3-RSS-DRIFT)
+
+Date: 2026-09-18T0x:xxZ. Box: 24 cores, load 3–5 (a `phpantom_lsp` holding ~70 % of one core),
+851 G free. Every number below is startup RSS of `examples/hello_server.php` at one PHP thread,
+read from `/proc/<pid>/status` after the first successful `GET /` — **not** a soak number. Old
+commits are built in a detached worktree against **today's** `/opt/php85-zts`, so the engine is a
+constant across the whole series and only the repository varies.
+
+### The noise floor first, because without it none of the rest means anything
+
+Six consecutive runs at one commit: 38 616, 38 640, 38 676, 38 724, 38 824, 38 848 kB — a spread of
+**232 kB (0.6 %)**. Startup RSS is a far better bisect signal than throughput, whose spread on this
+same box is ±6.7 % (below). One outlier of 40 968 kB appeared in ~20 runs, so every point below is
+a median of three or five.
+
+### The split nobody had made: engine versus repository
+
+| | startup RSS |
+|---|---|
+| V-10's recorded figure (2026-09-16, the engine of that day) | 26 920 kB |
+| **the same commit `7a5c43f`, rebuilt on today's engine** | **36 888 kB** |
+| HEAD (`ca6e81b`) | 41 620 kB |
+
+So of the ~14.7 MB, **~10 MB is outside the repository** — the PHP rebuild with the toolchain
+extensions and whatever else moved on this box — and **4.7 MB is 281 commits of our own code**.
+That overturns the working estimate of "extensions ≈ 3 MB": the extensions are the large term, not
+the small one. A bisect could never have found those 10 MB, because no commit in this repository
+contains them.
+
+### The 4.7 MB, bisected
+
+| commit | date | median RSS | Δ |
+|---|---|---|---|
+| `7a5c43f` | 09-15 22:56 | 36 888 | — |
+| `1ace01c` | 09-16 04:28 | 38 248 | +1 360 |
+| `b301feb` | 09-16 19:53 | 38 700 | +452 |
+| `1e6f758` | 09-16 21:01 | **38 672** | −28 |
+| **`17a2ceb`** | **09-16 21:31** | **40 752** | **+2 080** |
+| `5b4c29b` | 09-17 09:19 | 41 312 | +560 |
+| `ec25d06` | 09-17 15:31 | 41 500 | +188 |
+| `ca6e81b` | 09-18 02:30 | 41 620 | +120 |
+
+One commit is above the noise by an order of magnitude and the rest is a diffuse ramp. `17a2ceb`
+("refactor(park): sockets.rs + accept.rs deleted — the audited libphp rows carry ext/sockets")
+costs **+2.08 MB**, with non-overlapping ranges either side: parent 38 496–38 800 over three runs,
+the commit itself 40 616–40 980 over five.
+
+### What it is not — two hypotheses killed by their own off-switches
+
+The commit does two things: it grows the `SEED` park policy from 7 rows to 19, and it deletes 641
+lines of Rust that had been replacing PHP's own socket and transport paths. Both have a control.
+
+| | startup RSS |
+|---|---|
+| HEAD, full 19-row seed | 41 660 / 41 812 / 41 752 |
+| HEAD, `IGNIS_PARK` set to the **old 7-row** seed | 41 728 / 41 748 / 41 556 |
+| HEAD, `IGNIS_NO_UNIVERSAL_PARK=1` | 40 492 / 40 608 / 40 784 |
+| `1e6f758`, stream transport hook as shipped | 38 800 / 38 536 / 38 496 |
+| `1e6f758`, `IGNIS_NO_STREAM_HOOK=1` (stock transport) | 38 488 / 38 780 / 38 672 |
+
+**Not the policy rows:** 19 rows and 7 rows are indistinguishable, and the entire universal-park
+mechanism is worth only 1.1 MB. **Not the stream transport factory:** hooked and stock are
+indistinguishable. So the 2.08 MB is the remainder of that commit and the mechanism is still open —
+recorded as open rather than guessed at.
+
+### The thing that matters more than the cause
+
+It is a **fixed footprint, not a leak**. The E3 re-run in the same session holds RSS flat across
+1.15 M requests (44 396 → 43 868 kB, −1.2 %) with the PHP heap flat to the byte over samples 1–7.
+Startup cost buys the mechanism budget's deletion of 641 lines of Rust; a leak would be a defect.
+That is why S3-RSS-DRIFT closes here and does not become a fix.
+
+### The throughput half of S3-NUMBERS: the bisect is refused, with a number
+
+Five consecutive `wrk -t2 -c64 -d10s` runs against one HEAD server: 50 804, 51 346, 52 566, 53 669,
+54 190 req/s — **±6.7 % spread**. V-46 addendum 3 had already measured V-6's own commit at 61.5–63.1k
+on this box, so 128k → 62k is the box and not the code; what remained unbisected was a residual
+4–5 % code-side drop. That residual is **smaller than the run-to-run spread of the measurement**, so
+`git bisect run` gated on it would follow noise and name an innocent commit with full confidence.
+Recorded as undecidable on this box rather than run. It becomes decidable on a quiet machine, or
+with a metric that has a 0.6 %-class noise floor the way startup RSS does.

@@ -511,7 +511,7 @@ not, and keeps producing for a client that is gone.
 **Acceptance.** Start a stream, kill the client mid-body, the handler's fiber is cancelled inside the
 bound E11 uses for whole-body responses. Lands with S4-ANSWER-MAP.
 
-### S3-RSS-DRIFT 13 MB of RSS growth that is not the extensions `main` `open — measured 2026-09-18`
+### S3-RSS-DRIFT 13 MB of RSS growth that is not the extensions `main` `DONE 2026-09-18 — V-82`
 **What.** The E3 re-measurement (S3-NUMBERS) came back with worker-mode RSS at **42.7 MB** against
 V-10's 26.2 MB, +16.5 MB. The framing in the brief -- "that is the cost of building the extensions
 in" -- did not survive the measurement, and the bencher said so rather than confirming it:
@@ -533,8 +533,23 @@ that moved it, or a recorded decomposition (allocator, tokio, added statics) tha
 V-10's ~167k, so throughput from a loaded run is junk even though RSS at a given request count is
 not -- the two runs agreed on RSS to 0.3% across a 5x load difference, which is what makes the
 flatness claim safe to keep and the throughput claim unsafe to quote.
+**Done (V-82), and the decomposition above was wrong in its largest term.** Bisected on startup
+RSS, not soak RSS: its noise floor is **232 kB (0.6 %)** over six repeats, against +/-6.7 % for
+throughput, which is what makes a bisect possible at all. Building `7a5c43f` -- V-10's own commit --
+in a worktree against **today's** engine gives **36 888 kB** where V-10 recorded 26 920 kB. So
+**~10 MB is outside this repository**, not ~3 MB: the engine rebuild with the toolchain extensions
+is the large term, and no bisect could ever have found it because no commit here contains it. The
+repo's own share is **4.7 MB over 281 commits**, and one commit carries 2.08 MB of it -- `17a2ceb`
+("sockets.rs + accept.rs deleted"), parent 38 496-38 800 over three runs against 40 616-40 980 over
+five, non-overlapping. Two candidate causes inside that commit are **killed by their own
+off-switches**: the 19-row park policy measures the same as the old 7-row one on HEAD (and the whole
+park mechanism is worth 1.1 MB), and the stream transport hook measures the same as the stock
+transport on the parent. The remaining cause is recorded open rather than guessed. It is not
+chased further because it is a **fixed footprint, not a leak** -- the same session's E3 run holds
+RSS flat across 1.15 M requests with the heap flat to the byte -- and it bought the deletion of 641
+lines of Rust that the mechanism budget wanted gone.
 
-### S3-STATS-SCOPE `/stats` reports one thread's PHP heap, not the process's `agent` `open — 2026-09-18`
+### S3-STATS-SCOPE `/stats` reports one thread's PHP heap, not the process's `agent` `DONE 2026-09-18 — renamed`
 **What.** `examples/hello_server.php`'s `/stats` reports `mem` from `memory_get_usage()`, and the
 Zend MM heap is thread-local under ZTS. At `--threads 1` -- V-10 and every E3 run so far -- that is
 the whole PHP side, so "flat to the byte" is honest. At `--threads N` it is one worker's heap and
@@ -542,13 +557,26 @@ the number means much less than a reader would assume.
 **Acceptance.** Either a per-thread sum across the registry, or the field renamed and documented so
 it cannot be read as process-wide. The summing version touches `module.rs`, so it is a `main` item
 if that route is taken.
+**Done.** Renamed, not summed: `mem` -> `mem_this_thread` and `mem_real` -> `mem_real_this_thread`
+in `examples/hello_server.php` and `bench/php/a3-soak.php`. Nothing parses those two fields, so the
+rename is free; summing would have meant reading other threads' Zend heaps, which is a new
+cross-thread mechanism on the hottest boundary for a diagnostic field. `rss_kb` is process-wide
+already and `ignis_stats()` comes from the Rust side. `resumes`/`fibers`/`idle` are equally
+thread-local and keep their names deliberately: `bench/a3-soak.sh` parses them by name.
 
-### S3-NUMBERS The numbers this work made stale `main` `open`
+### S3-NUMBERS The numbers this work made stale `main` `DONE 2026-09-18 — V-10 addendum, V-79 addendum 2, V-82`
 **What.** V-10's 26.2 MB predates the toolchain extensions (+2.9 MB, DECISIONS 2026-09-17); the PHP
 coverage floor V-79's addendum calls for is not in CI; H-12's 58k-vs-128k has never been bisected.
 **Acceptance.** V-10 re-run and its entry amended; `scripts/ci-coverage-gate.sh` enforcing
 `achieved − 5` in the `php-unit` job; `git bisect run` over `bench/wrk-hello.sh` naming the commit,
 or a recorded conclusion that the drop is the box.
+**Done, all three.** V-10 re-run by me and amended (flatness CONFIRMED again at -1.2 % over 1.15 M
+requests, heap flat to the byte; the absolutes are stale and now decomposed in V-82).
+`scripts/ci-coverage-gate.sh` is in the `php-unit` job at `FLOOR=31.6`, set from my own 36.60 %, and
+was proved to fail three ways -- under the floor, over it, and on a log with no coverage summary at
+all. The `wrk-hello` bisect is **refused with a number**: five consecutive runs on one HEAD server
+spread 50.8k-54.2k req/s (+/-6.7 %), and the residual code-side drop V-46 addendum 3 left open is
+4-5 %, i.e. under the noise. A bisect gated on it would name an innocent commit. V-82.
 
 ### S3-LIMITS `[limits]` in `ignis.toml` `agent` `open`
 Already filed as R-LIMITS-CONFIG; it is the config half of S1-CAP and lands with it.
