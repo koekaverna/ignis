@@ -4388,10 +4388,19 @@ present.
 The control that decides this is a defect and not a theory: with the fix stashed, the new test
 errors (`SessionNotFoundException`); with it, 11 tests / 31 assertions pass.
 
-**What was not broken, checked rather than assumed:** `resetRequestFormats()` touches a static on
-`Request` and never the array, and the parent constructor seeds through `$this->push()` — which is
-overridden here, so seeded requests were already reaching the scope. An override I had written for
-it was deleted as redundant before this entry.
+**What was not broken, checked rather than assumed:** the parent constructor seeds through
+`$this->push()` — overridden here — so seeded requests already reached the scope, and an override I
+had written for it was deleted as redundant before this entry.
+
+**`resetRequestFormats()` stays inherited, and that is a decision rather than an oversight.** The
+owner asked whether it needs moving too. It does not read the parent's array; it nulls
+`Request::$formats`, declared `protected static ?array` (`http-foundation/Request.php:235`), so the
+map is per **thread** and shared by every fiber on it. Moving it into `Scope` is impossible from
+here — registering a format is `Request::setFormat()`, static, and just as thread-wide as clearing
+one. What is left is a real trade-off with nobody's measurement behind it: Symfony resets so one
+request's format does not leak into the next, while here the reset lands on requests in flight. It
+is filed as `S-REQUEST-FORMATS` with the arm that would settle it, and it is mitigated by the
+resetter effectively never running under Ignis (research 36).
 
 ### The gate was not running, and two commits said it was
 

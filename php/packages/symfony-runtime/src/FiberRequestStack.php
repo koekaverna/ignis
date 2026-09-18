@@ -14,7 +14,9 @@ use Symfony\Component\HttpFoundation\Session\SessionInterface;
  * One request stack per fiber (ADR-0011): interleaved requests never see each other's Request.
  *
  * Every method that reads the stack must be overridden — `RequestStack` keeps its own private array,
- * and an inherited method reads that one, which is always empty here (V-88).
+ * and an inherited method reads that one, which is always empty here (V-88). `resetRequestFormats()`
+ * is the exception that stays inherited: it clears `Request::$formats`, a static that is thread-wide
+ * for every fiber and cannot be scoped from here (`S-REQUEST-FORMATS`).
  */
 final class FiberRequestStack extends RequestStack
 {
