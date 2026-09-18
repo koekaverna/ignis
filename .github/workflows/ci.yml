@@ -194,6 +194,8 @@ jobs:
         run: cd php && /opt/php85-zts/bin/php vendor/bin/phpunit --colors=never
       - name: phpunit + line coverage (PHP 8.5.10 ZTS + pcov)
         run: timeout 900 scripts/test-php.sh --coverage 2>&1 | tee /tmp/php-coverage.log
+      - name: coverage floor
+        run: scripts/ci-coverage-gate.sh /tmp/php-coverage.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
