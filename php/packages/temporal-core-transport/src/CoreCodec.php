@@ -87,6 +87,9 @@ final class CoreCodec implements CodecInterface
     public function decode(string $batch, array $headers = []): iterable
     {
         $data = \json_decode($batch, true, 512, \JSON_THROW_ON_ERROR);
+        if (!\is_array($data)) {
+            throw new \LogicException('the core document is not a JSON object');
+        }
 
         return $this->kind === ActivationSource::ACTIVITY
             ? $this->decodeActivityTask($data)
@@ -114,7 +117,7 @@ final class CoreCodec implements CodecInterface
     // ---------------------------------------------------------------- workflow activations
 
     /**
-     * @param  array<string, mixed> $act
+     * @param  array<array-key, mixed> $act
      * @return list<ServerRequest|SuccessResponse|FailureResponse>
      */
     private function decodeActivation(array $act): array
@@ -122,17 +125,20 @@ final class CoreCodec implements CodecInterface
         $this->runId = $runId = self::required($act['runId'] ?? null, 'runId');
         $info = new TickInfo(
             time: $this->timestamp($act['timestamp'] ?? null),
-            historyLength: \max(0, (int) ($act['historyLength'] ?? 0)),
-            historySize: \max(0, (int) ($act['historySizeBytes'] ?? 0)),
+            historyLength: \max(0, self::intField($act, 'historyLength') ?? 0),
+            historySize: \max(0, self::intField($act, 'historySizeBytes') ?? 0),
             continueAsNewSuggested: (bool) ($act['continueAsNewSuggested'] ?? false),
             isReplaying: (bool) ($act['isReplaying'] ?? false),
         );
 
         $out = [];
-        foreach ($act['jobs'] ?? [] as $job) {
+        foreach (self::listOfArraysField($act, 'jobs') as $job) {
             // protojson flattens a oneof to its field name, so the job IS its single key.
             $name = \array_key_first($job);
-            $d = $job[$name] ?? [];
+            if ($name === null) {
+                continue;
+            }
+            $d = self::arrayField($job, $name);
 
             switch ($name) {
                 case 'initializeWorkflow':
@@ -141,13 +147,13 @@ final class CoreCodec implements CodecInterface
                         name: 'StartWorkflow',
                         info: $info,
                         options: ['info' => $this->workflowInfo($runId, $d, $info)],
-                        payloads: $this->values($d['arguments'] ?? []),
+                        payloads: $this->values(self::payloadListField($d, 'arguments', 'jobs.initializeWorkflow.arguments')),
                         id: $runId,
                     );
                     break;
 
                 case 'fireTimer':
-                    $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
+                    $id = $this->takeId($runId, self::intField($d, 'seq') ?? 0);
                     if ($id !== null) {
                         $out[] = new SuccessResponse(null, $id, $info);
                     }
@@ -156,31 +162,36 @@ final class CoreCodec implements CodecInterface
                     // Local activities resolve through this job too, with `is_local` set; the seq map
                     // does not care which kind it was.
                 case 'resolveActivity':
-                    $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
+                    $id = $this->takeId($runId, self::intField($d, 'seq') ?? 0);
                     if ($id !== null) {
-                        $out[] = $this->resolution($d['result'] ?? [], $id, $info);
+                        $out[] = $this->resolution(self::arrayField($d, 'result'), $id, $info);
                     }
                     break;
 
                 case 'resolveChildWorkflowExecutionStart':
-                    $seq = (int) ($d['seq'] ?? 0);
+                    $seq = self::intField($d, 'seq') ?? 0;
                     $id = $this->runs[$runId]['childStart'][$seq] ?? null;
                     unset($this->runs[$runId]['childStart'][$seq]);
                     if ($id === null) {
                         break;
                     }
+                    $succeeded = self::arrayField($d, 'succeeded');
                     $out[] = isset($d['succeeded'])
                         ? new SuccessResponse(EncodedValues::fromValues([[
-                            'ID' => $d['succeeded']['childWorkflowId'] ?? '',
-                            'RunID' => $d['succeeded']['runId'] ?? '',
+                            'ID' => self::stringField($succeeded, 'childWorkflowId') ?? '',
+                            'RunID' => self::stringField($succeeded, 'runId') ?? '',
                         ]], $this->converter), $id, $info)
-                        : new FailureResponse(new \RuntimeException((string) ($d['failed']['failure']['message'] ?? $d['cancelled']['failure']['message'] ?? 'child workflow did not start')), $id, $info);
+                        : new FailureResponse(new \RuntimeException(
+                            self::stringField(self::arrayField($d, 'failed'), 'failure')
+                                ?? self::stringField(self::arrayField($d, 'cancelled'), 'failure')
+                                ?? 'child workflow did not start',
+                        ), $id, $info);
                     break;
 
                 case 'resolveChildWorkflowExecution':
-                    $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
+                    $id = $this->takeId($runId, self::intField($d, 'seq') ?? 0);
                     if ($id !== null) {
-                        $out[] = $this->resolution($d['result'] ?? [], $id, $info);
+                        $out[] = $this->resolution(self::arrayField($d, 'result'), $id, $info);
                     }
                     break;
 
@@ -188,38 +199,38 @@ final class CoreCodec implements CodecInterface
                     $out[] = new ServerRequest(
                         name: 'InvokeSignal',
                         info: $info,
-                        options: ['name' => $d['signalName'] ?? '', 'runId' => $runId],
-                        payloads: $this->values($d['input'] ?? []),
+                        options: ['name' => self::stringField($d, 'signalName') ?? '', 'runId' => $runId],
+                        payloads: $this->values(self::payloadListField($d, 'input', 'jobs.signalWorkflow.input')),
                         id: $runId,
                     );
                     break;
 
                 case 'queryWorkflow':
-                    $this->runs[$runId]['queries'][] = (string) ($d['queryId'] ?? '');
+                    $this->runs[$runId]['queries'][] = self::stringField($d, 'queryId') ?? '';
                     $out[] = new ServerRequest(
                         name: 'InvokeQuery',
                         info: $info,
-                        options: ['name' => $d['queryType'] ?? '', 'runId' => $runId],
-                        payloads: $this->values($d['arguments'] ?? []),
+                        options: ['name' => self::stringField($d, 'queryType') ?? '', 'runId' => $runId],
+                        payloads: $this->values(self::payloadListField($d, 'arguments', 'jobs.queryWorkflow.arguments')),
                         id: $runId,
                     );
                     break;
 
                 case 'doUpdate':
-                    $updateId = (string) ($d['id'] ?? '');
-                    $this->runs[$runId]['updates'][$updateId] = (string) ($d['protocolInstanceId'] ?? $updateId);
+                    $updateId = self::stringField($d, 'id') ?? '';
+                    $this->runs[$runId]['updates'][$updateId] = self::stringField($d, 'protocolInstanceId') ?? $updateId;
                     $out[] = new ServerRequest(
                         name: 'InvokeUpdate',
                         info: $info,
                         options: [
                             'updateId' => $updateId,
-                            'name' => $d['name'] ?? '',
+                            'name' => self::stringField($d, 'name') ?? '',
                             'runId' => $runId,
                             // sdk-php reads this as "skip the validator"; core says so by clearing
                             // run_validator during replay.
                             'replay' => !($d['runValidator'] ?? true),
                         ],
-                        payloads: $this->values($d['input'] ?? []),
+                        payloads: $this->values(self::payloadListField($d, 'input', 'jobs.doUpdate.input')),
                         id: $runId,
                     );
                     break;
@@ -229,7 +240,7 @@ final class CoreCodec implements CodecInterface
                         name: 'CancelWorkflow',
                         info: $info,
                         options: ['runId' => $runId],
-                        payloads: $this->values($d['details'] ?? []),
+                        payloads: $this->values(self::payloadListField($d, 'details', 'jobs.cancelWorkflow.details')),
                         id: $runId,
                     );
                     break;
@@ -281,6 +292,7 @@ final class CoreCodec implements CodecInterface
             }
 
             $options = $c->getOptions();
+            $suboptions = self::arrayField($options, 'options');
 
             switch ($c->getName()) {
                 case 'ExecuteActivity':
@@ -288,14 +300,14 @@ final class CoreCodec implements CodecInterface
                     $out[] = ['scheduleActivity' => \array_filter([
                         'seq' => $seq,
                         'activityId' => (string) $seq,
-                        'activityType' => (string) ($options['name'] ?? ''),
-                        'taskQueue' => (string) ($options['options']['TaskQueueName'] ?? $this->taskQueue),
+                        'activityType' => self::stringField($options, 'name') ?? '',
+                        'taskQueue' => self::stringField($suboptions, 'TaskQueueName') ?? $this->taskQueue,
                         'arguments' => $this->payloads($c->getPayloads()),
-                        'startToCloseTimeout' => $this->duration($options['options']['StartToCloseTimeout'] ?? null, 30),
-                        'scheduleToCloseTimeout' => $this->duration($options['options']['ScheduleToCloseTimeout'] ?? null),
-                        'scheduleToStartTimeout' => $this->duration($options['options']['ScheduleToStartTimeout'] ?? null),
-                        'heartbeatTimeout' => $this->duration($options['options']['HeartbeatTimeout'] ?? null),
-                        'retryPolicy' => $this->retryPolicy($options['options']['RetryPolicy'] ?? null),
+                        'startToCloseTimeout' => $this->duration($suboptions['StartToCloseTimeout'] ?? null, 30),
+                        'scheduleToCloseTimeout' => $this->duration($suboptions['ScheduleToCloseTimeout'] ?? null),
+                        'scheduleToStartTimeout' => $this->duration($suboptions['ScheduleToStartTimeout'] ?? null),
+                        'heartbeatTimeout' => $this->duration($suboptions['HeartbeatTimeout'] ?? null),
+                        'retryPolicy' => $this->retryPolicy($suboptions['RetryPolicy'] ?? null),
                     ], static fn($v): bool => $v !== null && $v !== [])];
                     break;
 
@@ -304,18 +316,18 @@ final class CoreCodec implements CodecInterface
                     $out[] = ['scheduleLocalActivity' => \array_filter([
                         'seq' => $seq,
                         'activityId' => (string) $seq,
-                        'activityType' => (string) ($options['name'] ?? ''),
+                        'activityType' => self::stringField($options, 'name') ?? '',
                         'arguments' => $this->payloads($c->getPayloads()),
-                        'startToCloseTimeout' => $this->duration($options['options']['StartToCloseTimeout'] ?? null, 30),
-                        'scheduleToCloseTimeout' => $this->duration($options['options']['ScheduleToCloseTimeout'] ?? null),
-                        'retryPolicy' => $this->retryPolicy($options['options']['RetryPolicy'] ?? null),
+                        'startToCloseTimeout' => $this->duration($suboptions['StartToCloseTimeout'] ?? null, 30),
+                        'scheduleToCloseTimeout' => $this->duration($suboptions['ScheduleToCloseTimeout'] ?? null),
+                        'retryPolicy' => $this->retryPolicy($suboptions['RetryPolicy'] ?? null),
                     ], static fn($v): bool => $v !== null && $v !== [])];
                     break;
 
                 case 'NewTimer':
                     $out[] = ['startTimer' => [
                         'seq' => $this->nextSeq($runId, $c->getID(), self::TIMER),
-                        'startToFireTimeout' => $this->durationMs((int) ($options['ms'] ?? 0)),
+                        'startToFireTimeout' => $this->durationMs(self::intField($options, 'ms') ?? 0),
                     ]];
                     break;
 
@@ -323,28 +335,28 @@ final class CoreCodec implements CodecInterface
                     $seq = $this->nextSeq($runId, $c->getID(), self::CHILD);
                     $out[] = ['startChildWorkflowExecution' => \array_filter([
                         'seq' => $seq,
-                        'workflowId' => (string) ($options['options']['WorkflowID'] ?? \uniqid('child-', true)),
-                        'workflowType' => (string) ($options['name'] ?? ''),
-                        'taskQueue' => (string) ($options['options']['TaskQueueName'] ?? $this->taskQueue),
+                        'workflowId' => self::stringField($suboptions, 'WorkflowID') ?? \uniqid('child-', true),
+                        'workflowType' => self::stringField($options, 'name') ?? '',
+                        'taskQueue' => self::stringField($suboptions, 'TaskQueueName') ?? $this->taskQueue,
                         'input' => $this->payloads($c->getPayloads()),
-                        'workflowExecutionTimeout' => $this->duration($options['options']['WorkflowExecutionTimeout'] ?? null),
-                        'workflowRunTimeout' => $this->duration($options['options']['WorkflowRunTimeout'] ?? null),
-                        'workflowTaskTimeout' => $this->duration($options['options']['WorkflowTaskTimeout'] ?? null),
-                        'retryPolicy' => $this->retryPolicy($options['options']['RetryPolicy'] ?? null),
+                        'workflowExecutionTimeout' => $this->duration($suboptions['WorkflowExecutionTimeout'] ?? null),
+                        'workflowRunTimeout' => $this->duration($suboptions['WorkflowRunTimeout'] ?? null),
+                        'workflowTaskTimeout' => $this->duration($suboptions['WorkflowTaskTimeout'] ?? null),
+                        'retryPolicy' => $this->retryPolicy($suboptions['RetryPolicy'] ?? null),
                     ], static fn($v): bool => $v !== null && $v !== [])];
                     break;
 
                 case 'GetChildWorkflowExecution':
                     // No command: this one is answered when core reports the child has started.
                     // It names the ExecuteChildWorkflow request it belongs to.
-                    $seq = $this->runs[$runId]['byId'][$options['id'] ?? '']['seq'] ?? null;
+                    $seq = $this->runs[$runId]['byId'][self::stringField($options, 'id') ?? '']['seq'] ?? null;
                     if ($seq !== null) {
                         $this->runs[$runId]['childStart'][$seq] = $c->getID();
                     }
                     break;
 
                 case 'Cancel':
-                    foreach ($options['ids'] ?? [] as $id) {
+                    foreach (self::listOfKeysField($options, 'ids') as $id) {
                         $cmd = $this->cancelOf($runId, $id);
                         if ($cmd !== null) {
                             $out[] = $cmd;
@@ -440,18 +452,18 @@ final class CoreCodec implements CodecInterface
     // ---------------------------------------------------------------- activity tasks
 
     /**
-     * @param  array<string, mixed> $task
+     * @param  array<array-key, mixed> $task
      * @return list<ServerRequest>
      */
     private function decodeActivityTask(array $task): array
     {
-        $this->taskToken = $task['taskToken'] ?? null;
-        $start = $task['start'] ?? null;
-        if ($start === null) {
+        $this->taskToken = self::stringField($task, 'taskToken');
+        if (!isset($task['start'])) {
             return [];   // a cancellation: not translated yet
         }
+        $start = self::arrayField($task, 'start');
 
-        $execution = $start['workflowExecution'] ?? [];
+        $execution = self::arrayField($start, 'workflowExecution');
         $activityId = self::required($start['activityId'] ?? null, 'start.activityId');
 
         return [new ServerRequest(
@@ -463,22 +475,22 @@ final class CoreCodec implements CodecInterface
                 'info' => [
                     'TaskToken' => $this->tokenBase64(),
                     'ActivityID' => $activityId,
-                    'ActivityType' => ['Name' => (string) ($start['activityType'] ?? '')],
+                    'ActivityType' => ['Name' => self::stringField($start, 'activityType') ?? ''],
                     'TaskQueue' => $this->taskQueue,
                     'WorkflowNamespace' => $this->namespace,
-                    'WorkflowType' => ['Name' => (string) ($start['workflowType'] ?? '')],
+                    'WorkflowType' => ['Name' => self::stringField($start, 'workflowType') ?? ''],
                     'WorkflowExecution' => [
-                        'ID' => (string) ($execution['workflowId'] ?? ''),
-                        'RunID' => (string) ($execution['runId'] ?? ''),
+                        'ID' => self::stringField($execution, 'workflowId') ?? '',
+                        'RunID' => self::stringField($execution, 'runId') ?? '',
                     ],
-                    'Attempt' => (int) ($start['attempt'] ?? 1),
+                    'Attempt' => self::intField($start, 'attempt') ?? 1,
                     'HeartbeatTimeout' => $this->nanos($start['heartbeatTimeout'] ?? null),
                     'ScheduledTime' => $this->rfc3339($start['scheduledTime'] ?? null),
                     'StartedTime' => $this->rfc3339($start['startedTime'] ?? null),
                     'Deadline' => $this->rfc3339($start['scheduledTime'] ?? null),
                 ],
             ],
-            payloads: $this->values($start['input'] ?? []),
+            payloads: $this->values(self::payloadListField($start, 'input', 'start.input')),
             id: $activityId,
         )];
     }
@@ -525,12 +537,150 @@ final class CoreCodec implements CodecInterface
      */
     private static function required(mixed $name, string $field): string
     {
-        $value = (string) $name;
+        $value = self::stringOrNull($name) ?? '';
         if ($value === '') {
             throw new \LogicException(\sprintf('the core document has no "%s"', $field));
         }
 
         return $value;
+    }
+
+    // ---------------------------------------------------------------- reading a wire document
+    //
+    // protojson omits a field entirely once it is absent or the zero value, so the wire never
+    // distinguishes "not sent" from "sent as the default". Every field below is read through one
+    // of these rather than indexed directly: each mirrors the `?? default` a direct read would
+    // have used, but only after confirming the value is what it claims to be.
+
+    private static function stringOrNull(mixed $value): ?string
+    {
+        return \is_string($value) || \is_int($value) ? (string) $value : null;
+    }
+
+    private static function intOrNull(mixed $value): ?int
+    {
+        if (\is_int($value)) {
+            return $value;
+        }
+
+        return \is_string($value) && \is_numeric($value) ? (int) $value : null;
+    }
+
+    private static function stringField(mixed $source, int|string $key): ?string
+    {
+        return self::stringOrNull(\is_array($source) ? ($source[$key] ?? null) : null);
+    }
+
+    private static function intField(mixed $source, int|string $key): ?int
+    {
+        return self::intOrNull(\is_array($source) ? ($source[$key] ?? null) : null);
+    }
+
+    /** @return array<array-key, mixed> */
+    private static function arrayField(mixed $source, int|string $key): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+
+        return \is_array($value) ? $value : [];
+    }
+
+    /** @return list<array<array-key, mixed>> */
+    private static function listOfArraysField(mixed $source, int|string $key): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+        if (!\is_array($value)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            if (\is_array($item)) {
+                $out[] = $item;
+            }
+        }
+
+        return $out;
+    }
+
+    /** @return list<int|string> */
+    private static function listOfKeysField(mixed $source, int|string $key): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+        if (!\is_array($value)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            if (\is_int($item) || \is_string($item)) {
+                $out[] = $item;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * A payload is core's own `{metadata, data}` document, and a list of them is core's own
+     * encoding of a `Payloads` message; unlike a scalar field, that shape is never optional-by-
+     * omission, so anything else found here is a malformed document rather than a value to default
+     * away.
+     *
+     * @return list<array{metadata?: array<string, string>, data?: string}>
+     */
+    private static function payloadListField(mixed $source, int|string $key, string $field): array
+    {
+        $value = \is_array($source) ? ($source[$key] ?? null) : null;
+        if ($value === null) {
+            return [];
+        }
+        if (!\is_array($value)) {
+            throw new \LogicException(\sprintf('the core document\'s "%s" is not a list of payloads', $field));
+        }
+
+        return \array_values(\array_map(
+            static fn(mixed $payload): array => self::payloadOf($payload, $field),
+            $value,
+        ));
+    }
+
+    /** @return array{metadata?: array<string, string>, data?: string} */
+    private static function payloadOf(mixed $payload, string $field): array
+    {
+        if (!\is_array($payload)) {
+            throw new \LogicException(\sprintf('a payload in "%s" is not an object', $field));
+        }
+
+        $out = [];
+        if (isset($payload['metadata'])) {
+            $out['metadata'] = self::stringMapOf($payload['metadata'], $field);
+        }
+        if (isset($payload['data'])) {
+            if (!\is_string($payload['data'])) {
+                throw new \LogicException(\sprintf('the "data" of a payload in "%s" is not a base64 string', $field));
+            }
+            $out['data'] = $payload['data'];
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, string> */
+    private static function stringMapOf(mixed $map, string $field): array
+    {
+        if (!\is_array($map)) {
+            throw new \LogicException(\sprintf('the metadata of a payload in "%s" is not an object', $field));
+        }
+
+        $out = [];
+        foreach ($map as $key => $value) {
+            if (!\is_string($key) || !\is_string($value)) {
+                throw new \LogicException(\sprintf('the metadata of a payload in "%s" has a non-string key or value', $field));
+            }
+            $out[$key] = $value;
+        }
+
+        return $out;
     }
 
     private function reset(string $runId): void
@@ -567,18 +717,19 @@ final class CoreCodec implements CodecInterface
 
     /**
      * An ActivityResolution / ChildWorkflowResult -> the response sdk-php is waiting for.
-     * @param array<string, mixed> $result
+     * @param array<array-key, mixed> $result
      */
     private function resolution(array $result, int|string $id, TickInfo $info): SuccessResponse|FailureResponse
     {
         if (isset($result['completed'])) {
-            $payload = $result['completed']['result'] ?? null;
+            $payload = self::arrayField($result, 'completed')['result'] ?? null;
 
-            return new SuccessResponse($this->values($payload === null ? [] : [$payload]), $id, $info);
+            return new SuccessResponse($this->values($payload === null ? [] : [self::payloadOf($payload, 'result')]), $id, $info);
         }
 
         $kind = \array_key_first($result) ?? 'failed';
-        $message = $result[$kind]['failure']['message'] ?? 'activity ' . $kind;
+        $message = self::stringField(self::arrayField(self::arrayField($result, $kind), 'failure'), 'message')
+            ?? ('activity ' . $kind);
 
         return new FailureResponse(
             $kind === 'cancelled' ? new CanceledFailure($message) : new \RuntimeException($message),
@@ -592,17 +743,17 @@ final class CoreCodec implements CodecInterface
      * are fixed by that class's `#[Marshal]` names, and the timeouts by DateIntervalType's default
      * unit — nanoseconds.
      *
-     * @param  array<string, mixed> $start the activation's `startWorkflow` job
+     * @param  array<array-key, mixed> $start the activation's `startWorkflow` job
      * @return array<string, mixed>
      */
     private function workflowInfo(string $runId, array $start, TickInfo $info): array
     {
         return [
-            'WorkflowExecution' => ['ID' => (string) ($start['workflowId'] ?? ''), 'RunID' => $runId],
-            'WorkflowType' => ['Name' => (string) ($start['workflowType'] ?? '')],
+            'WorkflowExecution' => ['ID' => self::stringField($start, 'workflowId') ?? '', 'RunID' => $runId],
+            'WorkflowType' => ['Name' => self::stringField($start, 'workflowType') ?? ''],
             'TaskQueueName' => $this->taskQueue,
             'Namespace' => $this->namespace,
-            'Attempt' => (int) ($start['attempt'] ?? 1),
+            'Attempt' => self::intField($start, 'attempt') ?? 1,
             'WorkflowExecutionTimeout' => $this->nanos($start['workflowExecutionTimeout'] ?? null),
             'WorkflowRunTimeout' => $this->nanos($start['workflowRunTimeout'] ?? null),
             'WorkflowTaskTimeout' => $this->nanos($start['workflowTaskTimeout'] ?? null),
@@ -651,7 +802,9 @@ final class CoreCodec implements CodecInterface
         foreach ($values->toPayloads()->getPayloads() as $p) {
             $metadata = [];
             foreach ($p->getMetadata() as $k => $v) {
-                $metadata[$k] = \base64_encode((string) $v);
+                if (\is_string($k) && \is_string($v)) {
+                    $metadata[$k] = \base64_encode($v);
+                }
             }
             $out[] = ['metadata' => $metadata, 'data' => \base64_encode($p->getData())];
         }
@@ -683,7 +836,7 @@ final class CoreCodec implements CodecInterface
     /** sdk-php marshals every timeout as nanoseconds; protojson wants seconds with a suffix. */
     private function duration(mixed $nanoseconds, ?int $defaultSeconds = null): ?string
     {
-        $ns = (int) $nanoseconds;
+        $ns = self::intOrNull($nanoseconds) ?? 0;
         if ($ns <= 0) {
             return $defaultSeconds === null ? null : $defaultSeconds . 's';
         }

@@ -66,7 +66,11 @@ final class RecordedSource implements ActivationSource, \Temporal\Worker\Transpo
     public function complete(string $kind, string $json): void
     {
         $this->raw[] = $json;
-        $this->completions[] = [$kind, \json_decode($json, true, 512, \JSON_THROW_ON_ERROR)];
+        $decoded = \json_decode($json, true, 512, \JSON_THROW_ON_ERROR);
+        if (!\is_array($decoded)) {
+            throw new \LogicException('a completion the worker produced did not decode to a JSON object');
+        }
+        $this->completions[] = [$kind, $decoded];
     }
 
     public function heartbeat(string $taskToken, array $details): array
@@ -116,6 +120,56 @@ function job(string $name, array $data): array
 function cmdName(array $command): string
 {
     return (string) \array_key_first($command);
+}
+
+/**
+ * The `successful.commands` a completion body carries, or none for a body this worker did not
+ * produce (an eviction ack, say) — the codec under test may or may not have set it.
+ *
+ * @param array<string, mixed> $body
+ *
+ * @return list<array<array-key, mixed>>
+ */
+function commandsOf(array $body): array
+{
+    $successful = $body['successful'] ?? null;
+    $commands = \is_array($successful) ? ($successful['commands'] ?? null) : null;
+    if (!\is_array($commands)) {
+        return [];
+    }
+
+    $out = [];
+    foreach ($commands as $command) {
+        if (\is_array($command)) {
+            $out[] = $command;
+        }
+    }
+
+    return $out;
+}
+
+/**
+ * protojson flattens a oneof, so a command's body is the single value behind its field name.
+ *
+ * @param array<array-key, mixed> $command
+ *
+ * @return array<string, mixed>
+ */
+function commandBodyOf(array $command): array
+{
+    $body = \array_values($command)[0] ?? null;
+
+    return \is_array($body) ? $body : [];
+}
+
+/** Walks a decoded document by key, returning '' unless every step and the final value are strings. */
+function stringPathOf(mixed $document, int|string ...$path): string
+{
+    foreach ($path as $key) {
+        $document = \is_array($document) ? ($document[$key] ?? null) : null;
+    }
+
+    return \is_string($document) ? $document : '';
 }
 
 $runId = 'run-1';
@@ -176,22 +230,24 @@ function check(string $what, mixed $got, mixed $want): void
 $c = $source->completions;
 \printf("completions: %d\n", \count($c));
 foreach ($c as $i => [$kind, $body]) {
-    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($body['successful']['commands'] ?? $body));
+    $successful = $body['successful'] ?? null;
+    $commands = \is_array($successful) ? ($successful['commands'] ?? null) : null;
+    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($commands ?? $body));
 }
 
-$names1 = static fn(int $i): array => \array_map(cmdName(...), $c[$i][1]['successful']['commands'] ?? []);
-$body1 = static fn(int $i, int $j): array => \array_values($c[$i][1]['successful']['commands'][$j] ?? [[]])[0];
+$names1 = static fn(int $i): array => \array_map(cmdName(...), commandsOf($c[$i][1]));
+$body1 = static fn(int $i, int $j): array => commandBodyOf(commandsOf($c[$i][1])[$j] ?? []);
 
 check('1. start -> one scheduleActivity', $names1(0), ['scheduleActivity']);
 check('   activity type reaches core', $body1(0, 0)['activityType'] ?? null, 'greet');
 check('   StartToCloseTimeout as a protojson duration', $body1(0, 0)['startToCloseTimeout'] ?? null, '5s');
-check('   argument survives the DataConverter', \json_decode(\base64_decode($body1(0, 0)['arguments'][0]['data'] ?? ''), true), 'Ada');
+check('   argument survives the DataConverter', \json_decode(\base64_decode(stringPathOf($body1(0, 0), 'arguments', 0, 'data')), true), 'Ada');
 check('2. activity ran, token echoed', $c[1][1]['taskToken'] ?? null, \base64_encode('tok-1'));
-check('   activity result', \json_decode(\base64_decode($c[1][1]['result']['completed']['result']['data'] ?? ''), true), 'Hello, Ada!');
+check('   activity result', \json_decode(\base64_decode(stringPathOf($c[1][1], 'result', 'completed', 'result', 'data')), true), 'Hello, Ada!');
 check('3. resolve -> startTimer', $names1(2), ['startTimer']);
 check('   timer interval as a duration', $body1(2, 0)['startToFireTimeout'] ?? null, '1s');
 check('4. fire -> completeWorkflowExecution', $names1(3), ['completeWorkflowExecution']);
-check('   workflow return value', \json_decode(\base64_decode($body1(3, 0)['result']['data'] ?? ''), true), 'HELLO, ADA!');
+check('   workflow return value', \json_decode(\base64_decode(stringPathOf($body1(3, 0), 'result', 'data')), true), 'HELLO, ADA!');
 check('5. eviction -> no commands', $names1(4), []);
 
 // ---------------------------------------------------------------------------------------------
@@ -266,11 +322,13 @@ $factory2->run($act2);  // the heartbeating activity
 $d = $source2->completions;
 \printf("\ncompletions (scenario 2): %d\n", \count($d));
 foreach ($d as $i => [$kind, $body]) {
-    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($body['successful']['commands'] ?? $body));
+    $successful = $body['successful'] ?? null;
+    $commands = \is_array($successful) ? ($successful['commands'] ?? null) : null;
+    \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($commands ?? $body));
 }
 
-$cmds = static fn(int $i): array => \array_map(cmdName(...), $d[$i][1]['successful']['commands'] ?? []);
-$cmd = static fn(int $i, int $j): array => \array_values($d[$i][1]['successful']['commands'][$j] ?? [[]])[0];
+$cmds = static fn(int $i): array => \array_map(cmdName(...), commandsOf($d[$i][1]));
+$cmd = static fn(int $i, int $j): array => commandBodyOf(commandsOf($d[$i][1])[$j] ?? []);
 
 check('6. start -> workflow awaits, no commands', $cmds(0), []);
 check('7. update -> accepted, then a LOCAL activity', $cmds(1), ['updateResponse', 'scheduleLocalActivity']);
@@ -278,13 +336,13 @@ check('   the validator ran and passed', $cmd(1, 0)['protocolInstanceId'] ?? nul
 check('   accepted, not rejected', \array_key_exists('accepted', $cmd(1, 0)), true);
 check('   prefix from #[LocalActivityInterface]', $cmd(1, 1)['activityType'] ?? null, 'projection.jobStarted');
 check('8. query -> respondToQuery by its own id', $cmds(2), ['respondToQuery']);
-check('   query answered from workflow state', \json_decode(\base64_decode($cmd(2, 0)['succeeded']['response']['data'] ?? ''), true), 'new');
-check('9. local activity ran on the activity stream', \json_decode(\base64_decode($d[3][1]['result']['completed']['result']['data'] ?? ''), true), 'started:x');
+check('   query answered from workflow state', \json_decode(\base64_decode(stringPathOf($cmd(2, 0), 'succeeded', 'response', 'data')), true), 'new');
+check('9. local activity ran on the activity stream', \json_decode(\base64_decode(stringPathOf($d[3][1], 'result', 'completed', 'result', 'data')), true), 'started:x');
 check('10. resolve -> update completes, then workflow', $cmds(4), ['updateResponse', 'completeWorkflowExecution']);
-check('    update result reaches core', \json_decode(\base64_decode($cmd(4, 0)['completed']['data'] ?? ''), true), 'ok:x');
+check('    update result reaches core', \json_decode(\base64_decode(stringPathOf($cmd(4, 0), 'completed', 'data')), true), 'ok:x');
 check('    protocolInstanceId, not the update id', $cmd(4, 0)['protocolInstanceId'] ?? null, 'pi-1');
 check('11. heartbeat reached the host', \count($source2->heartbeats), 1);
-check('    with the task token and the detail', \json_decode(\base64_decode($source2->heartbeats[0]['details'][0]['data'] ?? ''), true), ['at' => 'beat']);
+check('    with the task token and the detail', \json_decode(\base64_decode(stringPathOf($source2->heartbeats[0]['details'] ?? [], 0, 'data')), true), ['at' => 'beat']);
 
 // ---------------------------------------------------------------------------------------------
 // Scenario 3: the client half. sdk-php's own WorkflowClient, in a build with no gRPC extension,

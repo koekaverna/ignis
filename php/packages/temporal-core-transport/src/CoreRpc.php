@@ -33,22 +33,27 @@ final class CoreRpc implements RPCConnectionInterface
         if (!$this->source instanceof HeartbeatSink) {
             throw new TransportException('this host cannot record activity heartbeats (no HeartbeatSink)');
         }
+        if (!\is_array($payload) || !\is_string($payload['details'] ?? null) || !\is_string($payload['taskToken'] ?? null)) {
+            throw new TransportException('the "temporal.RecordActivityHeartbeat" payload must be array{taskToken: string, details: string}');
+        }
 
         // sdk-php hands the details over as wire bytes of a Payloads message — the one place its
         // API forces the protobuf wire format on us. Decoding it here keeps the host's contract in
         // the same plain shape as everything else.
         $details = new Payloads();
-        $details->mergeFromString(\base64_decode((string) ($payload['details'] ?? '')));
+        $details->mergeFromString(\base64_decode($payload['details']));
 
         $out = [];
         foreach ($details->getPayloads() as $p) {
             $metadata = [];
             foreach ($p->getMetadata() as $k => $v) {
-                $metadata[$k] = \base64_encode((string) $v);
+                if (\is_string($k) && \is_string($v)) {
+                    $metadata[$k] = \base64_encode($v);
+                }
             }
             $out[] = ['metadata' => $metadata, 'data' => \base64_encode($p->getData())];
         }
 
-        return $this->source->heartbeat(\base64_decode((string) ($payload['taskToken'] ?? '')), $out);
+        return $this->source->heartbeat(\base64_decode($payload['taskToken']), $out);
     }
 }

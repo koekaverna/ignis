@@ -51,8 +51,12 @@ final class CoreServiceClient implements GrpcClientInterceptor
      * wants a pipeline of `GrpcClientInterceptor` rather than one of this class — so the element
      * type is stated here instead of being inferred at the call.
      *
+     * `Pipeline::prepare()` itself always returns `self<T, mixed>` — its second template parameter
+     * is never inferred from the interceptor type — so that is the only return this method can
+     * honestly promise too.
+     *
      * @param  list<GrpcClientInterceptor>             $interceptors
-     * @return Pipeline<GrpcClientInterceptor, object>
+     * @return Pipeline<GrpcClientInterceptor, mixed>
      */
     private static function pipelineOf(array $interceptors): Pipeline
     {

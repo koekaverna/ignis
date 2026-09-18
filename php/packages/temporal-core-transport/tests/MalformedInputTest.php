@@ -8,9 +8,12 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Temporal\Client\GRPC\Context;
 use Temporal\DataConverter\DataConverter;
+use Temporal\Exception\TransportException;
 use Temporal\Worker\Transport\Core\ActivationSource;
 use Temporal\Worker\Transport\Core\CoreCodec;
+use Temporal\Worker\Transport\Core\CoreRpc;
 use Temporal\Worker\Transport\Core\CoreServiceClient;
+use Temporal\Worker\Transport\Core\HeartbeatSink;
 use Temporal\Worker\Transport\Core\ServiceCall;
 
 /**
@@ -58,6 +61,79 @@ final class MalformedInputTest extends TestCase
         $this->expectExceptionMessage('start.activityId');
 
         $codec->decode(self::json(['taskToken' => 'dG9rZW4=', 'start' => ['activityType' => 'Greet']]));
+    }
+
+    public function testADocumentThatIsNotAJsonObjectIsRejected(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('not a JSON object');
+
+        $this->codec()->decode('"not an object"');
+    }
+
+    public function testAPayloadThatIsNotAnObjectIsRejected(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('jobs.initializeWorkflow.arguments');
+
+        $this->codec()->decode(self::json([
+            'runId' => 'run-1',
+            'jobs' => [['initializeWorkflow' => ['workflowId' => 'wf-1', 'arguments' => ['not-a-payload']]]],
+        ]));
+    }
+
+    public function testAPayloadWithNonStringDataIsRejected(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('"data"');
+
+        $this->codec()->decode(self::json([
+            'runId' => 'run-1',
+            'jobs' => [['initializeWorkflow' => ['workflowId' => 'wf-1', 'arguments' => [['data' => 42]]]]],
+        ]));
+    }
+
+    public function testPayloadMetadataWithANonStringValueIsRejected(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('metadata');
+
+        $this->codec()->decode(self::json([
+            'runId' => 'run-1',
+            'jobs' => [['initializeWorkflow' => ['workflowId' => 'wf-1', 'arguments' => [['metadata' => ['encoding' => 42]]]]]],
+        ]));
+    }
+
+    public function testAHeartbeatPayloadWithoutStringDetailsIsRejected(): void
+    {
+        $rpc = new CoreRpc(new class implements ActivationSource, HeartbeatSink {
+            public function poll(string $kind): ?string
+            {
+                return null;
+            }
+
+            public function complete(string $kind, string $json): void {}
+
+            public function heartbeat(string $taskToken, array $details): array
+            {
+                return [];
+            }
+
+            public function taskQueue(): string
+            {
+                return 'ignis';
+            }
+
+            public function namespace(): string
+            {
+                return 'default';
+            }
+        });
+
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('RecordActivityHeartbeat');
+
+        $rpc->call('temporal.RecordActivityHeartbeat', ['taskToken' => 'dG9r']);
     }
 
     public function testANonProtobufRequestIsRejectedByName(): void
