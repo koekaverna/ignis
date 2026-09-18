@@ -30,6 +30,14 @@ listen = "127.0.0.1:8080"
 # Path prefixes admitted regardless of the budget, so a saturated server can still be probed.
 # exempt = ["/_ignis/", "/metrics"]
 
+# Development reload (research 40, V-90). Watches the files PHP actually loads and brings the
+# workers back with a change, one at a time, without closing the listener. Needs `supervise = true`;
+# leave it off in production, where a stray write would reload the fleet.
+# [watch]
+# enabled = true
+# settle_ms = 300          # quiet time before a change counts; one composer install is one reload
+# reload_parallel = 1      # workers away at once; 1 keeps the reload invisible to clients
+
 [budget]
 # Request fibers admitted at once, per thread. Past it requests wait as data (a few hundred bytes
 # each), never as a fiber (~15 kB). 0 = unlimited. Default 1024.

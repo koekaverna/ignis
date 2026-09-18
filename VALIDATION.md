@@ -4468,3 +4468,65 @@ measurement is deterministic today, and the baseline follows the measurement rat
 
 Gates after the change: `E15 phpt` counts at or above baseline in every row, `php -l + phpstan +
 cs-fixer` clean (`[OK] No errors`, 0 of 143 files), PHP suite 307 tests / 720 assertions.
+
+## V-90 — development reload: the workers come back with the change and nobody notices (CONFIRMED)
+
+Date: 2026-09-19T0x:xxZ. `IGNIS_WATCH=1 ignis --supervise --threads N app.php` watches the files PHP
+has loaded and reloads the workers when one changes — Node's model rather than RoadRunner's, because
+RoadRunner's `pool.debug` restarts the worker after **every** request and that would serialise
+development, where every bug of the last week needs two requests overlapping to appear (research 40).
+
+Configured either way, the file first: `[watch] enabled = true` in `ignis.toml` (with
+`supervise = true`), or `IGNIS_WATCH=1` for a one-off, the environment winning as it does everywhere
+else in the runtime. `settle_ms` and `reload_parallel` sit in the same table.
+
+Gate: `bench/e25-reload.sh`, six arms, all green.
+
+| arm | result |
+|---|---|
+| a save reaches every worker | 40 of 40 requests on the new code, twice in a row |
+| requests still overlap | two 400 ms requests in **417 ms** (serial would be ~800) |
+| a request in flight | **200** in 0.404 s, answered with the code it started on |
+| under load | **283,066 requests, 0 non-2xx**, 35.4k req/s, no heap corruption |
+| `SIGHUP` with no file change | workers respawn, the code is unchanged |
+| `IGNIS_WATCH` without `--supervise` | refuses, says why, and keeps serving |
+
+### Six defects, found by review, each now an arm above
+
+The first version passed a single-request test and failed every one of these. Three reviews ran in
+parallel — Rust, userland, and one that only tried to break the running server — and between them:
+
+1. **Dropped requests under load: 1,472 of 383,181 (0.38 %).** Two causes. The drain counted only
+   PHP's own in-flight number, so a request the front door had already handed the reactor but
+   `ignis_poll` had not delivered was answered 500 by `fail_pending`; and **every worker left
+   dispatch at once**, leaving a window with no reactor registered at all. The drain now waits on the
+   same set `isIdle()` uses, and workers go down one at a time through a slot
+   (`IGNIS_WATCH_RELOAD_PARALLEL`, default 1). After: 0 of 283,066.
+2. **`IGNIS_WATCH` without `--supervise` killed the process** on the first save — both static reviews
+   found it independently. Watching is refused with a message instead.
+3. **A reload spent the crash-loop budget.** One save ended N workers, each charged against
+   `restarts_this_minute >= 10`; at `--threads 12` one edit exhausted it, and the exhausted slot was
+   *removed from the list and never put back*, so the process ended when every slot had gone. The
+   supervisor now tells a reload from a crash by the watcher's generation, keeps the slot, and retries
+   a genuinely crashing one after 5 s. Verified against the review's own case: deleting a loaded file
+   used to burn ten restarts in 252 ms and kill the process; now the process survives and recovers
+   ~3 s after the file comes back.
+4. **`opcache_reset()` corrupts the heap.** Flagged as PLAUSIBLE by the userland review, confirmed by
+   measurement: called while siblings served, it produced `zend_mm_heap corrupted` and 12k req/s.
+   Replaced by `opcache.revalidate_freq=0`, set through `zend_alter_ini_entry_chars` **before the
+   first compile** — `ini_set` from the loop is too late and `php_embed_module.ini_entries` is
+   overwritten by `php_embed_init`. Research 40's recommendation is corrected there.
+5. **Workers that lost the race for the slot slept through their turn.** They were parked in
+   `ignis_poll(-1)` and nothing woke them when the slot was released, so they served one request with
+   the old code first — visible only as a distribution: 3 stale workers of 7 answering. Releasing the
+   slot now wakes the others.
+6. **Classic `listen()` never reported its files**, so reload was a silent no-op there.
+
+Also checked and cleared by review: no deadlock in the notify callback, the FFI in the six zifs, the
+three `FUNCTIONS` table lengths, `leave_dispatch` correctly not failing pending work, and the cost
+when the feature is off — 40,296 req/s with `IGNIS_WATCH` unset against 37,938–40,849 with it on, the
+same within noise.
+
+Gates: `cargo nextest` 51/51, PHP suite 307 tests / 720 assertions, PHPStan `[OK] No errors`,
+php-cs-fixer 0 of 143, `cargo fmt`/`clippy` clean, `bench/e25-reload.sh` GREEN, `scripts/smoke.sh`
+GREEN, `mkdocs build --strict` clean.

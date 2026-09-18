@@ -128,18 +128,31 @@ the first call is 283 strings, every later one is a delta that is almost always 
 to the Rust side, which owns the notify watches and the debounce. A change marks the workers for
 reload; they stop one at a time (O2), so requests keep overlapping *through* the reload as well.
 
-### O4 — opcache is a separate decision, and the default is deliberately wrong for dev
+### O4 — opcache: the obvious tool is the wrong one (corrected by measurement, 2026-09-19)
 
 A respawn leaves opcache SHM untouched on purpose: V-17 counts that as a **production** win —
 php-fpm recycles a worker and pays recompilation, we do not. In development the same property is the
-bug: a fresh engine can compile from a cache that still holds the old file if timestamps are not
-being validated.
+bug: the fresh engine compiles the file it already had, and the worker comes back serving the old
+code. Measured exactly that.
 
-The defaults save us (`validate_timestamps=1`, `revalidate_freq=2`), but a production ini that sets
-`validate_timestamps=0` — the recommended production setting everywhere — makes reload silently do
-nothing. So a reload must either call `opcache_reset()` as part of the cycle, or document
-`revalidate_freq=0` for dev. Recommended: **reset on an explicit reload, leave a respawn-after-fatal
-untouched**, because the two events mean different things.
+This document first recommended `opcache_reset()` on an explicit reload. **That recommendation was
+wrong and is withdrawn.** Built and measured: a worker calling `opcache_reset()` while sibling
+threads served produced `zend_mm_heap corrupted` and took the process down, throughput collapsing
+from 38k to 12k req/s on the way. The cache is process-wide and the siblings are executing out of it;
+there is no moment in a rolling reload when nobody is.
+
+What works is making the revalidation immediate instead of dropping the cache:
+`opcache.revalidate_freq=0`, so every include re-stats its file. Three ways to set it, two of which
+fail for reasons worth writing down:
+
+- `ini_set()` from the loop — **too late**: the entry script and everything it requires are compiled
+  before any PHP of ours runs.
+- `php_embed_module.ini_entries` — **overwritten**: `php_embed_init` assigns its own hardcoded
+  entries over whatever is there.
+- `zend_alter_ini_entry_chars` just before the script is compiled — **works**, and is where the
+  runtime does it when development reload is on.
+
+The cost is a `stat` per include per request, which is what every development setup pays anyway.
 
 ### O5 — per-request kernel *rebuild* in worker mode (rejected — and note it is not O3's restart)
 
@@ -177,8 +190,8 @@ PHP's inability to unload a class leaves available.
    development**, which is where our concurrency bugs are visible at all.
 4. **Per-request restart as an opt-in**, RoadRunner's `pool.debug` for people who want it — and
    documented with its cost: it serialises development, so a fiber-scope bug will not appear there.
-5. **opcache reset on an explicit reload**, and a line in the documentation for anyone running
-   `validate_timestamps=0`.
+5. **`opcache.revalidate_freq=0` while watching** — set by the runtime before the first compile.
+   Not `opcache_reset()`: measured, it corrupts the heap when siblings are serving (O4).
 
 Steps 1 and 2 are worth doing whatever the development story becomes: a reload without a restart is
 an operations feature first — configuration changes, a new deployment on the same host, a stuck
