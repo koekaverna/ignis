@@ -52,9 +52,9 @@ final class ClientTest extends TestCase
 
     public function testArgumentsWithNoClosureInThemAreHandedOverUnchanged(): void
     {
-        $args = ['a', 1, null, true, ['nested' => ['deep' => 'value']]];
+        $arguments = ['a', 1, null, true, ['nested' => ['deep' => 'value']]];
 
-        self::assertSame($args, self::extract($args, $callbacks));
+        self::assertSame($arguments, self::extract($arguments, $callbacks));
         self::assertSame([], $callbacks);
     }
 
@@ -197,12 +197,12 @@ final class ClientTest extends TestCase
         (new \ReflectionMethod(Client::class, 'runCallback'))->invoke(null, $payload);
     }
 
-    /** @param list<mixed> $args */
-    private static function extract(array $args, mixed &$callbacks): mixed
+    /** @param list<mixed> $arguments */
+    private static function extract(array $arguments, mixed &$callbacks): mixed
     {
         $callbacks = [];
 
-        return (new \ReflectionMethod(Client::class, 'extractCallbacks'))->invokeArgs(null, [$args, &$callbacks]);
+        return (new \ReflectionMethod(Client::class, 'extractCallbacks'))->invokeArgs(null, [$arguments, &$callbacks]);
     }
 
     private static function set(string $property, mixed $value): void

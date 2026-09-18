@@ -110,18 +110,23 @@ namespace Swoole {
                 try {
                     $fn(...$args);
                 } catch (\Throwable $e) {
-                    // Swoole aborts the process on an uncaught coroutine exception; tests rely on the message.
-                    echo "PHP Fatal error:  Uncaught ", $e, "\n  thrown in ", $e->getFile(), " on line ", $e->getLine(), "\n";
-                    Event::$aborted = true;
-                    exit(255);
+                    self::abortOnUncaughtException($e);
                 } finally {
-                    foreach (\array_reverse(self::$defers[$cid] ?? []) as $d) {
-                        $d();
+                    foreach (\array_reverse(self::$defers[$cid] ?? []) as $deferred) {
+                        $deferred();
                     }
                     unset(self::$live[$cid], self::$defers[$cid], self::$cancelled[$cid]);
                 }
             });
             return $cid;
+        }
+
+        /** Swoole aborts the process on an uncaught coroutine exception; tests rely on the message. */
+        private static function abortOnUncaughtException(\Throwable $exception): never
+        {
+            echo "PHP Fatal error:  Uncaught ", $exception, "\n  thrown in ", $exception->getFile(), " on line ", $exception->getLine(), "\n";
+            Event::$aborted = true;
+            exit(255);
         }
 
         public static function getCid(): int
@@ -212,10 +217,8 @@ namespace Swoole {
          */
         public static function drive(callable $stop): void
         {
-            if (\Fiber::getCurrent() !== null) { // nested: only await, the outer driver polls
-                while (!$stop()) {
-                    \Ignis\sleep(1);
-                }
+            if (\Fiber::getCurrent() !== null) {
+                self::awaitNested($stop);
                 return;
             }
             \Ignis\Loop::spawn(static function () use ($stop): void {
@@ -224,6 +227,14 @@ namespace Swoole {
                 }
             });
             \Ignis\Loop::runUntil($stop);
+        }
+
+        /** Nested inside a fiber: only await, the outer driver already polls the ticker. */
+        private static function awaitNested(callable $stop): void
+        {
+            while (!$stop()) {
+                \Ignis\sleep(1);
+            }
         }
 
         /** Co\run(): runs $fn as a coroutine and drives the loop until every coroutine and timer is done. */
@@ -252,9 +263,15 @@ namespace Swoole {
             if (self::$aborted) {
                 return;
             }
+            self::waitUnlessLoopAlreadyRunning();
+        }
+
+        /** A `LogicException` here means exit() inside a coroutine already has the loop running. */
+        private static function waitUnlessLoopAlreadyRunning(): void
+        {
             try {
                 self::wait();
-            } catch (\LogicException) { /* loop already running: exit() inside a coroutine */
+            } catch (\LogicException) {
             }
         }
     }
@@ -379,8 +396,8 @@ namespace Swoole\Coroutine {
 
         private function wake(): void
         {
-            foreach ($this->waiters as $f) {
-                \Ignis\Loop::markReady($f, null);
+            foreach ($this->waiters as $fiber) {
+                \Ignis\Loop::markReady($fiber, null);
             }
             $this->waiters = [];
         }
@@ -411,9 +428,9 @@ namespace Swoole\Coroutine {
             if (!$this->park(fn(): bool => $this->closed || $this->queue !== [], $timeout) || $this->queue === []) {
                 return false;
             }
-            $v = \array_shift($this->queue);
+            $value = \array_shift($this->queue);
             $this->wake();
-            return $v;
+            return $value;
         }
 
         public function close(): bool

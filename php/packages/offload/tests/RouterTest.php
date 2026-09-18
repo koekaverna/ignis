@@ -176,10 +176,11 @@ final class RouterTest extends TestCase
         self::assertNull($proxy->getMethod('untyped')->getReturnType(), 'no return type on the parent means none on the override');
     }
 
+    /** The second call must be idempotent — a second eval of the same class name would be a fatal. */
     public function testProxyClassIsIdempotentAndIgnoresAClassThatIsNotLoaded(): void
     {
         Router::proxyClass(\IgnisOffloadProxySubject::class);
-        Router::proxyClass(\IgnisOffloadProxySubject::class);   // a second eval of the same name would be a fatal
+        Router::proxyClass(\IgnisOffloadProxySubject::class);
         Router::proxyClass('NoSuchClassAnywhere');
 
         self::assertFalse(class_exists('Ignis\Offload\Proxy\NoSuchClassAnywhere', false));
@@ -217,8 +218,8 @@ final class RouterTest extends TestCase
         );
     }
 
-    private static function call(string $method, mixed ...$args): mixed
+    private static function call(string $method, mixed ...$arguments): mixed
     {
-        return (new \ReflectionMethod(Router::class, $method))->invoke(null, ...$args);
+        return (new \ReflectionMethod(Router::class, $method))->invoke(null, ...$arguments);
     }
 }

@@ -227,9 +227,9 @@ final class WorkerRuntimeTest extends TestCase
         WorkerRuntime::routed('method:count', ['not an object']);
     }
 
-    private static function call(string $method, mixed ...$args): mixed
+    private static function call(string $method, mixed ...$arguments): mixed
     {
-        return (new \ReflectionMethod(WorkerRuntime::class, $method))->invoke(null, ...$args);
+        return (new \ReflectionMethod(WorkerRuntime::class, $method))->invoke(null, ...$arguments);
     }
 
     private static function set(string $property, mixed $value): void
