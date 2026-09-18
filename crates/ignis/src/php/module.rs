@@ -766,91 +766,6 @@ unsafe extern "C" fn zif_ignis_route_pass(_ex: *mut sys::zend_execute_data, rv: 
     unsafe { zval::set_null(rv) }
 }
 
-/// `ignis_pg_open(string $dsn, int $max): int` — pool id, no I/O (E14).
-unsafe extern "C" fn zif_ignis_pg_open(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: args are VM-owned for the call; the dsn is copied.
-    unsafe {
-        let mut d: *mut c_char = ptr::null_mut();
-        let mut dl: usize = 0;
-        let mut max: sys::zend_long = 10;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"sl".as_ptr(), &mut d, &mut dl, &mut max) != sys::SUCCESS {
-            return;
-        }
-        let dsn = String::from_utf8_lossy(std::slice::from_raw_parts(d as *const u8, dl)).into_owned();
-        zval::set_long(rv, crate::pg::open(dsn, max.max(1) as usize) as i64);
-    }
-}
-
-/// `ignis_pg_acquire(int $pool): int|array` — `['lease' => id]` at once when a connection is idle, else an op whose payload is `{"lease": id}` (E14).
-unsafe extern "C" fn zif_ignis_pg_acquire(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: as above.
-    unsafe {
-        let mut p: sys::zend_long = 0;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut p) != sys::SUCCESS {
-            return;
-        }
-        let owner = Arc::as_ptr(&reactor()) as usize; // M4-11: the lease belongs to this thread
-        if let Some(lease) = crate::pg::try_acquire(p as u64, owner) {
-            zval::set_new_array(rv);
-            sys::add_assoc_long_ex(rv, c"lease".as_ptr(), 5, lease as i64);
-            return;
-        }
-        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::acquire(p as u64, owner))) as i64);
-    }
-}
-
-/// `ignis_pg_query(int $lease, string $sql, string $paramsJson): int` — op; payload `{"rows": [...], "affected": n}` (E14).
-unsafe extern "C" fn zif_ignis_pg_query(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: as above.
-    unsafe {
-        let mut l: sys::zend_long = 0;
-        let (mut q, mut ql, mut j, mut jl): (*mut c_char, usize, *mut c_char, usize) = (ptr::null_mut(), 0, ptr::null_mut(), 0);
-        if sys::zend_parse_parameters(zval::num_args(ex), c"lss".as_ptr(), &mut l, &mut q, &mut ql, &mut j, &mut jl) != sys::SUCCESS {
-            return;
-        }
-        let sql = String::from_utf8_lossy(std::slice::from_raw_parts(q as *const u8, ql)).into_owned();
-        let params = String::from_utf8_lossy(std::slice::from_raw_parts(j as *const u8, jl)).into_owned();
-        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::query(l as u64, sql, params))) as i64);
-    }
-}
-
-/// `ignis_pg_release(int $lease, bool $reset): int` — op; payload 1 when the connection is idle again (E14).
-unsafe extern "C" fn zif_ignis_pg_release(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: as above.
-    unsafe {
-        let mut l: sys::zend_long = 0;
-        let mut reset: bool = true;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"lb".as_ptr(), &mut l, &mut reset) != sys::SUCCESS {
-            return;
-        }
-        zval::set_long(rv, reactor().submit(Op::Custom(crate::pg::release(l as u64, reset))) as i64);
-    }
-}
-
-/// `ignis_pg_stats(int $pool): ?array` — `[idle, created, available]` (E14).
-unsafe extern "C" fn zif_ignis_pg_stats(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: as above.
-    unsafe {
-        let mut p: sys::zend_long = 0;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut p) != sys::SUCCESS {
-            return;
-        }
-        match crate::pg::stats(p as u64) {
-            Some((idle, created, available)) => {
-                zval::set_new_array(rv);
-                sys::add_assoc_long_ex(rv, c"idle".as_ptr(), 4, idle as i64);
-                sys::add_assoc_long_ex(rv, c"created".as_ptr(), 7, created as i64);
-                sys::add_assoc_long_ex(rv, c"available".as_ptr(), 9, available as i64);
-                // M4-1: hold-time visibility. `pools()[&id]` is safe here: stats() just found it.
-                let (oldest_ms, over) = crate::pg::lease_ages(p as u64);
-                sys::add_assoc_long_ex(rv, c"oldest_lease_ms".as_ptr(), 15, oldest_ms as i64);
-                sys::add_assoc_long_ex(rv, c"leases_over_warn".as_ptr(), 16, over as i64);
-            }
-            None => zval::set_null(rv),
-        }
-    }
-}
-
 const fn fe(
     name: &'static CStr,
     handler: unsafe extern "C" fn(*mut sys::zend_execute_data, *mut sys::zval),
@@ -881,7 +796,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 38]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 33]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
@@ -906,11 +821,6 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 38]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
-    fe(c"ignis_pg_open", zif_ignis_pg_open, ARGINFO_GRPC2.0.as_ptr(), 2),
-    fe(c"ignis_pg_acquire", zif_ignis_pg_acquire, ARGINFO_ONE.0.as_ptr(), 1),
-    fe(c"ignis_pg_query", zif_ignis_pg_query, ARGINFO_GRPC3.0.as_ptr(), 3),
-    fe(c"ignis_pg_release", zif_ignis_pg_release, ARGINFO_GRPC2.0.as_ptr(), 2),
-    fe(c"ignis_pg_stats", zif_ignis_pg_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_offload_submit", zif_ignis_offload_submit, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_next", zif_ignis_offload_next, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_offload_done", zif_ignis_offload_done, ARGINFO_GRPC2.0.as_ptr(), 2),
@@ -924,7 +834,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 38]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 46]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 41]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -957,11 +867,6 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 46]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
-    fe(c"ignis_pg_open", zif_ignis_pg_open, ARGINFO_GRPC2.0.as_ptr(), 2),
-    fe(c"ignis_pg_acquire", zif_ignis_pg_acquire, ARGINFO_ONE.0.as_ptr(), 1),
-    fe(c"ignis_pg_query", zif_ignis_pg_query, ARGINFO_GRPC3.0.as_ptr(), 3),
-    fe(c"ignis_pg_release", zif_ignis_pg_release, ARGINFO_GRPC2.0.as_ptr(), 2),
-    fe(c"ignis_pg_stats", zif_ignis_pg_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_offload_submit", zif_ignis_offload_submit, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_next", zif_ignis_offload_next, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_offload_done", zif_ignis_offload_done, ARGINFO_GRPC2.0.as_ptr(), 2),
@@ -973,7 +878,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 46]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
@@ -998,11 +903,6 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_ONE.0.as_ptr(), 1),
-    fe(c"ignis_pg_open", zif_ignis_pg_open, ARGINFO_GRPC2.0.as_ptr(), 2),
-    fe(c"ignis_pg_acquire", zif_ignis_pg_acquire, ARGINFO_ONE.0.as_ptr(), 1),
-    fe(c"ignis_pg_query", zif_ignis_pg_query, ARGINFO_GRPC3.0.as_ptr(), 3),
-    fe(c"ignis_pg_release", zif_ignis_pg_release, ARGINFO_GRPC2.0.as_ptr(), 2),
-    fe(c"ignis_pg_stats", zif_ignis_pg_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_offload_submit", zif_ignis_offload_submit, ARGINFO_GRPC3.0.as_ptr(), 3),
     fe(c"ignis_offload_next", zif_ignis_offload_next, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_offload_done", zif_ignis_offload_done, ARGINFO_GRPC2.0.as_ptr(), 2),
@@ -1093,8 +993,6 @@ mod tests {
             "ignis_grpc_end",
             "ignis_grpc_call",
             "ignis_grpc_recv",
-            "ignis_pg_open",
-            "ignis_pg_query",
             "ignis_offload_submit",
             "ignis_offload_next",
         ] {

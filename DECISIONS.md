@@ -437,3 +437,18 @@ All three are then deleted locally and on `origin`. Nothing is lost: every commi
 and stays; the tags `night-1-done` and `v0.1.0-rc.1` stay. No new night branch is created until
 there is a night's work to put on it — `ci.yml` still triggers on `main` and `night-*`, so the next
 one costs nothing to make.
+
+## 2026-09-18 — the runtime's PostgreSQL client is removed, not deprecated
+
+Owner: "удалить, меньше кода меньше поддержки, удалить из документации для сайта, оставить только в
+ADR как закрыто". Taken as written: the code is gone rather than feature-gated, the site documentation
+describes `pdo_pgsql` with `ignis/doctrine` instead, and ADR-0015 is the single surviving record —
+rewritten to open with why it closed and to keep its original decision text unedited.
+
+The evidence behind it, in the order it arrived: `pdo_pgsql` parks with no runtime client involved
+(V-45, V-59); the pool that was `Ignis\Pg`'s last unique role now lives in `ignis/doctrine`, per
+connection and configured in code (V-85 addenda 2–4); and parked `pdo_pgsql` prepared is faster than
+the native client on both the sequential and the concurrent axis (V-86). What the deletion costs is
+recorded rather than hidden: the runtime pool was process-wide where the userland one is per thread,
+and it had lease age, an acquire timeout and a breaker — `S-POOL-LEASE-AGE` carries those forward for
+the pool that remains.

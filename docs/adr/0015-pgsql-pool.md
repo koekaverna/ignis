@@ -1,6 +1,37 @@
 # ADR-0015 — Runtime-owned PostgreSQL pool with per-fiber leases
 
-Status: accepted (Cycle 16, 2026-09-16; V-21). Amended 2026-09-16 (V-42/V-43/V-44): see the end. Amendment: the reset is the documented expansion of `DISCARD ALL` minus `DEALLOCATE ALL`/`DISCARD PLANS`, in one round trip, so the per-connection prepared-statement cache survives; `ignis_pg_acquire` returns the lease without a reactor hop when a connection is idle. Affects pain-map items: RoadRunner 8 (no pool, pconnect leaks transactions), Swoole 1 (state discipline pushed to the developer), Swoole 7 / FrankenPHP 6 ("pools survive" a thread restart), Swoole 5 (native drivers instead of hooks). Depends on ADR-0007 (parking), ADR-0009 (cancellation), ADR-0013 (`Op::Custom`).
+Status: **closed and removed, 2026-09-18** (owner decision; the code is deleted, this record is what
+is left of it). Accepted Cycle 16, 2026-09-16 (V-21), amended 2026-09-16 (V-42/V-43/V-44). Affected
+pain-map items: RoadRunner 8 (no pool, pconnect leaks transactions), Swoole 1 (state discipline
+pushed to the developer), Swoole 7 / FrankenPHP 6 ("pools survive" a thread restart), Swoole 5
+(native drivers instead of hooks). Depended on ADR-0007 (parking), ADR-0009 (cancellation), ADR-0013
+(`Op::Custom`).
+
+## Why it was removed
+
+The decision below was right about the problem and wrong about where to solve it. Three things
+happened between it and 2026-09-18:
+
+1. **Universal park made the ordinary driver asynchronous** (V-45, V-59): `pdo_pgsql` suspends the
+   fiber on its own socket with no runtime client involved — 100 concurrent 200 ms queries on one
+   thread in 303 ms.
+2. **The pool moved to userland where the framework already is** (V-85 addenda 2–4): `ignis/doctrine`
+   gives every fiber its own connection and, optionally, a per-thread pool with a warm start, a
+   bounded wait and the same `DISCARD ALL` expansion this ADR introduced. Doctrine speaks to it
+   without an adapter, because it is a DBAL driver middleware rather than a second API.
+3. **The speed argument was measured and lost** (V-86): parked `pdo_pgsql` prepared is 264 µs per
+   query against this pool's 349 µs on a held lease, and 74–86 µs against 97–100 µs at twenty
+   concurrent fibers. The native client was paying for the crossing — zif, op, tokio, completion
+   channel — where the parked driver simply waits on its socket.
+
+What this design still had that the userland pool does not: one pool for the whole process rather
+than one per thread (`threads × size` connections), and lease age, an acquire timeout and a circuit
+breaker (`S-POOL-LEASE-AGE` carries those forward). They were not enough to keep 697 lines of Rust,
+27 registered functions and a PHP package alive for a path no framework used. Removing it took
+5.6 MB off the binary (39.1 MB → 33.5 MB) with `tokio-postgres` and its dependencies.
+
+The decision as it stood follows, unedited, because the shape it describes — the runtime owning a
+resource and PHP holding a lease — is the one thing here worth remembering.
 
 ## Decision
 

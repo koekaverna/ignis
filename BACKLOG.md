@@ -226,7 +226,7 @@ env/toml; `IGNIS_NO_UNIVERSAL_PARK` as the hook-off control (every hook claim ne
 
 ## M4 — Operate
 
-### M4-1 Hold-time on pool leases `main` `done (V-44)`
+### M4-1 Hold-time on pool leases `main` `done (V-44); removed 2026-09-18 with the pool it measured (ADR-0015 closed) — the idea is alive as S-POOL-LEASE-AGE for the userland pool`
 **What.** `pg::Lease` gets an `Instant` at acquire; `pg::stats` reports the oldest live lease's age
 and the count of leases older than a threshold; a `warn!` when a lease passes `IGNIS_PG_LEASE_WARN_MS`
 (default 5000). Same for offload jobs in flight.
@@ -236,7 +236,7 @@ and the count of leases older than a threshold; a `warn!` when a lease passes `I
 and age; `/_ignis/stats` shows `pg.oldest_lease_ms` ≥ 6000 while it is held and 0 after release.
 **Constraints.** `main` (`pg.rs`, `module.rs`). An agent may write the PHP reproducer first.
 
-### M4-2 Per-dependency bulkhead + circuit breaker (B2) `main` `DONE 2026-09-18 — see S1-BULKHEAD`
+### M4-2 Per-dependency bulkhead + circuit breaker (B2) `main` `DONE 2026-09-18 — see S1-BULKHEAD; removed the same day with ADR-0015, and the bounded wait now lives in ignis/doctrine's pool (PoolTimeoutException)`
 **What.** ROADMAP B2 as rewritten 2026-09-16: cap the number of fibers that may *wait* on one pool
 (`pg::acquire` waits unboundedly today — `acquire_owned().await` behind a semaphore that bounds
 connections, not waiters); past the cap fail fast with `Ignis\Pg\BusyError` instead of parking.
@@ -572,7 +572,7 @@ RSS is unbounded under load — the half of B1's acceptance a fiber budget canno
 **Acceptance.** `limits.max_connections` enforced at accept; over the cap the listener stops
 accepting rather than queueing unboundedly; RSS at 2× the cap is flat. Lands with S3-LIMITS.
 
-### S1-BULKHEAD Per-dependency bulkhead and breaker (M4-2/B2) `main` `DONE 2026-09-18`
+### S1-BULKHEAD Per-dependency bulkhead and breaker (M4-2/B2) `main` `DONE 2026-09-18, then removed with ADR-0015 — the userland pool has the bounded wait, not the breaker (S-POOL-LEASE-AGE)`
 **What.** `pg::acquire` waits unboundedly, so one slow dependency stalls every fiber that wants it.
 pain-map PHP-FPM 2, still NOT STARTED.
 **Acceptance.** A bounded wait with a configurable ceiling; past it the caller gets an error rather

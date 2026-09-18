@@ -13,7 +13,7 @@ One process, two worlds that only ever exchange plain data over channels.
   thread (ADR-0010).
 
 `reactor.rs` is the only bridge between the two worlds. PHP calls one of a small set of
-`ignis_*()` functions — `ignis_submit_sleep()`, `ignis_watch()`, `ignis_grpc_*()`, `ignis_pg_*()`,
+`ignis_*()` functions — `ignis_submit_sleep()`, `ignis_watch()`, `ignis_grpc_*()`,
 `ignis_offload_*()` — each packaging an `Op` (`Sleep`, `Watch`, `CancelWatch`, `Custom`) as plain
 data, no pointers, and then `ignis_poll(timeout)`. HTTP requests, gRPC calls, timer completions and
 offload answers all arrive on that one completion channel, so a PHP thread has **exactly one wait
@@ -77,7 +77,7 @@ deliberately shaped like a [Revolt](https://revolt.run) event-loop driver
 10,000-fiber benchmark put the Rust side at 0.3% of PHP-thread samples — the userland scheduler is
 not the bottleneck (fiber lifecycle, the mmap'd C stack per Fiber, is), so there is no performance
 case for moving it into Rust, and keeping it in userland means Revolt, `symfony/runtime`, gRPC,
-Temporal and `Ignis\Pg` are all adapters over the same primitives rather than separate mechanisms.
+Temporal and the Doctrine integration are all adapters over the same primitives rather than separate mechanisms.
 
 ## Where this is decided
 

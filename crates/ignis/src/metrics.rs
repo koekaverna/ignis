@@ -142,17 +142,6 @@ pub fn render() -> String {
     metric(&mut out, "ignis_fibers_created_total", "counter", "Fibers the pool has had to allocate.", t.fibers_created);
     metric(&mut out, "ignis_fiber_resumes_total", "counter", "Fiber starts and resumes performed by the loops.", t.resumes);
 
-    let (oldest_ms, over_warn, leases) = crate::pg::lease_metrics();
-    metric(&mut out, "ignis_pg_leases", "gauge", "PostgreSQL connections leased to a fiber right now (ADR-0015).", leases);
-    metric(
-        &mut out,
-        "ignis_pg_lease_age_seconds_max",
-        "gauge",
-        "Age of the oldest live lease; older than IGNIS_PG_LEASE_WARN_MS means a held connection.",
-        oldest_ms as f64 / 1000.0,
-    );
-    metric(&mut out, "ignis_pg_leases_over_warn", "gauge", "Live leases older than IGNIS_PG_LEASE_WARN_MS.", over_warn);
-
     out
 }
 

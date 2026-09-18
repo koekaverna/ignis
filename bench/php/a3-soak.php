@@ -5,12 +5,10 @@
 // /stats route (rss_kb + counters) so the driving script can read RSS from the process
 // itself as a cross-check against `ps`/`/proc`. Listens on IGNIS_LISTEN (default differs
 // from app.php's 127.0.0.1:8080 so this can run without colliding with anything else on
-// the box). /db (E14, PG_DSN) is left in but unexercised by the driver: no PG server on
-// this box -- it just returns its "set PG_DSN..." info message, never an error.
+// the box).
 declare(strict_types=1);
 
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
-require __DIR__ . '/../../php/packages/pg/src/ignis-pg.php';
 require __DIR__ . '/../../php/packages/offload/src/ignis-offload.php';
 
 use Ignis\Http\Request;
@@ -46,19 +44,6 @@ function offloadDemo(): array
     return ['result' => $upper, 'pool' => Ignis\Offload\Client::stats()];
 }
 
-function dbDemo(): array
-{
-    static $pool = null;
-    $dsn = getenv('PG_DSN');
-    if ($dsn === false) {
-        return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
-    }
-    $pool ??= new Ignis\Pg\Pool($dsn, 10);
-    return $pool->transaction(static fn(Ignis\Pg\Lease $l) => [
-        'backend' => $l->backendPid(),
-        'now' => $l->query('SELECT now()::text AS t')[0]['t'],
-    ]);
-}
 
 Ignis\serve(static function (Request $req): Response {
     return match ($req->path()) {
@@ -66,7 +51,6 @@ Ignis\serve(static function (Request $req): Response {
         '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
         '/upstream'  => Response::json(upstreamJson('http://' . (getenv('IGNIS_LISTEN') ?: '127.0.0.1:8099') . '/dashboard')),
         '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),
-        '/db'        => Response::json(dbDemo()),
         '/offload'   => Response::json(offloadDemo()),
         '/sleep'     => (static function () use ($req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));

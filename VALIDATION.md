@@ -4321,3 +4321,46 @@ What this does **not** refute: the runtime's pool is process-wide, where `ignis/
 thread (`threads × size` connections), and it has lease age, an acquire timeout and a breaker that
 the userland pool does not (`S-POOL-LEASE-AGE`). Those are the arguments that survive; speed is not
 one of them.
+
+## V-87 — the runtime's PostgreSQL client is deleted (owner decision, ADR-0015 closed)
+
+Date: 2026-09-18T20:0xZ. Owner: "удалить, меньше кода меньше поддержки, удалить из документации для
+сайта, оставить только в ADR как закрыто". Three measurements had already taken every argument for it
+apart: park made the ordinary driver asynchronous (V-45, V-59), the pool moved to userland where the
+framework is (V-85 addenda 2–4), and the native client measured **slower** than parked `pdo_pgsql`
+(V-86).
+
+**What went:**
+
+| | |
+|---|---|
+| `crates/ignis/src/pg.rs` | 697 lines, with its 9 nextest cases |
+| `ignis_pg_*` functions | 5 zifs, registered in all three `FUNCTIONS` tables (15 rows), plus their stubs |
+| `php/packages/pg` | the `Ignis\Pg` package and its unit suite (21 tests) |
+| benches | `e14-pg.sh`, `e14_pg.php`, `m4-pool-survives.sh`/`.php`, `pg_async_probe.php`, and `e25_pg_vs_pdo.php` — the comparison bench itself, which cannot run without the API it compared |
+| dependency | `tokio-postgres` and its tree |
+| CI | the `postgres:16` service that existed for smoke's E14 leg |
+
+**Measured effect:** the release binary is **33,479,832 bytes against 39,065,608** — 5.6 MB, 14.3 %,
+gone with `tokio-postgres`. `cargo nextest` 60 → 51 tests; the PHP suite 323 → 302; three
+`FUNCTIONS` tables shrank by five entries each (their lengths are explicit, so a miscount is a
+compile error — that is how the first attempt failed).
+
+**Kept:** ADR-0015, rewritten to open with why it was closed and to keep its decision text unedited,
+because the shape it describes — the runtime owning a resource, PHP holding a lease — is the part
+worth remembering. Research 14 and 24, the hypotheses and every V-entry stay as records; they are not
+site documentation. The ADR index row now reads *closed and removed*.
+
+**Removed from the site:** the `Ignis\Pg` section of the PHP API reference, the four `IGNIS_PG_*`
+rows and the breaker note in the configuration reference, the lease-age row and the pool-error
+runbook in Operations, and the PostgreSQL rows in README and the compatibility table now describe
+`pdo_pgsql` + `ignis/doctrine` instead.
+
+**One mistake worth recording:** the first pass at `configuration.md` deleted the whole "Front door:
+limits and shutdown" section along with the breaker note, because the slice ran to the next `!!!`
+block rather than the next heading. `mkdocs build --strict` caught it as a broken anchor from the
+`limits.max_body_bytes` row — the link that a table row happened to carry into the section is what
+saved it. Restored and redone by exact heading.
+
+Gates: `cargo nextest` 51/51, clippy and `cargo fmt` clean, PHP suite 302 tests / 712 assertions,
+`mkdocs build --strict` clean (no warnings, no broken anchors), `scripts/smoke.sh` GREEN.

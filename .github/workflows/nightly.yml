@@ -72,9 +72,6 @@ jobs:
           record e2_all3x200_ms "${all:-999999}" 230
           record e2_per_fiber_us_warm "${warm:-999999}" 100
 
-          echo "== E14 (pgsql pool): CI runners have no PostgreSQL — skipped"
-          echo "nightly: e14_pgsql skipped (no PostgreSQL service on this runner)"
-          TABLE="${TABLE}nightly: e14_pgsql skipped (no PostgreSQL service on this runner)"$'\n'
 
           echo "== hello (V-6/V-15: wrk -t2 -c64 -d10s, 1 PHP thread)"
           timeout 30 ./target/release/ignis examples/hello_server.php >/tmp/hello.log 2>&1 &
@@ -100,7 +97,7 @@ jobs:
 
           echo "== E16 (V-24: offload pool, 100 x 200ms through 8 workers)"
           # bench/e16-offload.sh's auto-routing leg also probes pdo_pgsql, which this runner
-          # doesn't have (see E14 above); run e16_offload.php directly to get the one summary line
+          # has no PostgreSQL for; run e16_offload.php directly to get the one summary line
           # the pool claim needs — it prints before that script's own (unguarded) pdo_pgsql probe.
           IGNIS_OFFLOAD_PRELUDE="$PWD/bench/php/e16_prelude.php" timeout 120 ./target/release/ignis --offload 8 bench/php/e16_offload.php >/tmp/e16.log 2>&1 || true
           e16_ms=$(sed -nE 's/^blocking calls: 100 x 200 ms through 8 workers: ([0-9.]+) ms wall.*/\1/p' /tmp/e16.log | tail -1)

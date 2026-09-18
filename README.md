@@ -179,7 +179,7 @@ LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis serve examples/hello_s
 | `PDO` on a socket-backed driver (`pgsql`; `mysql` is not compiled into this build) | **parks the fiber** — 303 ms for 100 × 200 ms queries on one thread, against 2,753 ms through an 8-worker offload pool | V-45, V-59 |
 | `SQLite3` | routed to the offload pool, the fiber sleeps — a regular file cannot be parked (ADR-0024), so offload is the only mechanism it has | V-24 |
 | `PDO` on `sqlite:` | **blocks the OS thread** for the length of the file access, like every other regular-file call (ADR-0024). Routing is by class name and the driver is in the DSN, which the runtime cannot see when it decides — set `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to send every `PDO` to the pool instead | V-59 addendum |
-| PostgreSQL | runtime-owned pool with per-fiber leases (`Ignis\Pg`), or `ext/pgsql` async over the same reactor | V-21, research 24 |
+| PostgreSQL | `pdo_pgsql` and `ext/pgsql` unchanged — the driver's socket parks the fiber; `ignis/doctrine` gives every fiber its own connection and pools them per thread | V-85, V-86 |
 | `$_SERVER`, `$_GET`, `$_POST`, `$_COOKIE` | fiber-scoped; two interleaved requests never see each other's | V-11 |
 | a client disconnect | cancels the request fiber and its children within 1 ms; `Ignis\deadline()` per request | V-14, V-30 |
 | a fatal error in a handler | ends one worker thread, which is respawned; other threads keep serving | V-17 |

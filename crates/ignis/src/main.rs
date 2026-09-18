@@ -8,7 +8,6 @@ mod grpc;
 mod http;
 mod metrics;
 mod offload;
-mod pg;
 mod php;
 mod reactor;
 

@@ -16,7 +16,6 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../php/packages/runtime/src/ignis.php';
-require __DIR__ . '/../php/packages/pg/src/ignis-pg.php'; // E14: runtime-owned PostgreSQL pool (route /db needs PG_DSN)
 require __DIR__ . '/../php/packages/offload/src/ignis-offload.php'; // E16: offload pool (route /offload needs --offload N)
 
 use Ignis\Future;
@@ -138,7 +137,6 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
         '/users'     => Response::json(usersFromDb($pdo)),
         '/upstream'  => Response::json(upstreamJson("http://$listen/dashboard")), // self-call, suspends (E6)
         '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
-        '/db'        => Response::json(dbDemo()),                                             // pool lease per fiber, transaction pins it (E14)
         '/offload'   => Response::json(offloadDemo()),                                        // blocking code on a sync worker thread, fiber parks (E16)
         '/sleep'     => (static function () use ($req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
@@ -152,27 +150,6 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
         default      => Response::text("not found\n", 404),
     };
 }, $listen);
-
-/**
- * E14: one lease per fiber; a transaction keeps one backend; the query parks the fiber, not the thread.
- * @return array<string, mixed>
- */
-function dbDemo(): array
-{
-    static $pool = null;
-    $dsn = getenv('PG_DSN');
-    if ($dsn === false) {
-        return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
-    }
-    $pool ??= new Ignis\Pg\Pool($dsn, 10);
-
-    return $pool->transaction(static fn(Ignis\Pg\Lease $l) => [
-        'backend' => $l->backendPid(),
-        'now' => $l->query('SELECT now()::text AS t')[0]['t'],
-        'sleep_ms' => intColumn($l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0], 'd'),
-        'pool' => $pool->stats(),
-    ]);
-}
 
 /**
  * E16: a named function runs on a synchronous worker thread with its own PHP context; this fiber parks meanwhile.

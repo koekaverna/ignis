@@ -42,7 +42,9 @@ final class Scope
      * outlives the request that used it: the loop keeps parked fibers and hands them to the next
      * request, so without this "per fiber" silently means "per fiber, forever" — measured in V-67,
      * where request n+1 read request n's value on the same fiber id. Anything holding a resource
-     * (an `Ignis\Pg` lease) releases through its destructor when the reference goes.
+     * releases through its destructor when the reference goes — and a resource caught in a reference
+     * cycle does not, which is why `ignis/doctrine` keeps its connection behind a handle that is in
+     * none (V-85).
      */
     public static function clear(): void
     {

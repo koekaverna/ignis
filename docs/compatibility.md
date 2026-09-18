@@ -14,7 +14,7 @@ VALIDATION.md entry that measured it. Nothing here is a claim without a number b
 | `PDO` on a socket-backed driver (`pgsql`; `mysql` is not compiled into this build) | **parks the fiber** — 303 ms for 100 × 200 ms queries on one thread, against 2,753 ms through an 8-worker offload pool | V-45, V-59 |
 | `SQLite3` | routed to the offload pool, the fiber sleeps — a regular file cannot be parked (ADR-0024), so offload is the only mechanism it has | V-24 |
 | `PDO` on `sqlite:` | **blocks the OS thread** for the length of the file access, like every other regular-file call (ADR-0024). Routing is by class name and the driver is in the DSN, which the runtime cannot see when it decides — set `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to send every `PDO` to the pool instead | V-59 addendum |
-| PostgreSQL | runtime-owned pool with per-fiber leases (`Ignis\Pg`), or `ext/pgsql` async over the same reactor | V-21 |
+| PostgreSQL | `pdo_pgsql` and `ext/pgsql` unchanged — the driver's socket parks the fiber; under Symfony, `ignis/doctrine` gives every fiber its own connection and can pool them per thread | V-85, V-86 |
 | `$_SERVER`, `$_GET`, `$_POST`, `$_COOKIE` | fiber-scoped; two interleaved requests never see each other's | V-11 |
 | a client disconnect | cancels the request fiber and its children within 1 ms; `Ignis\deadline()` per request | V-14, V-30 |
 | a fatal error in a handler | ends one worker thread, which is respawned; other threads keep serving | V-17 |
@@ -45,7 +45,7 @@ running `ignis serve`, which prints the resolved policy in its startup banner
 
 | driver | mechanism | why |
 |---|---|---|
-| `pdo_pgsql`, `ext/pgsql`, `Ignis\Pg` | **parks the fiber** | a socket — there is readiness to wait for. 100 concurrent 200 ms queries on one thread: **303 ms** (V-45, V-59). One handle must belong to one fiber: libpq is not reentrant per connection, and two fibers inside one connection swap result sets (V-85) — under Symfony that is what `IgnisDoctrineBundle` guarantees |
+| `pdo_pgsql`, `ext/pgsql` | **parks the fiber** | a socket — there is readiness to wait for. 100 concurrent 200 ms queries on one thread: **303 ms** (V-45, V-59). One handle must belong to one fiber: libpq is not reentrant per connection, and two fibers inside one connection swap result sets (V-85) — under Symfony that is what `IgnisDoctrineBundle` guarantees |
 | `pdo_mysql`, `mysqli` | **parks the fiber**, by construction | also a socket, and `mysqlnd` goes through `php_stream`. **Not compiled into the current build**, so this is design, not measurement |
 | `SQLite3` | **offload pool** | a regular file. `epoll` refuses regular files, so nothing can park it ([ADR-0024](concept/non-goals.md)); a worker thread blocks instead of your request thread |
 | `PDO` on `sqlite:` | **blocks the OS thread** by default | see below — this is the one case the runtime cannot decide for you |

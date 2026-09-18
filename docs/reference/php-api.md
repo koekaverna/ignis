@@ -4,7 +4,7 @@ Every public function, class and method a script or framework integration is mea
 Sources: `php/packages/runtime/src/ignis.php` (the userland scheduler — `Ignis\Loop`, `Future`, `async()`, `all()`,
 `sleep()`, `deadline()`, `Scope`, `serve()`, `Ignis\Http\Request`/`Response`), `php/packages/runtime/src/classic.php`
 (`Ignis\Classic`), `php/packages/runtime/src/Output.php` (`Ignis\Output`), `php/packages/pg/src/ignis-pg.php`
-(`Ignis\Pg`), `php/packages/offload/src/ignis-offload.php` (`Ignis\Offload`, `Ignis\offload()`),
+`php/packages/offload/src/ignis-offload.php` (`Ignis\Offload`, `Ignis\offload()`),
 `php/packages/revolt/src/IgnisDriver.php` (`Ignis\Revolt\IgnisDriver`), `php/packages/symfony-runtime/src/*`
 (`Ignis\Symfony`), `php/packages/doctrine/src/*` (`Ignis\Doctrine`), `php/packages/temporal/src/*`
 (`Ignis\Temporal`), and the internal `ignis_*` function table registered from `crates/ignis/src/php/module.rs`.
@@ -51,7 +51,7 @@ Ignis\serve(function (Ignis\Http\Request $req): Ignis\Http\Response {
 
 The scheduler class behind every function above; shaped so it can become a Revolt driver
 (`activate`/`dispatch`/`deactivate`/`now` — see `IgnisDriver` below). Most applications never call
-`Loop` directly and use the top-level functions instead; integrations (`Ignis\Pg`, `Ignis\Offload`)
+`Loop` directly and use the top-level functions instead; integrations (`Ignis\Offload`, `ignis/doctrine`)
 call `Loop::awaitOp()` and `Loop::spawn()` directly.
 
 | Member | What it does |
@@ -99,7 +99,7 @@ is dropped when that fiber is garbage-collected (backed by a `WeakMap`). Outside
 | `static get(string $key, mixed $default = null): mixed` | Reads it back; `$default` if unset. |
 
 Used internally for `ignis.request` (the current request id, for cancellation/deadline routing) and
-by `Ignis\Pg` (one lease per fiber per pool) and Symfony's `FiberRequestStack`.
+by `ignis/doctrine` (one entity manager and one connection per fiber) and Symfony's `FiberRequestStack`.
 
 ### `Ignis\Output` (`php/packages/runtime/src/Output.php`)
 
@@ -170,36 +170,6 @@ mode) already imposes.
 Also declared (global namespace, only if not already defined — e.g. under `Ignis\Classic`):
 `getallheaders()`, `apache_request_headers()`, `apache_response_headers()` polyfills built from
 `$_SERVER`'s `HTTP_*` entries and the sent header list.
-
-## `namespace Ignis\Pg` (`php/packages/pg/src/ignis-pg.php`, E14/ADR-0015)
-
-Connections belong to the runtime (a process-wide pool); PHP code holds *leases*.
-
-| Class / member | What it does |
-|---|---|
-| `Pool::__construct(string $dsn, int $max = 10)` | Opens a pool (`ignis_pg_open`, no I/O yet) shared by every thread/fiber in the process. |
-| `Pool::acquire(): Lease` | Leases a connection for the current fiber. A **second** `acquire()` from a pool already leased in the same fiber throws `LeaseError` — never waits (one lease per fiber per pool, tracked via `Ignis\Scope`). |
-| `Pool::query(string $sql, array $params = []): array` | Acquire → query → release in one call; returns the row list. |
-| `Pool::exec(string $sql, array $params = []): int` | Acquire → exec → release; returns the affected-row count. |
-| `Pool::transaction(callable(Lease):mixed $fn): mixed` | Runs `$fn($lease)` inside `BEGIN`/`COMMIT` on one leased connection; any `\Throwable` triggers `ROLLBACK` and rethrows. |
-| `Pool::stats(): ?array` | `['idle', 'created', 'available', 'oldest_lease_ms', 'leases_over_warn']` (the last two per `IGNIS_PG_LEASE_WARN_MS`, see `configuration.md`); `null` if the pool id is unknown to the runtime. |
-| `Lease::query(string $sql, array $params = []): array` | Rows only. |
-| `Lease::exec(string $sql, array $params = []): int` | Affected-row count only. |
-| `Lease::backendPid(): int` | `SELECT pg_backend_pid()` convenience. |
-| `Lease::release(bool $reset = true): void` | Returns the connection to the pool; `$reset` runs `ROLLBACK; DISCARD ALL` server-side first. Safe to call more than once (a no-op after the first). |
-| `Lease::__destruct()` | Fire-and-forget release if the script never called `release()` explicitly — nobody awaits this completion. |
-
-`LeaseError extends \LogicException` (double-acquire, or using a released lease);
-`QueryError extends \RuntimeException` (the query itself failed server-side).
-
-```php
-$pool = new Ignis\Pg\Pool('postgres://user:pass@localhost/db', max: 10);
-$rows = $pool->query('SELECT id, name FROM users WHERE id = $1', [42]);
-$pool->transaction(function (Ignis\Pg\Lease $l) {
-    $l->exec('UPDATE accounts SET balance = balance - 100 WHERE id = $1', [1]);
-    $l->exec('UPDATE accounts SET balance = balance + 100 WHERE id = $1', [2]);
-});
-```
 
 ## `namespace Ignis\Offload` (`php/packages/offload/src/ignis-offload.php`, E16/ADR-0016)
 
@@ -354,7 +324,6 @@ except for the two noted below.
 | `ignis_set_superglobals(array, array, array, array): void` | `Ignis\Loop`'s request dispatch (ADR-0006) |
 | `ignis_cancel_parked_any(\Fiber, \Throwable): bool` | `Ignis\Loop::throwInto()` (ADR-0009 cancellation) |
 | `ignis_grpc_send`/`_end`/`_call`/`_recv` | `php/packages/grpc/src/ignis-grpc.php` (E10; not covered in full by this reference) |
-| `ignis_pg_open`/`_acquire`/`_query`/`_release`/`_stats` | `Ignis\Pg\Pool`/`Lease` above |
 | `ignis_offload_submit`/`_next`/`_done`/`_callback`/`_cb_result`/`_stats` | `Ignis\Offload\Client`/`offload()` above |
 | `ignis_route_enable`/`_route_pass` | `Ignis\Offload\Router` above |
 | `ignis_temporal_*` (8 functions — `connect`, `replay`, `poll`, `complete`, `poll_activity`, `complete_activity`, `heartbeat`, `shutdown`; `feature = "temporal"` builds only) | Two consumers, neither covered in full by this reference: `php/packages/temporal-prototype/src/ignis-temporal.php` (the frozen ADR-0013 workflow runtime of our own) and `Ignis\Temporal\CoreSource` (`php/packages/temporal/src/CoreSource.php`, ADR-0040 — the current, supported host, which drives the official `temporalio/sdk-php` over the same primitives via `ignis/temporal-core-transport`'s `ActivationSource`). |
@@ -363,7 +332,7 @@ except for the two noted below.
 **Two exceptions a custom event-loop integration legitimately calls directly** (as `IgnisDriver`
 does): `ignis_watch(resource $stream, int $mode): int` (one-shot readiness watch, mode `1` =
 readable / `2` = writable, ADR-0008) and `ignis_cancel(int $op): int` (cancels a pending
-`ignis_watch`). Every other application should go through `Ignis\sleep()`/`async()`/`Ignis\Pg`/etc.
+`ignis_watch`). Every other application should go through `Ignis\sleep()`/`async()`/the integrations above.
 
 ### Consistency with `php/packages/runtime/stubs/ignis.php`
 

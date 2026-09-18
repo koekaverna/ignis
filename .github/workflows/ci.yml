@@ -111,15 +111,6 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: ignis
-          POSTGRES_PASSWORD: ignis
-          POSTGRES_DB: ignis
-        options: >-
-          --health-cmd "pg_isready -U ignis" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -134,7 +125,7 @@ jobs:
       - name: composer install (the php/ monorepo and its dev tooling)
         run: cd php && timeout 900 /opt/php85-zts/bin/php "$(command -v composer)" install --no-interaction --quiet
       - name: smoke (every step under timeout)
-        run: PGHOST=postgres timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
+        run: timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

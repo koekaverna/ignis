@@ -63,28 +63,12 @@ Everything below is read directly with `std::env::var`/`var_os` somewhere in `cr
 | `IGNIS_OFFLOAD_FUNCTIONS` | `crates/ignis/src/php/route.rs` | **empty** (was the `curl_*` list until 2026-09-17; curl parks now — V-59, and setting the old list back restores routing) | Comma-separated internal function names auto-routed to the offload pool (E16 auto-routing) when running inside a fiber and the extension is loaded; unset means "the default list", not "nothing". |
 | `IGNIS_OFFLOAD_CLASSES` | `crates/ignis/src/php/route.rs` | `SQLite3` (was `PDO,SQLite3` until 2026-09-17: routing every `PDO` sent `pgsql` to a worker too, 9× slower than parking — V-59 addendum. Add `PDO` back for a `pdo_sqlite` app) | Comma-separated class names whose `new` is auto-routed to the offload pool inside a fiber. |
 | `IGNIS_NO_OFFLOAD_ROUTE` | `crates/ignis/src/php/route.rs` | unset (routing installed) | Any value disables auto-routing installation entirely (`route::install()` returns immediately) — the E16 hook-off control. |
-| `IGNIS_PG_LEASE_WARN_MS` | `crates/ignis/src/pg.rs` | `5000` | A PostgreSQL connection lease held longer than this is counted in `ignis_pg_lease_age_seconds_max` / `ignis_pg_leases_over_warn` (`/metrics`, `crates/ignis/src/metrics.rs`) and in `ignis_pg_stats()['leases_over_warn']`. Does not itself kill or reclaim the lease. |
-| `IGNIS_PG_ACQUIRE_TIMEOUT_MS` | `crates/ignis/src/pg.rs` | `5000` | M4-2/B2: ceiling on `ignis_pg_acquire`'s wait for a permit and a connection. Past it the fiber's `await()` throws with `acquire timed out after <n> ms (IGNIS_PG_ACQUIRE_TIMEOUT_MS)` instead of waiting on a database that may never answer. |
-| `IGNIS_PG_BREAKER_FAILURES` | `crates/ignis/src/pg.rs` | `5` | Consecutive `acquire` failures (connect errors or an acquire-timeout) that open the pool's circuit breaker. `0` turns the breaker off — every acquire is tried against the database again. |
-| `IGNIS_PG_BREAKER_COOLDOWN_MS` | `crates/ignis/src/pg.rs` | `5000` | How long an open breaker refuses acquires outright (no connection attempt, no wait) before letting exactly one caller probe the database again. See the breaker note below. |
 | `IGNIS_STREAM_CHUNKS` | `crates/ignis/src/php/module.rs` | `2` | How many chunks of a streamed response (`Ignis\Http\StreamedResponse`/`Ignis\write()`, R-STREAM) may sit in the channel between PHP and the socket before the producing fiber's `ignis_respond_chunk`/`ignis_stream_write` has to wait. Read once per process. |
 | `IGNIS_STREAM_FRAME_BYTES` | `crates/ignis/src/php/output.rs` | `8192` | Bytes a streaming fiber accumulates before a frame is pushed to the socket rather than held for the next `echo`/`Ignis\write()` call. Read once per process. |
 | `IGNIS_LOCKLIB` | `crates/ignis/src/php/locklib.rs` | unset (the `ignis_locklib_*` functions are never registered) | Path to the H36 lock-hazard test shim (`bench/e18/locklib.c`), `dlopen`ed with `RTLD_GLOBAL`. Exists only to prove that `park` deadlocks a library holding a non-recursive mutex across a blocking syscall while `block` does not (ADR-0037 §5) — not something an application ever sets. Listed here rather than under diagnostics because it gates whether a whole function family exists, not just a runtime behavior. |
 | `IGNIS_POLL_SPIN_US` | `crates/ignis/src/reactor.rs` | `0` | Microseconds the reactor's `poll` spins on `try_recv` before parking the OS thread (H30). `0` means never spin — go straight to the blocking receive. |
 | `IGNIS_LOOP_GC` | `php/packages/runtime/src/ignis.php` (`Loop::gcInit`, read via `getenv`) | on (any value other than `""`/`"0"`, **including unset**, counts as on) | Takes PHP's automatic cycle collector off the hot path: `gc_disable()`, and the userland loop calls `gc_collect_cycles()` itself at an idle point (never mid-request) once the root buffer crosses `IGNIS_LOOP_GC_ROOTS`. |
 | `IGNIS_LOOP_GC_ROOTS` | `php/packages/runtime/src/ignis.php` | `5000` (floored at `100`) | Root-buffer size that triggers the loop's own `gc_collect_cycles()` when `IGNIS_LOOP_GC` is on. |
-
-!!! note "The PostgreSQL breaker: closed, open, half-open"
-
-    M4-2/B2 (`crates/ignis/src/pg.rs`, pain-map "PHP-FPM 2"). Each pool tracks consecutive `acquire`
-    failures. Below `IGNIS_PG_BREAKER_FAILURES` the breaker is **closed** and every `acquire` is tried
-    normally. At the threshold it **opens**: for `IGNIS_PG_BREAKER_COOLDOWN_MS`, every `acquire` fails
-    immediately with `circuit breaker open after <n> consecutive failures; not connecting for another
-    <ms> ms` — no socket touched, no wait. Once the cooldown passes, the breaker is **half-open**: the
-    next caller is let through as a probe (a second caller arriving while that probe is in flight fails
-    fast with `...half-open...one probe is already in flight`); the probe's own outcome either resets
-    the failure count to zero (closed again) or reopens the breaker for another cooldown. A successful
-    `acquire` at any point resets the count.
 
 ### Front door: limits and shutdown
 

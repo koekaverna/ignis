@@ -42,7 +42,6 @@ tonic = { version = "0.14", default-features = false, features = ["server", "cha
 futures-core = "0.3"
 # E6' (ADR-0017): TLS for hooked ssl:// streams; ring provider (no cmake/aws-lc build).
 # E14 (ADR-0015): runtime-owned PostgreSQL pool; JSON boundary for params/rows.
-tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 
 [build-dependencies]
 cc = "1"

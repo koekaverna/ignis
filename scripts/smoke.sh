@@ -61,7 +61,7 @@ if [ "${1:-}" = "--image" ]; then
   [ "$hok" = 1 ] || { echo "/_ignis/health never answered ok in $IMAGE (docker logs $HEALTH_C):"; docker logs "$HEALTH_C" || true; exit 1; }
   docker exec "$HEALTH_C" ldd /usr/local/bin/ignis 2>/dev/null | grep -q "not found" && { echo "image links against something it doesn't carry"; exit 1; }
 
-  echo "== image mode skips: build, unit tests, hello.php, E1/E2/E5/E6/E7/E11/E12/E13/E14 (need target/release/ignis and bench/*.sh talking to a local port; a container here is reachable only via docker exec)"
+  echo "== image mode skips: build, unit tests, hello.php, E1/E2/E5/E6/E7/E11/E12/E13 (need target/release/ignis and bench/*.sh talking to a local port; a container here is reachable only via docker exec)"
   echo "smoke: GREEN"
   exit 0
 fi
@@ -189,6 +189,5 @@ echo "== E13 (200 concurrent HTTP)"; timeout 120 bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 timeout 120 bench/e6-fetch.sh | tail -2
 if [ -d php/packages/revolt/vendor ]; then echo "== E7 (Revolt/AMPHP examples: IgnisDriver must match a stock event loop)"; timeout 180 bench/e7-revolt.sh > /tmp/ignis-e7.log 2>&1; e7rc=$?; grep -E "^(DIFFER|e7)" /tmp/ignis-e7.log || true; [ "$e7rc" = 0 ] || { echo "E7 FAILED (see /tmp/ignis-e7.log)"; exit 1; }; else echo "== E7 skipped (run: cd php/packages/revolt && composer install --prefer-source)"; fi
 echo "== E11 (cancellation + deadline)"; timeout 120 bench/e11-cancel.sh | grep -E "cancelled|status=" | head -2
-if pg_isready -h "$PGHOST" -q 2>/dev/null; then echo "== E14 (pgsql pool)"; PGHOST="$PGHOST" timeout 120 bench/e14-pg.sh | grep -E "warm|transaction|reset"; else echo "== E14 skipped (no PostgreSQL on $PGHOST)"; fi
 echo "== E12 (supervisor: fatal + spin)"; timeout 120 bench/e12-isolation.sh | grep -E "^after \(a\)|^after hello|server"
 echo "smoke: GREEN"

@@ -72,7 +72,6 @@ caught before any thread is created.
 | worker restarts | any nonzero and climbing `restarts`; a slot that hits **10 restarts/minute** (ADR-0012's own cap) stops being respawned, so capacity for that slot is gone until the process restarts | `/_ignis/health` (`restarts` field, cumulative); `/_ignis/metrics`'s `ignis_thread_restarts_total` counter (V-55); log `WARN worker script ended; respawning … status=NNN` for a fatal, `DEBUG script called exit()` for a clean exit (V-17, H-10) |
 | requests queued and rejected | a `503` with header `retry-after: 1` is the budget shedding load by design (ADR-0019), not a crash; watch `rejected` trending up against sustained legitimate traffic, not a single spike | `/_ignis/metrics` (`ignis_requests_queued`, `ignis_requests_queued_peak`, `ignis_requests_queued_admitted_total`, `ignis_requests_rejected_total`, `ignis_fiber_budget`, `ignis_queue_depth_limit` — summed/maxed over threads, V-55); an application's own `/stats` route calling `Ignis\Loop`'s counters gives the same numbers per thread (V-38 shows the shape: `budget`, `queue_depth`, `inflight`, `queued`, `queued_peak`, `queued_admitted`, `rejected`) |
 | park failures | **any nonzero value** means a fiber thread blocked where the policy said it should have parked (V-52) — this is always worth paging on, not a threshold to tune | `/_ignis/metrics`'s `ignis_park_failed_total` counter (V-55), and the log line: `WARN universal park: policy says park but the call could not park — it blocked the thread` (`what=<symbol>`) |
-| PostgreSQL lease age | a lease older than `IGNIS_PG_LEASE_WARN_MS` (default 5000 ms) is a held connection (V-42/V-43/V-44) | `/_ignis/metrics` (`ignis_pg_lease_age_seconds_max`, `ignis_pg_leases_over_warn`, `ignis_pg_leases`, V-55); log: `WARN pg lease held longer than IGNIS_PG_LEASE_WARN_MS lease=N held_ms=N` at release (V-44); `ignis_pg_stats($pool_id)` from PHP gives the same two fields per pool (`oldest_lease_ms`, `leases_over_warn`) for an application's own `/stats` route |
 | RSS | `memory_limit` is per thread (ADR-0025) — an OOM in one fiber ends that thread's script and every other fiber on it; size against the marginal-cost formula in `ignis.toml.example`'s comments and V-37 (**~14.7 kB per admitted fiber, ~33 kB per held connection whether admitted or queued**) | **not exposed as a runtime metric** — `/_ignis/metrics` answers 22 metrics (V-55: threads, park failures, queue/budget, fiber pool, PostgreSQL leases) but none of them is RSS, so read the process's own RSS externally (`ps`, cgroup accounting, a node exporter) |
 
 `/_ignis/health` itself: answered by the Rust runtime before dispatch, never by PHP, so it keeps
@@ -118,19 +117,6 @@ thread: a custom `IGNIS_PARK` policy with `libphp:flock` removed (it is in the d
 call with no reactor to park on — both fall back to the real blocking `flock` silently. Action: leave
 `flock` in the park policy; a stall that traces to it under a custom policy is a policy
 misconfiguration, not a runtime limit.
-
-**PostgreSQL is slow or unreachable, and callers fail fast instead of piling up.** Symptom:
-`Ignis\Pg\PoolError` (not `QueryError`) out of `Pool::acquire()`, with one of three log lines. Cause:
-`pg::acquire` is bounded (S1-BULKHEAD/M4-2, closed 2026-09-18): past `IGNIS_PG_ACQUIRE_TIMEOUT_MS`
-(default 5000 ms) an acquire that has not found a connection fails with "acquire timed out after N
-ms" instead of waiting forever and stalling every fiber that wants a lease on every thread; after
-`IGNIS_PG_BREAKER_FAILURES` (default 5, `0` disables) consecutive failures the breaker opens and
-refuses immediately for `IGNIS_PG_BREAKER_COOLDOWN_MS` (default 5000 ms) with "circuit breaker open …
-not connecting for another N ms", then lets one probe through ("circuit breaker half-open … one probe
-is already in flight"). Action: this is the bulkhead working as designed — one sick dependency fails
-its own requests instead of stalling the process; read a run of these log lines as "the database is
-down", not "the runtime is broken", and size the timeout/cooldown to what the application can
-tolerate waiting.
 
 **The request queue is filling up.** Symptom: rising `ignis_requests_queued`/
 `ignis_requests_rejected_total` on `/_ignis/metrics`, or `queued`/`rejected` on an application's own
@@ -250,11 +236,8 @@ The `[limits]` table (`c031408`) is new this cycle — these five were environme
 Eight more env vars are read directly, not through `ignis.toml` (no file key exists for them):
 `IGNIS_PARK` (the park policy table, `lib` or `lib:symbol` rows, ADR-0020/ADR-0037),
 `IGNIS_SKIP_PARK_SELFCHECK` (bypass the boot self-check above), `IGNIS_PARK_TRACE` (one stderr line
-per park decision — a diagnostic tool, not for production traffic), `IGNIS_PG_LEASE_WARN_MS`
 (default `5000`, the threshold in the watch table above), `IGNIS_DRAIN_DELAY_MS` (default `0` — how
 long `/_ignis/health` answers `draining` while the listener keeps accepting, before
 `limits.drain_timeout_ms` starts, V-56), and the PostgreSQL bulkhead's three (S1-BULKHEAD/M4-2,
-`16e930f`): `IGNIS_PG_ACQUIRE_TIMEOUT_MS` (default `5000`), `IGNIS_PG_BREAKER_FAILURES` (default `5`,
-`0` disables the breaker) and `IGNIS_PG_BREAKER_COOLDOWN_MS` (default `5000`).
 
 `ignis --version` and `ignis serve [--config PATH] [entry.php]` are the CLI surface (V-38).

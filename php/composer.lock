@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "45860fe5dabd612ebcbc33c7a77bf710",
+    "content-hash": "dd2d46bfab84649e3bf7ce357b7cbdae",
     "packages": [
         {
             "name": "brick/math",
@@ -1290,7 +1290,7 @@
         },
         {
             "name": "ignis/doctrine",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/doctrine",
@@ -1320,7 +1320,7 @@
         },
         {
             "name": "ignis/grpc",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/grpc",
@@ -1347,7 +1347,7 @@
         },
         {
             "name": "ignis/offload",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/offload",
@@ -1373,35 +1373,8 @@
             }
         },
         {
-            "name": "ignis/pg",
-            "version": "dev-night-2",
-            "dist": {
-                "type": "path",
-                "url": "packages/pg",
-                "reference": "6d30bc860d050e53638c6af19d8036deafa51a3e"
-            },
-            "require": {
-                "ignis/runtime": "@dev",
-                "php": ">=8.4"
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "src/ignis-pg.php"
-                ]
-            },
-            "license": [
-                "MIT"
-            ],
-            "description": "Ignis\\Pg: the runtime-owned PostgreSQL pool (ADR-0015). Queries are reactor ops, so a waiting fiber costs no thread and a lease is visible in /_ignis/metrics.",
-            "transport-options": {
-                "symlink": true,
-                "relative": true
-            }
-        },
-        {
             "name": "ignis/runtime",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/runtime",
@@ -1438,7 +1411,7 @@
         },
         {
             "name": "ignis/swoole",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/swoole",
@@ -1460,7 +1433,7 @@
         },
         {
             "name": "ignis/symfony-runtime",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/symfony-runtime",
@@ -1490,7 +1463,7 @@
         },
         {
             "name": "ignis/temporal",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/temporal",
@@ -1519,7 +1492,7 @@
         },
         {
             "name": "ignis/temporal-core-transport",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/temporal-core-transport",
@@ -1553,7 +1526,7 @@
         },
         {
             "name": "ignis/temporal-prototype",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/temporal-prototype",
@@ -7661,11 +7634,11 @@
         },
         {
             "name": "ignis/revolt",
-            "version": "dev-night-2",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/revolt",
-                "reference": "5395abb4e246bc4a8152840c24e3665d1c9ac5fc"
+                "reference": "04054073810b47894ea476087bd52db18d964bb3"
             },
             "require": {
                 "amphp/amp": "^3.0",
@@ -11007,7 +10980,6 @@
         "ignis/doctrine": 20,
         "ignis/grpc": 20,
         "ignis/offload": 20,
-        "ignis/pg": 20,
         "ignis/runtime": 20,
         "ignis/swoole": 20,
         "ignis/symfony-runtime": 20,

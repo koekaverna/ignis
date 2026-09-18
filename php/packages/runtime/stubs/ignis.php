@@ -191,56 +191,6 @@ if (!function_exists('ignis_grpc_recv')) {
     }
 }
 
-// --- PostgreSQL pool (ADR-0015, V-21) ---
-
-if (!function_exists('ignis_pg_open')) {
-    /** ignis_pg_open(string $dsn, int $max): int — pool id, no I/O (ADR-0015, V-21). */
-    function ignis_pg_open(string $dsn, int $max): int
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_pg_acquire')) {
-    /**
-     * ignis_pg_acquire(int $pool): int|array — lease id, or op id if none idle (ADR-0015, V-21).
-     *
-     * @return int|array{lease: int}
-     */
-    function ignis_pg_acquire(int $pool): int|array
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_pg_query')) {
-    /** ignis_pg_query(int $lease, string $sql, string $paramsJson): int — op id; payload {rows, affected} (ADR-0015, V-21). */
-    function ignis_pg_query(int $lease, string $sql, string $paramsJson): int
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_pg_release')) {
-    /** ignis_pg_release(int $lease, bool $reset): int — op id; payload 1 when idle again (ADR-0015, V-21). */
-    function ignis_pg_release(int $lease, bool $reset): int
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_pg_stats')) {
-    /**
-     * ignis_pg_stats(int $pool): ?array — [idle, created, available] (ADR-0015, V-21).
-     *
-     * @return array<string, int>|null
-     */
-    function ignis_pg_stats(int $pool): ?array
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
 // --- offload pool (ADR-0016, V-24) ---
 
 if (!function_exists('ignis_offload_submit')) {

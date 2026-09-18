@@ -17,7 +17,6 @@
         "ignis/doctrine": "@dev",
         "ignis/grpc": "@dev",
         "ignis/offload": "@dev",
-        "ignis/pg": "@dev",
         "ignis/runtime": "@dev",
         "ignis/swoole": "@dev",
         "ignis/symfony-runtime": "@dev",
