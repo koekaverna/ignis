@@ -10,6 +10,12 @@ ini_set('memory_limit', '1G');
 use Ignis\Http\Request;
 use Ignis\Http\Response;
 
+/** A superglobal is `mixed`; the E13 probe compares exact values, so a wrong type must be visible, not fatal. */
+function superglobalText(mixed $value): string
+{
+    return is_string($value) ? $value : '?';
+}
+
 // One address for the listener and the /fetch self-call below: with the two hardcoded apart,
 // a stranger holding :8080 answered the self-call and E6 reported ok=0 (2026-09-16).
 $listen = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';
@@ -45,7 +51,8 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
                 return Response::text($child->await() . "\n");
             } finally {
                 Ignis\Scope::set('slow.finally', true);
-                $GLOBALS['slow_finally_ran'] = ($GLOBALS['slow_finally_ran'] ?? 0) + 1;
+                $ran = $GLOBALS['slow_finally_ran'] ?? 0;
+                $GLOBALS['slow_finally_ran'] = (is_int($ran) ? $ran : 0) + 1;
             }
         })(),
         '/deadline' => (static function () use ($req): Response {
@@ -54,11 +61,11 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             Ignis\sleep(1000);
             return Response::text("finished\n");
         })(),
-        '/fetch' => (static function () use ($listen): Response {
+        '/fetch' => (static function () use ($listen, $req): Response {
             // E6: unmodified file_get_contents() over http:// suspends this fiber; the server serves
             // its own /sleep endpoints meanwhile — on ONE thread this can only work if it suspends.
             $t0 = hrtime(true);
-            $ms = (int) ($_GET['ms'] ?? 200);
+            $ms = (int) ($req->query('ms') ?? 200);
             $bodies = Ignis\all([
                 Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
                 Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
@@ -66,13 +73,16 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             ]);
             return Response::json(['bodies' => $bodies, 'ms' => round((hrtime(true) - $t0) / 1e6, 1)]);
         })(),
-        '/echo'  => (static function (): Response {
+        '/echo'  => (static function () use ($req): Response {
             // E13: after suspending, this fiber must still see its own superglobals.
-            $x = $_GET['x'] ?? '?';
-            Ignis\sleep((int) ($_GET['ms'] ?? 20));
+            $x = superglobalText($_GET['x'] ?? '?');
+            Ignis\sleep((int) ($req->query('ms') ?? 20));
             Ignis\Scope::set('x', $x);
             Ignis\sleep(1);
-            return Response::text(($_GET['x'] ?? '?') . ' ' . $_SERVER['REQUEST_URI'] . ' ' . Ignis\Scope::get('x') . "\n");
+            $query = superglobalText($_GET['x'] ?? '?');
+            $uri = superglobalText($_SERVER['REQUEST_URI'] ?? null);
+            $scoped = superglobalText(Ignis\Scope::get('x'));
+            return Response::text("$query $uri $scoped\n");
         })(),
         '/cpu'   => (static function (): Response {
             // ~0.3 ms of CPU-bound work per request (E5 over HTTP).

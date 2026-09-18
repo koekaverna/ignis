@@ -67,7 +67,13 @@ function usersFromDb(\PDO $pdo): array
     return $rows->fetchAll(\PDO::FETCH_ASSOC);
 }
 
-/** @return array<string, mixed> */
+/**
+ * The decoded upstream document. Keyed `mixed` because that is what JSON gives back: the only
+ * caller hands it straight to `Response::json()`, so promising string keys was a lie that bought
+ * nothing.
+ *
+ * @return array<mixed, mixed>
+ */
 function upstreamJson(string $url): array
 {
     $body = file_get_contents($url);
@@ -75,7 +81,12 @@ function upstreamJson(string $url): array
         throw new \RuntimeException("upstream {$url} could not be read");
     }
 
-    return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+    $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($decoded)) {
+        throw new \RuntimeException("upstream {$url} returned " . get_debug_type($decoded) . ', expected a JSON object');
+    }
+
+    return $decoded;
 }
 
 // ---------------------------------------------------------------------------
