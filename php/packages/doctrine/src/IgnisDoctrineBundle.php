@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Ignis\Doctrine;
 
 use Ignis\Doctrine\DependencyInjection\DoctrineFiberScopePass;
-use Ignis\Doctrine\DependencyInjection\IgnisDoctrineExtension;
+use Ignis\Doctrine\DependencyInjection\DoctrinePoolPass;
 use Ignis\Doctrine\Pool\PoolingMiddleware;
 use Symfony\Component\DependencyInjection\Compiler\PassConfig;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -24,6 +24,10 @@ final class IgnisDoctrineBundle extends Bundle
 {
     public function build(ContainerBuilder $container): void
     {
+        // Priority 1: DoctrineBundle's MiddlewaresPass reads every `doctrine.middleware` tag at 0 and
+        // never looks again, so the pools have to be registered before it. The scope pass is the
+        // opposite case — it needs DoctrineBundle to have finished building the managers.
+        $container->addCompilerPass(new DoctrinePoolPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 1);
         $container->addCompilerPass(new DoctrineFiberScopePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -512);
     }
 
@@ -38,23 +42,24 @@ final class IgnisDoctrineBundle extends Bundle
     public function boot(): void
     {
         $container = $this->container;
-        if ($container === null || !$container->has(IgnisDoctrineExtension::POOL_SERVICE_ID) || !$container->hasParameter('doctrine.connections')) {
-            return;
-        }
-        $middleware = $container->get(IgnisDoctrineExtension::POOL_SERVICE_ID);
-        if (!$middleware instanceof PoolingMiddleware || !$middleware->isPooling()) {
+        if ($container === null || !$container->hasParameter('doctrine.connections')) {
             return;
         }
 
         /** @var array<string,string> $connections */
         $connections = $container->getParameter('doctrine.connections');
-        foreach ($connections as $id) {
-            $connection = $container->get($id);
-            if (!$connection instanceof \Doctrine\DBAL\Connection) {
-                continue;
+        foreach ($connections as $name => $id) {
+            $middleware = $container->has(DoctrinePoolPass::SERVICE_PREFIX . $name)
+                ? $container->get(DoctrinePoolPass::SERVICE_PREFIX . $name)
+                : null;
+            if (!$middleware instanceof PoolingMiddleware || !$middleware->isPooling()) {
+                continue;   // this connection is in per-fiber mode; nothing to warm
             }
-            $connection->getNativeConnection();
-            $connection->close();
+            $connection = $container->get($id);
+            if ($connection instanceof \Doctrine\DBAL\Connection) {
+                $connection->getNativeConnection();
+                $connection->close();
+            }
         }
     }
 }

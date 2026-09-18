@@ -166,6 +166,44 @@ reuse_probe "loop GC off, PHP collects cycles itself" "$SEQUENTIAL" 2 IGNIS_LOOP
 echo "== pool mode: the same requests over a fixed set of connections"
 reuse_probe "pool of 4, warmed at boot" 4 4 E24_POOL=4
 
+# Two Doctrine connections, two pool sizes, one app: the settings have to follow the connection and
+# not the process. `default` gets four, `reporting` gets one, and both are asked for four concurrent
+# queries at once — so the first can spread over four backends while the second can only take turns.
+per_connection_probe() {
+  rm -rf "$APP/var/cache"
+  ( export IGNIS_THREADS=1 IGNIS_LISTEN=127.0.0.1:$PORT APP_ENV=prod APP_DEBUG=0 IGNIS_PHP_INI="$PWD/$APP/php.ini" \
+      E24_POOL=4 E24_POOL_REPORTING=1
+    exec "$BIN" --threads 1 "$APP/public/index.php" ) > /tmp/e24-server.log 2>&1 &
+  local server=$! up=0
+  for _ in $(seq 1 100); do curl -sf -u alice:alicepw "http://127.0.0.1:$PORT/pg?tag=warm&sleep=0" >/dev/null && { up=1; break; }; sleep 0.2; done
+  if [ "$up" != 1 ]; then echo "  FAIL: the app never answered"; tail -3 /tmp/e24-server.log; kill -9 $server 2>/dev/null; fail=1; return; fi
+
+  local connection clients i distinct mismatches
+  for connection in default reporting; do
+    clients=""
+    for i in 1 2 3 4; do
+      curl -s -m 30 -u alice:alicepw "http://127.0.0.1:$PORT/pg?tag=c$i&sleep=0.2&connection=$connection" > "/tmp/e24-conn-$connection-$i.json" &
+      clients="$clients $!"
+    done
+    for i in $clients; do wait "$i"; done
+    distinct=$(cat /tmp/e24-conn-$connection-*.json | grep -o '"backend":[0-9]*' | sort -u | grep -c '[0-9]')
+    mismatches=0
+    for i in 1 2 3 4; do grep -q "\"tag\":\"c$i\",\"marker\":\"c$i\"" "/tmp/e24-conn-$connection-$i.json" || mismatches=$((mismatches + 1)); done
+    echo "  $connection: 4 concurrent queries over $distinct backends, $mismatches wrong"
+    [ "$mismatches" = 0 ] || { echo "  FAIL: $connection lost a row"; fail=1; }
+    eval "${connection}Backends=$distinct"
+  done
+  kill $server 2>/dev/null
+  for _ in $(seq 1 20); do kill -0 $server 2>/dev/null || break; sleep 0.5; done
+  kill -9 $server 2>/dev/null; wait $server 2>/dev/null
+
+  [ "${defaultBackends:-0}" -gt 1 ] || { echo "  FAIL: the pool of four never used more than one backend"; fail=1; }
+  [ "${reportingBackends:-0}" = 1 ] || { echo "  FAIL: the pool of one used ${reportingBackends} backends"; fail=1; }
+}
+
+echo "== two connections, two pool sizes, one application"
+per_connection_probe
+
 echo "== symfony through Doctrine, $REQUESTS overlapping requests on one thread"
 symfony_probe "with fiber scoping" clean
 echo "== the same, in pool mode with fewer connections than requests"

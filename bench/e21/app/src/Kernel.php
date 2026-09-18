@@ -56,20 +56,30 @@ final class Kernel extends BaseKernel
             'access_control' => [['path' => '^/whoami', 'roles' => 'ROLE_USER']],
         ]);
 
+        // Two connections on the same database, so E24 can give them different pool settings.
+        $connection = getenv('DATABASE_URL')
+            ? ['url' => getenv('DATABASE_URL')]                                          // E24 runs the same app on PostgreSQL
+            : ['driver' => 'pdo_sqlite', 'path' => '%kernel.project_dir%/var/probe.sqlite'];
+        $mappings = ['App' => ['type' => 'attribute', 'dir' => '%kernel.project_dir%/src/Entity', 'prefix' => 'App\\Entity', 'is_bundle' => false]];
+
         $c->extension('doctrine', [
-            'dbal' => getenv('DATABASE_URL')
-                ? ['url' => getenv('DATABASE_URL')]                                      // E24 runs the same app on PostgreSQL
-                : ['driver' => 'pdo_sqlite', 'path' => '%kernel.project_dir%/var/probe.sqlite'],
+            'dbal' => ['default_connection' => 'default', 'connections' => ['default' => $connection, 'reporting' => $connection]],
             'orm'  => [
-                'mappings' => ['App' => ['type' => 'attribute', 'dir' => '%kernel.project_dir%/src/Entity', 'prefix' => 'App\\Entity', 'is_bundle' => false]],
+                'default_entity_manager' => 'default',
+                'entity_managers' => ['default' => ['connection' => 'default', 'mappings' => $mappings]],
             ],
         ]);
 
         if (!getenv('IGNIS_NO_DOCTRINE_SCOPE')) {
-            $c->extension('ignis_doctrine', ['pool' => [        // E24 drives both connection modes from here
-                'size' => (int) (getenv('E24_POOL') ?: 0),
-                'wait_ms' => (int) (getenv('E24_POOL_WAIT_MS') ?: 5000),
-            ]]);
+            $c->extension('ignis_doctrine', [                  // E24 drives both connection modes from here
+                'pool' => [
+                    'size' => (int) (getenv('E24_POOL') ?: 0),
+                    'wait_ms' => (int) (getenv('E24_POOL_WAIT_MS') ?: 5000),
+                ],
+                'connections' => ['reporting' => ['pool' => [
+                    'size' => (int) (getenv('E24_POOL_REPORTING') ?: 0),
+                ]]],
+            ]);
         }
 
         $s = $c->services();

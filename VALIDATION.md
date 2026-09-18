@@ -4198,3 +4198,49 @@ removes the directory first.
 
 Gates: PHP suite **320 tests / 747 assertions**, `bench/e24` GREEN (nine arms), `bench/e21` GREEN,
 `scripts/smoke.sh` GREEN, phpstan and php-cs-fixer clean on everything this work touches.
+
+### V-85 addendum 4 — pool settings follow the connection, the way Doctrine's own settings do
+
+Date: 2026-09-18T18:0xZ. Owner: different connections must be able to have different settings. The
+configuration now mirrors `doctrine.dbal`'s shape — one block for every connection, names for the
+ones that differ:
+
+```yaml
+ignis_doctrine:
+    pool: { size: 10, warm: 10, wait_ms: 5000 }
+    connections:
+        reporting: { pool: { size: 2, wait_ms: 500 } }
+        archive:   { pool: { size: 0 } }        # stays a connection per fiber
+```
+
+Each key falls back to the block above it, so a connection overrides only what it names (`warm`
+follows its own `size` unless it says otherwise). A name that is not one of Doctrine's connections
+fails the container build — `ignis_doctrine.connections names analytics, which Doctrine does not
+have. Known connections: default, reporting.`
+
+**Measured end to end**, one application with two connections on the same database, `default` at 4
+and `reporting` at 1, four concurrent 0.2 s queries at each:
+
+```
+default:   4 concurrent queries over 4 backends, 0 wrong
+reporting: 4 concurrent queries over 1 backends, 0 wrong
+```
+
+The arm fails if the first ever collapses to one backend (the size would not be reaching the pool) or
+if the second ever exceeds one (the override would not be).
+
+**`DoctrinePoolPass` is back, and this time it has to exist.** The connection names live in
+DoctrineBundle's `doctrine.connections` parameter, which does not exist while extensions load, so the
+extension only parses the configuration into a parameter and the pass — at priority 1, ahead of
+`MiddlewaresPass` — registers one middleware per connection, tagged with that connection's name. A
+middleware is registered even for a connection configured at `size: 0`, because the size may be an
+environment placeholder with no value until runtime; `PoolingMiddleware` waves the driver through
+when it sees a size below 1.
+
+Found while wiring the gate: the new arm's result files were named `/tmp/e24-<connection>-N.json`,
+which the request arms' own `/tmp/e24-r*.json` glob matched — `reporting` begins with an `r`. Their
+reported connection and backend counts were inflated for one run (10 objects instead of 6) before the
+files were renamed. The pass/fail assertions read one file at a time and were never affected.
+
+Gates: PHP suite **323 tests / 757 assertions**, `bench/e24` GREEN (ten arms), `bench/e21` GREEN,
+`scripts/smoke.sh` GREEN, phpstan and php-cs-fixer clean on everything this work touches.
