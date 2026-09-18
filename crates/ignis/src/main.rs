@@ -12,7 +12,7 @@ mod pg;
 mod php;
 mod reactor;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// Worker thread restarts performed by the supervisor (ADR-0012).
@@ -24,109 +24,154 @@ pub static RESTARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+const USAGE: &str = "usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version";
+
 fn main() -> ExitCode {
-    // M1: `ignis serve` and `ignis --version` are handled first, because `serve` bridges
-    // ignis.toml into the environment and that has to happen before the log filter reads RUST_LOG
-    // and before any thread exists (config.rs explains the precedence).
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.first().is_some_and(|a| a == "--version" || a == "-V") {
         println!("ignis {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    // `serve` is the production entry: it gets a one-line startup banner on stderr. A plain script
-    // run gets nothing, because the phpt harness treats a single stderr line as a test failure and
-    // the default log floor is `warn` — which is why a clean start was otherwise invisible to an
-    // operator (found while rewriting docs/operate.md).
     let serving = raw.first().is_some_and(|a| a == "serve");
-    let raw = if serving {
-        match config::serve_to_legacy_args(raw[1..].to_vec()) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("ignis serve: {e:#}");
-                return ExitCode::from(2);
-            }
-        }
-    } else {
-        raw
+    let mut args = match if serving { bridge_serve_config(raw) } else { Ok(raw) } {
+        Ok(v) => v,
+        Err(code) => return code,
     };
-    // Without RUST_LOG, EnvFilter's default directive is `error`, which hid the watchdog's
-    // "php threads busy for > 1 s" and the supervisor's "worker script ended; respawning" — a
-    // worker could die and respawn with the operator seeing nothing (found while chasing H31,
-    // where it also cost three wrong conclusions from probes whose output was being discarded).
-    // `warn` is the floor now; `info` and below stay opt-in. The phpt harness sets RUST_LOG=error
-    // itself, because run-tests compares output byte for byte and a single warning fails a test —
-    // raising the floor without that cost fibers main 108 -> 72 before it was caught.
+    init_logging();
+
+    let flags = parse_runtime_flags(&mut args);
+    let inline = match take_inline_code(&mut args) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let Some(script) = inline.as_ref().map(|(_, name)| PathBuf::from(name)).or_else(|| args.first().map(PathBuf::from)) else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let script = script.canonicalize().unwrap_or(script);
+
+    let rt = tokio_runtime();
+    php::module::install_runtime(rt.handle().clone());
+    install_signal_drain(&rt);
+    php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
+
+    metrics::mark_start();
+    let mut engine = match init_php_engine(&args) {
+        Ok(e) => e,
+        Err(code) => return code,
+    };
+    if let Err(code) = check_park_interposers() {
+        return code;
+    }
+    if serving {
+        print_ready_banner();
+    }
+
+    if let Some((code, name)) = inline {
+        return run_inline_code(engine, rt, &code, &name);
+    }
+
+    let offload_handles = spawn_offload_workers(flags.offload);
+    spawn_watchdog(&rt);
+    let worst = if flags.supervise {
+        supervise_workers(flags.threads, &script, rt.handle())
+    } else {
+        run_workers(flags.threads, &script, rt.handle(), &mut engine)
+    };
+    stop_offload_workers(offload_handles);
+    drop(engine);
+    rt.shutdown_background();
+    ExitCode::from(worst.clamp(0, 255) as u8)
+}
+
+/// M1: `ignis serve` is handled before anything else, because it bridges ignis.toml into the
+/// environment and that has to happen before the log filter reads RUST_LOG and before any thread
+/// exists (config.rs explains the precedence).
+fn bridge_serve_config(raw: Vec<String>) -> Result<Vec<String>, ExitCode> {
+    config::serve_to_legacy_args(raw[1..].to_vec()).map_err(|e| {
+        eprintln!("ignis serve: {e:#}");
+        ExitCode::from(2)
+    })
+}
+
+/// `warn` is the log floor when RUST_LOG is unset: EnvFilter's own default is `error`, which hid
+/// the watchdog's "php threads busy for > 1 s" and the supervisor's "worker script ended;
+/// respawning" — a worker could die and respawn with the operator seeing nothing (H31, and H-10's
+/// reason a respawn must never be silent; it also cost three wrong conclusions from probes whose
+/// output was being discarded). `info` and below stay opt-in. The phpt harness sets RUST_LOG=error
+/// itself, because run-tests compares output byte for byte and a single warning fails a test —
+/// raising the floor without that cost fibers main 108 -> 72 before it was caught.
+fn init_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
         )
         .with_writer(std::io::stderr)
         .init();
+}
 
-    // `ignis [--threads N] <script.php>`; env IGNIS_THREADS is the fallback.
-    let mut args: Vec<String> = raw;
-    let mut threads: usize = std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
-    let mut supervise = false;
-    let mut offload: usize = std::env::var("IGNIS_OFFLOAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+/// `ignis [--threads N] [--offload N] [--supervise] <script.php>`; the IGNIS_THREADS and
+/// IGNIS_OFFLOAD environment variables are the defaults.
+struct RuntimeFlags {
+    threads: usize,
+    offload: usize,
+    supervise: bool,
+}
+
+/// Takes the leading runtime flags off `args`, leaving the script and its own arguments.
+fn parse_runtime_flags(args: &mut Vec<String>) -> RuntimeFlags {
+    let mut flags = RuntimeFlags {
+        threads: std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
+        offload: std::env::var("IGNIS_OFFLOAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
+        supervise: false,
+    };
     loop {
         if args.len() >= 2 && args[0] == "--threads" {
-            threads = args[1].parse().unwrap_or(1);
+            flags.threads = args[1].parse().unwrap_or(1);
             args.drain(0..2);
         } else if args.len() >= 2 && args[0] == "--offload" {
-            offload = args[1].parse().unwrap_or(0);
+            flags.offload = args[1].parse().unwrap_or(0);
             args.drain(0..2);
         } else if !args.is_empty() && args[0] == "--supervise" {
-            // Thread 0 stays idle (it owns the SAPI and cannot be respawned); workers 1..=N run the
-            // script and are respawned by the supervisor when their script ends (ADR-0012).
-            supervise = true;
+            flags.supervise = true;
             args.remove(0);
         } else {
             break;
         }
     }
-    // A5: php-cli's `-r <code>` and `--` (script on stdin). Tests that re-exec PHP_BINARY use
-    // both; the embed SAPI has no such flags, so `scripts/ignis-php` had to hand those invocations
-    // to the stock CLI. Like php-cli these run one script on this thread: no worker threads, no
-    // offload pool, no supervisor.
-    let inline: Option<(String, String)> = if args.len() >= 2 && args[0] == "-r" {
+    flags.threads = flags.threads.max(1);
+    flags
+}
+
+/// A5: php-cli's `-r <code>` and `--` (script on stdin), returned as the code and the name PHP
+/// reports for it. Tests that re-exec PHP_BINARY use both and the embed SAPI has no such flags, so
+/// `scripts/ignis-php` had to hand those invocations to the stock CLI. Like php-cli they run one
+/// script on this thread: no worker threads, no offload pool, no supervisor.
+fn take_inline_code(args: &mut Vec<String>) -> Result<Option<(String, String)>, ExitCode> {
+    if args.len() >= 2 && args[0] == "-r" {
         let code = args[1].clone();
         args.drain(0..2);
-        Some((code, "Command line code".to_string()))
-    } else if args.first().is_some_and(|a| a == "--") {
+        return Ok(Some((code, "Command line code".to_string())));
+    }
+    if args.first().is_some_and(|a| a == "--") {
         args.remove(0);
         let mut code = String::new();
         if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut code) {
             eprintln!("reading the script from stdin: {e}");
-            return ExitCode::from(2);
+            return Err(ExitCode::from(2));
         }
-        Some((code, "Standard input code".to_string()))
-    } else {
-        None
-    };
+        return Ok(Some((code, "Standard input code".to_string())));
+    }
+    Ok(None)
+}
 
-    let Some(script) = inline
-        .as_ref()
-        .map(|(_, name)| PathBuf::from(name))
-        .or_else(|| args.first().map(PathBuf::from))
-    else {
-        eprintln!("usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version");
-        return ExitCode::from(2);
-    };
-    let threads = threads.max(1);
-    let script = script.canonicalize().unwrap_or(script);
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name("ignis-tokio")
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-    php::module::install_runtime(rt.handle().clone());
-    // M4-5: SIGTERM (a container stop, a systemd restart) drains instead of dropping. The listener
-    // closes first and `/_ignis/health` answers "draining", so a load balancer takes this instance
-    // out of rotation; then in-flight requests are given IGNIS_DRAIN_TIMEOUT_MS to finish. SIGINT
-    // does the same, so Ctrl-C in a terminal behaves like a stop rather than a kill.
+/// M4-5: SIGTERM (a container stop, a systemd restart) drains instead of dropping. The listener
+/// closes first and `/_ignis/health` answers "draining", so a load balancer takes this instance out
+/// of rotation; then in-flight requests are given IGNIS_DRAIN_TIMEOUT_MS to finish. SIGINT does the
+/// same, so Ctrl-C in a terminal behaves like a stop rather than a kill. The process then exits
+/// outright: the PHP threads own their engines and cannot be unwound from here (ADR-0012), so once
+/// no request is in flight, leaving is the honest end of the process.
+fn install_signal_drain(rt: &tokio::runtime::Runtime) {
     rt.spawn(async {
         let mut term = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
             Ok(s) => s,
@@ -147,65 +192,83 @@ fn main() -> ExitCode {
         if pending == 0 {
             tracing::info!(signal = sig, took_ms = took.as_millis() as u64, "drained; exiting");
         } else {
-            tracing::warn!(signal = sig, took_ms = took.as_millis() as u64, pending, "drain timed out; exiting with requests still in flight");
+            tracing::warn!(
+                signal = sig,
+                took_ms = took.as_millis() as u64,
+                pending,
+                "drain timed out; exiting with requests still in flight"
+            );
         }
-        // The PHP threads own their engines and cannot be unwound from here (ADR-0012); once no
-        // request is in flight, leaving is the honest end of the process.
         std::process::exit(0);
     });
-    php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
+}
 
-    // Main thread = PHP thread 0 (php_embed_init runs here).
-    // PHP's argv is `[script, args...]` (like php-cli), so `$argv[0]` is the script (E15 harnesses).
-    let php_args: Vec<String> = args.iter().cloned().collect();
-    metrics::mark_start();
-    let mut engine = match php::embed::Engine::init(&php_args) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(1);
-        }
-    };
+/// Main thread = PHP thread 0 (`php_embed_init` runs here). PHP's argv is `[script, args...]` like
+/// php-cli, so `$argv[0]` is the script (the E15 harnesses rely on it).
+fn init_php_engine(args: &[String]) -> Result<php::embed::Engine, ExitCode> {
+    php::embed::Engine::init(args).map_err(|e| {
+        eprintln!("{e:#}");
+        ExitCode::from(1)
+    })
+}
 
-    // ADR-0037 §4(a): universal park's failure mode is a hang, not an exception, so prove the
-    // interposers really bind inside the policy's libraries before anything can depend on them.
-    // After MINIT (extensions loaded, so RTLD_NOLOAD sees them), before any worker thread exists.
+/// ADR-0037 §4(a): universal park's failure mode is a hang, not an exception, so prove the
+/// interposers really bind inside the policy's libraries before anything can depend on them —
+/// after MINIT (extensions loaded, so RTLD_NOLOAD sees them), before any worker thread exists.
+fn check_park_interposers() -> Result<(), ExitCode> {
     #[cfg(feature = "universal-park")]
     if let Err(e) = php::park::selfcheck() {
         eprintln!("ignis: {e}");
-        return ExitCode::from(2);
+        return Err(ExitCode::from(2));
     }
-    if serving {
-        eprintln!(
-            "ignis {} — threads={} listen={} park={} — ready",
-            env!("CARGO_PKG_VERSION"),
-            std::env::var("IGNIS_THREADS").unwrap_or_else(|_| std::thread::available_parallelism().map_or("?".into(), |n| n.to_string())),
-            std::env::var("IGNIS_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into()),
-            php::park::policy_summary(),
-        );
-    }
+    Ok(())
+}
 
-    // A5: `-r` / stdin code is a single script on this thread, like php-cli.
-    if let Some((code, name)) = inline {
-        let status = match engine.eval(&code, &name) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{e:#}");
-                255
-            }
-        };
-        drop(engine);
-        rt.shutdown_background();
-        return ExitCode::from(status.clamp(0, 255) as u8);
-    }
+/// `serve` is the production entry, so it gets a one-line startup banner on stderr. A plain script
+/// run gets nothing, because the phpt harness treats a single stderr line as a test failure and the
+/// default log floor is `warn` — which is why a clean start was otherwise invisible to an operator
+/// (found while rewriting docs/operate.md).
+fn print_ready_banner() {
+    eprintln!(
+        "ignis {} — threads={} listen={} park={} — ready",
+        env!("CARGO_PKG_VERSION"),
+        std::env::var("IGNIS_THREADS").unwrap_or_else(|_| std::thread::available_parallelism().map_or("?".into(), |n| n.to_string())),
+        std::env::var("IGNIS_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into()),
+        php::park::policy_summary(),
+    );
+}
 
-    // E16: offload workers — synchronous PHP threads (own TSRM context, no reactor) running the
-    // embedded worker loop; jobs arrive over channels, answers go back to the caller's reactor.
-    let mut offload_handles = Vec::new();
-    if offload > 0 {
-        offload::init(offload);
-        for i in 0..offload {
-            offload_handles.push(std::thread::Builder::new()
+/// Two tokio worker threads beside the PHP ones: this side owns every timer and socket and never
+/// runs PHP code.
+fn tokio_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("ignis-tokio").enable_all().build().expect("tokio runtime")
+}
+
+/// A5: `-r` / stdin code is a single script on this thread, like php-cli, and the process is over
+/// when it returns.
+fn run_inline_code(mut engine: php::embed::Engine, rt: tokio::runtime::Runtime, code: &str, name: &str) -> ExitCode {
+    let status = match engine.eval(code, name) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e:#}");
+            255
+        }
+    };
+    drop(engine);
+    rt.shutdown_background();
+    ExitCode::from(status.clamp(0, 255) as u8)
+}
+
+/// E16: offload workers — synchronous PHP threads (own TSRM context, no reactor) running the
+/// embedded worker loop; jobs arrive over channels, answers go back to the caller's reactor.
+fn spawn_offload_workers(offload: usize) -> Vec<std::thread::JoinHandle<()>> {
+    if offload == 0 {
+        return Vec::new();
+    }
+    offload::init(offload);
+    (0..offload)
+        .map(|i| {
+            std::thread::Builder::new()
                 .name(format!("ignis-offload-{i}"))
                 .spawn(move || {
                     php::module::OFFLOAD_WORKER.with(|c| c.set(Some(i)));
@@ -220,34 +283,44 @@ fn main() -> ExitCode {
                         eprintln!("offload thread {i}: {e:#}");
                     }
                 })
-                .expect("spawn offload thread"));
-        }
+                .expect("spawn offload thread")
+        })
+        .collect()
+}
+
+/// E16: the offload workers leave their PHP requests before the engine shuts down.
+fn stop_offload_workers(handles: Vec<std::thread::JoinHandle<()>>) {
+    offload::shutdown();
+    for h in handles {
+        let _ = h.join();
     }
+}
 
-    // Worker threads: each attaches to TSRM, gets its own reactor, runs the same script.
-    let spawn_worker = |i: usize| {
-        let script = script.clone();
-        let rt_handle = rt.handle().clone();
-        std::thread::Builder::new()
-            .name(format!("ignis-php-{i}"))
-            .spawn(move || -> i32 {
-                php::module::install_thread_reactor(reactor::Reactor::new(&rt_handle));
-                let mut w = match php::embed::WorkerThread::attach() {
-                    Ok(w) => w,
-                    Err(e) => {
-                        eprintln!("php thread {i}: {e:#}");
-                        return 1;
-                    }
-                };
-                let status = w.run_file(&script).unwrap_or(1);
-                // The script is over (normally or by fatal): stop routing requests here.
-                php::http_unregister_current();
-                status
-            })
-            .expect("spawn php thread")
-    };
+/// One PHP worker thread: it attaches to TSRM, gets its own reactor and runs the same script. When
+/// the script is over (normally or by fatal) the thread stops routing requests to itself.
+fn spawn_worker(index: usize, script: &Path, rt: &tokio::runtime::Handle) -> std::thread::JoinHandle<i32> {
+    let script = script.to_path_buf();
+    let rt_handle = rt.clone();
+    std::thread::Builder::new()
+        .name(format!("ignis-php-{index}"))
+        .spawn(move || -> i32 {
+            php::module::install_thread_reactor(reactor::Reactor::new(&rt_handle));
+            let mut w = match php::embed::WorkerThread::attach() {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("php thread {index}: {e:#}");
+                    return 1;
+                }
+            };
+            let status = w.run_file(&script).unwrap_or(1);
+            php::http_unregister_current();
+            status
+        })
+        .expect("spawn php thread")
+}
 
-    // Watchdog: report threads stuck in PHP code (ADR-0012).
+/// Watchdog: report threads stuck in PHP code (ADR-0012).
+fn spawn_watchdog(rt: &tokio::runtime::Runtime) {
     rt.spawn(async {
         let mut last = 0usize;
         loop {
@@ -259,62 +332,120 @@ fn main() -> ExitCode {
             }
         }
     });
+}
 
-    let worst;
-    if supervise {
-        // Supervisor: workers 1..=N, respawned when their script ends; thread 0 only supervises.
-        let mut handles: Vec<(usize, std::thread::JoinHandle<i32>)> = (1..=threads).map(|i| (i, spawn_worker(i))).collect();
-        let mut restarts_this_minute = 0u32;
-        let mut minute = std::time::Instant::now();
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            let mut i = 0;
-            while i < handles.len() {
-                if handles[i].1.is_finished() {
-                    let (slot, h) = handles.remove(i);
-                    let status = h.join().unwrap_or(1);
-                    if minute.elapsed() > std::time::Duration::from_secs(60) {
-                        minute = std::time::Instant::now();
-                        restarts_this_minute = 0;
-                    }
-                    if restarts_this_minute >= 10 {
-                        tracing::error!(slot, status, "worker ended; restart budget exhausted (10/min), not respawning");
-                        continue;
-                    }
-                    restarts_this_minute += 1;
-                    RESTARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    tracing::warn!(slot, status, "worker script ended; respawning (opcache SHM untouched)");
-                    handles.push((slot, spawn_worker(slot)));
-                } else {
-                    i += 1;
+/// `--supervise` (ADR-0012): thread 0 stays idle, because it owns the SAPI and cannot be respawned;
+/// workers 1..=N run the script and are respawned when their script ends, up to ten restarts a
+/// minute. Returns when every worker is gone for good.
+fn supervise_workers(threads: usize, script: &Path, rt: &tokio::runtime::Handle) -> i32 {
+    let mut handles: Vec<(usize, std::thread::JoinHandle<i32>)> = (1..=threads).map(|i| (i, spawn_worker(i, script, rt))).collect();
+    let mut restarts_this_minute = 0u32;
+    let mut minute = std::time::Instant::now();
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut i = 0;
+        while i < handles.len() {
+            if handles[i].1.is_finished() {
+                let (slot, h) = handles.remove(i);
+                let status = h.join().unwrap_or(1);
+                if minute.elapsed() > std::time::Duration::from_secs(60) {
+                    minute = std::time::Instant::now();
+                    restarts_this_minute = 0;
                 }
-            }
-            if handles.is_empty() {
-                break;
+                if restarts_this_minute >= 10 {
+                    tracing::error!(slot, status, "worker ended; restart budget exhausted (10/min), not respawning");
+                    continue;
+                }
+                restarts_this_minute += 1;
+                RESTARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tracing::warn!(slot, status, "worker script ended; respawning (opcache SHM untouched)");
+                handles.push((slot, spawn_worker(slot, script, rt)));
+            } else {
+                i += 1;
             }
         }
-        worst = 1;
-    } else {
-        let handles: Vec<_> = (1..threads).map(spawn_worker).collect();
-        let status = match engine.run_file(&script) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{e:#}");
-                1
-            }
-        };
-        let mut w = status;
-        for h in handles {
-            w = w.max(h.join().unwrap_or(1));
+        if handles.is_empty() {
+            return 1;
         }
-        worst = w;
     }
-    // E16: offload workers leave their PHP requests before the engine shuts down.
-    offload::shutdown();
-    for h in offload_handles {
-        let _ = h.join();
+}
+
+/// The unsupervised run: threads 1..N run the script beside thread 0, and the worst exit status of
+/// all of them is the process's.
+fn run_workers(threads: usize, script: &Path, rt: &tokio::runtime::Handle, engine: &mut php::embed::Engine) -> i32 {
+    let handles: Vec<_> = (1..threads).map(|i| spawn_worker(i, script, rt)).collect();
+    let status = match engine.run_file(script) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e:#}");
+            1
+        }
+    };
+    handles.into_iter().fold(status, |worst, h| worst.max(h.join().unwrap_or(1)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
     }
-    drop(engine);
-    rt.shutdown_background();
-    ExitCode::from(worst.clamp(0, 255) as u8)
+
+    #[test]
+    fn runtime_flags_are_taken_in_any_order() {
+        let mut a = args(&["--supervise", "--offload", "3", "--threads", "4", "app.php", "--verbose"]);
+        let flags = parse_runtime_flags(&mut a);
+        assert_eq!(flags.threads, 4);
+        assert_eq!(flags.offload, 3);
+        assert!(flags.supervise);
+        assert_eq!(a, args(&["app.php", "--verbose"]));
+    }
+
+    #[test]
+    fn a_non_numeric_thread_count_falls_back_to_one() {
+        let mut a = args(&["--threads", "lots", "app.php"]);
+        let flags = parse_runtime_flags(&mut a);
+        assert_eq!(flags.threads, 1);
+        assert_eq!(a, args(&["app.php"]));
+    }
+
+    #[test]
+    fn supervise_stands_alone() {
+        let mut a = args(&["--supervise", "app.php"]);
+        let flags = parse_runtime_flags(&mut a);
+        assert!(flags.supervise);
+        assert_eq!(a, args(&["app.php"]));
+    }
+
+    #[test]
+    fn a_script_argument_that_looks_like_a_flag_is_left_alone() {
+        let mut a = args(&["app.php", "--threads", "4"]);
+        let flags = parse_runtime_flags(&mut a);
+        assert!(!flags.supervise);
+        assert_eq!(a, args(&["app.php", "--threads", "4"]));
+    }
+
+    #[test]
+    fn dash_r_consumes_the_code_and_its_argument() {
+        let mut a = args(&["-r", "echo 1;", "extra"]);
+        let inline = take_inline_code(&mut a).expect("-r is accepted");
+        assert_eq!(inline, Some(("echo 1;".to_string(), "Command line code".to_string())));
+        assert_eq!(a, args(&["extra"]));
+    }
+
+    #[test]
+    fn a_plain_script_is_not_inline_code() {
+        let mut a = args(&["app.php", "-r"]);
+        assert_eq!(take_inline_code(&mut a).expect("no inline code"), None);
+        assert_eq!(a, args(&["app.php", "-r"]));
+    }
+
+    #[test]
+    fn dash_dash_reads_the_script_from_stdin() {
+        let mut a = args(&["--", "extra"]);
+        let inline = take_inline_code(&mut a).expect("-- is accepted").expect("-- means inline code");
+        assert_eq!(inline.1, "Standard input code");
+        assert_eq!(a, args(&["extra"]));
+    }
 }

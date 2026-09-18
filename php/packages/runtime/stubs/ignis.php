@@ -15,6 +15,18 @@ declare(strict_types=1);
 
 // --- core reactor primitives (ADR-0001/ADR-0002) ---
 
+/**
+ * The shapes `ignis_poll()` can return, as PHPStan types rather than prose.
+ *
+ * They are declared once here so every reader of a completion narrows on `kind` instead of
+ * indexing a `mixed`. There is no class and no runtime cost: these are type aliases the analyser
+ * resolves and the engine never sees.
+ *
+ * @phpstan-type IgnisCompletion array{kind: 'error', message: string}|array{kind: 'cancel', age_us: int}|array{kind: 'offload_cb', job: int, seq: int, cb: int, args: string}
+ * @phpstan-type IgnisRequest array{method: string, uri: string, headers: array<string, string>, body: string}
+ */
+
+
 if (!function_exists('ignis_submit_sleep')) {
     /** ignis_submit_sleep(int $ms): int — op id for a timer completion (V-2, V-3). */
     function ignis_submit_sleep(int $ms): int
@@ -24,7 +36,25 @@ if (!function_exists('ignis_submit_sleep')) {
 }
 
 if (!function_exists('ignis_poll')) {
-    /** ignis_poll(int $timeout_ms): array — id => payload; the runtime's single wait point (V-33). */
+    /**
+     * ignis_poll(int $timeout_ms): array — id => payload; the runtime's single wait point (V-33).
+     *
+     * The payload is a tagged union with a closed set of shapes, written out here because the
+     * alternative is `mixed` and every read of it becoming an unchecked offset access. With the
+     * shapes declared, `match ($payload['kind'] ?? null)` narrows in the analyser at no runtime
+     * cost, which is what the truncated-protobuf class of defect comes from not having.
+     *
+     * The Rust side of each arm is `Outcome` in `crates/ignis/src/reactor.rs`:
+     *   int                                                    Slept (late µs) or Ready (1)
+     *   string                                                 Json, or a Blob with a body
+     *   null                                                   a Blob with none
+     *   array{kind:'error', message:string}                    Failed
+     *   array{kind:'cancel', age_us:int}                       Cancelled (ADR-0009)
+     *   array{kind:'offload_cb', job:int, seq:int, cb:int, args:string}   OffloadCallback (E16)
+     *   array{method:string, uri:string, headers:array<string,string>, body:string}   Request
+     *
+     * @return array<int, int|string|null|IgnisCompletion|IgnisRequest>
+     */
     function ignis_poll(int $timeout_ms): array
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -298,6 +328,100 @@ if (!function_exists('ignis_temporal_complete_activity')) {
 if (!function_exists('ignis_temporal_shutdown')) {
     /** ignis_temporal_shutdown(int $worker): int — op; initiates shutdown (ADR-0013, V-18). */
     function ignis_temporal_shutdown(int $worker): int
+    {
+        throw new \LogicException('stub: only the ignis binary (temporal feature) defines ' . __FUNCTION__);
+    }
+}
+
+// --- output capture and streamed responses (V-72, V-76, V-77) ---
+
+if (!function_exists('ignis_capture_start')) {
+    /** ignis_capture_start(): bool — this fiber's output goes to a fresh buffer until it is taken. */
+    function ignis_capture_start(): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_capture_take')) {
+    /** ignis_capture_take(): string — the bytes written since the matching start; stops capturing. */
+    function ignis_capture_take(): string
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_capture_reset')) {
+    /** ignis_capture_reset(): bool — drops whatever this fiber left behind, so a pooled fiber does not hand its bytes to the next request (V-67). */
+    function ignis_capture_reset(): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_stream_bind')) {
+    /**
+     * ignis_stream_bind(int $id, int $status, array $headers): bool — this fiber's output becomes the body of response $id.
+     *
+     * @param array<string, string|list<string>> $headers
+     */
+    function ignis_stream_bind(int $id, int $status, array $headers): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_stream_unbind')) {
+    /**
+     * ignis_stream_unbind(): array — stops forwarding and reports [tail, started].
+     *
+     * @return array{0: string, 1: bool}
+     */
+    function ignis_stream_unbind(): array
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_stream_write')) {
+    /** ignis_stream_write(string $bytes): int — a frame of this fiber's response; 0 if the runtime took it, an op id to await if the queue is full, -1 if this fiber is not streaming. */
+    function ignis_stream_write(string $bytes): int
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_respond_chunk')) {
+    /** ignis_respond_chunk(int $id, string $bytes): int — one frame of a streamed response; returns an op to await. */
+    function ignis_respond_chunk(int $id, string $bytes): int
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_respond_end')) {
+    /** ignis_respond_end(int $id): bool — no more chunks; the body is complete. */
+    function ignis_respond_end(int $id): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_publish_stats')) {
+    /**
+     * ignis_publish_stats(array $stats): void — the PHP loop hands its own counters to the runtime for /_ignis/metrics (M4-4).
+     *
+     * @param array<string, int> $stats
+     */
+    function ignis_publish_stats(array $stats): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_temporal_heartbeat')) {
+    /** ignis_temporal_heartbeat(int $worker, string $json): bool — activity heartbeat (ADR-0013). */
+    function ignis_temporal_heartbeat(int $worker, string $json): bool
     {
         throw new \LogicException('stub: only the ignis binary (temporal feature) defines ' . __FUNCTION__);
     }

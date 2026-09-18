@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Revolt event-loop driver over the Ignis reactor (ADR-0008, E7).
  *
@@ -43,11 +44,24 @@ final class IgnisDriver extends AbstractDriver
         return null;
     }
 
+    /**
+     * Signals are not supported yet, and Revolt's contract is that saying so happens here.
+     *
+     * Its own DriverTest::checkForSignalCapability() calls onSignal() and skips the signal tests
+     * when this throws; leaving the throw in activate() let that probe pass and turned five skips
+     * into five errors inside run() the moment ext-posix appeared in the build.
+     */
+    public function onSignal(int $signal, \Closure $closure): string
+    {
+        throw new UnsupportedFeatureException('Signals are not supported by IgnisDriver yet');
+    }
+
     protected function now(): float
     {
         return (float) \hrtime(true) / 1_000_000_000;
     }
 
+    /** @param array<string, DriverCallback> $callbacks */
     protected function activate(array $callbacks): void
     {
         foreach ($callbacks as $callback) {

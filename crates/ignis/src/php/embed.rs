@@ -28,6 +28,8 @@ struct Argv {
 }
 // SAFETY: written once before any thread reads it; the pointed-to strings are never freed.
 unsafe impl Sync for Argv {}
+// SAFETY: as above -- the pointers are process-lifetime and immutable after Engine::init, so moving
+// the struct between threads hands over nothing that can be freed or mutated.
 unsafe impl Send for Argv {}
 static ARGV: std::sync::OnceLock<Argv> = std::sync::OnceLock::new();
 
@@ -55,6 +57,9 @@ impl Engine {
         let ini = std::env::var("IGNIS_PHP_INI").ok().and_then(|p| CString::new(p).ok());
         // PHP_BINARY (E15a finding: empty under the stock embed, breaks suites that re-exec PHP).
         let exe = std::env::current_exe().ok().and_then(|p| CString::new(p.to_string_lossy().into_owned()).ok());
+        // SAFETY: single-threaded process startup, before any other thread exists. php_embed_module
+        // is libphp's own static and the hooks installed here are `extern "C"` functions with the
+        // signatures the SAPI struct declares; the argv pointers outlive the process.
         let rc = unsafe {
             sys::php_embed_module.startup = Some(module::ignis_sapi_startup);
             sys::php_embed_module.register_server_variables = Some(register_server_variables);
@@ -75,7 +80,7 @@ impl Engine {
             }
             sys::php_embed_init(argc, argv_ptrs.as_mut_ptr())
         };
-        if rc != sys::SUCCESS as i32 {
+        if rc != sys::SUCCESS {
             bail!("php_embed_init failed ({rc})");
         }
         #[cfg(php_async_abi)]
@@ -104,12 +109,16 @@ impl Engine {
         // cannot tell `exit(0)` from a parse error — both would look like "failed, status 0".
         // A sentinel in EG(exit_status) distinguishes them: only exit() overwrites it.
         unsafe { set_exit_status(SENTINEL) };
+        // SAFETY: PHP thread after startup. `code` and `name` are CStrings owned by this frame and
+        // outlive the call, and a null return-value slot means "discard the result", which is what
+        // php-cli's -r does.
         let rc = unsafe { sys::zend_eval_stringl_ex(code.as_ptr(), code.as_bytes().len(), std::ptr::null_mut(), name.as_ptr(), true) };
         // SAFETY: on a PHP thread after startup, same contract as run_file's use of it.
         let status = unsafe { exit_status() };
         if status != SENTINEL {
             return Ok(status); // exit(N) was called, N == 0 included
         }
+        // SAFETY: PHP thread after startup, the contract set_exit_status documents.
         unsafe { set_exit_status(0) };
         // A parse error or an uncaught throw: PHP has already printed it, and php-cli exits 255.
         if rc != sys::SUCCESS { Ok(255) } else { Ok(0) }
@@ -125,6 +134,8 @@ const SENTINEL: i32 = i32::MIN;
 /// # Safety
 /// PHP thread after startup; same contract as [`exit_status`].
 unsafe fn set_exit_status(v: i32) {
+    // SAFETY: the caller upholds `# Safety` above, so this thread has a TSRM context and the offset
+    // into it is the one the linked libphp reports; the field is a plain int owned by that thread.
     unsafe {
         let base = sys::tsrm_get_ls_cache() as *mut u8;
         let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;

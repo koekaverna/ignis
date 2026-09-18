@@ -9,7 +9,7 @@ final class Future
     private bool $done = false;
     private mixed $value = null;
     private ?\Throwable $error = null;
-    /** @var list<\Fiber> */
+    /** @var list<\Fiber<mixed,mixed,mixed,mixed>> */
     private array $waiters = [];
 
     public function isDone(): bool
@@ -36,9 +36,7 @@ final class Future
         $this->value = $value;
         $this->error = $e;
         if ($e !== null && $this->waiters === []) {
-            // Nobody is waiting: remember it so the loop can report it (an await() later un-registers it).
-            Loop::$unobserved[] = $e;
-            $this->unobservedError = $e;
+            $this->rememberUnobserved($e);
         }
         foreach ($this->waiters as $fiber) {
             Loop::markReady($fiber, null);
@@ -48,34 +46,54 @@ final class Future
 
     private ?\Throwable $unobservedError = null;
 
+    /** Nobody is waiting yet, so the loop holds the rejection until someone does (V-22). */
+    private function rememberUnobserved(\Throwable $e): void
+    {
+        Loop::$unobserved[] = $e;
+        $this->unobservedError = $e;
+    }
+
+    /** Awaiting a rejection is observing it, so it leaves the loop's report. */
+    private function observeError(): void
+    {
+        $error = $this->unobservedError;
+        if ($error === null) {
+            return;
+        }
+        $this->unobservedError = null;
+        Loop::$unobserved = array_values(array_filter(Loop::$unobserved, static fn(\Throwable $e): bool => $e !== $error));
+    }
+
     /** Suspends the current fiber until settled; rethrows on rejection. */
     public function await(): mixed
     {
         if (!$this->done) {
             $fiber = \Fiber::getCurrent();
             if ($fiber === null) {
-                Loop::runUntil(fn () => $this->done);
-                if (!$this->done) {
-                    // The loop went idle (nothing in flight, nothing waiting) with this future unsettled:
-                    // a fiber is stuck on something the loop does not know about. Say so instead of returning null.
-                    throw new \LogicException('Ignis\Future::await(): the loop stopped with this future unsettled (a fiber is parked on an op the loop never completes)');
-                }
+                $this->driveLoopUntilSettled();
             } else {
                 $this->waiters[] = $fiber;
                 \Fiber::suspend();
             }
         }
-        if ($this->error !== null) {
-            if ($this->unobservedError !== null) {
-                $k = array_search($this->unobservedError, Loop::$unobserved, true);
-                if ($k !== false) {
-                    unset(Loop::$unobserved[$k]);
-                    Loop::$unobserved = array_values(Loop::$unobserved);
-                }
-                $this->unobservedError = null;
-            }
-            throw $this->error;
+        $error = $this->error;
+        if ($error !== null) {
+            $this->observeError();
+            throw $error;
         }
         return $this->value;
+    }
+
+    /**
+     * {main} has no fiber to park, so it drives the loop instead. A loop that goes idle — nothing
+     * in flight, nothing waiting — with this future still unsettled means a fiber is stuck on
+     * something the loop does not know about; say so instead of returning null.
+     */
+    private function driveLoopUntilSettled(): void
+    {
+        Loop::runUntil(fn() => $this->done);
+        if (!$this->done) {
+            throw new \LogicException('Ignis\Future::await(): the loop stopped with this future unsettled (a fiber is parked on an op the loop never completes)');
+        }
     }
 }

@@ -1,4 +1,5 @@
 <?php
+
 // Worker-mode hello world: the script stays resident, every request runs in a pooled fiber.
 declare(strict_types=1);
 require __DIR__ . '/../php/packages/runtime/src/ignis.php';
@@ -21,20 +22,24 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             return Response::text("slept\n");
         })(),
         '/fatal' => (static function (): Response {
-            // E12: a real fatal (bailout) — must kill only this thread's script.
+            // E12: a real fatal (bailout) — must kill only this thread's script, and never return.
             trigger_error('deliberate fatal for E12', E_USER_ERROR);
-            return Response::text("unreachable\n");
         })(),
         '/spin'  => (static function () use ($req): Response {
             // E12: CPU loop with no suspension point; stalls only this thread.
             $until = hrtime(true) + (int) ($req->query('s') ?? 5) * 1_000_000_000;
             $n = 0;
-            while (hrtime(true) < $until) { $n++; }
+            while (hrtime(true) < $until) {
+                $n++;
+            }
             return Response::text("spun $n\n");
         })(),
         '/slow'  => (static function (): Response {
             // E11: 5 s of work in this fiber plus a child; a client disconnect must cancel both.
-            $child = Ignis\async(static function (): string { Ignis\sleep(5000); return 'child done'; });
+            $child = Ignis\async(static function (): string {
+                Ignis\sleep(5000);
+                return 'child done';
+            });
             try {
                 Ignis\sleep(5000);
                 return Response::text($child->await() . "\n");
@@ -55,9 +60,9 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             $t0 = hrtime(true);
             $ms = (int) ($_GET['ms'] ?? 200);
             $bodies = Ignis\all([
-                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
-                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
-                Ignis\async(static fn () => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
+                Ignis\async(static fn() => file_get_contents("http://$listen/sleep?ms=$ms")),
             ]);
             return Response::json(['bodies' => $bodies, 'ms' => round((hrtime(true) - $t0) / 1e6, 1)]);
         })(),
@@ -87,8 +92,8 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             'cancel_latency_us_max' => Ignis\Loop::$cancelLatencyUsMax,
             'slow_finally_ran' => $GLOBALS['slow_finally_ran'] ?? 0,
             'runtime'  => function_exists('ignis_stats') ? ignis_stats() : null,
-            'mem'      => memory_get_usage(),
-            'mem_real' => memory_get_usage(true),
+            'mem_this_thread'      => memory_get_usage(),
+            'mem_real_this_thread' => memory_get_usage(true),
             'rss_kb'   => (int) (preg_match('/^VmRSS:\s+(\d+)/m', (string) file_get_contents('/proc/self/status'), $m) ? $m[1] : -1),
         ]),
         default  => Response::text("not found\n", 404),

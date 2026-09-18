@@ -20,7 +20,5 @@ final class DetachedStub extends \Grpc\BaseStub
         return 2;   // READY — nothing to connect
     }
 
-    public function close()
-    {
-    }
+    public function close(): void {}
 }

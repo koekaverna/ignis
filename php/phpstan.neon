@@ -1,0 +1,70 @@
+# PHPStan for the whole userland: one config, not eleven.
+#
+# The phpVersion range replaces per-package configs. The min is the lowest contract any package
+# promises (ignis/temporal-core-transport is >=8.2 deliberately — it is written to go upstream),
+# the max is the engine we ship on. Every file in the tree parses on 8.3 and on 8.5, so there is
+# no 8.4-only syntax anywhere for a wider range to break on.
+#
+# ignis/revolt is not here: it promises 8.1 to AMPHP users, so packages/revolt/phpstan.neon
+# re-runs this config with min 80100 over that one package.
+#
+# There is deliberately no phpstan-baseline.neon. The debt is being driven to zero; a baseline is
+# the file that would make that optional.
+parameters:
+    # Raised 6 -> 8 on 2026-09-18 (S3-STAN8). Measured with 6 clean: 7 = 36, 8 = 39, 9 = 349,
+    # 10 = 399. The 39 were worth taking and four were bug-shaped -- a PDOStatement|false
+    # dereferenced, a string invoked without a callable check on the offload job channel, protobuf
+    # methods on a bare object. Level 9 is S4-MIXED, filed under its real name: it is 300-odd
+    # unchecked accesses on `mixed` at the network boundary, not a number to raise.
+    level: 8
+
+    phpVersion:
+        min: 80200
+        max: 80504
+
+    paths:
+        - packages/doctrine/src
+        - packages/grpc/src
+        - packages/offload/src
+        - packages/pg/src
+        - packages/runtime/src
+        - packages/runtime/tests
+        - packages/swoole/src
+        - packages/symfony-runtime/src
+        - packages/temporal/src
+        - packages/temporal-core-transport/src
+        - packages/temporal-core-transport/tests
+        - packages/temporal-prototype/src
+        - ../examples
+
+    excludePaths:
+        - */vendor/*
+        - ../bench/e21/app
+
+    # php/tests is not analysed on purpose: the fake reactor declares ignis_serve() and
+    # ignis_cancel_parked_any() with bodies that return, and analysing them turns three calls in
+    # Loop.php into "result unused" errors that are an artefact of the fake, not debt in the loop.
+    # `composer lint` still parses the file and the suite still runs it.
+    #
+    # Scanned, never bootstrapped. The stub bodies throw on purpose, and
+    # packages/offload/src/ignis-offload.php guards on function_exists('ignis_route_enable') —
+    # which a loaded stub satisfies — and then calls ignis_offload_stats(), which throws.
+    scanFiles:
+        - packages/runtime/stubs/ignis.php
+        # The fake reactor declares Ignis\Tests\FakeReactor and StopLoop, which every Loop test
+        # names. Its filename does not match the Ignis\Tests\ PSR-4 rule, so nothing else can
+        # resolve them. Scanned, not analysed: the reason tests/ stays out of `paths` -- the fake's
+        # discarded return values become result-unused findings -- does not apply to scanFiles.
+        - tests/fake-reactor.php
+
+    # One entry, not a baseline: the incompatibility is upstream and no annotation satisfies both
+    # sides. Persistence\Mapping\ClassMetadataFactory is @template T of ClassMetadata (invariant)
+    # while ORM narrows it, so ObjectManager's phpdoc return and the native ORM return cannot both
+    # be honoured. Doctrine's own EntityManagerDecorator::getMetadataFactory() reports the identical
+    # error when analysed, which is what proves it is not ours. Named by identifier, path and count,
+    # so it cannot quietly grow to cover anything else.
+    ignoreErrors:
+        -
+            identifier: method.childReturnType
+            path: packages/doctrine/src/FiberEntityManager.php
+            count: 1

@@ -74,7 +74,7 @@ final class CoreSource implements ActivationSource, HeartbeatSink
     public function heartbeat(string $taskToken, array $details): array
     {
         \ignis_temporal_heartbeat($this->worker, \json_encode([
-            'task_token' => \array_values(\unpack('C*', $taskToken)),
+            'task_token' => \array_values(\unpack('C*', $taskToken) ?: []),
             'details' => $details,
         ], \JSON_THROW_ON_ERROR));
 

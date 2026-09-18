@@ -1,4 +1,5 @@
 <?php
+
 /**
  * examples/cli.php — a command-line script that overlaps its own waits.
  *

@@ -1,4 +1,5 @@
 <?php
+
 // E13 (b): two interleaved fibers each set their own superglobals; after suspending they must still see them.
 declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
@@ -13,11 +14,15 @@ $mk = static function (string $tag) use (&$mismatch): Ignis\Future {
                 $mismatch++;
             }
             $_GET['i'] = $i; // a write must not leak into the other fiber either
-            if (isset($_GET['i']) && $_GET['i'] !== $i) { $mismatch++; }
+            if (isset($_GET['i']) && $_GET['i'] !== $i) {
+                $mismatch++;
+            }
         }
     });
 };
-$fa = $mk('A'); $fb = $mk('B'); $fc = $mk('C');
+$fa = $mk('A');
+$fb = $mk('B');
+$fc = $mk('C');
 Ignis\Loop::run();
 Ignis\all([$fa, $fb, $fc]);
 $mainSeesLeak = isset($_GET['x']) ? 1 : 0; // {main} inherited nothing: it never set globals and the fibers' entries were saved under their own contexts

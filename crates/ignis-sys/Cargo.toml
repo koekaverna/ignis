@@ -10,3 +10,6 @@ links = "php"
 
 [build-dependencies]
 bindgen = "0.73"
+
+[lints]
+workspace = true

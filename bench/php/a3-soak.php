@@ -1,4 +1,5 @@
 <?php
+
 // A3 soak: examples/app.php's routes (streams via /upstream, per-fiber superglobals via
 // /whoami, offload pool via /offload, multi-await concurrency via /dashboard), plus a
 // /stats route (rss_kb + counters) so the driving script can read RSS from the process
@@ -26,7 +27,7 @@ function fetchDashboard(int $userId): array
             Ignis\sleep(200);
             return [['id' => 1, 'total' => 42.0]];
         }),
-        Ignis\async(static fn (): array => ['sku-1', 'sku-2']),
+        Ignis\async(static fn(): array => ['sku-1', 'sku-2']),
     ]);
     return compact('profile', 'orders', 'recommendations');
 }
@@ -53,7 +54,7 @@ function dbDemo(): array
         return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
     }
     $pool ??= new Ignis\Pg\Pool($dsn, 10);
-    return $pool->transaction(static fn (Ignis\Pg\Lease $l) => [
+    return $pool->transaction(static fn(Ignis\Pg\Lease $l) => [
         'backend' => $l->backendPid(),
         'now' => $l->query('SELECT now()::text AS t')[0]['t'],
     ]);
@@ -76,7 +77,7 @@ Ignis\serve(static function (Request $req): Response {
             'fibers'   => Ignis\Loop::$fibersCreated,
             'idle'     => Ignis\Loop::idleFibers(),
             'runtime'  => function_exists('ignis_stats') ? ignis_stats() : null,
-            'mem_real' => memory_get_usage(true),
+            'mem_real_this_thread' => memory_get_usage(true),
             'rss_kb'   => (int) (preg_match('/^VmRSS:\s+(\d+)/m', (string) file_get_contents('/proc/self/status'), $m) ? $m[1] : -1),
         ]),
         default      => Response::text("not found\n", 404),

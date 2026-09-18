@@ -28,7 +28,10 @@ function async(callable $fn, mixed ...$args): Future
 
 /**
  * Await all futures; returns their values in the same order.
- * @param iterable<Future> $futures
+ *
+ * @template TKey of array-key
+ * @param  iterable<TKey, Future> $futures
+ * @return array<TKey, mixed>
  */
 function all(iterable $futures): array
 {

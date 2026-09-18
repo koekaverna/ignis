@@ -9,10 +9,8 @@ use std::process::Command;
 
 fn php_config(arg: &str) -> String {
     let pc = env::var("PHP_CONFIG").unwrap_or_else(|_| "/opt/php85-zts/bin/php-config".into());
-    let out = Command::new(&pc)
-        .arg(arg)
-        .output()
-        .unwrap_or_else(|e| panic!("cannot run {pc} {arg}: {e}. Build PHP first: scripts/build-php.sh"));
+    let out =
+        Command::new(&pc).arg(arg).output().unwrap_or_else(|e| panic!("cannot run {pc} {arg}: {e}. Build PHP first: scripts/build-php.sh"));
     assert!(out.status.success(), "{pc} {arg} failed");
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }

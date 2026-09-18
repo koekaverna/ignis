@@ -1,4 +1,5 @@
 <?php
+
 /**
  * PHPUnit bootstrap for the Ignis Revolt driver tests (E15b).
  *

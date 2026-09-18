@@ -50,6 +50,9 @@ use Temporal\Worker\Transport\Command\Server\ServerRequest;
 use Temporal\Worker\Transport\Command\Server\SuccessResponse;
 use Temporal\Worker\Transport\Command\Server\TickInfo;
 
+/**
+ * @phpstan-type Run array{seq: int, bySeq: array<int, array{id: int|string, kind: string}>, byId: array<int|string, array{seq: int, kind: string}>, childStart: array<int, int|string>, queries: list<string>, updates: array<string, string>}
+ */
 final class CoreCodec implements CodecInterface
 {
     private const NS = 1_000_000_000;
@@ -59,7 +62,7 @@ final class CoreCodec implements CodecInterface
     private const TIMER = 'timer';
     private const CHILD = 'child';
 
-    /** @var array<string, array{seq:int, bySeq:array<int,array{id:int|string,kind:string}>, byId:array<int|string,array{seq:int,kind:string}>, childStart:array<int,int|string>, queries:list<string>, updates:array<string,string>}> */
+    /** @var array<string, Run> */
     private array $runs = [];
 
     /** The batch being decoded/encoded right now; set by CoreHost before each dispatch. */
@@ -80,6 +83,7 @@ final class CoreCodec implements CodecInterface
         $this->taskToken = null;
     }
 
+    /** @param array<string, mixed> $headers */
     public function decode(string $batch, array $headers = []): iterable
     {
         $data = \json_decode($batch, true, 512, \JSON_THROW_ON_ERROR);
@@ -103,20 +107,23 @@ final class CoreCodec implements CodecInterface
     public function encodeFailure(\Throwable $error): string
     {
         return $this->kind === ActivationSource::ACTIVITY
-            ? \json_encode(['taskToken' => $this->taskToken, 'result' => ['failed' => ['failure' => ['message' => $error->getMessage()]]]], \JSON_THROW_ON_ERROR)
-            : \json_encode(['runId' => $this->runId, 'successful' => ['commands' => [['failWorkflowExecution' => ['failure' => ['message' => $error->getMessage()]]]]]], \JSON_THROW_ON_ERROR);
+            ? self::json(['taskToken' => $this->taskToken, 'result' => ['failed' => ['failure' => ['message' => $error->getMessage()]]]])
+            : self::json(['runId' => $this->runId, 'successful' => ['commands' => [['failWorkflowExecution' => ['failure' => ['message' => $error->getMessage()]]]]]]);
     }
 
     // ---------------------------------------------------------------- workflow activations
 
-    /** @return list<ServerRequest|SuccessResponse|FailureResponse> */
+    /**
+     * @param  array<string, mixed> $act
+     * @return list<ServerRequest|SuccessResponse|FailureResponse>
+     */
     private function decodeActivation(array $act): array
     {
-        $this->runId = $runId = (string) ($act['runId'] ?? '');
+        $this->runId = $runId = self::required($act['runId'] ?? null, 'runId');
         $info = new TickInfo(
             time: $this->timestamp($act['timestamp'] ?? null),
-            historyLength: (int) ($act['historyLength'] ?? 0),
-            historySize: (int) ($act['historySizeBytes'] ?? 0),
+            historyLength: \max(0, (int) ($act['historyLength'] ?? 0)),
+            historySize: \max(0, (int) ($act['historySizeBytes'] ?? 0)),
             continueAsNewSuggested: (bool) ($act['continueAsNewSuggested'] ?? false),
             isReplaying: (bool) ($act['isReplaying'] ?? false),
         );
@@ -146,8 +153,8 @@ final class CoreCodec implements CodecInterface
                     }
                     break;
 
-                // Local activities resolve through this job too, with `is_local` set; the seq map
-                // does not care which kind it was.
+                    // Local activities resolve through this job too, with `is_local` set; the seq map
+                    // does not care which kind it was.
                 case 'resolveActivity':
                     $id = $this->takeId($runId, (int) ($d['seq'] ?? 0));
                     if ($id !== null) {
@@ -237,15 +244,18 @@ final class CoreCodec implements CodecInterface
                     );
                     break;
 
-                // UpdateRandomSeed / NotifyHasPatch carry nothing sdk-php acts on through this
-                // transport; Nexus is out of scope.
+                    // UpdateRandomSeed / NotifyHasPatch carry nothing sdk-php acts on through this
+                    // transport; Nexus is out of scope.
             }
         }
 
         return $out;
     }
 
-    /** @param iterable<CommandInterface> $commands */
+    /**
+     * @param  iterable<CommandInterface> $commands
+     * @return non-empty-string
+     */
     private function encodeCompletion(iterable $commands): string
     {
         $runId = $this->runId;
@@ -366,10 +376,13 @@ final class CoreCodec implements CodecInterface
             }
         }
 
-        return \json_encode(['runId' => $runId, 'successful' => ['commands' => $out]], \JSON_THROW_ON_ERROR);
+        return self::json(['runId' => $runId, 'successful' => ['commands' => $out]]);
     }
 
-    /** `UpdateValidated`/`UpdateCompleted` -> core's accepted / rejected / completed. */
+    /**
+     * `UpdateValidated`/`UpdateCompleted` -> core's accepted / rejected / completed.
+     * @return array<string, mixed>
+     */
     private function updateResponse(string $runId, UpdateResponse $c): array
     {
         $updateId = (string) ($c->getOptions()['id'] ?? '');
@@ -391,6 +404,7 @@ final class CoreCodec implements CodecInterface
         ]];
     }
 
+    /** @return array<string, mixed> */
     private function queryResult(string $queryId, CommandInterface $c): array
     {
         $failure = $this->failureOf($c);
@@ -406,6 +420,7 @@ final class CoreCodec implements CodecInterface
         ]];
     }
 
+    /** @return null|array<string, mixed> */
     private function cancelOf(string $runId, int|string $id): ?array
     {
         $entry = $this->runs[$runId]['byId'][$id] ?? null;
@@ -424,7 +439,10 @@ final class CoreCodec implements CodecInterface
 
     // ---------------------------------------------------------------- activity tasks
 
-    /** @return list<ServerRequest> */
+    /**
+     * @param  array<string, mixed> $task
+     * @return list<ServerRequest>
+     */
     private function decodeActivityTask(array $task): array
     {
         $this->taskToken = $task['taskToken'] ?? null;
@@ -434,6 +452,7 @@ final class CoreCodec implements CodecInterface
         }
 
         $execution = $start['workflowExecution'] ?? [];
+        $activityId = self::required($start['activityId'] ?? null, 'start.activityId');
 
         return [new ServerRequest(
             // Core delivers local activities on this same stream, flagged; sdk-php routes them to
@@ -443,7 +462,7 @@ final class CoreCodec implements CodecInterface
             options: [
                 'info' => [
                     'TaskToken' => $this->tokenBase64(),
-                    'ActivityID' => (string) ($start['activityId'] ?? ''),
+                    'ActivityID' => $activityId,
                     'ActivityType' => ['Name' => (string) ($start['activityType'] ?? '')],
                     'TaskQueue' => $this->taskQueue,
                     'WorkflowNamespace' => $this->namespace,
@@ -460,11 +479,14 @@ final class CoreCodec implements CodecInterface
                 ],
             ],
             payloads: $this->values($start['input'] ?? []),
-            id: (string) ($start['activityId'] ?? ''),
+            id: $activityId,
         )];
     }
 
-    /** @param iterable<CommandInterface> $commands */
+    /**
+     * @param  iterable<CommandInterface> $commands
+     * @return non-empty-string
+     */
     private function encodeActivityResult(iterable $commands): string
     {
         $result = ['completed' => new \stdClass()];
@@ -480,19 +502,51 @@ final class CoreCodec implements CodecInterface
             }
         }
 
-        return \json_encode(['taskToken' => $this->taskToken, 'result' => $result], \JSON_THROW_ON_ERROR);
+        return self::json(['taskToken' => $this->taskToken, 'result' => $result]);
     }
 
     // ---------------------------------------------------------------- helpers
 
+    /**
+     * @param  array<string, mixed> $document
+     * @return non-empty-string
+     */
+    private static function json(array $document): string
+    {
+        return \json_encode($document, \JSON_THROW_ON_ERROR) ?: throw new \JsonException('the completion encoded to an empty document');
+    }
+
+    /**
+     * Core names every run and every activity, and sdk-php correlates its own requests by that
+     * name — so a document that arrives without one would have every request of every run share
+     * the empty id. A missing name is a malformed document and fails the task here.
+     *
+     * @return non-empty-string
+     */
+    private static function required(mixed $name, string $field): string
+    {
+        $value = (string) $name;
+        if ($value === '') {
+            throw new \LogicException(\sprintf('the core document has no "%s"', $field));
+        }
+
+        return $value;
+    }
+
     private function reset(string $runId): void
     {
-        $this->runs[$runId] = ['seq' => 0, 'bySeq' => [], 'byId' => [], 'childStart' => [], 'queries' => [], 'updates' => []];
+        $this->runs[$runId] = self::emptyRun();
+    }
+
+    /** @return Run */
+    private static function emptyRun(): array
+    {
+        return ['seq' => 0, 'bySeq' => [], 'byId' => [], 'childStart' => [], 'queries' => [], 'updates' => []];
     }
 
     private function nextSeq(string $runId, int|string $id, string $kind): int
     {
-        isset($this->runs[$runId]) or $this->reset($runId);
+        $this->runs[$runId] ??= self::emptyRun();
         $seq = ++$this->runs[$runId]['seq'];
         $this->runs[$runId]['bySeq'][$seq] = ['id' => $id, 'kind' => $kind];
         $this->runs[$runId]['byId'][$id] = ['seq' => $seq, 'kind' => $kind];
@@ -511,7 +565,10 @@ final class CoreCodec implements CodecInterface
         return $entry['id'];
     }
 
-    /** An ActivityResolution / ChildWorkflowResult -> the response sdk-php is waiting for. */
+    /**
+     * An ActivityResolution / ChildWorkflowResult -> the response sdk-php is waiting for.
+     * @param array<string, mixed> $result
+     */
     private function resolution(array $result, int|string $id, TickInfo $info): SuccessResponse|FailureResponse
     {
         if (isset($result['completed'])) {
@@ -534,24 +591,27 @@ final class CoreCodec implements CodecInterface
      * `StartWorkflow` options are unmarshalled into `Temporal\Workflow\WorkflowInfo`, so these keys
      * are fixed by that class's `#[Marshal]` names, and the timeouts by DateIntervalType's default
      * unit — nanoseconds.
+     *
+     * @param  array<string, mixed> $start the activation's `startWorkflow` job
+     * @return array<string, mixed>
      */
-    private function workflowInfo(string $runId, array $d, TickInfo $info): array
+    private function workflowInfo(string $runId, array $start, TickInfo $info): array
     {
         return [
-            'WorkflowExecution' => ['ID' => (string) ($d['workflowId'] ?? ''), 'RunID' => $runId],
-            'WorkflowType' => ['Name' => (string) ($d['workflowType'] ?? '')],
+            'WorkflowExecution' => ['ID' => (string) ($start['workflowId'] ?? ''), 'RunID' => $runId],
+            'WorkflowType' => ['Name' => (string) ($start['workflowType'] ?? '')],
             'TaskQueueName' => $this->taskQueue,
             'Namespace' => $this->namespace,
-            'Attempt' => (int) ($d['attempt'] ?? 1),
-            'WorkflowExecutionTimeout' => $this->nanos($d['workflowExecutionTimeout'] ?? null),
-            'WorkflowRunTimeout' => $this->nanos($d['workflowRunTimeout'] ?? null),
-            'WorkflowTaskTimeout' => $this->nanos($d['workflowTaskTimeout'] ?? null),
+            'Attempt' => (int) ($start['attempt'] ?? 1),
+            'WorkflowExecutionTimeout' => $this->nanos($start['workflowExecutionTimeout'] ?? null),
+            'WorkflowRunTimeout' => $this->nanos($start['workflowRunTimeout'] ?? null),
+            'WorkflowTaskTimeout' => $this->nanos($start['workflowTaskTimeout'] ?? null),
             'HistoryLength' => $info->historyLength,
             'HistorySize' => $info->historySize,
             'ShouldContinueAsNew' => $info->continueAsNewSuggested,
-            'CronSchedule' => $d['cronSchedule'] ?? null,
-            'ContinuedExecutionRunID' => $d['continuedFromExecutionRunId'] ?? null,
-            'FirstRunID' => $d['firstExecutionRunId'] ?? $runId,
+            'CronSchedule' => $start['cronSchedule'] ?? null,
+            'ContinuedExecutionRunID' => $start['continuedFromExecutionRunId'] ?? null,
+            'FirstRunID' => $start['firstExecutionRunId'] ?? $runId,
             'OriginalRunID' => $runId,
         ];
     }
@@ -636,7 +696,10 @@ final class CoreCodec implements CodecInterface
         return \rtrim(\rtrim(\sprintf('%.3f', $ms / 1000), '0'), '.') . 's';
     }
 
-    /** sdk-php's marshalled RetryOptions -> core's temporal.api.common.v1.RetryPolicy. */
+    /**
+     * sdk-php's marshalled RetryOptions -> core's temporal.api.common.v1.RetryPolicy.
+     * @return null|array<string, mixed>
+     */
     private function retryPolicy(mixed $policy): ?array
     {
         if (!\is_array($policy)) {

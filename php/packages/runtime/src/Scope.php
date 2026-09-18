@@ -10,7 +10,9 @@ namespace Ignis;
  */
 final class Scope
 {
+    /** @var null|\WeakMap<object, array<string, mixed>> */
     private static ?\WeakMap $map = null;
+    /** @var array<string, mixed> the {main} bag, for code running outside any fiber */
     private static array $main = [];
 
     public static function set(string $key, mixed $value): void

@@ -10,6 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -34,16 +35,64 @@ struct Pool {
     /// M4-12: the capacity the first opener asked for, so a later opener with a different `max`
     /// can be warned rather than silently getting the first one's.
     max: usize,
+    /// M4-2/B2: the state that lets a down database cost a fiber nothing instead of the ceiling.
+    breaker: Mutex<Breaker>,
+}
+
+/// M4-2/B2, pain-map "PHP-FPM 2": consecutive acquire failures open the pool, an open pool refuses
+/// without touching the network, and one probe after the cooldown decides whether to close it again.
+#[derive(Default)]
+struct Breaker {
+    consecutive_failures: u32,
+    open_until: Option<Instant>,
+    probing: bool,
+}
+
+impl Breaker {
+    /// `Ok` when the caller may try the database: the breaker is closed, or the cooldown has passed
+    /// and this caller is the one probe allowed through.
+    fn admit(&mut self) -> Result<(), String> {
+        let Some(until) = self.open_until else { return Ok(()) };
+        if self.probing {
+            return Err(format!(
+                "circuit breaker half-open after {} consecutive failures; one probe is already in flight",
+                self.consecutive_failures
+            ));
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if !left.is_zero() {
+            return Err(format!(
+                "circuit breaker open after {} consecutive failures; not connecting for another {} ms (IGNIS_PG_BREAKER_COOLDOWN_MS)",
+                self.consecutive_failures,
+                left.as_millis()
+            ));
+        }
+        self.probing = true;
+        Ok(())
+    }
+
+    fn record(&mut self, acquired: bool) {
+        self.probing = false;
+        if acquired {
+            self.consecutive_failures = 0;
+            self.open_until = None;
+            return;
+        }
+        self.consecutive_failures += 1;
+        let threshold = tuning().breaker_failures;
+        if threshold > 0 && self.consecutive_failures >= threshold {
+            self.open_until = Some(Instant::now() + tuning().breaker_cooldown);
+        }
+    }
 }
 
 struct Lease {
     pool: Arc<Pool>,
     conn: Conn,
     _permit: OwnedSemaphorePermit,
-    /// M4-1: when the lease was handed out, so a held connection is visible (oldest age in
-    /// `stats`) and logged (`release` warns past `IGNIS_PG_LEASE_WARN_MS`). Before this nothing
-    /// tracked hold time at all — the owner's "will we see it in the logs?" was answered no.
-    since: std::time::Instant,
+    /// M4-1: when the lease was handed out, so a held connection is visible (oldest age in `stats`)
+    /// and logged (`release` warns past `IGNIS_PG_LEASE_WARN_MS`).
+    since: Instant,
 }
 
 /// `DISCARD ALL` minus `DEALLOCATE ALL`/`DISCARD PLANS` (its documented expansion), so the
@@ -56,7 +105,10 @@ const STMT_CACHE_MAX: usize = 256;
 type Fut = Pin<Box<dyn Future<Output = Outcome> + Send>>;
 
 static POOLS: OnceLock<Mutex<HashMap<u64, Arc<Pool>>>> = OnceLock::new();
-static LEASES: OnceLock<Mutex<HashMap<u64, Arc<AsyncMutex<Option<Lease>>>>>> = OnceLock::new();
+/// A lease slot: `None` once released, so a late query fails instead of touching a reused lease.
+type LeaseSlot = Arc<AsyncMutex<Option<Lease>>>;
+
+static LEASES: OnceLock<Mutex<HashMap<u64, LeaseSlot>>> = OnceLock::new();
 /// M4-11: lease id → the reactor (thread) that acquired it, kept outside the lease's async mutex
 /// so a dying thread's leases can be found without waiting on a query in flight (V-42).
 static OWNERS: OnceLock<Mutex<HashMap<u64, usize>>> = OnceLock::new();
@@ -81,28 +133,46 @@ fn failed(msg: String) -> Outcome {
     Outcome::Failed(format!("pg: {msg}"))
 }
 
+/// M4-12: the pool already open for this DSN, if any. Every worker thread runs the same script and
+/// calls `open`; before this, each call minted its own pool (V-43: `--threads 3` gave three pools
+/// of `max` each).
+fn pool_already_open_for_dsn(dsn: &str, max: usize) -> Option<u64> {
+    let &id = by_dsn().lock().unwrap().get(dsn)?;
+    if let Some(p) = pools().lock().unwrap().get(&id)
+        && p.max != max.max(1)
+    {
+        tracing::warn!(
+            pool = id,
+            first = p.max,
+            requested = max,
+            "ignis_pg_open: same DSN opened with a different max; the first opener's applies"
+        );
+    }
+    Some(id)
+}
+
 /// `ignis_pg_open`: no I/O; connections are made lazily up to `max`.
 pub fn open(dsn: String, max: usize) -> u64 {
-    // M4-12: one pool per DSN per process. Every worker thread runs the same script and calls
-    // this; before, each call minted a pool, so an app got threads × max connections (V-43).
-    if let Some(&id) = by_dsn().lock().unwrap().get(&dsn) {
-        if let Some(p) = pools().lock().unwrap().get(&id)
-            && p.max != max.max(1)
-        {
-            tracing::warn!(pool = id, first = p.max, requested = max, "ignis_pg_open: same DSN opened with a different max; the first opener's applies");
-        }
+    if let Some(id) = pool_already_open_for_dsn(&dsn, max) {
         return id;
     }
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    let pool = Arc::new(Pool { dsn: dsn.clone(), idle: Mutex::new(Vec::new()), sem: Arc::new(Semaphore::new(max.max(1))), created: AtomicU64::new(0), max: max.max(1) });
+    let pool = Arc::new(Pool {
+        dsn: dsn.clone(),
+        idle: Mutex::new(Vec::new()),
+        sem: Arc::new(Semaphore::new(max.max(1))),
+        created: AtomicU64::new(0),
+        max: max.max(1),
+        breaker: Mutex::new(Breaker::default()),
+    });
     by_dsn().lock().unwrap().insert(dsn, id);
     pools().lock().unwrap().insert(id, pool);
     id
 }
 
+/// A new connection. The spawned task owns the socket and ends when the client is dropped.
 async fn connect(pool: &Pool) -> Result<Client, tokio_postgres::Error> {
     let (client, conn) = tokio_postgres::connect(&pool.dsn, NoTls).await?;
-    // The connection task owns the socket; it ends when the client is dropped.
     tokio::spawn(async move {
         if let Err(e) = conn.await {
             tracing::debug!(error = %e, "pg connection ended");
@@ -113,29 +183,52 @@ async fn connect(pool: &Pool) -> Result<Client, tokio_postgres::Error> {
 }
 
 /// `ignis_pg_acquire`: waits for a permit (pool exhausted) then reuses an idle connection or connects.
+///
+/// M4-2/B2: the wait is bounded by `IGNIS_PG_ACQUIRE_TIMEOUT_MS` and gated by the pool's breaker, so
+/// a slow or dead PostgreSQL costs a fiber the ceiling once and nothing afterwards, instead of
+/// stalling every fiber on every thread for as long as the database stays unhappy.
 pub fn acquire(pool_id: u64, owner: usize) -> Fut {
     Box::pin(async move {
         let Some(pool) = pools().lock().unwrap().get(&pool_id).cloned() else { return failed("unknown pool".into()) };
-        let permit = match pool.sem.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => return failed("pool closed".into()),
+        let admitted = pool.breaker.lock().unwrap().admit();
+        if let Err(message) = admitted {
+            return failed(message);
+        }
+        let ceiling = tuning().acquire_timeout;
+        let outcome = match tokio::time::timeout(ceiling, lease_from(pool.clone(), owner)).await {
+            Ok(outcome) => outcome,
+            Err(_) => failed(format!("acquire timed out after {} ms (IGNIS_PG_ACQUIRE_TIMEOUT_MS)", ceiling.as_millis())),
         };
-        let idle = pool.idle.lock().unwrap().pop();
-        let conn = match idle {
-            Some(c) if !c.client.is_closed() => c,
-            _ => match connect(&pool).await {
-                Ok(c) => Conn { client: c, stmts: HashMap::new() },
-                Err(e) => return failed(format!("connect: {e}")),
-            },
-        };
-        let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
-        owners().lock().unwrap().insert(id, owner);
-        Outcome::Json(format!("{{\"lease\":{id}}}"))
+        pool.breaker.lock().unwrap().record(!matches!(outcome, Outcome::Failed(_)));
+        outcome
     })
 }
 
+/// The unbounded half of `acquire`: a permit, then an idle connection or a new one. Cancelling it at
+/// the ceiling drops the permit and any half-open socket with it.
+async fn lease_from(pool: Arc<Pool>, owner: usize) -> Outcome {
+    let permit = match pool.sem.clone().acquire_owned().await {
+        Ok(p) => p,
+        Err(_) => return failed("pool closed".into()),
+    };
+    let idle = pool.idle.lock().unwrap().pop();
+    let conn = match idle {
+        Some(c) if !c.client.is_closed() => c,
+        _ => match connect(&pool).await {
+            Ok(c) => Conn { client: c, stmts: HashMap::new() },
+            Err(e) => return failed(format!("connect: {e}")),
+        },
+    };
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: Instant::now() }))));
+    owners().lock().unwrap().insert(id, owner);
+    Outcome::Json(format!("{{\"lease\":{id}}}"))
+}
+
 /// Fast path for `ignis_pg_acquire`: a free permit and an idle connection mean no reactor hop.
+/// With no idle connection the permit is dropped and `None` sends the caller down the async path.
+/// The breaker does not gate this path: it never connects and never waits, and a closed connection
+/// is popped and skipped, so during an outage the idle list drains and callers reach `acquire`.
 pub fn try_acquire(pool_id: u64, owner: usize) -> Option<u64> {
     let pool = pools().lock().unwrap().get(&pool_id).cloned()?;
     let permit = pool.sem.clone().try_acquire_owned().ok()?;
@@ -145,13 +238,13 @@ pub fn try_acquire(pool_id: u64, owner: usize) -> Option<u64> {
             match idle.pop() {
                 Some(c) if !c.client.is_closed() => break c,
                 Some(_) => continue,
-                None => return None, // permit dropped: the async path will connect
+                None => return None,
             }
         }
     };
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: std::time::Instant::now() }))));
-        owners().lock().unwrap().insert(id, owner);
+    leases().lock().unwrap().insert(id, Arc::new(AsyncMutex::new(Some(Lease { pool, conn, _permit: permit, since: Instant::now() }))));
+    owners().lock().unwrap().insert(id, owner);
     Some(id)
 }
 
@@ -212,6 +305,7 @@ pub fn query(lease_id: u64, sql: String, params_json: String) -> Fut {
 }
 
 /// `ignis_pg_release`: `ROLLBACK; DISCARD ALL` (when `reset`) then back to idle; a failed reset closes the connection.
+/// The permit is returned last, so the next acquire finds the connection already idle.
 pub fn release(lease_id: u64, reset: bool) -> Fut {
     Box::pin(async move {
         owners().lock().unwrap().remove(&lease_id);
@@ -230,7 +324,6 @@ pub fn release(lease_id: u64, reset: bool) -> Fut {
         } else {
             pool.idle.lock().unwrap().push(conn);
         }
-        // Dropping the permit here lets the next acquire proceed with the connection already idle.
         drop(_permit);
         Outcome::Ready
     })
@@ -238,13 +331,15 @@ pub fn release(lease_id: u64, reset: bool) -> Fut {
 
 /// `ignis_pg_stats(pool)`: `(idle, created, available permits)` for VALIDATION tables.
 pub fn stats(pool_id: u64) -> Option<(usize, u64, usize)> {
-    pools().lock().unwrap().get(&pool_id).map(|p| (p.idle.lock().unwrap().len(), p.created.load(Ordering::Relaxed), p.sem.available_permits()))
+    pools()
+        .lock()
+        .unwrap()
+        .get(&pool_id)
+        .map(|p| (p.idle.lock().unwrap().len(), p.created.load(Ordering::Relaxed), p.sem.available_permits()))
 }
 
-/// M4-1: (age of the oldest live lease in ms, live leases held ≥ `IGNIS_PG_LEASE_WARN_MS`) for a
-/// pool. A lease mid-query is behind its async mutex; `try_lock` skips it rather than block the
-/// PHP thread, so a lease inside a long query is counted from the moment it is free to inspect —
-/// which is exactly when its age is the interesting number.
+/// M4-1: (age of the oldest live lease in ms, live leases held ≥ `IGNIS_PG_LEASE_WARN_MS`) for one pool.
+/// A lease mid-query is behind its async mutex; `try_lock` skips it rather than block the PHP thread.
 pub fn lease_ages(pool_id: u64) -> (u64, usize) {
     let warn = lease_warn_ms();
     let mut oldest = 0u64;
@@ -265,10 +360,9 @@ pub fn lease_ages(pool_id: u64) -> (u64, usize) {
     (oldest, over)
 }
 
-/// Pool-wide lease numbers for `/_ignis/metrics` (M4-4): (oldest live lease in ms, leases older
-/// than the warn threshold, live leases). Unlike `lease_ages()` this asks about every pool at once
-/// and never blocks: a lease whose slot is locked right now is counted as live and skipped for
-/// age, because the metrics endpoint must answer while PHP threads are busy, not wait for them.
+/// M4-4, every pool at once: (oldest live lease in ms, leases over the warn threshold, live leases).
+/// Never blocks — `/_ignis/metrics` must answer while PHP threads are busy — so a locked slot counts
+/// as live but not towards the oldest age.
 pub fn lease_metrics() -> (u64, usize, usize) {
     let warn = lease_warn_ms();
     let (mut oldest, mut over, mut live) = (0u64, 0usize, 0usize);
@@ -291,7 +385,32 @@ pub fn lease_metrics() -> (u64, usize, usize) {
 /// `IGNIS_PG_LEASE_WARN_MS`, default 5000; read once.
 fn lease_warn_ms() -> u64 {
     static V: OnceLock<u64> = OnceLock::new();
-    *V.get_or_init(|| std::env::var("IGNIS_PG_LEASE_WARN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5000))
+    *V.get_or_init(|| env_or("IGNIS_PG_LEASE_WARN_MS", 5000))
+}
+
+/// M4-2/B2, read once. The ceiling matches `IGNIS_PG_LEASE_WARN_MS`: waiting longer for a connection
+/// than we are willing to let one be held is a stalled request, not a busy pool. Five failures are
+/// enough that an ordinary connection blip does not trip the breaker, and the cooldown is one ceiling
+/// — long enough that a down database is not re-probed per request, short enough that a recovered one
+/// is back within a request or two. `IGNIS_PG_BREAKER_FAILURES=0` turns the breaker off.
+struct Tuning {
+    acquire_timeout: Duration,
+    breaker_failures: u32,
+    breaker_cooldown: Duration,
+}
+
+static TUNING: OnceLock<Tuning> = OnceLock::new();
+
+fn tuning() -> &'static Tuning {
+    TUNING.get_or_init(|| Tuning {
+        acquire_timeout: Duration::from_millis(env_or("IGNIS_PG_ACQUIRE_TIMEOUT_MS", 5000)),
+        breaker_failures: env_or("IGNIS_PG_BREAKER_FAILURES", 5),
+        breaker_cooldown: Duration::from_millis(env_or("IGNIS_PG_BREAKER_COOLDOWN_MS", 5000)),
+    })
+}
+
+fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 fn bind(v: &Value, ty: &Type) -> Result<Box<dyn ToSql + Sync + Send>, String> {
@@ -301,7 +420,14 @@ fn bind(v: &Value, ty: &Type) -> Result<Box<dyn ToSql + Sync + Send>, String> {
                 return Ok(Box::new(None::<$t>));
             }
             let n: $t = match v {
-                Value::Number(n) => n.as_i64().and_then(|x| <$t>::try_from(x).ok()).or_else(|| n.as_f64().map(|f| f as $t)).ok_or("number out of range")?,
+                Value::Number(n) => {
+                    // The fallback has to come BEFORE the range check, not after it: as_f64 always
+                    // succeeds and a float-to-int `as` saturates, so with the two the other way
+                    // round an out-of-range number silently became i16::MAX on the wire instead of
+                    // an error, while the same value as a *string* errored correctly.
+                    let whole = n.as_i64().or_else(|| n.as_f64().map(|f| f as i64));
+                    whole.and_then(|x| <$t>::try_from(x).ok()).ok_or("number out of range")?
+                }
                 Value::String(s) => s.parse::<$t>().map_err(|_| format!("'{s}' is not a {}", ty.name()))?,
                 Value::Bool(b) => (*b as i64) as $t,
                 _ => return Err(format!("cannot bind {v} as {}", ty.name())),
@@ -393,10 +519,8 @@ fn col_to_json(row: &Row, i: usize, ty: &Type) -> Result<Value, String> {
     })
 }
 
-/// M4-11 (V-42): a PHP thread is ending — return every lease it still holds. The reset and the
-/// permit return run on the runtime, so nothing here waits on the dying thread; a lease whose
-/// query is still in flight is released the moment that query finishes (`release` takes the
-/// lease's async mutex). Returns how many were reclaimed.
+/// M4-11 (V-42): a PHP thread is ending — return every lease it still holds, and how many that was.
+/// The reset runs on the runtime, so nothing here waits on the dying thread or on a query in flight.
 pub fn release_owned_by(owner: usize, rt: &tokio::runtime::Handle) -> usize {
     let ids: Vec<u64> = owners().lock().unwrap().iter().filter(|(_, o)| **o == owner).map(|(id, _)| *id).collect();
     for &id in &ids {
@@ -406,4 +530,161 @@ pub fn release_owned_by(owner: usize, rt: &tokio::runtime::Handle) -> usize {
         tracing::warn!(leases = ids.len(), "php thread ended holding pg leases; reset and returned to the pool");
     }
     ids.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BytesMut;
+    use tokio_postgres::types::IsNull;
+
+    /// What the wire would carry for `value` bound as `ty`: `None` for SQL NULL.
+    fn encode(value: &Value, ty: &Type) -> Result<Option<BytesMut>, String> {
+        let bound = bind(value, ty)?;
+        let mut buf = BytesMut::new();
+        match bound.to_sql_checked(ty, &mut buf) {
+            Ok(IsNull::No) => Ok(Some(buf)),
+            Ok(IsNull::Yes) => Ok(None),
+            Err(err) => Err(err.to_string()),
+        }
+    }
+
+    #[test]
+    fn int4_binds_numbers_strings_bools_and_null() {
+        assert_eq!(encode(&json!(5), &Type::INT4).unwrap().unwrap()[..], [0, 0, 0, 5]);
+        assert_eq!(encode(&json!("5"), &Type::INT4).unwrap().unwrap()[..], [0, 0, 0, 5]);
+        assert_eq!(encode(&json!(true), &Type::INT4).unwrap().unwrap()[..], [0, 0, 0, 1]);
+        assert_eq!(encode(&json!(false), &Type::INT4).unwrap().unwrap()[..], [0, 0, 0, 0]);
+        assert_eq!(encode(&Value::Null, &Type::INT4).unwrap(), None);
+        assert_eq!(encode(&json!(-1), &Type::INT8).unwrap().unwrap()[..], [255; 8]);
+    }
+
+    #[test]
+    fn int2_rejects_an_out_of_range_value_whichever_json_type_it_arrives_as() {
+        let from_string = bind(&json!("70000"), &Type::INT2).unwrap_err();
+        assert!(from_string.contains("is not a int2"), "{from_string}");
+
+        // Until 2026-09-17 these two saturated to 32767 / -32768 and were written to the row: the
+        // range check ran before the float fallback, and a float-to-int `as` saturates. A JSON
+        // number and a JSON string of the same value must both be refused.
+        assert!(bind(&json!(70000), &Type::INT2).unwrap_err().contains("number out of range"));
+        assert!(bind(&json!(-70000), &Type::INT2).unwrap_err().contains("number out of range"));
+
+        // In range, and still accepted from a float the way it always was.
+        assert_eq!(encode(&json!(32767), &Type::INT2).unwrap().unwrap()[..], [0x7f, 0xff]);
+        assert_eq!(encode(&json!(7.9), &Type::INT2).unwrap().unwrap()[..], [0x00, 0x07]);
+    }
+
+    #[test]
+    fn text_and_bool_coerce_from_any_scalar() {
+        assert_eq!(encode(&json!(42), &Type::TEXT).unwrap().unwrap()[..], b"42"[..]);
+        assert_eq!(encode(&json!(true), &Type::VARCHAR).unwrap().unwrap()[..], b"true"[..]);
+        assert_eq!(encode(&Value::Null, &Type::TEXT).unwrap(), None);
+
+        assert_eq!(encode(&json!("yes"), &Type::BOOL).unwrap().unwrap()[..], [1]);
+        assert_eq!(encode(&json!("nope"), &Type::BOOL).unwrap().unwrap()[..], [0]);
+        assert_eq!(encode(&json!(0), &Type::BOOL).unwrap().unwrap()[..], [0]);
+        assert_eq!(encode(&json!(3), &Type::BOOL).unwrap().unwrap()[..], [1]);
+        assert!(bind(&json!([1]), &Type::BOOL).unwrap_err().contains("not a bool"));
+    }
+
+    #[test]
+    fn bytea_is_base64_and_says_so_when_it_is_not() {
+        assert_eq!(encode(&json!("aGk="), &Type::BYTEA).unwrap().unwrap()[..], b"hi"[..]);
+        let err = bind(&json!("!!!"), &Type::BYTEA).unwrap_err();
+        assert!(err.starts_with("bytea parameters are base64 strings: "), "{err}");
+        assert!(bind(&json!(1), &Type::BYTEA).unwrap_err().contains("base64"));
+    }
+
+    #[test]
+    fn an_unsupported_parameter_type_tells_the_caller_to_cast_it() {
+        let err = bind(&json!("2026-09-17"), &Type::DATE).unwrap_err();
+        assert!(err.contains("unsupported parameter type date"), "{err}");
+        assert!(err.contains("cast it in SQL"), "{err}");
+    }
+
+    /// V-43: `--threads 3` used to mint three pools of `max` each for one DSN.
+    #[test]
+    fn open_is_one_pool_per_dsn_and_does_no_io() {
+        let dsn = "postgres://nobody@240.0.0.1:1/ignis-test";
+        let started = Instant::now();
+        let first = open(dsn.into(), 4);
+        let again = open(dsn.into(), 9);
+        let other = open(format!("{dsn}-other"), 4);
+        assert_eq!(first, again, "same DSN must share one pool");
+        assert_ne!(first, other);
+        assert!(started.elapsed() < Duration::from_millis(100), "open blocked: {:?}", started.elapsed());
+        assert_eq!(stats(first), Some((0, 0, 4)), "open must not connect, and keeps the first opener's max");
+        assert_eq!(stats(other), Some((0, 0, 4)));
+    }
+
+    /// A listener that completes the TCP handshake and then answers nothing: PostgreSQL slow rather
+    /// than down, which is the case an unbounded acquire waits on for ever. The listener has to stay
+    /// alive for the length of the test, so the caller keeps it.
+    fn black_hole() -> (std::net::TcpListener, String) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        (listener, format!("postgres://ignis@127.0.0.1:{port}/ignis-test"))
+    }
+
+    fn tune(acquire_timeout_ms: u64, breaker_failures: u32, breaker_cooldown_ms: u64) {
+        let tuning = Tuning {
+            acquire_timeout: Duration::from_millis(acquire_timeout_ms),
+            breaker_failures,
+            breaker_cooldown: Duration::from_millis(breaker_cooldown_ms),
+        };
+        assert!(TUNING.set(tuning).is_ok(), "tuning was already read; each test needs its own process (nextest)");
+    }
+
+    async fn acquire_failure(pool: u64) -> (String, Duration) {
+        let started = Instant::now();
+        let outcome = acquire(pool, 0).await;
+        let elapsed = started.elapsed();
+        let Outcome::Failed(message) = outcome else { panic!("a black hole answered an acquire") };
+        (message, elapsed)
+    }
+
+    /// M4-2/B2: the bulkhead. Before this, the acquire below never returned.
+    #[tokio::test]
+    async fn an_acquire_gives_up_at_the_ceiling_instead_of_waiting_on_a_slow_database() {
+        tune(300, 0, 0);
+        let (_listener, dsn) = black_hole();
+        let pool = open(dsn, 2);
+
+        let (message, elapsed) = acquire_failure(pool).await;
+        assert!(message.contains("acquire timed out after 300 ms"), "{message}");
+        assert!(elapsed >= Duration::from_millis(300), "gave up early: {elapsed:?}");
+        assert!(elapsed < Duration::from_secs(2), "the ceiling did not bound the wait: {elapsed:?}");
+    }
+
+    /// M4-2/B2: the breaker. The point of the fast-fail assertion is that a down dependency costs a
+    /// fiber nothing rather than the ceiling, every request, for as long as it stays down.
+    #[tokio::test]
+    async fn the_breaker_opens_on_consecutive_failures_and_lets_one_probe_through_after_the_cooldown() {
+        tune(200, 2, 400);
+        let (_listener, dsn) = black_hole();
+        let pool = open(dsn, 4);
+
+        for attempt in 0..2 {
+            let (message, _) = acquire_failure(pool).await;
+            assert!(message.contains("acquire timed out"), "attempt {attempt}: {message}");
+        }
+
+        let (message, elapsed) = acquire_failure(pool).await;
+        assert!(message.contains("circuit breaker open after 2 consecutive failures"), "{message}");
+        assert!(elapsed < Duration::from_millis(50), "an open breaker must fail fast: {elapsed:?}");
+
+        tokio::time::sleep(Duration::from_millis(450)).await;
+        let (message, elapsed) = acquire_failure(pool).await;
+        assert!(message.contains("acquire timed out"), "the probe never reached the database: {message}");
+        assert!(elapsed >= Duration::from_millis(200), "the probe did not wait for the ceiling: {elapsed:?}");
+    }
+
+    #[test]
+    fn stats_and_lease_metrics_on_an_untouched_process() {
+        assert_eq!(stats(999_999), None);
+        assert_eq!(lease_metrics(), (0, 0, 0));
+        let Outcome::Failed(message) = failed("boom".into()) else { panic!("not a failure") };
+        assert_eq!(message, "pg: boom");
+    }
 }

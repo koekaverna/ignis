@@ -56,3 +56,6 @@ cc = "1"
 default = ["universal-park"]
 universal-park = []
 temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-wkt-types", "dep:prost-reflect", "dep:prost"]
+
+[lints]
+workspace = true

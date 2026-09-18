@@ -1,4 +1,5 @@
 <?php
+
 // E1 / H2: N fibers on one thread each sleeping $ms via tokio; wall time must be < 1.2 s for N=10000, ms=1000.
 declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
@@ -29,12 +30,24 @@ for ($round = 1; $round <= $rounds; $round++) {
     Ignis\Loop::run();
     $tDone = hrtime(true);
 
-    $sum = array_sum(array_map(static fn (Ignis\Future $f) => $f->await(), $futures));
+    $sum = array_sum(array_map(static fn(Ignis\Future $f) => $f->await(), $futures));
     $ok = $ok && $sum === $n;
     $wall = ($tDone - $t0) / 1e6;
-    $ph = array_map(static fn (int $ns) => round($ns / 1e6, 1), Ignis\Loop::$phaseNs);
+    $ph = array_map(static fn(int $ns) => round($ns / 1e6, 1), Ignis\Loop::$phaseNs);
     printf("round=%d phases_ms start=%.1f ready=%.1f poll=%.1f resume=%.1f\n", $round, $ph['start'], $ph['ready'], $ph['poll'], $ph['resume']);
-    printf("round=%d n=%d sleep_ms=%d completed=%d wall_ms=%.1f spawn_ms=%.1f run_ms=%.1f overhead_ms=%.1f resumes=%d fibers_created=%d peak_rss_kb=%d\n",
-        $round, $n, $ms, $sum, $wall, ($tSpawned - $t0) / 1e6, ($tDone - $tSpawned) / 1e6, $wall - $ms, Ignis\Loop::$resumes, Ignis\Loop::$fibersCreated, memory_get_peak_usage(true) >> 10);
+    printf(
+        "round=%d n=%d sleep_ms=%d completed=%d wall_ms=%.1f spawn_ms=%.1f run_ms=%.1f overhead_ms=%.1f resumes=%d fibers_created=%d peak_rss_kb=%d\n",
+        $round,
+        $n,
+        $ms,
+        $sum,
+        $wall,
+        ($tSpawned - $t0) / 1e6,
+        ($tDone - $tSpawned) / 1e6,
+        $wall - $ms,
+        Ignis\Loop::$resumes,
+        Ignis\Loop::$fibersCreated,
+        memory_get_peak_usage(true) >> 10,
+    );
 }
 exit($ok ? 0 : 1);

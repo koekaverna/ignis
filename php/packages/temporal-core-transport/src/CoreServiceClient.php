@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 namespace Temporal\Worker\Transport\Core;
 
+use Google\Protobuf\Internal\Message;
 use Temporal\Client\GRPC\ContextInterface;
 use Temporal\Client\GRPC\ServiceClient;
 use Temporal\Client\GRPC\ServiceClientInterface;
@@ -42,15 +43,47 @@ final class CoreServiceClient implements GrpcClientInterceptor
     public static function for(ServiceCall $call): ServiceClientInterface
     {
         return (new ServiceClient(static fn(): \Grpc\BaseStub => new DetachedStub()))
-            ->withInterceptorPipeline(Pipeline::prepare([new self($call)]));
+            ->withInterceptorPipeline(self::pipelineOf([new self($call)]));
+    }
+
+    /**
+     * `Pipeline::prepare()` infers its interceptor type from what it is handed, and `BaseClient`
+     * wants a pipeline of `GrpcClientInterceptor` rather than one of this class — so the element
+     * type is stated here instead of being inferred at the call.
+     *
+     * @param  list<GrpcClientInterceptor>             $interceptors
+     * @return Pipeline<GrpcClientInterceptor, object>
+     */
+    private static function pipelineOf(array $interceptors): Pipeline
+    {
+        return Pipeline::prepare($interceptors);
     }
 
     public function interceptCall(string $method, object $arg, ContextInterface $ctx, callable $next): object
     {
-        $response = $this->responseFor($arg::class, $method);
-        $response->mergeFromString($this->call->call(self::PATH . $method, $arg->serializeToString()));
+        $request = $this->requestOf($arg, $method);
+        $response = $this->responseFor($request::class, $method);
+        $response->mergeFromString($this->call->call(self::PATH . $method, $request->serializeToString()));
 
         return $response;
+    }
+
+    /**
+     * `GrpcClientInterceptor` types the argument `object`, but `ServiceClient`'s ~95 generated
+     * methods all hand `invoke()` a protobuf message, and the host is given bytes — so anything
+     * else cannot be serialised at all and says so here rather than at `serializeToString()`.
+     */
+    private function requestOf(object $arg, string $method): Message
+    {
+        if (!$arg instanceof Message) {
+            throw new \LogicException(\sprintf(
+                'the request of "%s" is a %s, which is not a protobuf message; this transport can only send protobuf',
+                $method,
+                $arg::class,
+            ));
+        }
+
+        return $arg;
     }
 
     /**
@@ -58,13 +91,13 @@ final class CoreServiceClient implements GrpcClientInterceptor
      * follows from the request type. A method that ever breaks the convention fails by name here
      * rather than returning something plausible.
      */
-    private function responseFor(string $requestClass, string $method): object
+    private function responseFor(string $requestClass, string $method): Message
     {
         $responseClass = \str_ends_with($requestClass, 'Request')
             ? \substr($requestClass, 0, -7) . 'Response'
             : null;
 
-        if ($responseClass === null || !\class_exists($responseClass)) {
+        if ($responseClass === null || !\is_subclass_of($responseClass, Message::class)) {
             throw new \LogicException(\sprintf(
                 'cannot infer the response type of "%s" from %s; this transport needs an explicit mapping for it',
                 $method,

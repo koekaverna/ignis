@@ -17,6 +17,7 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(Request::class)]
 final class RequestTest extends TestCase
 {
+    /** @param array<string, string> $headers */
     private static function get(string $uri, array $headers = []): Request
     {
         return new Request('GET', $uri, $headers, '');
@@ -103,6 +104,7 @@ final class RequestTest extends TestCase
         self::assertSame(['a' => '1'], $post);
     }
 
+    /** @return iterable<string, array{0: string}> */
     public static function boundarySpellings(): iterable
     {
         yield 'plain' => ['multipart/form-data; boundary=BNDRY'];
@@ -167,6 +169,58 @@ final class RequestTest extends TestCase
         $body = self::multipart([['name' => '', 'value' => 'v'], ['name' => 'ok', 'value' => '1']]);
         [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
         self::assertSame(['ok' => '1'], $post);
+    }
+
+    /**
+     * `path()`, `query()` and `superglobals()` each scan the URI for `?` on their own, and
+     * `superglobals()` then runs `parse_str()` a second time over the same bytes that `query()`
+     * already parsed. The three have to agree; these pin what "agree" means before the refactor
+     * that collapses them into one scan.
+     */
+    public function testTheThreeQuestionMarkScansAgreeOnWhereTheQueryStarts(): void
+    {
+        $r = self::get('/a?b=1?c=2');
+        [$server, $get] = $r->superglobals();
+
+        self::assertSame('/a', $r->path(), 'the first ? ends the path');
+        self::assertSame('b=1?c=2', $server['QUERY_STRING'], 'every later ? belongs to the query string');
+        self::assertSame('1?c=2', $r->query('b'));
+        self::assertSame(['b' => '1?c=2'], $get, 'the lazy query() cache and the eager $_GET parse must not diverge');
+    }
+
+    public function testAQueryThatIsEmptyOrAbsentLooksTheSameEverywhere(): void
+    {
+        foreach (['/a?' => '/a', '/a' => '/a', '?x=1' => ''] as $uri => $path) {
+            $r = self::get($uri);
+            [$server, $get] = $r->superglobals();
+
+            self::assertSame($path, $r->path(), $uri);
+            self::assertSame(ltrim(strstr($uri, '?') ?: '', '?'), $server['QUERY_STRING'], $uri);
+            self::assertSame($r->query('x'), $get['x'] ?? null, $uri);
+        }
+    }
+
+    /**
+     * `query()` used to be `?string` and cast whatever `parse_str()` produced, so `x[]=…` came back
+     * as the literal `Array` with an "Array to string conversion" warning while `$_GET` held the
+     * real list. `parse_str()` is the only grammar either side uses, so the two must not diverge:
+     * `x[]=` is a list, a plain repeated `x=` is last-wins, and `x[a]=` is a map — PHP's rules, not
+     * ours. A `@dataProvider` would hide that the point is the agreement with `$_GET`.
+     */
+    public function testARepeatedParameterIsTheListThatIsInGet(): void
+    {
+        foreach (['/a?x[]=1&x[]=2' => ['1', '2'], '/a?x=1&x=2' => '2', '/a?x[a]=1&x[b]=2' => ['a' => '1', 'b' => '2']] as $uri => $expected) {
+            $r = self::get($uri);
+            [, $get] = $r->superglobals();
+
+            self::assertSame($expected, $r->query('x'), $uri);
+            self::assertSame($get['x'], $r->query('x'), $uri . ': query() and $_GET are the same parse');
+        }
+    }
+
+    public function testASingleValueIsStillAPlainString(): void
+    {
+        self::assertSame('1', self::get('/a?x=1&y[]=2')->query('x'), 'one scalar stays scalar; only the repeats become lists');
     }
 
     /** @param list<array{name:string,value:string,filename?:string}> $parts */

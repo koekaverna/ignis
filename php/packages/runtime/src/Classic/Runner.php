@@ -43,12 +43,16 @@ final class Runner
         return self::$sent === null ? $response : null;   // already written straight to the socket
     }
 
-    /** @var list<array{0:int,1:array}> requests handed over by the loop, one at a time */
+    /** @var list<array{0: int, 1: array<string, mixed>}> requests handed over by the loop, one at a time */
     private static array $inbox = [];
     private static ?int $current = null;
     private static ?string $currentSid = null;
 
-    /** `Loop::$rawRequestHandler`: runs on the loop's own stack, so it only parks the request. */
+    /**
+     * `Loop::$rawRequestHandler`: runs on the loop's own stack, so it only parks the request.
+     *
+     * @param array<string, mixed> $raw
+     */
     public static function queue(int $id, array $raw): void
     {
         self::$inbox[] = [$id, $raw];
@@ -58,7 +62,7 @@ final class Runner
     public static function accept(): ?string
     {
         while (true) {
-            \Ignis\Loop::runUntil(static fn (): bool => self::$inbox !== []);
+            \Ignis\Loop::runUntil(static fn(): bool => self::$inbox !== []);
             $next = array_shift(self::$inbox);
             if ($next === null) {
                 return null; // the loop stopped and nothing is pending
@@ -124,7 +128,7 @@ final class Runner
             return [null, '', ''];
         }
         $script = '';
-        foreach (array_filter($segments, 'strlen') as $segment) {
+        foreach (array_filter($segments, static fn(string $segment): bool => $segment !== '') as $segment) {
             $script .= '/' . $segment;
             if (is_file(self::$docroot . $script)) {
                 return [self::$docroot . $script, $script, substr($path, strlen($script))];
@@ -137,6 +141,32 @@ final class Runner
         return self::$index !== null && is_file(self::$docroot . $index) ? [self::$docroot . $index, $index, ''] : [null, '', ''];
     }
 
+    /**
+     * An empty session cookie parameter is not the same as an unset one: setcookie() reads an empty
+     * path as "the current directory", and session.cookie_path may legitimately be set to empty.
+     */
+    private static function orFallback(string $value, string $fallback): string
+    {
+        return $value !== '' ? $value : $fallback;
+    }
+
+    /**
+     * `session.cookie_samesite` is a free-form ini string, while setcookie() accepts three values.
+     * Anything else is the configuration being wrong, and silently sending it would let the browser
+     * decide -- so an unrecognised value falls back to the default rather than travelling.
+     *
+     * @return 'Lax'|'None'|'Strict'
+     */
+    private static function sameSite(string $configured): string
+    {
+        return match (strtolower($configured)) {
+            'none' => 'None',
+            'strict' => 'Strict',
+            default => 'Lax',
+        };
+    }
+
+    /** @return array<string, string> */
     private static function server(Request $req, string $file, string $script, string $pathInfo): array
     {
         [$name, $port] = array_pad(explode(':', $req->headers['host'] ?? 'localhost', 2), 2, '80');
@@ -159,7 +189,8 @@ final class Runner
         if (ob_get_level() === 0) { // permanent and non-removable, so a script's `while (ob_end_flush())` loop stops here
             ob_start(null, 0, PHP_OUTPUT_HANDLER_CLEANABLE);
         }
-        while (ob_get_level() > 1 && @ob_end_clean()) {}
+        while (ob_get_level() > 1 && @ob_end_clean()) {
+        }
         ob_clean();
         header_remove();
         header('X-Ignis: reset', true, 599); // a code change is the only userland path that frees a header('HTTP/…') status line
@@ -172,7 +203,8 @@ final class Runner
     /** Always a string body: classic mode writes through output and cannot stream. */
     private static function response(): Response
     {
-        while (ob_get_level() > 1 && @ob_end_flush()) {}
+        while (ob_get_level() > 1 && @ob_end_flush()) {
+        }
         $headers = self::headerMap();
         if (!isset(array_change_key_case($headers)['content-type'])) {
             $headers['Content-Type'] = ini_get('default_mimetype') . '; charset=' . ini_get('default_charset');
@@ -181,11 +213,27 @@ final class Runner
         return new Response((string) ob_get_contents(), \is_int($code) && $code >= 100 ? $code : 200, $headers);
     }
 
-    /** headers_list() as name => value. A repeated name (several Set-Cookie) gets case variants: Ignis responses are maps and hyper lower-cases names on the wire. */
+    /**
+     * headers_list() as name => value. A repeated name (several Set-Cookie) gets case variants:
+     * Ignis responses are maps and hyper lower-cases names on the wire.
+     * @return array<string, string>
+     */
     public static function headerMap(): array
     {
+        return self::parseHeaderLines(headers_list());
+    }
+
+    /**
+     * The pure half of headerMap(): `headers_list()` returns `[]` under php-cli, so the parsing is
+     * split out to be testable without a SAPI.
+     *
+     * @param  list<string>          $lines
+     * @return array<string, string>
+     */
+    public static function parseHeaderLines(array $lines): array
+    {
         $map = [];
-        foreach (headers_list() as $line) {
+        foreach ($lines as $line) {
             $colon = strpos($line, ':');
             if ($colon === false || $colon === 0) {
                 continue; // header('Invalid') is stored by PHP but not sendable
@@ -217,9 +265,14 @@ final class Runner
         }
         $sid = session_id();
         session_write_close();
-        if ($sid !== $cookieSid) {
+        $name = session_name();
+        if ($sid !== false && $name !== false && $sid !== $cookieSid) {
             $p = session_get_cookie_params();
-            setcookie(session_name(), $sid, ['path' => $p['path'] ?: '/', 'httponly' => $p['httponly'], 'samesite' => $p['samesite'] ?: 'Lax']);
+            setcookie($name, $sid, [
+                'path' => self::orFallback($p['path'], '/'),
+                'httponly' => $p['httponly'],
+                'samesite' => self::sameSite($p['samesite']),
+            ]);
         }
     }
 }

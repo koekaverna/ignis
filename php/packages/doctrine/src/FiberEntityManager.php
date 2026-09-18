@@ -37,8 +37,7 @@ final class FiberEntityManager implements EntityManagerInterface, ResetInterface
         private readonly ContainerInterface $locator,
         private readonly string $innerId,
         private readonly string $key = 'doctrine.em',
-    ) {
-    }
+    ) {}
 
     /** This fiber's manager, built on first use and replaced once Doctrine has closed it. */
     private function em(): EntityManagerInterface
@@ -139,7 +138,7 @@ final class FiberEntityManager implements EntityManagerInterface, ResetInterface
         return $this->em()->createQueryBuilder();
     }
 
-    public function find(string $className, mixed $id, \Doctrine\DBAL\LockMode|int|null $lockMode = \Doctrine\DBAL\LockMode::NONE, ?int $lockVersion = NULL): ?object
+    public function find(string $className, mixed $id, \Doctrine\DBAL\LockMode|int|null $lockMode = \Doctrine\DBAL\LockMode::NONE, ?int $lockVersion = null): ?object
     {
         return $this->em()->find($className, $id, $lockMode, $lockVersion);
     }
@@ -159,7 +158,7 @@ final class FiberEntityManager implements EntityManagerInterface, ResetInterface
         $this->em()->close();
     }
 
-    public function lock(object $entity, \Doctrine\DBAL\LockMode|int $lockMode, \DateTimeInterface|int|null $lockVersion = NULL): void
+    public function lock(object $entity, \Doctrine\DBAL\LockMode|int $lockMode, \DateTimeInterface|int|null $lockVersion = null): void
     {
         $this->em()->lock($entity, $lockMode, $lockVersion);
     }

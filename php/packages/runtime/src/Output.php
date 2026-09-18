@@ -26,11 +26,18 @@ final class Output
     /** Resolved when the fiber holding the buffer lets go. Null means nobody holds it. */
     private static ?Future $busy = null;
 
-    /** The fiber that holds it, so a nested capture in the same fiber does not wait for itself. */
+    /**
+     * The fiber that holds it, so a nested capture in the same fiber does not wait for itself.
+     * @var null|\Fiber<mixed,mixed,mixed,mixed>
+     */
     private static ?\Fiber $holder = null;
 
     /**
      * Runs `$emit` with an output buffer this fiber owns and returns what it wrote.
+     *
+     * Nesting inside the fiber that already holds the fallback buffer is safe and must not wait: a
+     * fiber cannot interleave with itself, so its buffers always close last-in-first-out. Everyone
+     * else waits in a loop, not an `if` — several fibers can be waiting and only one wins each release.
      *
      * @param callable():void $emit
      */
@@ -47,13 +54,10 @@ final class Output
             return $captured;
         }
 
-        // Nesting inside the fiber that already holds it is safe and must not wait: a fiber cannot
-        // interleave with itself, so its buffers always close last-in-first-out.
         if (self::$busy !== null && self::$holder === \Fiber::getCurrent()) {
             return self::buffer($emit);
         }
 
-        // A loop, not an `if`: several fibers can be waiting and only one wins each release.
         while (self::$busy !== null) {
             self::$busy->await();
         }
@@ -80,15 +84,6 @@ final class Output
         }
 
         return $captured === false ? '' : $captured;
-    }
-
-    /** @var resource|null */
-    private static $stdout = null;
-
-    /** Where output goes when no fiber is capturing it. Opened once. */
-    private static function stdout(): mixed
-    {
-        return self::$stdout ??= (\defined('STDOUT') ? \STDOUT : \fopen('php://stdout', 'w'));
     }
 
     /** True while some fiber on this thread holds the **fallback** buffer. For tests. */

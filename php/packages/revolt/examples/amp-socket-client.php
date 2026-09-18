@@ -1,4 +1,5 @@
 <?php
+
 // amphp/socket v2: connect to the Ignis hello server, send a request, read the reply (onReadable/onWritable path).
 declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';

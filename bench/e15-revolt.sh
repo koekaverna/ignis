@@ -26,7 +26,7 @@ mkdir -p "$TMP"
 # php/packages/revolt/ignis.ini names prepend.php by an absolute path; regenerate it for this checkout.
 sed "s#^auto_prepend_file=.*#auto_prepend_file=$ROOT/php/packages/revolt/prepend.php#" "$ROOT/php/packages/revolt/ignis.ini" > "$TMP/ignis.ini"
 REPS=${REPS:-3}
-BOOT=$AMPHP/test/bootstrap.php
+BOOT=$AMPHP/tests/bootstrap.php
 mkdir -p "$TMP"
 
 cat > "$TMP/phpunit-run.php" <<'EOF'
@@ -104,7 +104,7 @@ IGN_LINE=""
 for i in $(seq 1 "$REPS"); do
     IGNIS_PHP_INI=$TMP/ignis.ini IGNIS_NO_UNIVERSAL_PARK=1 \
         timeout 300 "$BIN" "$TMP/phpunit-run.php" --no-configuration --bootstrap "$BOOT" \
-        "$AMPHP/test/IgnisDriverTest.php" > "$TMP/out-ignis-$i.txt" 2>&1
+        "$AMPHP/tests/IgnisDriverTest.php" > "$TMP/out-ignis-$i.txt" 2>&1
     rc=$?
     line=$(summary "$TMP/out-ignis-$i.txt")
     [ -z "$IGN_LINE" ] && IGN_LINE=$line
@@ -120,7 +120,7 @@ run_variant() { # label env...
     local label=$1; shift
     ( for kv in "$@"; do export "$kv"; done
       timeout 300 "$BIN" "$TMP/phpunit-run.php" --no-configuration --bootstrap "$BOOT" \
-          "$AMPHP/test/IgnisDriverTest.php" > "$TMP/out-var-$label.txt" 2>&1 )
+          "$AMPHP/tests/IgnisDriverTest.php" > "$TMP/out-var-$label.txt" 2>&1 )
     local rc=$?
     echo "   $label: rc=$rc  $(summary "$TMP/out-var-$label.txt")"
     echo "           failing: $(failing "$TMP/out-var-$label.txt")"

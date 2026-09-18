@@ -1,4 +1,5 @@
 <?php
+
 /**
  * examples/app.php — THE API SPEC.
  *
@@ -25,6 +26,7 @@ use Ignis\Http\Response;  // → E4
 // ---------------------------------------------------------------------------
 // 1. Structured concurrency inside one request: ✓ (E1/E2, V-2/V-3)
 // ---------------------------------------------------------------------------
+/** @return array{profile: array<string, mixed>, orders: list<array<string, mixed>>, recommendations: list<string>} */
 function fetchDashboard(int $userId): array
 {
     // Three independent waits run concurrently on one OS thread; the fiber
@@ -34,11 +36,11 @@ function fetchDashboard(int $userId): array
             Ignis\sleep(200);                              // stands in for a slow upstream
             return ['id' => $userId, 'name' => 'Ada'];
         }),
-        Ignis\async(static function () use ($userId): array {
+        Ignis\async(static function (): array {
             Ignis\sleep(200);
             return [['id' => 1, 'total' => 42.0]];
         }),
-        Ignis\async(static fn (): array => ['sku-1', 'sku-2']),
+        Ignis\async(static fn(): array => ['sku-1', 'sku-2']),
     ]);
     return compact('profile', 'orders', 'recommendations');
 }
@@ -49,14 +51,31 @@ function fetchDashboard(int $userId): array
 //    factory is replaced by Ignis (ADR-0007). PDO sqlite does its own file I/O in-process
 //    and still blocks the thread (V-12) — use it for short queries only for now.
 // ---------------------------------------------------------------------------
+/**
+ * PDO's own stub promises no more than `array` for fetchAll(), so that is what this claims. Saying
+ * `list<array<string, mixed>>` would be a promise nothing here can keep.
+ *
+ * @return array<array-key, mixed>
+ */
 function usersFromDb(\PDO $pdo): array
 {
-    return $pdo->query('SELECT id, name FROM users ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
+    $rows = $pdo->query('SELECT id, name FROM users ORDER BY id');
+    if ($rows === false) {
+        throw new \RuntimeException('users query failed: ' . implode(' ', $pdo->errorInfo()));
+    }
+
+    return $rows->fetchAll(\PDO::FETCH_ASSOC);
 }
 
+/** @return array<string, mixed> */
 function upstreamJson(string $url): array
 {
-    return json_decode(file_get_contents($url), true, 512, JSON_THROW_ON_ERROR);
+    $body = file_get_contents($url);
+    if ($body === false) {
+        throw new \RuntimeException("upstream {$url} could not be read");
+    }
+
+    return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +96,11 @@ $listen = getenv('IGNIS_LISTEN') ?: '127.0.0.1:8080';
 Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
     return match ($req->path()) {
         '/'          => Response::text("hello from fiber\n"),
-        '/deadline'  => (static function (): Response { Ignis\deadline(100); Ignis\sleep(1000); return Response::text("never\n"); })(),
+        '/deadline'  => (static function (): Response {
+            Ignis\deadline(100);
+            Ignis\sleep(1000);
+            return Response::text("never\n");
+        })(),
         '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
         '/users'     => Response::json(usersFromDb($pdo)),
         '/upstream'  => Response::json(upstreamJson("http://$listen/dashboard")), // self-call, suspends (E6)
@@ -97,7 +120,10 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
     };
 }, $listen);
 
-/** E14: one lease per fiber; a transaction keeps one backend; the query parks the fiber, not the thread. */
+/**
+ * E14: one lease per fiber; a transaction keeps one backend; the query parks the fiber, not the thread.
+ * @return array<string, mixed>
+ */
 function dbDemo(): array
 {
     static $pool = null;
@@ -106,7 +132,7 @@ function dbDemo(): array
         return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
     }
     $pool ??= new Ignis\Pg\Pool($dsn, 10);
-    return $pool->transaction(static fn (Ignis\Pg\Lease $l) => [
+    return $pool->transaction(static fn(Ignis\Pg\Lease $l) => [
         'backend' => $l->backendPid(),
         'now' => $l->query('SELECT now()::text AS t')[0]['t'],
         'sleep_ms' => (int) $l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0]['d'],
@@ -114,7 +140,10 @@ function dbDemo(): array
     ]);
 }
 
-/** E16: a named function runs on a synchronous worker thread with its own PHP context; this fiber parks meanwhile. */
+/**
+ * E16: a named function runs on a synchronous worker thread with its own PHP context; this fiber parks meanwhile.
+ * @return array<string, mixed>
+ */
 function offloadDemo(): array
 {
     if ((Ignis\Offload\Client::stats()['workers'] ?? 0) === 0) {

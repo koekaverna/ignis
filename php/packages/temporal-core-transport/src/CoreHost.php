@@ -22,6 +22,7 @@ final class CoreHost implements HostConnectionInterface
 {
     private int $handled = 0;
 
+    /** @param ActivationSource::WORKFLOW|ActivationSource::ACTIVITY $kind */
     public function __construct(
         private readonly ActivationSource $source,
         private readonly CoreCodec $codec,
@@ -42,6 +43,7 @@ final class CoreHost implements HostConnectionInterface
         return new CommandBatch($task, ['taskQueue' => $this->source->taskQueue()]);
     }
 
+    /** @param array<string, mixed> $headers */
     public function send(string $frame, array $headers = []): void
     {
         ++$this->handled;

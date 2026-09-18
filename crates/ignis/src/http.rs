@@ -19,21 +19,34 @@ use tokio::sync::Semaphore;
 
 use crate::reactor::{HttpRequest, Reactor};
 
+/// Unset and unparsable both mean "keep the default": a typo in an env var must not move a limit.
+fn parse_or<T: std::str::FromStr>(value: Option<String>, default: T) -> T {
+    value.and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
 /// Reads an env var as an integer, falling back to `default` when unset or unparsable.
 fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    parse_or(std::env::var(name).ok(), default)
 }
 
 /// Reads an env var as milliseconds, falling back to `default_ms` when unset or unparsable.
 fn env_ms(name: &str, default_ms: u64) -> Duration {
-    Duration::from_millis(std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default_ms))
+    Duration::from_millis(parse_or(std::env::var(name).ok(), default_ms))
 }
 
 /// Body cap, checked per request in `handle`; read once and cached (pg.rs's `warn_ms` does the
-/// same for a value read on every request). Future ignis.toml key: `limits.max_body_bytes`.
+/// same for a value read on every request).
 fn max_body_bytes() -> usize {
     static V: OnceLock<usize> = OnceLock::new();
     *V.get_or_init(|| env_usize("IGNIS_MAX_BODY_BYTES", 8 * 1024 * 1024))
+}
+
+/// The header pairs and the path+query (`/a/b?x=1`, `/` when the URI carries neither) that the
+/// reactor hands to PHP. Shared by the HTTP and the gRPC front doors, which see the same request.
+pub fn request_parts<B>(req: &Request<B>) -> (Vec<(String, String)>, String) {
+    let headers = req.headers().iter().map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
+    let uri = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
+    (headers, uri)
 }
 
 /// Reactors of every PHP thread that called `ignis_serve`; each request goes
@@ -75,7 +88,7 @@ impl Registry {
 
 /// Number of registered PHP threads that have not polled for longer than `limit`
 /// (a thread busy in PHP code for that long), and the total registered.
-pub fn stalled_threads(limit: std::time::Duration) -> (usize, usize) {
+pub fn stalled_threads(limit: Duration) -> (usize, usize) {
     match REGISTRY.get() {
         Some(r) => {
             let rs = r.reactors.lock().unwrap();
@@ -94,6 +107,8 @@ static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 /// grace window useless, because the accept loop saw the drain the instant health did.
 static LISTENER_STOP: AtomicBool = AtomicBool::new(false);
 
+/// Resolves when the drain reaches phase 2 (M4-5): the listener stops first, so a load balancer
+/// sees the port close while in-flight requests are still answered on the connections already open.
 async fn shutdown_signalled() {
     if LISTENER_STOP.load(Ordering::Relaxed) {
         return;
@@ -109,12 +124,13 @@ pub fn is_draining() -> bool {
 
 /// Starts the drain: stop accepting, then wait until no request is in flight, bounded by
 /// `IGNIS_DRAIN_TIMEOUT_MS` (default 10 s). Returns how long it took and what was still pending.
-pub async fn drain() -> (std::time::Duration, usize) {
-    // Two phases, because a load balancer needs to be told before the socket goes away:
-    // 1. health answers "draining" (503) while the listener is STILL accepting, for
-    //    `IGNIS_DRAIN_DELAY_MS` — set it to a little more than the balancer's check interval and a
-    //    rolling deploy loses nothing. Default 0: a single instance has nobody to tell.
-    // 2. the listener closes and in-flight requests are given `IGNIS_DRAIN_TIMEOUT_MS`.
+///
+/// Two phases, because a load balancer needs to be told before the socket goes away. First health
+/// answers "draining" (503) while the listener is STILL accepting, for `IGNIS_DRAIN_DELAY_MS` — set
+/// that to a little more than the balancer's check interval and a rolling deploy loses nothing;
+/// default 0, because a single instance has nobody to tell. Then the listener closes and the
+/// requests already in flight are given `IGNIS_DRAIN_TIMEOUT_MS`.
+pub async fn drain() -> (Duration, usize) {
     SHUTTING_DOWN.store(true, Ordering::Relaxed);
     let delay = env_ms("IGNIS_DRAIN_DELAY_MS", 0);
     if !delay.is_zero() {
@@ -124,13 +140,13 @@ pub async fn drain() -> (std::time::Duration, usize) {
     LISTENER_STOP.store(true, Ordering::Relaxed);
     SHUTDOWN.notify_waiters();
     let limit = env_ms("IGNIS_DRAIN_TIMEOUT_MS", 10_000);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     loop {
         let pending = totals().pending;
         if pending == 0 || started.elapsed() >= limit {
             return (started.elapsed(), pending);
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -145,12 +161,12 @@ pub fn totals() -> crate::metrics::Totals {
     t
 }
 
-/// Removes a PHP thread's reactor from dispatch (its script ended or died).
+/// Removes a PHP thread's reactor from dispatch (its script ended or died). E12': the requests it
+/// still had in flight fail fast with a 500 instead of hanging until the client gives up.
 pub fn unregister(reactor: &Arc<Reactor>) {
     if let Some(registry) = REGISTRY.get() {
         registry.reactors.lock().unwrap().retain(|r| !Arc::ptr_eq(r, reactor));
     }
-    // E12': in-flight requests of a dying thread fail fast (500) instead of hanging.
     let n = reactor.fail_pending();
     if n > 0 {
         tracing::warn!(pending = n, "php thread ended with requests in flight; answered 500");
@@ -175,103 +191,114 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, addr: &str) -> 
     drop(bound);
     reactor.server_started();
     registry.reactors.lock().unwrap().push(reactor);
-    let registry = registry.clone();
-    // ADR-0025: the connection cap is the RSS bound, so this number must be honest — V-37
-    // measured a held connection's marginal cost at 33 kB queued, on top of a fiber's own
-    // ~34 kB (V-5). Future ignis.toml key: `limits.max_connections`.
-    let max_connections = env_usize("IGNIS_MAX_CONNECTIONS", 8192);
-    let connection_permits = Arc::new(Semaphore::new(max_connections));
-    // Future ignis.toml key: `limits.header_timeout_ms`.
+    rt.spawn(accept_loop(listener, registry.clone()));
+    Ok(local)
+}
+
+/// The connection cap is this process's RSS bound, so the number has to be honest (ADR-0025):
+/// V-37 measured a held connection's marginal cost at 33 kB queued, on top of a fiber's own ~34 kB
+/// (V-5).
+fn max_connections() -> usize {
+    env_usize("IGNIS_MAX_CONNECTIONS", 8192)
+}
+
+/// Accepts until the drain closes the listener, giving every connection a semaphore permit it holds
+/// for its whole life.
+async fn accept_loop(listener: TcpListener, registry: Arc<Registry>) {
+    let connection_permits = Arc::new(Semaphore::new(max_connections()));
     let header_timeout = env_ms("IGNIS_HEADER_TIMEOUT_MS", 10_000);
-    // Future ignis.toml key: `limits.idle_timeout_ms`.
     let idle_timeout = env_ms("IGNIS_IDLE_TIMEOUT_MS", 60_000);
-    rt.spawn(async move {
-        loop {
-            // M4-5: on SIGTERM the listener stops first, so a load balancer sees the port close
-            // while in-flight requests are still being answered on the connections already open.
-            let accepted = tokio::select! {
-                biased;
-                _ = shutdown_signalled() => {
-                    tracing::info!("draining: listener closed, finishing in-flight requests");
-                    return;
-                }
-                r = listener.accept() => r,
-            };
-            let (stream, _peer) = match accepted {
-                Ok(x) => x,
-                Err(e) => {
-                    tracing::warn!(error = %e, "accept failed");
-                    continue;
-                }
-            };
-            let _ = stream.set_nodelay(true);
-            let registry = registry.clone();
-            // Over the cap: answer inline and drop the socket rather than queue it — an
-            // accepted-but-unserved connection is exactly the unbounded queueing this guards
-            // against. try_acquire_owned is non-blocking so the accept loop never stalls on it.
-            let Ok(permit) = connection_permits.clone().try_acquire_owned() else {
-                tokio::spawn(async move {
-                    let mut stream = stream;
-                    let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").await;
-                });
+    loop {
+        let accepted = tokio::select! {
+            biased;
+            _ = shutdown_signalled() => {
+                tracing::info!("draining: listener closed, finishing in-flight requests");
+                return;
+            }
+            r = listener.accept() => r,
+        };
+        let (stream, _peer) = match accepted {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::warn!(error = %e, "accept failed");
                 continue;
-            };
-            tokio::spawn(async move {
-                let _permit = permit; // held for the connection's lifetime; drop releases it
-                // One target per request (not per connection) so keep-alive
-                // connections still spread across PHP threads.
-                let last_activity = Arc::new(Mutex::new(Instant::now()));
-                let la = last_activity.clone();
-                let svc = service_fn(move |req| {
-                    *la.lock().unwrap() = Instant::now();
-                    let r = registry.pick();
-                    async move {
-                        match r {
-                            Some(r) => handle(r, req).await,
-                            None => Ok(simple(StatusCode::SERVICE_UNAVAILABLE, "no php thread registered\n")),
-                        }
-                    }
-                });
-                let mut builder = auto::Builder::new(TokioExecutor::new());
-                // Slowloris: a client that never finishes sending headers is dropped instead of
-                // holding the connection (and its semaphore permit) forever.
-                builder.http1().timer(TokioTimer::new()).header_read_timeout(header_timeout);
-                let conn = builder.serve_connection(TokioIo::new(stream), svc);
-                tokio::pin!(conn);
-                // auto::Builder has no built-in idle timer (header_read_timeout only covers one
-                // request's header read), so an idle keep-alive connection is timed out here:
-                // graceful_shutdown once `idle_timeout` passes since the last request started.
-                loop {
-                    let idle_for = last_activity.lock().unwrap().elapsed();
-                    if idle_for >= idle_timeout {
-                        conn.as_mut().graceful_shutdown();
-                        if let Err(e) = conn.as_mut().await {
-                            tracing::debug!(error = %e, "connection ended with error");
-                        }
-                        break;
-                    }
-                    tokio::select! {
-                        res = conn.as_mut() => {
-                            if let Err(e) = res {
-                                tracing::debug!(error = %e, "connection ended with error");
-                            }
-                            break;
-                        }
-                        _ = tokio::time::sleep(idle_timeout - idle_for) => {}
-                    }
-                }
-            });
+            }
+        };
+        let _ = stream.set_nodelay(true);
+        let Ok(permit) = connection_permits.clone().try_acquire_owned() else {
+            refuse_over_capacity(stream);
+            continue;
+        };
+        tokio::spawn(serve_connection(stream, permit, registry.clone(), header_timeout, idle_timeout));
+    }
+}
+
+/// Over the cap: answer inline and drop the socket rather than queue it — an accepted-but-unserved
+/// connection is exactly the unbounded queueing the cap guards against. Reached through a
+/// non-blocking `try_acquire_owned`, so the accept loop never stalls on the cap either.
+fn refuse_over_capacity(mut stream: tokio::net::TcpStream) {
+    tokio::spawn(async move {
+        let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").await;
+    });
+}
+
+/// One connection, for as long as it lives — `permit` is released when this returns. Each *request*
+/// picks its own PHP thread, not each connection, so keep-alive connections still spread across
+/// threads. Two timers guard it: `header_timeout` drops a client that never finishes sending
+/// headers (slowloris, which would otherwise hold the connection and its permit forever), and
+/// `idle_timeout` shuts a silent keep-alive connection down gracefully — `auto::Builder` has no
+/// idle timer of its own, `header_read_timeout` covering only one request's header read.
+async fn serve_connection(
+    stream: tokio::net::TcpStream,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    registry: Arc<Registry>,
+    header_timeout: Duration,
+    idle_timeout: Duration,
+) {
+    let _permit = permit;
+    let last_activity = Arc::new(Mutex::new(Instant::now()));
+    let activity = last_activity.clone();
+    let svc = service_fn(move |req| {
+        *activity.lock().unwrap() = Instant::now();
+        let r = registry.pick();
+        async move {
+            match r {
+                Some(r) => handle(r, req).await,
+                None => Ok(simple(StatusCode::SERVICE_UNAVAILABLE, "no php thread registered\n")),
+            }
         }
     });
-    Ok(local)
+    let mut builder = auto::Builder::new(TokioExecutor::new());
+    builder.http1().timer(TokioTimer::new()).header_read_timeout(header_timeout);
+    let conn = builder.serve_connection(TokioIo::new(stream), svc);
+    tokio::pin!(conn);
+    loop {
+        let idle_for = last_activity.lock().unwrap().elapsed();
+        if idle_for >= idle_timeout {
+            conn.as_mut().graceful_shutdown();
+            if let Err(e) = conn.as_mut().await {
+                tracing::debug!(error = %e, "connection ended with error");
+            }
+            return;
+        }
+        tokio::select! {
+            res = conn.as_mut() => {
+                if let Err(e) = res {
+                    tracing::debug!(error = %e, "connection ended with error");
+                }
+                return;
+            }
+            _ = tokio::time::sleep(idle_timeout - idle_for) => {}
+        }
+    }
 }
 
 /// M1: `/_ignis/health`, answered by the runtime and never by PHP. 200 while at least one PHP
 /// thread is registered and not every one of them is stalled; 503 otherwise — so a load balancer
 /// stops sending to a process whose workers are all wedged, which `/` from PHP could never report.
 fn health() -> Response<tonic::body::Body> {
-    let (stalled, total) = stalled_threads(std::time::Duration::from_secs(1));
-    let restarts = crate::RESTARTS.load(std::sync::atomic::Ordering::Relaxed);
+    let (stalled, total) = stalled_threads(Duration::from_secs(1));
+    let restarts = crate::RESTARTS.load(Ordering::Relaxed);
     let ok = total > 0 && stalled < total && !is_draining();
     let body = format!(
         "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts}}}\n",
@@ -291,84 +318,108 @@ fn health() -> Response<tonic::body::Body> {
         .unwrap()
 }
 
+/// M4-4: `/_ignis/metrics`, answered by the runtime and never by PHP, so it keeps answering when
+/// every PHP thread is wedged — which is when an operator needs it most (ADR-0022).
+fn metrics() -> Response<tonic::body::Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+        .header("cache-control", "no-store")
+        .body(crate::grpc::plain_body(Bytes::from(crate::metrics::render())))
+        .unwrap()
+}
+
+/// If this future is dropped (client disconnect, ADR-0009) before PHP answers, the guard tells the
+/// reactor to cancel the request's fiber.
+struct CancelOnDrop {
+    reactor: Arc<Reactor>,
+    id: u64,
+    answered: bool,
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if !self.answered {
+            tracing::debug!(id = self.id, "client left before the answer was complete; cancelling");
+            self.reactor.cancel_request(self.id);
+        }
+    }
+}
+
+/// One request: the runtime's own `/_ignis/*` routes first, then gRPC (E10, ADR-0014 — it shares
+/// this listener, tonic frames it and PHP serves it), then PHP. A responder dropped without an
+/// answer means the handler crashed hard, and the client gets a 500 rather than a hung connection.
 async fn handle(reactor: Arc<Reactor>, req: Request<Incoming>) -> Result<Response<tonic::body::Body>, hyper::Error> {
-    if req.uri().path() == "/_ignis/health" {
-        return Ok(health());
+    match req.uri().path() {
+        "/_ignis/health" => return Ok(health()),
+        "/_ignis/metrics" => return Ok(metrics()),
+        _ => {}
     }
-    if req.uri().path() == "/_ignis/metrics" {
-        // M4-4: answered by the runtime, never by PHP, so it keeps answering when every PHP
-        // thread is wedged — which is when an operator needs it most (ADR-0022).
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
-            .header("cache-control", "no-store")
-            .body(crate::grpc::plain_body(Bytes::from(crate::metrics::render())))
-            .unwrap());
-    }
-    // E10 (ADR-0014): gRPC shares the listener; tonic frames it, PHP serves it.
     if crate::grpc::is_grpc(&req) {
         return Ok(crate::grpc::serve(reactor, req).await);
     }
-    let (parts, body) = req.into_parts();
-    // `Limited` errors as soon as one frame would push the running total past the cap, so an
-    // over-cap body is never buffered in full — just up to the frame that tripped it.
-    let body = match Limited::new(body, max_body_bytes()).collect().await {
-        Ok(c) => c.to_bytes(),
-        Err(e) => {
-            if e.downcast_ref::<http_body_util::LengthLimitError>().is_some() {
-                return Ok(simple(StatusCode::PAYLOAD_TOO_LARGE, "request body too large\n"));
-            }
-            tracing::debug!(error = %e, "body read failed");
-            return Ok(simple(StatusCode::BAD_REQUEST, "bad request body\n"));
-        }
+    let (headers, uri) = request_parts(&req);
+    let method = req.method().as_str().to_string();
+    let body = match collect_body(req.into_body()).await {
+        Ok(b) => b,
+        Err((status, message)) => return Ok(simple(status, message)),
     };
-    let headers = parts
-        .headers
-        .iter()
-        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
-        .collect();
-    let uri = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
-    let (request_id, rx) = reactor.deliver_request_with_id(HttpRequest { method: parts.method.as_str().to_string(), uri, headers, body });
-    // If this future is dropped (client disconnect, ADR-0009) before PHP
-    // answers, the guard tells the reactor to cancel the request's fiber.
-    struct CancelOnDrop {
-        reactor: Arc<Reactor>,
-        id: u64,
-        answered: bool,
-    }
-    impl Drop for CancelOnDrop {
-        fn drop(&mut self) {
-            if !self.answered {
-                self.reactor.cancel_request(self.id);
-            }
-        }
-    }
+    let (request_id, rx) = reactor.deliver_request_with_id(HttpRequest { method, uri, headers, body });
     let mut guard = CancelOnDrop { reactor: reactor.clone(), id: request_id, answered: false };
     let out = rx.await;
-    guard.answered = true;
     match out {
+        // Disarmed here only for a whole-body answer. A streamed one hands the guard to the body,
+        // which is what stays alive while PHP is still producing.
         Ok(r) => {
-            let mut b = Response::builder().status(r.status);
-            for (k, v) in r.headers {
-                b = b.header(k, v);
-            }
-            let body = match r.body {
-                crate::reactor::ResponseBody::Full(bytes) => crate::grpc::plain_body(bytes),
-                // R-STREAM: hyper starts writing now and frames the rest as it arrives, so the
-                // client gets the first bytes while PHP is still producing the last.
-                crate::reactor::ResponseBody::Stream(rx) => tonic::body::Body::new(ChannelBody { rx }),
-            };
-            Ok(b.body(body).unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR, "bad response headers\n")))
+            let streamed = matches!(r.body, crate::reactor::ResponseBody::Stream(_));
+            guard.answered = !streamed;
+            Ok(php_response(r, guard))
         }
-        // PHP dropped the responder without answering (handler crashed hard).
-        Err(_) => Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n")),
+        Err(_) => {
+            guard.answered = true;
+            Ok(simple(StatusCode::INTERNAL_SERVER_ERROR, "no response from php\n"))
+        }
     }
+}
+
+/// Reads the request body, capped at `max_body_bytes()`. `Limited` errors as soon as one frame
+/// would push the running total past the cap, so an over-cap body is never buffered in full — only
+/// up to the frame that tripped it. The error is the status and text to answer with.
+async fn collect_body(body: Incoming) -> Result<Bytes, (StatusCode, &'static str)> {
+    match Limited::new(body, max_body_bytes()).collect().await {
+        Ok(c) => Ok(c.to_bytes()),
+        Err(e) => {
+            if e.downcast_ref::<http_body_util::LengthLimitError>().is_some() {
+                return Err((StatusCode::PAYLOAD_TOO_LARGE, "request body too large\n"));
+            }
+            tracing::debug!(error = %e, "body read failed");
+            Err((StatusCode::BAD_REQUEST, "bad request body\n"))
+        }
+    }
+}
+
+/// Turns PHP's answer into hyper's. A streamed body (R-STREAM) starts writing now and is framed as
+/// the rest arrives, so the client gets the first bytes while PHP is still producing the last.
+fn php_response(r: crate::reactor::HttpResponse, guard: CancelOnDrop) -> Response<tonic::body::Body> {
+    let mut b = Response::builder().status(r.status);
+    for (k, v) in r.headers {
+        b = b.header(k, v);
+    }
+    let body = match r.body {
+        crate::reactor::ResponseBody::Full(bytes) => crate::grpc::plain_body(bytes),
+        crate::reactor::ResponseBody::Stream(rx) => tonic::body::Body::new(ChannelBody { rx, guard: Some(guard) }),
+    };
+    b.body(body).unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR, "bad response headers\n"))
 }
 
 /// A response body PHP is still producing. Each `ignis_respond_chunk()` is one frame; the body ends
 /// when the runtime drops the sender, which `ignis_respond_end()` does.
 struct ChannelBody {
     rx: tokio::sync::mpsc::Receiver<Bytes>,
+    /// R-STREAM-CANCEL: for a streamed answer the oneshot resolves when the *headers* go out, so
+    /// disarming the guard there left the rest of the body uncancellable. It travels with the body
+    /// instead, and a client that leaves mid-stream still cancels the producing fiber.
+    guard: Option<CancelOnDrop>,
 }
 
 impl hyper::body::Body for ChannelBody {
@@ -379,10 +430,16 @@ impl hyper::body::Body for ChannelBody {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
-        self.rx.poll_recv(cx).map(|o| o.map(|b| Ok(hyper::body::Frame::data(b))))
+        let frame = self.rx.poll_recv(cx);
+        if matches!(frame, std::task::Poll::Ready(None))
+            && let Some(guard) = self.guard.as_mut()
+        {
+            guard.answered = true; // PHP ended the stream; nothing left to cancel
+        }
+
+        frame.map(|o| o.map(|b| Ok(hyper::body::Frame::data(b))))
     }
 }
-
 
 fn simple(status: StatusCode, msg: &'static str) -> Response<tonic::body::Body> {
     Response::builder()
@@ -390,4 +447,98 @@ fn simple(status: StatusCode, msg: &'static str) -> Response<tonic::body::Body> 
         .header("content-type", "text/plain")
         .body(crate::grpc::plain_body(Bytes::from_static(msg.as_bytes())))
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reactor::HttpRequest;
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap()
+    }
+
+    fn registry_of(reactors: Vec<Arc<Reactor>>) -> Registry {
+        Registry { reactors: Mutex::new(reactors), next: AtomicUsize::new(0) }
+    }
+
+    /// Keeps the receiver alive, so the request stays unanswered and counts as pending.
+    fn deliver(reactor: &Arc<Reactor>) -> tokio::sync::oneshot::Receiver<crate::reactor::HttpResponse> {
+        reactor.deliver_request_with_id(HttpRequest { method: "GET".into(), uri: "/".into(), headers: Vec::new(), body: Bytes::new() }).1
+    }
+
+    #[test]
+    fn a_missing_or_unparsable_value_keeps_the_default() {
+        assert_eq!(parse_or(None, 7usize), 7);
+        assert_eq!(parse_or(Some("42".to_string()), 7usize), 42);
+        assert_eq!(parse_or(Some("eight".to_string()), 7usize), 7);
+        assert_eq!(parse_or(Some(String::new()), 7usize), 7);
+        assert_eq!(env_usize("IGNIS_TEST_VARIABLE_THAT_IS_NEVER_SET", 5), 5);
+        assert_eq!(env_ms("IGNIS_TEST_VARIABLE_THAT_IS_NEVER_SET", 250), Duration::from_millis(250));
+    }
+
+    #[test]
+    fn request_parts_carries_the_headers_and_the_path_with_its_query() {
+        let req = Request::builder().uri("/a/b?x=1").header("x-one", "1").header("x-two", "2").body(()).unwrap();
+        let (headers, uri) = request_parts(&req);
+        assert_eq!(uri, "/a/b?x=1");
+        assert_eq!(headers, vec![("x-one".to_string(), "1".to_string()), ("x-two".to_string(), "2".to_string())]);
+    }
+
+    #[test]
+    fn a_uri_without_a_path_becomes_a_slash() {
+        let req = Request::builder().method("CONNECT").uri("example.com:443").body(()).unwrap();
+        let (_, uri) = request_parts(&req);
+        assert_eq!(uri, "/");
+    }
+
+    #[test]
+    fn picking_from_an_empty_registry_gives_nothing() {
+        assert!(registry_of(Vec::new()).pick().is_none());
+    }
+
+    #[test]
+    fn an_idle_reactor_is_preferred_over_a_loaded_one() {
+        let rt = runtime();
+        let busy = Reactor::new(rt.handle());
+        let idle = Reactor::new(rt.handle());
+        let _pending = deliver(&busy);
+        assert_eq!(busy.pending_requests(), 1);
+        let registry = registry_of(vec![busy.clone(), idle.clone()]);
+        for _ in 0..4 {
+            assert!(Arc::ptr_eq(&registry.pick().unwrap(), &idle), "the loaded reactor was picked");
+        }
+    }
+
+    #[test]
+    fn equally_loaded_reactors_rotate() {
+        let rt = runtime();
+        let reactors: Vec<Arc<Reactor>> = (0..3).map(|_| Reactor::new(rt.handle())).collect();
+        let registry = registry_of(reactors.clone());
+        let picked: Vec<Arc<Reactor>> = (0..3).map(|_| registry.pick().unwrap()).collect();
+        for reactor in &reactors {
+            assert_eq!(picked.iter().filter(|p| Arc::ptr_eq(p, reactor)).count(), 1, "three calls must visit all three reactors");
+        }
+    }
+
+    #[tokio::test]
+    async fn health_is_unavailable_while_no_php_thread_is_registered() {
+        let response = health();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("\"status\":\"unavailable\""), "{body}");
+        assert!(body.contains("\"threads\":0"), "{body}");
+    }
+
+    /// No request is in flight, so `drain` returns on its first pass and never reaches
+    /// `IGNIS_DRAIN_TIMEOUT_MS` — which a test cannot set under edition 2024.
+    #[tokio::test]
+    async fn drain_flips_the_flag_and_returns_with_nothing_pending() {
+        assert!(!is_draining());
+        let (took, pending) = drain().await;
+        assert_eq!(pending, 0);
+        assert!(took < Duration::from_secs(1), "drain took {took:?}");
+        assert!(is_draining());
+    }
 }

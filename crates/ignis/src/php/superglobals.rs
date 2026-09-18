@@ -17,6 +17,7 @@ use std::ffi::c_char;
 
 use ignis_sys as sys;
 
+use super::tsrm;
 use super::zval;
 
 const KEYS: [&[u8]; 4] = [b"_SERVER", b"_GET", b"_POST", b"_COOKIE"];
@@ -40,12 +41,11 @@ thread_local! {
     static VIEW: Cell<*mut sys::zend_fiber_context> = const { Cell::new(std::ptr::null_mut()) };
 }
 
-unsafe fn eg_ptr() -> *mut sys::zend_executor_globals {
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
-}
-
 /// Save the currently installed view where it belongs (the owner's slot, or BASE).
 unsafe fn save_current_view() {
+    // SAFETY: PHP thread inside the fiber-switch observer, where the symbol table is quiescent.
+    // snapshot() addrefs everything it takes, and the previous occupant of the slot is released
+    // before being overwritten, so no entry is dropped without its refcount.
     unsafe {
         let owner = VIEW.with(|v| v.get());
         let snap = snapshot();
@@ -71,10 +71,10 @@ unsafe fn save_current_view() {
 
 /// Mark the running fiber as isolated: it gets its own slot (E13'). Called by `ignis_set_superglobals`.
 unsafe fn isolate_current() {
+    // SAFETY: called from ignis_set_superglobals on a PHP thread. `{main}` (a null active_fiber) is
+    // returned early rather than given a slot, because the base world is not an isolated view.
     unsafe {
-        let base = sys::tsrm_get_ls_cache() as *mut u8;
-        let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
-        let fiber = (*eg).active_fiber;
+        let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() {
             return; // {main}: the base world itself
         }
@@ -91,6 +91,7 @@ unsafe fn isolate_current() {
 }
 
 unsafe fn undef4() -> [sys::zval; 4] {
+    // SAFETY: four IS_UNDEF zvals, which hold nothing and need no request context.
     unsafe { [undef(), undef(), undef(), undef()] }
 }
 
@@ -105,11 +106,9 @@ unsafe fn slot_of(ctx: *mut sys::zend_fiber_context) -> *mut *mut [sys::zval; 4]
 /// # Safety
 /// PHP thread after startup.
 unsafe fn symbol_table() -> *mut sys::HashTable {
-    unsafe {
-        let base = sys::tsrm_get_ls_cache() as *mut u8;
-        let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
-        &raw mut (*eg).symbol_table
-    }
+    // SAFETY: the caller upholds `# Safety` above. The result is a pointer into this thread's own
+    // EG, taken with &raw mut so no reference to the global is ever formed.
+    unsafe { &raw mut (*tsrm::executor_globals()).symbol_table }
 }
 
 unsafe fn undef() -> sys::zval {
@@ -119,6 +118,8 @@ unsafe fn undef() -> sys::zval {
 
 /// Copies the four current entries (addref'd) out of the symbol table.
 unsafe fn snapshot() -> [sys::zval; 4] {
+    // SAFETY: PHP thread after startup. Every entry found is addref'd before being copied out, so
+    // the snapshot owns its values independently of what the symbol table does next.
     unsafe {
         let st = symbol_table();
         let mut out = [undef(), undef(), undef(), undef()];
@@ -136,6 +137,8 @@ unsafe fn snapshot() -> [sys::zval; 4] {
 /// Installs `vals` into the symbol table (each entry addref'd for the table;
 /// UNDEF entries leave the current value in place).
 unsafe fn install(vals: &[sys::zval; 4]) {
+    // SAFETY: PHP thread after startup. Each value is addref'd into a local copy before the table
+    // takes it, so `vals` keeps its own references and zend_hash_str_update owns what it stores.
     unsafe {
         let st = symbol_table();
         for (i, k) in KEYS.iter().enumerate() {
@@ -150,6 +153,8 @@ unsafe fn install(vals: &[sys::zval; 4]) {
 }
 
 unsafe fn release(vals: &mut [sys::zval; 4]) {
+    // SAFETY: PHP thread after startup. Each entry is dropped exactly once -- it is overwritten with
+    // IS_UNDEF straight after, so a second release() is a no-op rather than a double free.
     unsafe {
         for v in vals.iter_mut() {
             if zval::type_of(v) != sys::IS_UNDEF {
@@ -169,7 +174,7 @@ unsafe extern "C" fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys:
         let _ = from;
         let to_slot = slot_of(to);
         let to_isolated = !(*to_slot).is_null();
-        let to_main = to == (*eg_ptr()).main_fiber_context;
+        let to_main = to == (*tsrm::executor_globals()).main_fiber_context;
         let owner = VIEW.with(|v| v.get());
         if to_isolated {
             if owner == to {

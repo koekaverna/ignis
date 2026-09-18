@@ -29,7 +29,7 @@ thread_local! {
 }
 
 pub fn install_runtime(rt: tokio::runtime::Handle) {
-    RUNTIME.set(rt).ok().expect("runtime installed twice");
+    RUNTIME.set(rt).expect("runtime installed twice");
 }
 
 /// Binds `r` to the calling OS thread. Must precede any PHP execution on it.
@@ -53,6 +53,9 @@ pub fn try_reactor() -> Option<Arc<Reactor>> {
 /// after process start, so sharing across threads is sound.
 #[repr(transparent)]
 struct SyncStatic<T>(T);
+// SAFETY: stated by the type's own doc above -- every T stored in one of these is built from
+// 'static literals and other statics and is never mutated after process start, so no thread can
+// observe a torn or freed value.
 unsafe impl<T> Sync for SyncStatic<T> {}
 
 const fn arg_info(name: &'static CStr) -> sys::zend_internal_arg_info {
@@ -75,30 +78,23 @@ const fn arg_info_head(required: usize) -> sys::zend_internal_arg_info {
 
 static ARGINFO_ONE: SyncStatic<[sys::zend_internal_arg_info; 2]> = SyncStatic([arg_info_head(1), arg_info(c"value")]);
 static ARGINFO_NONE: SyncStatic<[sys::zend_internal_arg_info; 1]> = SyncStatic([arg_info_head(0)]);
-static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
-    arg_info_head(4),
-    arg_info(c"server"),
-    arg_info(c"get"),
-    arg_info(c"post"),
-    arg_info(c"cookie"),
-]);
-static ARGINFO_CANCEL: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"fiber"), arg_info(c"exception")]);
+static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> =
+    SyncStatic([arg_info_head(4), arg_info(c"server"), arg_info(c"get"), arg_info(c"post"), arg_info(c"cookie")]);
+static ARGINFO_CANCEL: SyncStatic<[sys::zend_internal_arg_info; 3]> =
+    SyncStatic([arg_info_head(2), arg_info(c"fiber"), arg_info(c"exception")]);
 #[allow(dead_code)]
 static ARGINFO_T2: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"worker"), arg_info(c"json")]);
 #[allow(dead_code)]
-static ARGINFO_T3: SyncStatic<[sys::zend_internal_arg_info; 4]> = SyncStatic([arg_info_head(3), arg_info(c"a"), arg_info(c"b"), arg_info(c"c")]);
+static ARGINFO_T3: SyncStatic<[sys::zend_internal_arg_info; 4]> =
+    SyncStatic([arg_info_head(3), arg_info(c"a"), arg_info(c"b"), arg_info(c"c")]);
 static ARGINFO_GRPC2: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"id"), arg_info(c"message")]);
-static ARGINFO_GRPC3: SyncStatic<[sys::zend_internal_arg_info; 4]> = SyncStatic([arg_info_head(3), arg_info(c"id"), arg_info(c"code"), arg_info(c"message")]);
+static ARGINFO_GRPC3: SyncStatic<[sys::zend_internal_arg_info; 4]> =
+    SyncStatic([arg_info_head(3), arg_info(c"id"), arg_info(c"code"), arg_info(c"message")]);
 static ARGINFO_GRPC4: SyncStatic<[sys::zend_internal_arg_info; 5]> =
     SyncStatic([arg_info_head(4), arg_info(c"url"), arg_info(c"path"), arg_info(c"message"), arg_info(c"streaming")]);
 static ARGINFO_WATCH: SyncStatic<[sys::zend_internal_arg_info; 3]> = SyncStatic([arg_info_head(2), arg_info(c"stream"), arg_info(c"mode")]);
-static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> = SyncStatic([
-    arg_info_head(4),
-    arg_info(c"id"),
-    arg_info(c"status"),
-    arg_info(c"headers"),
-    arg_info(c"body"),
-]);
+static ARGINFO_RESPOND: SyncStatic<[sys::zend_internal_arg_info; 5]> =
+    SyncStatic([arg_info_head(4), arg_info(c"id"), arg_info(c"status"), arg_info(c"headers"), arg_info(c"body")]);
 
 unsafe extern "C" fn zif_ignis_submit_sleep(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: called by the Zend VM on a PHP thread with a valid frame.
@@ -122,6 +118,9 @@ unsafe extern "C" fn zif_ignis_submit_sleep(ex: *mut sys::zend_execute_data, rv:
 /// # Safety
 /// Must run on the PHP thread inside a request; `out` receives ownership.
 unsafe fn request_to_zval(out: *mut sys::zval, req: &crate::reactor::HttpRequest) {
+    // SAFETY: the caller upholds `# Safety` above -- PHP thread, inside a request, `out` is VM-owned
+    // storage this call may write once. Every string copied in is borrowed from `req`, which outlives
+    // the call, and add_assoc_* copies rather than borrows.
     unsafe {
         zval::set_new_array(out);
         sys::add_assoc_stringl_ex(out, c"method".as_ptr(), 6, req.method.as_ptr() as *const c_char, req.method.len());
@@ -301,11 +300,11 @@ unsafe extern "C" fn zif_ignis_publish_stats(ex: *mut sys::zend_execute_data, _r
         let mut pos: sys::HashPosition = 0;
         sys::zend_hash_internal_pointer_reset_ex(ht, &mut pos);
         while {
-            val = sys::zend_hash_get_current_data_ex(ht, &mut pos);
+            val = sys::zend_hash_get_current_data_ex(ht, &pos);
             !val.is_null()
         } {
             let mut idx: sys::zend_ulong = 0;
-            if sys::zend_hash_get_current_key_ex(ht, &mut key, &mut idx, &mut pos) == sys::HASH_KEY_IS_STRING
+            if sys::zend_hash_get_current_key_ex(ht, &mut key, &mut idx, &pos) == sys::HASH_KEY_IS_STRING
                 && !key.is_null()
                 && zval::type_of(val) == sys::IS_LONG
             {
@@ -365,7 +364,10 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
         }
         let headers = header_pairs(ht, "ignis_respond");
         let body = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(body as *const u8, body_len));
-        let ok = reactor().respond(id as u64, HttpResponse { status: status.clamp(100, 599) as u16, headers, body: crate::reactor::ResponseBody::Full(body) });
+        let ok = reactor().respond(
+            id as u64,
+            HttpResponse { status: status.clamp(100, 599) as u16, headers, body: crate::reactor::ResponseBody::Full(body) },
+        );
         zval::set_bool(rv, ok);
     }
 }
@@ -374,6 +376,30 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
 ///
 /// # Safety
 /// `ht` must be a live hash table owned by the VM for the duration of the call.
+/// Appends one `(name, value)` pair per element of a list-valued header.
+///
+/// # Safety
+/// `values` must be a live `HashTable` on the PHP thread.
+unsafe fn push_each_value(headers: &mut Vec<(String, String)>, name: &str, values: *mut sys::HashTable, who: &str) {
+    // SAFETY: hash iteration through ZEND_API only; every value is copied before returning.
+    unsafe {
+        let mut pos: sys::HashPosition = 0;
+        sys::zend_hash_internal_pointer_reset_ex(values, &mut pos);
+        loop {
+            let element = sys::zend_hash_get_current_data_ex(values, &pos);
+            if element.is_null() {
+                break;
+            }
+            if zval::type_of(element) == sys::IS_STRING {
+                headers.push((name.to_string(), zval::zstr_to_string((*element).value.str_)));
+            } else {
+                tracing::warn!("{who}: every value of header {name} must be a string; skipped one");
+            }
+            sys::zend_hash_move_forward_ex(values, &mut pos);
+        }
+    }
+}
+
 pub(super) unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(String, String)> {
     let mut headers = Vec::new();
     // SAFETY: hash iteration through ZEND_API only; every value is copied before returning.
@@ -388,10 +414,18 @@ pub(super) unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(St
             let mut skey: *mut sys::zend_string = ptr::null_mut();
             let mut nkey: sys::zend_ulong = 0;
             let kt = sys::zend_hash_get_current_key_ex(ht, &mut skey, &mut nkey, &pos);
-            if kt == sys::HASH_KEY_IS_STRING && zval::type_of(v) == sys::IS_STRING {
-                headers.push((zval::zstr_to_string(skey), zval::zstr_to_string((*v).value.str_)));
+            if kt == sys::HASH_KEY_IS_STRING {
+                let name = zval::zstr_to_string(skey);
+                match zval::type_of(v) {
+                    sys::IS_STRING => headers.push((name, zval::zstr_to_string((*v).value.str_))),
+                    // A PHP array cannot hold the same string key twice, so a response with two
+                    // Set-Cookie lines has to arrive as a list under one key. The wire is already a
+                    // list of pairs, which is why only this side needed to learn about it.
+                    sys::IGNIS_IS_ARRAY_EX | sys::IS_ARRAY => push_each_value(&mut headers, &name, (*v).value.arr, who),
+                    _ => tracing::warn!("{who}: header {name} must be a string or a list of strings; skipped"),
+                }
             } else {
-                tracing::warn!("{who}: header entries must be string => string; skipped one");
+                tracing::warn!("{who}: header entries must be keyed by name; skipped one");
             }
             sys::zend_hash_move_forward_ex(ht, &mut pos);
         }
@@ -403,7 +437,7 @@ pub(super) unsafe fn header_pairs(ht: *mut sys::HashTable, who: &str) -> Vec<(St
 /// How many chunks may sit between PHP and the socket. Read once: it cannot change, and
 /// `respond_start` runs per streamed response.
 pub(super) fn stream_chunks() -> usize {
-    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    static V: OnceLock<usize> = OnceLock::new();
     *V.get_or_init(|| std::env::var("IGNIS_STREAM_CHUNKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2usize))
 }
 
@@ -459,11 +493,11 @@ pub(super) fn send_chunk(id: u64, chunk: bytes::Bytes) -> i64 {
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return -1, // the client hung up
     };
     // Full: now it is worth an op, because awaiting it is exactly the back-pressure.
-    reactor().submit(crate::reactor::Op::Custom(Box::pin(async move {
+    reactor().submit(Op::Custom(Box::pin(async move {
         match tx.send(chunk).await {
-            Ok(()) => crate::reactor::Outcome::Ready,
+            Ok(()) => Outcome::Ready,
             // The receiver is gone: the client hung up. The handler sees it and can stop.
-            Err(_) => crate::reactor::Outcome::Failed("client gone".into()),
+            Err(_) => Outcome::Failed("client gone".into()),
         }
     }))) as i64
 }
@@ -518,8 +552,17 @@ unsafe extern "C" fn zif_ignis_grpc_call(ex: *mut sys::zend_execute_data, rv: *m
         let (mut u, mut ul, mut p, mut pl, mut m, mut ml): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
             (ptr::null_mut(), 0, ptr::null_mut(), 0, ptr::null_mut(), 0);
         let mut streaming: bool = false;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"sssb".as_ptr(), &mut u, &mut ul, &mut p, &mut pl, &mut m, &mut ml, &mut streaming)
-            != sys::SUCCESS
+        if sys::zend_parse_parameters(
+            zval::num_args(ex),
+            c"sssb".as_ptr(),
+            &mut u,
+            &mut ul,
+            &mut p,
+            &mut pl,
+            &mut m,
+            &mut ml,
+            &mut streaming,
+        ) != sys::SUCCESS
         {
             return;
         }
@@ -550,7 +593,9 @@ unsafe extern "C" fn rinit(_type: c_int, module_number: c_int) -> sys::zend_resu
     // SAFETY: request startup on the calling thread; streams and constants are request-scoped
     // (non-persistent), exactly like sapi/cli's php_cli_register_file_handles().
     unsafe {
-        for (name, path, mode) in [(c"STDIN", c"php://stdin", c"rb"), (c"STDOUT", c"php://stdout", c"wb"), (c"STDERR", c"php://stderr", c"wb")] {
+        for (name, path, mode) in
+            [(c"STDIN", c"php://stdin", c"rb"), (c"STDOUT", c"php://stdout", c"wb"), (c"STDERR", c"php://stderr", c"wb")]
+        {
             let stream = sys::_php_stream_open_wrapper_ex(path.as_ptr(), mode.as_ptr(), 0, ptr::null_mut(), ptr::null_mut());
             if stream.is_null() {
                 continue;
@@ -576,10 +621,18 @@ thread_local! {
     pub static OFFLOAD_WORKER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
+/// # Safety
+/// `p` must point to `l` readable bytes for the duration of the call.
 unsafe fn str_arg(p: *mut c_char, l: usize) -> String {
+    // SAFETY: the caller upholds the length contract above; the slice is read and copied before it
+    // returns, so the String never borrows VM memory.
     unsafe { String::from_utf8_lossy(std::slice::from_raw_parts(p as *const u8, l)).into_owned() }
 }
+
+/// # Safety
+/// `p` must point to `l` readable bytes for the duration of the call.
 unsafe fn bytes_arg(p: *mut c_char, l: usize) -> bytes::Bytes {
+    // SAFETY: as `str_arg` -- copy_from_slice owns the result, so nothing outlives the VM's buffer.
     unsafe { bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(p as *const u8, l)) }
 }
 
@@ -709,6 +762,7 @@ unsafe extern "C" fn zif_ignis_route_enable(ex: *mut sys::zend_execute_data, rv:
 /// `ignis_route_pass(): void` — the Router declines the current call; the original handler runs (E16).
 unsafe extern "C" fn zif_ignis_route_pass(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     super::route::pass();
+    // SAFETY: `rv` is the VM's return slot for this internal call, valid and writable once.
     unsafe { zval::set_null(rv) }
 }
 
@@ -1006,24 +1060,53 @@ mod tests {
 
     #[test]
     fn module_entry_matches_header_constants() {
-        // SAFETY: read-only access to a static in a single test thread.
-        let m = unsafe { &*(&raw const MODULE) };
-        assert_eq!(m.size as u64, std::mem::size_of::<sys::zend_module_entry>() as u64);
-        assert_eq!(m.zts, 1, "must be built against a ZTS PHP");
-        let bid = unsafe { CStr::from_ptr(m.build_id) }.to_str().unwrap();
-        assert!(bid.ends_with(",TS"), "build id {bid} is not a TS build");
-        assert!(bid.starts_with(&format!("API{}", m.zend_api)));
+        let m = &raw const MODULE;
+        // SAFETY: read-only access to a static in a single test thread. The raw pointer is never
+        // turned into a reference, which is the whole point of `static_mut_refs`.
+        unsafe {
+            assert_eq!((*m).size as u64, size_of::<sys::zend_module_entry>() as u64);
+            assert_eq!((*m).zts, 1, "must be built against a ZTS PHP");
+            let bid = CStr::from_ptr((*m).build_id).to_str().unwrap();
+            assert!(bid.ends_with(",TS"), "build id {bid} is not a TS build");
+            assert!(bid.starts_with(&format!("API{}", (*m).zend_api)));
+        }
     }
 
     #[test]
     fn function_table_is_terminated() {
         let last = &FUNCTIONS.0[FUNCTIONS.0.len() - 1];
         assert!(last.fname.is_null() && last.handler.is_none());
-        let names: Vec<String> = FUNCTIONS.0.iter().filter(|f| !f.fname.is_null()).map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string()).collect();
-        for n in ["ignis_stats", "ignis_set_superglobals", "ignis_respond", "ignis_poll", "ignis_grpc_send", "ignis_grpc_end", "ignis_grpc_call", "ignis_grpc_recv", "ignis_pg_open", "ignis_pg_query", "ignis_offload_submit", "ignis_offload_next"] {
+        let names: Vec<String> = FUNCTIONS
+            .0
+            .iter()
+            .filter(|f| !f.fname.is_null())
+            // SAFETY: fname is checked non-null just above and every entry's name is a 'static
+            // CStr literal in the table.
+            .map(|f| unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap().to_string())
+            .collect();
+        for n in [
+            "ignis_stats",
+            "ignis_set_superglobals",
+            "ignis_respond",
+            "ignis_poll",
+            "ignis_grpc_send",
+            "ignis_grpc_end",
+            "ignis_grpc_call",
+            "ignis_grpc_recv",
+            "ignis_pg_open",
+            "ignis_pg_query",
+            "ignis_offload_submit",
+            "ignis_offload_next",
+        ] {
             assert!(names.contains(&n.to_string()), "{n} missing");
         }
-        let sg = FUNCTIONS.0.iter().find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals").unwrap();
+        let sg = FUNCTIONS
+            .0
+            .iter()
+            // SAFETY: fname is checked non-null in the same expression, and the names are 'static
+            // CStr literals in the table.
+            .find(|f| !f.fname.is_null() && unsafe { CStr::from_ptr(f.fname) }.to_str().unwrap() == "ignis_set_superglobals")
+            .unwrap();
         assert_eq!(sg.num_args, 4);
     }
 }

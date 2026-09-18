@@ -1,0 +1,43 @@
+# Supply-chain gate. Counts are from 2026-09-17: 154 packages with default features, 367 with all.
+# `cargo deny` compiles nothing, so this runs without protoc even though all-features pulls the six
+# git crates of the temporal feature — and it has to pull them, or the checks miss that whole graph.
+[graph]
+targets = [{ triple = "x86_64-unknown-linux-gnu" }]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "warn"
+# "all" would let any unmaintained transitive crate block every merge for a reason nobody here can
+# fix; "workspace" keeps the alert on the dependencies we actually chose.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+version = 2
+# Every permissive licence that actually appears across those 367 packages. A new one is a decision,
+# not a build failure to wave through. 0BSD is here rather than in exceptions because it carries no
+# obligations at all -- it is public-domain-equivalent.
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unlicense", "Zlib", "BSL-1.0", "Unicode-3.0", "0BSD"]
+
+# MPL-2.0 is weak copyleft, a different category from everything above, so it is granted to one named
+# crate rather than allowed tree-wide: a NEW MPL dependency must trip this gate and be decided on.
+# option-ext reaches us as dirs -> dirs-sys -> option-ext under the temporal feature. MPL-2.0 is
+# per-file copyleft and we neither modify nor vendor it, so distributing the binary is fine; the
+# obligation would only bite if we changed its sources.
+[[licenses.exceptions]]
+name = "option-ext"
+allow = ["MPL-2.0"]
+
+[bans]
+# 15 duplicated crate names today (syn, toml, rand, getrandom, hashbrown, winnow, windows-sys, …),
+# every one of them transitive and none of them ours to resolve.
+multiple-versions = "allow"
+# A git dependency with no version requirement reads as a wildcard, so this warns rather than denies.
+wildcards = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# ADR-0013: sdk-core has no crates.io release we can use; the commit is pinned in Cargo.lock.
+allow-git = ["https://github.com/temporalio/sdk-core"]

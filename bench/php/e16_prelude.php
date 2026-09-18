@@ -1,4 +1,5 @@
 <?php
+
 // Functions the offload workers can run (E16). Loaded on every offload thread via IGNIS_OFFLOAD_PRELUDE.
 declare(strict_types=1);
 

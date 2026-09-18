@@ -24,7 +24,7 @@ require __DIR__ . '/../src/CoreSource.php';
 require __DIR__ . '/../../temporal-core-transport/tests/workflow.php';
 
 if (!\defined('STDERR')) {
-    \define('STDERR', \fopen('php://stderr', 'w'));
+    \define('STDERR', \fopen('php://stderr', 'w') ?: throw new \RuntimeException('cannot open php://stderr'));
 }
 
 $source = Ignis\Temporal\CoreSource::connect(

@@ -1,4 +1,5 @@
 <?php
+
 // A6: read-ahead on a hooked TLS stream must be visible to stream_select().
 //
 // rustls decrypts a whole TLS record at a time. Once a record is consumed from the socket the raw
@@ -28,7 +29,9 @@ Ignis\async(static function () use ($port, $hook): void {
     $first = fread($c, 8192);
     while (strlen($first) < 8192) {
         $more = fread($c, 8192 - strlen($first));
-        if ($more === false || $more === '') { break; }
+        if ($more === false || $more === '') {
+            break;
+        }
         $first .= $more;
     }
 
@@ -50,7 +53,7 @@ Ignis\async(static function () use ($port, $hook): void {
         (int) $ready,
         $selUs,
         strlen($rest),
-        ($ready === 1 && strlen($rest) > 0) ? 'PASS' : 'FAIL'
+        ($ready === 1 && strlen($rest) > 0) ? 'PASS' : 'FAIL',
     );
 });
 Ignis\Loop::run();

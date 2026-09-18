@@ -332,3 +332,54 @@ Short doc blocks on methods stay. Recorded in CLAUDE.md under "Code style".
 The one carve-out is the comments the architecture already requires as contracts: `// SAFETY:`
 on every `unsafe` block and the ownership/lifetime/who-frees notes at the FFI boundary. Those
 are not commentary, and dropping them would weaken a rule the owner set earlier.
+
+## 2026-09-17 — the quality gate blocks from the first commit (ADR-0041)
+
+Owner chose blocking gates over a warning period, so the debt is cleaned in the same body of work.
+The reasoning, the measured costs and the kill criteria are ADR-0041; the lines below are the small
+decisions it does not need a section for.
+
+- **`rustfmt` at `max_width = 140`, `use_small_heuristics = "Max"`.** Measured adoption diff:
+  120 gives +763/−254 in 19 files, 140 gives +357/−181 in 14, 160 gives +271/−221 in 15. 140 halves
+  120's churn and, unlike 160, does not re-join lines somebody split deliberately. The format-only
+  commit is listed in `.git-blame-ignore-revs`.
+- **`cargo test` is no longer a supported runner; `cargo nextest run` is.** Not a style preference:
+  nextest runs each test in its own process, and `http::REGISTRY`, `pg::POOLS`/`BY_DSN`,
+  `offload::POOL` and `metrics::START` are `OnceLock`s while `config::default_env` mutates the
+  process environment. The new tests depend on a virgin process. Coverage therefore has to be
+  `cargo llvm-cov nextest`, never `cargo llvm-cov test`.
+- **No `rust-toolchain.toml`.** The plan called for one, pinning 1.98.0. It would make every one of
+  the seven CI jobs download a second toolchain, because the action installs `stable` and the file
+  would then demand a different version. The same determinism comes from pinning the version in the
+  lint job itself, which is the only job that runs `-D warnings`.
+- **`[dev-dependencies]` stays empty.** `tokio` is already a normal dependency with `macros` and
+  `rt-multi-thread`, so `#[tokio::test]` needs nothing new, and `IGNIS_DRAIN_TIMEOUT_MS` in a test's
+  own process replaces what `tokio::time::pause()` would have wanted `test-util` for.
+- **No `clippy.toml`.** Every option worth setting is already the default; `accept-comment-above-statement`
+  in particular is what lets a SAFETY comment sit above a `let` rather than inside the block.
+- **`cargo-deny` with `multiple-versions = "allow"`.** 15 duplicated crate names today, every one
+  transitive and none ours to resolve; denying them would block merges on other people's graphs.
+- **`examples/rust/temporal-probe` declares its own `[workspace]`** rather than being excluded from
+  the root one, matching `grpc-baseline` beside it. It had neither and cargo refused the manifest.
+- **The seven copies of the TSRM accessor are one.** `EG`/`CG` were resolved by hand in `route.rs`,
+  `wait.rs`, `park.rs`, `superglobals.rs` (three times there) and `output.rs`; they are now
+  `php/tsrm.rs` with names that say what they return.
+
+## 2026-09-17 — the PHP build gets the toolchain extensions (owner)
+
+Owner asked why the missing extensions were being worked around instead of built. They were right:
+no `phar` meant composer could not run under our engine at all, no `dom`/`libxml` meant PHPUnit
+could not read a `phpunit.xml`, and no `zip` meant no dist extraction — those three gaps are where
+the docker-composer wrapper, the hand-generated PHPUnit runner and the two-host test split all came
+from.
+
+Added to `scripts/build-php.sh`: libxml, dom, xml, simplexml, xmlreader, xmlwriter, phar, fileinfo,
+posix. **`ext-zip` deliberately not built** — composer falls back to the `unzip` binary, which saves
+a `libzip-dev` build dependency on every host.
+
+Cost, measured before and after with the same release binary: RSS 34.6–35.0 MB → 37.6–37.8 MB
+(+2.9 MB), `libphp.so` 50.3 → 67.5 MB unstripped, startup unchanged at 0.01–0.02 s. **V-10's
+26.2 MB worker-mode figure is stale until re-run**; the flatness claim it rests on is unaffected,
+only the absolute. If RSS ever becomes the binding constraint the lever is to build these as shared
+modules loaded from a php.ini the CLI reads, so the embed runtime pays nothing — not done now
+because it adds an ini mechanism the embed SAPI deliberately does not have.

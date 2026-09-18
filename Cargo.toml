@@ -6,6 +6,23 @@ members = ["crates/ignis-sys", "crates/ignis"]
 edition = "2024"
 license = "MIT"
 
+# Counts are from 2026-09-17 on this tree; the CI lint job runs `-- -D warnings`, so a `warn` here
+# already blocks a merge. `warn` rather than `deny` so a local run prints the whole list instead of
+# stopping at the first one, and `cargo build` keeps working mid-edit. `deny` is reserved for the
+# markers that must never reach a commit at all — each measured at zero sites today.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+elided_lifetimes_in_paths = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+mem_forget = "deny"
+
 [profile.release]
 debug = 1
 lto = "thin"

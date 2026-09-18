@@ -1,4 +1,5 @@
 <?php
+
 // E18-D (ADR-0037 §4(b), research 32): proves whether a blocking-in-fiber syscall that the park
 // policy table does NOT cover actually blocks the PHP thread, versus a control call the table
 // DOES cover, which parks and frees the thread for the scheduler. No network, no database, no
@@ -64,5 +65,5 @@ printf(
     "e18_selfcheck: total_wall_ms=%d (serialized ~= %d if 'blocks' really blocked the thread; ~= %d if both ran concurrently)\n",
     $total,
     2 * $ms,
-    $ms
+    $ms,
 );

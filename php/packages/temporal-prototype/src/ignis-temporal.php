@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Ignis Temporal runtime (E9, ADR-0013): workflows run as Fibers; every await records a
  * command and suspends; a run's fiber is resumed only by activation jobs, which makes
@@ -18,11 +19,13 @@ final class Payloads
 {
     private const ENC = 'json/plain';
 
+    /** @return array{metadata: array<string, string>, data: string} */
     public static function encode(mixed $value): array
     {
         return ['metadata' => ['encoding' => base64_encode(self::ENC)], 'data' => base64_encode(json_encode($value, JSON_THROW_ON_ERROR))];
     }
 
+    /** @param null|array<string, mixed> $payload */
     public static function decode(?array $payload): mixed
     {
         if ($payload === null || !isset($payload['data'])) {
@@ -35,28 +38,26 @@ final class Payloads
 /** Per-run state: the workflow fiber, pending awaits and the commands recorded since the last completion. */
 final class WorkflowRun
 {
+    /** @var null|\Fiber<mixed,mixed,mixed,mixed> */
     public ?\Fiber $fiber = null;
     public int $seq = 0;
-    /** @var array<int,\Fiber> seq => fiber waiting for that command's resolution */
+    /** @var array<int,\Fiber<mixed,mixed,mixed,mixed>> seq => fiber waiting for that command's resolution */
     public array $waiting = [];
-    /** @var list<array> commands to send in the next completion */
+    /** @var list<array<string, mixed>> commands to send in the next completion */
     public array $commands = [];
     public mixed $result = null;
     public bool $done = false;
     public ?\Throwable $error = null;
 
-    public function __construct(public readonly string $runId, public readonly string $type)
-    {
-    }
+    public function __construct(public readonly string $runId, public readonly string $type) {}
 }
 
 /** What workflow code sees. All waits go through here; nothing else may suspend a workflow fiber. */
 final class Context
 {
-    public function __construct(private readonly WorkflowRun $run, private readonly string $taskQueue)
-    {
-    }
+    public function __construct(private readonly WorkflowRun $run, private readonly string $taskQueue) {}
 
+    /** @param list<mixed> $args */
     public function activity(string $type, array $args = [], int $startToCloseSec = 30): mixed
     {
         $seq = ++$this->run->seq;
@@ -79,13 +80,17 @@ final class Context
 
     private function await(int $seq): mixed
     {
-        $this->run->waiting[$seq] = \Fiber::getCurrent();
+        $this->run->waiting[$seq] = \Fiber::getCurrent()
+            ?? throw new \LogicException('a workflow can only await inside a fiber');
         return \Fiber::suspend();
     }
 }
 
 final class Worker
 {
+    /** `RemoveFromCache.EvictionReason.NONDETERMINISM` as prost numbers it. */
+    private const EVICTION_NONDETERMINISM = 3;
+
     public static int $activations = 0;
     public static int $evictionErrors = 0;
     public static int $activityTasks = 0;
@@ -93,14 +98,36 @@ final class Worker
     private array $runs = [];
 
     /**
+     * An eviction that means the workflow was rejected, as opposed to routine cache pressure.
+     *
+     * The comparison is spelling-insensitive on purpose. Until 2026-09-18 this matched
+     * 'Nondeterminism' and the wire carried `NONDETERMINISM`, so `bench/e9-temporal.sh`'s negative
+     * control -- the one whose whole job is to fail on a mutated history -- had been reporting
+     * REPLAY_OK while sdk-core evicted for nondeterminism in the same log. The spelling changed when
+     * V-65 replaced our own schema with core's protojson, which renders enums in SCREAMING_SNAKE.
+     * A numeric reason is still accepted: protojson emits the name, prost emits the tag.
+     */
+    private static function isEvictionAnError(mixed $reason): bool
+    {
+        if (is_int($reason)) {
+            return $reason === self::EVICTION_NONDETERMINISM;
+        }
+        if (!is_string($reason)) {
+            return false;
+        }
+        $normalised = strtoupper(str_replace(['_', '-', ' '], '', $reason));
+
+        return in_array($normalised, ['NONDETERMINISM', 'LANGFAIL', 'FATAL'], true);
+    }
+
+
+    /**
      * @param array<string, callable(Context, mixed...): mixed> $workflows
      * @param array<string, callable(mixed...): mixed> $activities
      */
-    public function __construct(private readonly int $worker, private readonly string $taskQueue, private readonly array $workflows, private readonly array $activities)
-    {
-    }
+    public function __construct(private readonly int $worker, private readonly string $taskQueue, private readonly array $workflows, private readonly array $activities) {}
 
-    /** @return mixed payload string (JSON) or throws on error */
+    /** The op's payload as JSON; a reactor error payload becomes a RuntimeException. */
     private static function call(int $opId): string
     {
         $r = Loop::awaitOp($opId);
@@ -124,9 +151,9 @@ final class Worker
     /** Runs the workflow-task loop and (unless replaying) the activity loop until the worker shuts down. */
     public function run(bool $replay = false): void
     {
-        $wf = \Ignis\async(fn () => $this->workflowLoop());
+        $wf = \Ignis\async(fn() => $this->workflowLoop());
         if (!$replay) {
-            \Ignis\async(fn () => $this->activityLoop());
+            \Ignis\async(fn() => $this->activityLoop());
         }
         Loop::run();
         $wf->await();
@@ -142,7 +169,7 @@ final class Worker
                 return;
             }
             ++self::$activations;
-            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(static fn ($j) => (string) array_key_first($j), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
+            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(static fn($j) => (string) array_key_first($j), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
             try {
                 $completion = $this->handleActivation($act);
                 self::call(\ignis_temporal_complete($this->worker, json_encode($completion, JSON_THROW_ON_ERROR)));
@@ -154,6 +181,10 @@ final class Worker
         }
     }
 
+    /**
+     * @param  array<string, mixed> $act
+     * @return array<string, mixed>
+     */
     private function handleActivation(array $act): array
     {
         $runId = $act['runId'];
@@ -192,7 +223,7 @@ final class Worker
                     $evicted = true;
                     $reason = (string) ($data['reason'] ?? 'Unspecified');
                     fwrite(STDERR, sprintf("  evicted: reason=%s %s\n", $reason, $data['message'] ?? ''));
-                    if (in_array($reason, ['Nondeterminism', 'LangFail', 'Fatal'], true) || (int) ($data['reason'] ?? 0) === 3) {
+                    if (self::isEvictionAnError($data['reason'] ?? null)) {
                         self::$evictionErrors++;
                     }
                     break;

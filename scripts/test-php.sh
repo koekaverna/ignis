@@ -5,43 +5,38 @@
 # multipart body a browser sends for any FormData), response construction, and future settling.
 # Everything that needs the reactor is measured by the E-suites against the real binary instead.
 #
-# Composer cannot run under our PHP build (no ext-phar), so the dev dependencies are installed in
-# docker; phpunit itself is a plain PHP script and runs under /opt/php85-zts/bin/php. There is no
-# phpunit.xml: reading one needs ext-dom, which this build does not have.
+# The suite, the bootstrap and the coverage source list all live in php/phpunit.xml; this script
+# only picks the interpreter. The dev dependencies are installed with composer in docker, because
+# that image carries a composer and the unzip binary; PHPUnit itself then runs under the
+# production engine at /opt/php85-zts.
+#
+#   scripts/test-php.sh              # the suite under PHP 8.5.10 ZTS
+#   scripts/test-php.sh --coverage   # the same, with pcov line coverage (text only)
+#   scripts/test-php.sh --filter Scope
 set -uo pipefail
 cd "$(dirname "$0")/.."
-PKG=php/packages/runtime
-PHP=${IGNIS_STOCK_PHP:-/opt/php85-zts/bin/php}
+PHP=${IGNIS_PHP:-/opt/php85-zts/bin/php}
+IMAGE=${IGNIS_PHP_IMAGE:-ghcr.io/koekaverna/ignis-php:8.5.10-zts}
+PCOV=${IGNIS_PCOV:-/opt/pcov/pcov.so}
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
 
-if [ ! -x "$PKG/vendor/bin/phpunit" ]; then
-  echo "== installing phpunit into $PKG (composer in docker)"
-  command -v docker >/dev/null || { echo "docker needed to install phpunit"; exit 2; }
-  timeout 600 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD/$PKG":/app -w /app composer:latest \
-    update --no-scripts --ignore-platform-reqs --no-interaction 2>&1 | tail -3
+if [ ! -x php/vendor/bin/phpunit ]; then
+  echo "== installing the php dev tooling (composer in docker)"
+  command -v docker >/dev/null || { echo "docker needed to install the php dev tooling"; exit 2; }
+  timeout 900 docker run --rm -u "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer \
+    -v "$PWD":/w -w /w/php "$IMAGE" composer install --no-interaction 2>&1 | tail -3
 fi
-[ -x "$PKG/vendor/bin/phpunit" ] || { echo "phpunit not installed"; exit 1; }
+[ -x php/vendor/bin/phpunit ] || { echo "phpunit not installed"; exit 1; }
 
-BOOT="$PWD/$PKG/tests/bootstrap.php"
-cat > "$BOOT" <<'BOOT'
-<?php
-declare(strict_types=1);
-require dirname(__DIR__) . '/vendor/autoload.php';   // psr-4 Ignis\ -> src/, plus autoload.files
-BOOT
+if [ "${1:-}" = "--coverage" ]; then
+  shift
+  if [ ! -f "$PCOV" ]; then
+    echo "== extracting pcov from $IMAGE to $PCOV"
+    command -v docker >/dev/null || { echo "docker needed to extract pcov"; exit 2; }
+    mkdir -p "$(dirname "$PCOV")" && docker run --rm "$IMAGE" cat /opt/pcov/pcov.so > "$PCOV"
+  fi
+  exec "$PHP" -d extension="$PCOV" -d pcov.enabled=1 -d pcov.directory=php/packages \
+    php/vendor/bin/phpunit -c php/phpunit.xml --colors=never --coverage-text "$@"
+fi
 
-# `vendor/bin/phpunit` refuses to start without ext-dom/libxml/xmlwriter, which this build does not
-# have; the library itself does not need them for a plain text run. Entering through the Application
-# class skips that gate — the same workaround bench/e15-revolt.sh uses, and its own header explains
-# why there is no phpunit.xml either (reading one WOULD need ext-dom).
-RUN=/tmp/ignis-phpunit-run.php
-cat > "$RUN" <<'RUNNER'
-<?php declare(strict_types=1);
-$_SERVER['PHP_SELF'] ??= $_SERVER['argv'][0] ?? __FILE__;
-$_SERVER['SCRIPT_NAME'] ??= $_SERVER['PHP_SELF'];
-$_SERVER['SCRIPT_FILENAME'] ??= $_SERVER['PHP_SELF'];
-require getenv('PHPUNIT_AUTOLOAD');
-exit((new PHPUnit\TextUI\Application())->run($_SERVER['argv']));
-RUNNER
-
-PHPUNIT_AUTOLOAD="$PWD/$PKG/vendor/autoload.php" "$PHP" "$RUN" \
-  --no-configuration --bootstrap "$BOOT" --colors=never "$PKG/tests"
+exec "$PHP" php/vendor/bin/phpunit -c php/phpunit.xml --colors=never "$@"

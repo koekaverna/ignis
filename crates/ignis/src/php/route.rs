@@ -8,6 +8,7 @@
 //! entry's `create_object` is swapped; inside a fiber it instantiates the userland proxy class
 //! (`Ignis\Offload\Proxy\<Name>`, a subclass of the real class) instead.
 
+use super::tsrm;
 use std::collections::HashMap;
 use std::ffi::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,7 +23,10 @@ type CreateObject = unsafe extern "C" fn(*mut sys::zend_class_entry) -> *mut sys
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static ORIG_FN: OnceLock<Mutex<HashMap<String, Handler>>> = OnceLock::new();
-static ORIG_CREATE: OnceLock<Mutex<HashMap<usize, (Option<CreateObject>, String)>>> = OnceLock::new();
+/// A class's original `create_object` handler and its name, kept so routing can be undone.
+type OriginalCreateObject = (Option<CreateObject>, String);
+
+static ORIG_CREATE: OnceLock<Mutex<HashMap<usize, OriginalCreateObject>>> = OnceLock::new();
 
 thread_local! {
     /// Set by `ignis_route_pass()` from the router: "run the original handler for this call".
@@ -51,16 +55,13 @@ const DEFAULT_FUNCTIONS: &str = "";
 /// `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to get the old behaviour back for it.
 const DEFAULT_CLASSES: &str = "SQLite3";
 
-unsafe fn cg() -> *mut sys::zend_compiler_globals {
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::compiler_globals_offset) as *mut sys::zend_compiler_globals }
-}
-unsafe fn eg() -> *mut sys::zend_executor_globals {
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
-}
-
 fn routing_here() -> bool {
     // Inside a fiber on a thread with a reactor (never on offload workers: they have no reactor).
-    ENABLED.load(Ordering::Relaxed) && unsafe { !(*eg()).active_fiber.is_null() } && super::module::try_reactor().is_some()
+    // SAFETY: reached only from a zif_handler on a PHP thread, so this thread has a TSRM context
+    // and EG(active_fiber) is a plain pointer field the engine keeps current.
+    ENABLED.load(Ordering::Relaxed)
+        && unsafe { !(*tsrm::executor_globals()).active_fiber.is_null() }
+        && super::module::try_reactor().is_some()
 }
 
 /// MINIT (main thread): swap handlers and create_object for the configured names.
@@ -72,9 +73,13 @@ pub unsafe fn install() {
     let classes = std::env::var("IGNIS_OFFLOAD_CLASSES").unwrap_or_else(|_| DEFAULT_CLASSES.to_string());
     let fns = ORIG_FN.get_or_init(|| Mutex::new(HashMap::new()));
     let creates = ORIG_CREATE.get_or_init(|| Mutex::new(HashMap::new()));
+    // SAFETY: MINIT on the PHP thread, before any request runs, so the function and class tables are
+    // fully built and nothing else is walking them. Every handler swapped in here is an extern "C"
+    // function with the signature the table's entry declares, and the original is kept in ORIG_FN /
+    // ORIG_CREATE so the swap stays reversible.
     unsafe {
         for name in functions.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            let zv = sys::zend_hash_str_find((*cg()).function_table, name.as_ptr() as *const c_char, name.len());
+            let zv = sys::zend_hash_str_find((*tsrm::compiler_globals()).function_table, name.as_ptr() as *const c_char, name.len());
             if zv.is_null() {
                 continue; // extension not built: nothing to route
             }
@@ -86,7 +91,7 @@ pub unsafe fn install() {
         }
         for name in classes.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let lc = name.to_ascii_lowercase();
-            let zv = sys::zend_hash_str_find((*cg()).class_table, lc.as_ptr() as *const c_char, lc.len());
+            let zv = sys::zend_hash_str_find((*tsrm::compiler_globals()).class_table, lc.as_ptr() as *const c_char, lc.len());
             if zv.is_null() {
                 continue;
             }
@@ -108,8 +113,14 @@ pub fn pass() {
 }
 
 /// A fresh (non-interned, refcounted) string zval owned by the caller.
+///
+/// # Safety
+/// PHP thread inside an active request: the string is allocated by the request allocator.
 pub(super) unsafe fn string_zval(bytes: &[u8]) -> sys::zval {
     // No zend_string_init binding (static inline): build it through a temporary array element.
+    // SAFETY: the caller upholds `# Safety` above. The element is stolen rather than copied -- its
+    // slot is retagged IS_NULL before the temporary array is destroyed, so the refcount the caller
+    // receives is the one add_index_stringl created, and zval_ptr_dtor frees only the array.
     unsafe {
         let mut tmp: sys::zval = std::mem::zeroed();
         zval::set_new_array(&mut tmp);
@@ -122,7 +133,11 @@ pub(super) unsafe fn string_zval(bytes: &[u8]) -> sys::zval {
     }
 }
 
+/// # Safety
+/// `ex` must be a live internal-function frame.
 unsafe fn frame_name(ex: *mut sys::zend_execute_data) -> String {
+    // SAFETY: the caller guarantees a live frame, so `func` and its `common` header are valid; a
+    // null function_name is handled rather than dereferenced, and the name is copied out.
     unsafe {
         let f = (*ex).func;
         let zs = (*f).common.function_name;
@@ -133,7 +148,11 @@ unsafe fn frame_name(ex: *mut sys::zend_execute_data) -> String {
 unsafe fn call_original(name: &str, ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     let orig = ORIG_FN.get().and_then(|m| m.lock().unwrap().get(name).copied());
     match orig {
+        // SAFETY: `h` came out of ORIG_FN, which only MINIT writes and only with the handler the
+        // engine itself had in the function table, so calling it with this frame is exactly what the
+        // VM would have done.
         Some(h) => unsafe { h(ex, rv) },
+        // SAFETY: `rv` is the VM's return slot for this call, writable once.
         None => unsafe { zval::set_null(rv) },
     }
 }
@@ -149,7 +168,7 @@ unsafe extern "C" fn trampoline(ex: *mut sys::zend_execute_data, rv: *mut sys::z
         }
         // Build [name, [args...]] and call Ignis\Offload\Router::dispatch.
         let n = (*ex).This.u2.num_args as usize;
-        let slot = std::mem::size_of::<sys::zend_execute_data>() / std::mem::size_of::<sys::zval>();
+        let slot = size_of::<sys::zend_execute_data>() / size_of::<sys::zval>();
         let mut args: sys::zval = std::mem::zeroed();
         zval::set_new_array(&mut args);
         for i in 0..n {

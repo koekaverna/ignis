@@ -286,6 +286,37 @@ E3 target "±2% over 1M requests": RSS did not grow at all over 1.5M requests (i
 
 Caveat: 1 thread, ~7 minutes of traffic, no PDO/streams yet; E3 must be re-run when E6 (streams) and E13 (state swap) land, since those add per-request allocations.
 
+### V-10 addendum — re-run 2026-09-18, my own, after the toolchain extensions landed
+
+Date: 2026-09-18T0x:xxZ. Same command (`bench/rss-1m.sh`, 1 PHP thread, release). Re-run because
+the entry's absolute numbers predate building the toolchain extensions into `/opt/php85-zts`
+(DECISIONS 2026-09-17); the *flatness* claim is what E3 gates on and it is unchanged.
+
+```
+sample 0 (post warm-up, 266k requests):  rss_kb=44396  mem=1693216
+sample 1  (+159k, total 159k):           rss_kb=44044  mem=1693336
+sample 4  (+169k, total 654k):           rss_kb=43920  mem=1693336
+sample 7  (+166k, total 1 150k):         rss_kb=43868  mem=1693336
+/sleep?ms=1, 500 conns, 20s (833k reqs): rss_kb=63084  mem=10727352  fibers=500
+/cpu 5s (17k reqs):                      rss_kb=56064
+hello again 3s (140k reqs):              rss_kb=51432
+```
+
+| | V-10 (2026-09-16) | this run | verdict |
+|---|---|---|---|
+| RSS drift over > 1 M hello | −2.5 % | **−1.2 %** (44 396 → 43 868 kB) | **CONFIRMED again**, well inside ±2 % |
+| PHP heap across samples | flat to the byte | **flat to the byte** (1 693 336 B, samples 1–7) | unchanged |
+| absolute post-warm-up RSS | 26.9 MB | **43.4 MB** | stale, and decomposed in **V-82** |
+| hello throughput | ~152k req/s | ~52k req/s | **do not quote either**: V-46 addendum 3 and V-82 |
+
+Two things this run makes explicit. **The flatness claim survives and the absolute does not** — E3
+is a drift gate, and the drift is what reproduced. **The throughput figure in the original entry
+("131k req/s on one PHP thread" for the sleep workload) is a box artefact**, not a code claim; this
+run gives 41k for the same workload and V-82 measures the box's own spread at ±6.7 %. The
+`/stats` field the heap column comes from has been renamed `mem_this_thread` since (S3-STATS-SCOPE):
+the Zend MM heap is thread-local under ZTS, so at `--threads 1` — every E3 run to date — it is the
+whole PHP side, and at `--threads N` it would have been one worker's.
+
 ## V-11 — H13 (E13): fiber-scoped superglobals via the fiber-switch observer (CONFIRMED)
 
 Date: 2026-09-16T01:4xZ. Build: release, observer registered at MINIT (`IGNIS_NO_SUPERGLOBALS=1` disables it). Saved state lives in `zend_fiber_context.reserved[slot]` (slot from `zend_get_resource_handle`), a HashMap version was measured first and replaced.
@@ -3513,3 +3544,383 @@ byte answers **500**, which is the property the whole design exists for. `cargo 
 suite **41 tests / 66 assertions**, `bench/e21` GREEN, `bench/e23` GREEN, `scripts/smoke.sh` **GREEN**. Symfony path
 re-measured on both forms: `echo` ttfb 0.0030 s, `Ignis\write()` ttfb 0.0024 s, both `total` 0.906 s
 with the correct bodies.
+
+## V-78 — Rust line coverage, and what a coverage number on this codebase can honestly mean (CONFIRMED)
+
+Date: 2026-09-17T20:1xZ. Machine: this box (WSL2, kernel 6.18, 4 vCPU reported by
+`available_parallelism`), `cargo 1.98.0`, `PHP_CONFIG=/opt/php85-zts/bin/php-config`, default
+features (`universal-park` on). Tooling installed for this entry: `llvm-tools-preview` +
+`cargo-llvm-cov` (neither was present; there had never been a coverage tool in this repo).
+
+### Command
+
+```
+cargo llvm-cov nextest --workspace --summary-only \
+  --ignore-filename-regex '(bindings\.rs|/build\.rs|/rustc/)'
+```
+
+`nextest`, not `test`: the new tests in `config.rs`, `pg.rs`, `offload.rs`, `metrics.rs` and
+`http.rs` depend on a virgin process each (`OnceLock` globals, and `config::default_env` mutates the
+environment), which is what nextest gives and `cargo test` does not.
+
+The ignore regex is the load-bearing flag. `bindings.rs` is 17,944 generated lines with ~244
+instrumentable functions that no test calls; left in, it dominates the denominator and the number
+stops meaning anything.
+
+### Before and after
+
+The "before" was measured on commit `a0a67ac` in a separate worktree with its own target dir, so it
+is the same command against the same tree minus the tests.
+
+| | tests | lines | missed | **covered** |
+|---|---|---|---|---|
+| before (`a0a67ac`) | 9 | 3,522 | 3,252 | **7.67 %** |
+| after | 54 | 4,034 | 2,826 | **29.95 %** |
+
+The denominator grew by 512 lines because the same work added code: `php/tsrm.rs`, the methods
+extracted out of `fn main`, and the four type aliases.
+
+### Per file, after
+
+| file | lines | covered | | file | lines | covered |
+|---|---|---|---|---|---|---|
+| `config.rs` | 129 | **90.70 %** | | `pg.rs` | 364 | 41.76 % |
+| `offload.rs` | 124 | **88.71 %** | | `main.rs` | 312 | 25.96 % |
+| `metrics.rs` | 175 | **86.86 %** | | `grpc.rs` | 138 | 22.46 % |
+| `php/zval.rs` | 62 | **82.26 %** | | `php/module.rs` | 585 | 7.18 % |
+| `reactor.rs` | 366 | **81.42 %** | | `php/park.rs` | 609 | 3.78 % |
+| `http.rs` | 350 | 43.14 % | | `php/{embed,output,route,superglobals,wait,locklib,tsrm}.rs` | 719 | **0.00 %** |
+
+The tokio side alone (`config`, `grpc`, `http`, `main`, `metrics`, `offload`, `pg`, `reactor` =
+1,958 lines) is **55.8 %**. `php/**` is 2,076 lines at ~2 %, and that is not laziness: every line in
+those files needs `php_embed_init` on the calling thread. They are covered by E1/E2/E5/E6/E7/E11/E13
+and by `bench/e15-phpt.sh`, which are pass/fail suites rather than line counters.
+
+### Predicted before measuring, as this repo requires
+
+ADR-0041 predicted 2–5 % before the tests and 20–30 % after, with 55–70 % on the tokio side and near
+0 % on `php/**`. Measured: 7.67 % before (higher than predicted — the 9 existing tests reach more of
+`reactor.rs` than assumed, 48 % of it), 29.95 % after (top of the band), 55.8 % on the tokio side
+(bottom of the band), ~2 % on `php/**`. The "before" prediction was wrong and is left here wrong.
+
+### Not instrumented, stated rather than hidden
+
+`crates/ignis/csrc/park.c`, 68 lines of C. `cc` reads `CFLAGS`, not `RUSTFLAGS`, so instrumenting it
+needs build-script plumbing and a merged profdata across two instrumentation runtimes — and every
+line in it executes only under a live engine with an interposed syscall, so a unit-coverage figure
+for it would be 0 % however much work went in. It is exercised by E18, E15 and by
+`php::park::selfcheck()` at boot.
+
+**Reported, not gated** (ADR-0041 §6): a floor on a tree where half the lines need a live PHP engine
+rewards tests that touch reachable-but-uninteresting code, which is the opposite of the point.
+
+## V-79 — PHP line coverage, on the engine the library actually ships on (CONFIRMED)
+
+Date: 2026-09-17T20:1xZ. PHP 8.5.10 ZTS + **PCOV 1.0.12 built from source against
+`/opt/php85-zts`** — clone, `phpize`, `configure`, `make` in 3 s; it carries explicit `#ifdef ZTS`
+and loads into the ZTS build. Baked into `docker/php.Dockerfile` at `/opt/pcov/pcov.so` so CI needs
+no network for it.
+
+### Command
+
+```
+scripts/test-php.sh --coverage
+```
+
+which runs PHPUnit under `/opt/php85-zts/bin/php` with `-d extension=/opt/pcov/pcov.so
+-d pcov.enabled=1 -d pcov.directory=php/packages` and `--coverage-text`.
+
+### Number
+
+| | tests | lines | **covered** |
+|---|---|---|---|
+| baseline, before any new test | 41 | 106 / 645 (`runtime/src` only) | **16.43 %** |
+| after `phpunit.xml` spans every package | 42 | 106 / 1,889 | **5.61 %** |
+
+The numerator is the same. The denominator tripled because `<source>` now covers
+`packages/*/src` rather than `runtime/src` alone — nine of eleven packages had no tests at all, and
+the 16.43 % figure had simply not been looking at them. **5.61 % is the honest starting point**, and
+16.43 % was never the library's coverage, only one package's.
+
+Covered classes today: `Ignis\Scope` 100 %, `Ignis\Http\Response` 100 %, `Ignis\Http\Request` 95 %,
+`Ignis\Output` 65 %, `Ignis\Future` 42 %. Everything else is 0 %.
+
+### Why the driver was built rather than installed
+
+`php-pcov 1.0.11` is one apt line away in Ubuntu 24.04 — for the image's **stock 8.3.6 NTS** php. A
+coverage number from a different engine than the one we ship on is a different measurement; three
+seconds of `make` buys the right one. The apt package remains the fallback if pcov ever stops
+building against a newer PHP.
+
+### Not covered by construction
+
+`packages/revolt/src` — its suite (`IgnisDriverTest`, 81 tests) runs **inside the ignis binary** via
+`bench/e15-revolt.sh` against the gate `revolt.pass 80`, so its coverage would have to come from that
+run. `Loop::produce`/`endStream` back-pressure is E23; `ignis_cancel_parked_any` is E11; the
+universal-park paths are E18. Those are pass/fail gates, not line counters.
+
+**Gated, unlike the Rust side**: the PHP library's unit-testable surface is most of the library, so a
+fixed floor of `achieved − 5` is meaningful here. It is set once the test waves land, never as a
+"must not decrease" ratchet — that reddens every time somebody adds a file.
+
+### V-79 addendum — the number after the tests, and the PHPStan count it sits next to
+
+Date: 2026-09-18T00:0xZ, same box, same command (`scripts/test-php.sh --coverage`, PHP 8.5.10 ZTS
++ PCOV 1.0.12). The entry above recorded only the baseline, because the tests had not been written
+yet; STATUS.md would otherwise cite an after-number with no V-n behind it.
+
+| | tests | assertions | lines | **covered** |
+|---|---|---|---|---|
+| baseline (V-79) | 41 → 42 | 66 → 69 | 106 / 1,889 | **5.61 %** |
+| after | **187** | **474** | **636 / 1,991** | **31.94 %** |
+
+The denominator moved 1,889 → 1,991 because the same work added source: `WorkerRuntime`'s guards,
+`Loop`'s extracted methods, `Runner::parseHeaderLines`, `Classic\configureRunner`.
+
+Per class, the ones that went from nothing: `Grpc\Proto` 100 %, `Pg\Pool` 100 %,
+`Symfony\FiberRequestStack` 100 %, `Temporal\Payloads` 100 %, `Pg\Lease` 94 %, `WorkerRuntime` 78 %,
+`Offload\Router` 76 %, **`Loop` 68 % from 0 %** — the scheduler had no unit test at all before this.
+
+### Static analysis, in the same run
+
+| | PHPStan level 6 |
+|---|---|
+| before any of this work | **123** (the agent's own first run; my re-run after the stub file was fixed read **124** — the difference is the 10 stubs landing between the two, and neither number is adjusted here) |
+| after | **0**, on both the root config and revolt's 8.1-floor override |
+
+One `ignoreErrors` entry survives, with `identifier`, `path` and `count: 1`: an invariance conflict
+between `Persistence\Mapping\ClassMetadataFactory` and ORM's narrowing that no annotation satisfies.
+It is not a baseline — the proof it is upstream is that Doctrine's own `EntityManagerDecorator`
+reports the identical error when analysed.
+
+`php-cs-fixer check` at @PER-CS: **0 of 125 files**. The adoption cost was two format-only commits,
+80 files / +854−364 under `php/` and 43 files / +432−163 under `bench/php` and `examples/`, the
+second proved token-identical bar trailing commas and control-structure braces.
+
+### Rust, for the same reason
+
+`crates/**` had **92 `unsafe` blocks with no SAFETY comment** against CLAUDE.md's claim that every
+one of them states why it is sound. After: **0**, verified by
+`cargo clippy --workspace --all-targets -- -D warnings` with
+`clippy::undocumented_unsafe_blocks` enabled. Seven copies of the TSRM accessor became one
+(`php/tsrm.rs`) along the way, which removed three of the 92 by deleting the code rather than
+documenting it three times.
+
+### V-79 addendum 2 — the number the CI floor is set from
+
+Date: 2026-09-18T0x:xxZ, my own run, same command and same engine (`scripts/test-php.sh
+--coverage`, PHP 8.5.10 ZTS + PCOV 1.0.12).
+
+| | tests | assertions | lines | **covered** |
+|---|---|---|---|---|
+| addendum 1 | 187 | 474 | 636 / 1,991 | 31.94 % |
+| **this run** | **209** | **519** | **751 / 2,052** | **36.60 %** |
+
+The 22 extra tests and 61 extra source lines are the work that landed after addendum 1 was written.
+
+`scripts/ci-coverage-gate.sh` is wired into the `php-unit` job with `FLOOR=31.6` — `achieved − 5`
+off **this** number, not off the stale one. It is a fixed floor, raised by hand in the commit that
+earns it, never a ratchet. Proved it can fail three ways before it was wired in: below the floor
+(`rc=1`), above it (`rc=0`), and **on a log with no coverage summary at all (`rc=1`)** — that last
+one is the case that matters, because "the gate ran and found nothing" is exactly how the PHP suite
+stayed green in CI for months without ever executing.
+
+### V-79 addendum 3 — the "0 undocumented unsafe blocks" figure was 0 for the default features only
+
+Date: 2026-09-18T0x:xxZ. The Rust section above records 92 -> **0**, verified by
+`cargo clippy --workspace --all-targets -- -D warnings`. That command does not build
+`backend/temporal.rs`, which is behind the `temporal` feature — and the `--all-features` clippy run
+that was supposed to cover it had never executed: the `e9-temporal` job takes
+`rust-toolchain@stable`, which ships without the clippy component, so the step died on
+"cargo-clippy is not installed" before linting a line. A red job that was measuring nothing, which
+is the third one of those this cycle.
+
+With the toolchain pinned (1.98.0 + clippy) the real count came out: **9 undocumented `unsafe`
+blocks in `backend/temporal.rs`** — seven `zif_*` entry points with one shared obligation, one in
+`submit`, one more in the same family. So the honest figure is **101 -> 0**, not 92 -> 0, and the
+0 now holds under `--all-features`.
+
+Verified in the CI image with the host toolchain mounted (the image has protoc, not cargo):
+`--all-features` clippy silent, `--all-features` nextest **63/63**.
+
+## V-80 — `ext/session` on files does NOT deadlock a thread; the rule it was cited for still stands (REFUTES part of R-SESS)
+
+Date: 2026-09-18T01:0xZ. Cycle item S1-SESS. The owner chose ADR-0038 option 2 — refuse to boot on
+`session.save_handler=files` — and the brief said to measure first whether a real session reaches the
+blocking `flock` at all. It does not, so the refusal is not built. Recording why, because the
+decision rested on a claim this measurement kills.
+
+### Two fibers on one thread cannot hold two session locks
+
+```
+IGNIS_PHP_INI=<use_cookies=0, save_path=…>  ./target/release/ignis sess-probe2.php
+use_cookies=0 handler=files save_path=…
+Warning: session_id(): Session ID cannot be changed when a session is active
+both returned in 401 ms
+[{"fiber":1,"started":true,"at_ms":0},{"fiber":2,"started":true,"at_ms":51}]
+```
+
+Fiber 1 opens the session and holds it across a 400 ms yield. Fiber 2 does not block: it does not
+take a second lock at all, because **`ext/session` is a per-thread singleton** — its `session_start()`
+joins fiber 1's active session (V-67 found the same thing from the other side: `$_SESSION` is shared
+across fibers). There is no second `flock`, so there is nothing to deadlock on.
+
+With the default `session.use_cookies=1` it is narrower still: `session_start()` fails outright under
+this SAPI (`php_embed_init()` pins `SG(headers_sent)`), which V-67 already recorded.
+
+### Across threads it serialises and completes, exactly like php-fpm
+
+Classic server, `--threads 2`, a script that opens the session, holds it across `usleep(400_000)`
+and closes it. Two concurrent requests carrying the **same** session id:
+
+| | wall | result |
+|---|---|---|
+| one request alone | 401 ms | `n=1 held_ms=401` |
+| two concurrent, same id, two threads | **818 ms** | `n=1` and `n=2`, both answered |
+| a third request afterwards | — | answered; **no thread lost** |
+
+They serialise on the session lock and both finish. That is php-fpm's behaviour for a shared session
+and is not a defect.
+
+### What this does and does not change
+
+**Stands, unchanged:** V-58's rule. A blocking `flock` held across a yield *does* kill the thread —
+that was measured with a raw `flock` probe (`scratchpad/flock2.php`), not through `ext/session`, and
+the mechanism is still true: a regular file is not epoll-able (research 30 group (d)), so the call
+cannot park and blocks the OS thread.
+
+**Refuted:** R-SESS's framing that `ext/session`'s files handler is how you reach it. It is not,
+for the two reasons above.
+
+**The real exposure, and it is not sessions:** any *application* code that takes a blocking
+`flock(LOCK_EX)` inside a fiber. And `flock` is **not in the interposed set** (`crates/ignis/build.rs`
+lists read, write, recv, send, recvfrom, sendto, poll, connect, nanosleep, usleep, sleep, accept …
+and no `flock`), so today that call blocks the thread with no warning, no `ignis_park_failed_total`
+increment, and nothing in the log. A boot refusal on a session setting would not have caught one of
+those; it would only have forbidden a configuration that demonstrably works.
+
+## V-81 — `flock` interposed: the exposure V-80 named is closed (CONFIRMED)
+
+V-80 ended by naming the real exposure: application code taking a blocking `flock(LOCK_EX)` inside
+a fiber. A regular file cannot be registered with epoll (research 30 group (d)), so the reactor had
+nothing to wait on — the call blocked the OS thread, and because the *holder* also lives on that
+thread, it could never be resumed to release the lock. Permanent, silent, one thread per occurrence.
+
+### The shape of the fix
+
+`flock` joins the interposed set (`csrc/park.c`, the symbol list in `build.rs`, and `libphp:flock`
+in the `SEED` policy of `park.rs`). A call that is genuinely blocking — no `LOCK_NB`, and not
+`LOCK_UN` — becomes `LOCK_NB` in a loop with a parked sleep between attempts, 200 us doubling to a
+20 ms ceiling. Everything else passes straight through. If the loop cannot park (no engine, no
+fiber), it increments `ignis_park_failed_total{symbol="flock"}` and makes the real blocking call —
+the same fallback every other interposed symbol uses.
+
+Polling rather than waiting is deliberate and is the only option: there is no epoll-able object
+here. The cost is bounded by the 20 ms ceiling; the alternative is a dead thread.
+
+### Measurement
+
+`bench/php/flock_park.php`: one fiber takes `LOCK_EX` and holds it across a 400 ms yield, a second
+fiber asks for the same lock, and a third fiber ticks every 10 ms — the tick count is the evidence
+that the thread kept serving.
+
+```
+LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis --threads 1 bench/php/flock_park.php
+```
+
+| | result |
+|---|---|
+| with the hook | `{"holder_released_ms":401,"waiter_acquired_ms":405,"ticks":45}` |
+| negative control — `IGNIS_PARK` = `SEED` minus `libphp:flock` | `rc=124`, killed at the 20 s timeout, **no output** |
+
+The waiter got the lock 4 ms after the holder let it go, and 45 ticks landed in the meantime: the
+thread served throughout. Without the policy row the process never printed anything and had to be
+killed — that is the V-58 deadlock reproduced on demand.
+
+### The gate
+
+`scripts/smoke.sh` runs the probe and asserts both halves — `"waiter_acquired_ms"` present *and*
+`ticks >= 30`. Verified to be a gate that can fail: re-run under the negative-control policy, the
+assertion goes red (the probe prints nothing at all). Machine: load 1.85, 851G free.
+
+## V-82 — where the RSS drift actually came from, and what it is not (S3-RSS-DRIFT)
+
+Date: 2026-09-18T0x:xxZ. Box: 24 cores, load 3–5 (a `phpantom_lsp` holding ~70 % of one core),
+851 G free. Every number below is startup RSS of `examples/hello_server.php` at one PHP thread,
+read from `/proc/<pid>/status` after the first successful `GET /` — **not** a soak number. Old
+commits are built in a detached worktree against **today's** `/opt/php85-zts`, so the engine is a
+constant across the whole series and only the repository varies.
+
+### The noise floor first, because without it none of the rest means anything
+
+Six consecutive runs at one commit: 38 616, 38 640, 38 676, 38 724, 38 824, 38 848 kB — a spread of
+**232 kB (0.6 %)**. Startup RSS is a far better bisect signal than throughput, whose spread on this
+same box is ±6.7 % (below). One outlier of 40 968 kB appeared in ~20 runs, so every point below is
+a median of three or five.
+
+### The split nobody had made: engine versus repository
+
+| | startup RSS |
+|---|---|
+| V-10's recorded figure (2026-09-16, the engine of that day) | 26 920 kB |
+| **the same commit `7a5c43f`, rebuilt on today's engine** | **36 888 kB** |
+| HEAD (`ca6e81b`) | 41 620 kB |
+
+So of the ~14.7 MB, **~10 MB is outside the repository** — the PHP rebuild with the toolchain
+extensions and whatever else moved on this box — and **4.7 MB is 281 commits of our own code**.
+That overturns the working estimate of "extensions ≈ 3 MB": the extensions are the large term, not
+the small one. A bisect could never have found those 10 MB, because no commit in this repository
+contains them.
+
+### The 4.7 MB, bisected
+
+| commit | date | median RSS | Δ |
+|---|---|---|---|
+| `7a5c43f` | 09-15 22:56 | 36 888 | — |
+| `1ace01c` | 09-16 04:28 | 38 248 | +1 360 |
+| `b301feb` | 09-16 19:53 | 38 700 | +452 |
+| `1e6f758` | 09-16 21:01 | **38 672** | −28 |
+| **`17a2ceb`** | **09-16 21:31** | **40 752** | **+2 080** |
+| `5b4c29b` | 09-17 09:19 | 41 312 | +560 |
+| `ec25d06` | 09-17 15:31 | 41 500 | +188 |
+| `ca6e81b` | 09-18 02:30 | 41 620 | +120 |
+
+One commit is above the noise by an order of magnitude and the rest is a diffuse ramp. `17a2ceb`
+("refactor(park): sockets.rs + accept.rs deleted — the audited libphp rows carry ext/sockets")
+costs **+2.08 MB**, with non-overlapping ranges either side: parent 38 496–38 800 over three runs,
+the commit itself 40 616–40 980 over five.
+
+### What it is not — two hypotheses killed by their own off-switches
+
+The commit does two things: it grows the `SEED` park policy from 7 rows to 19, and it deletes 641
+lines of Rust that had been replacing PHP's own socket and transport paths. Both have a control.
+
+| | startup RSS |
+|---|---|
+| HEAD, full 19-row seed | 41 660 / 41 812 / 41 752 |
+| HEAD, `IGNIS_PARK` set to the **old 7-row** seed | 41 728 / 41 748 / 41 556 |
+| HEAD, `IGNIS_NO_UNIVERSAL_PARK=1` | 40 492 / 40 608 / 40 784 |
+| `1e6f758`, stream transport hook as shipped | 38 800 / 38 536 / 38 496 |
+| `1e6f758`, `IGNIS_NO_STREAM_HOOK=1` (stock transport) | 38 488 / 38 780 / 38 672 |
+
+**Not the policy rows:** 19 rows and 7 rows are indistinguishable, and the entire universal-park
+mechanism is worth only 1.1 MB. **Not the stream transport factory:** hooked and stock are
+indistinguishable. So the 2.08 MB is the remainder of that commit and the mechanism is still open —
+recorded as open rather than guessed at.
+
+### The thing that matters more than the cause
+
+It is a **fixed footprint, not a leak**. The E3 re-run in the same session holds RSS flat across
+1.15 M requests (44 396 → 43 868 kB, −1.2 %) with the PHP heap flat to the byte over samples 1–7.
+Startup cost buys the mechanism budget's deletion of 641 lines of Rust; a leak would be a defect.
+That is why S3-RSS-DRIFT closes here and does not become a fix.
+
+### The throughput half of S3-NUMBERS: the bisect is refused, with a number
+
+Five consecutive `wrk -t2 -c64 -d10s` runs against one HEAD server: 50 804, 51 346, 52 566, 53 669,
+54 190 req/s — **±6.7 % spread**. V-46 addendum 3 had already measured V-6's own commit at 61.5–63.1k
+on this box, so 128k → 62k is the box and not the code; what remained unbisected was a residual
+4–5 % code-side drop. That residual is **smaller than the run-to-run spread of the measurement**, so
+`git bisect run` gated on it would follow noise and name an innocent commit with full confidence.
+Recorded as undecidable on this box rather than run. It becomes decidable on a quiet machine, or
+with a metric that has a 0.6 %-class noise floor the way startup RSS does.

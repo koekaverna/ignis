@@ -37,13 +37,16 @@ static POOL: OnceLock<Pool> = OnceLock::new();
 static NEXT: AtomicU64 = AtomicU64::new(1);
 /// (job id, callback seq) → worker waiting for the caller's answer.
 static CALLBACKS: OnceLock<Mutex<HashMap<(u64, u64), PendingCallback>>> = OnceLock::new();
+/// The reactor that submitted a job, and the op id to complete on it.
+type JobCaller = (Arc<Reactor>, u64);
+
 /// Jobs in flight, by id (for `done` to find the caller).
-static JOBS: OnceLock<Mutex<HashMap<u64, (Arc<Reactor>, u64)>>> = OnceLock::new();
+static JOBS: OnceLock<Mutex<HashMap<u64, JobCaller>>> = OnceLock::new();
 
 fn callbacks() -> &'static Mutex<HashMap<(u64, u64), PendingCallback>> {
     CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
-fn jobs() -> &'static Mutex<HashMap<u64, (Arc<Reactor>, u64)>> {
+fn jobs() -> &'static Mutex<HashMap<u64, JobCaller>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -57,14 +60,21 @@ pub fn init(n: usize) {
 /// Calling thread: submit a job; the returned op id completes with `Outcome::Blob(result)`.
 pub fn submit(caller: Arc<Reactor>, func: String, args: Bytes, affinity: Option<usize>) -> Result<u64, &'static str> {
     let pool = POOL.get().ok_or("no offload pool (start ignis with --offload N)")?;
+    // Everything that can be refused is refused before an op is reserved. Reserving first leaked the
+    // entry in JOBS and left Reactor::inflight permanently raised on every rejected submit, which
+    // also costs poll() its empty-reactor fast path for the rest of the thread's life.
+    let sender = match affinity {
+        Some(worker) if worker < pool.pinned.len() => &pool.pinned[worker].0,
+        Some(_) => return Err("no such offload worker"),
+        None => &pool.shared_tx,
+    };
     let op = caller.reserve_op();
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    jobs().lock().unwrap().insert(id, (caller, op));
-    let job = Job { id, func, args };
-    match affinity {
-        Some(w) if w < pool.pinned.len() => pool.pinned[w].0.send(job).map_err(|_| "worker gone")?,
-        Some(_) => return Err("no such offload worker"),
-        None => pool.shared_tx.send(job).map_err(|_| "pool gone")?,
+    jobs().lock().unwrap().insert(id, (caller.clone(), op));
+    if sender.send(Job { id, func, args }).is_err() {
+        jobs().lock().unwrap().remove(&id);
+        caller.complete(op, Outcome::Failed("offload worker gone".into()));
+        return Err("worker gone");
     }
     Ok(op)
 }
@@ -128,5 +138,79 @@ pub fn stats() -> (usize, usize, u64, usize) {
     match POOL.get() {
         Some(p) => (p.pinned.len(), p.busy.load(Ordering::Relaxed), p.done.load(Ordering::Relaxed), p.shared_rx.len()),
         None => (0, 0, 0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn caller() -> (tokio::runtime::Runtime, Arc<Reactor>) {
+        let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let reactor = Reactor::new(runtime.handle());
+        (runtime, reactor)
+    }
+
+    /// The whole E16 mechanism with no PHP: submit, take the job off the queue, answer it.
+    #[test]
+    fn a_job_travels_from_caller_to_worker_and_back() {
+        init(1);
+        let (_runtime, reactor) = caller();
+
+        let op = submit(reactor.clone(), "strtoupper".into(), Bytes::from_static(b"hi"), None).unwrap();
+        assert_eq!(stats(), (1, 0, 0, 1), "one worker, nothing busy, one job queued");
+
+        let job = next(0).expect("a queued job");
+        assert_eq!(job.func, "strtoupper");
+        assert_eq!(job.args, Bytes::from_static(b"hi"));
+        assert_eq!(stats(), (1, 1, 0, 0), "the worker is busy and the queue is empty");
+
+        assert!(done(job.id, Bytes::from_static(b"HI")));
+        assert!(!done(job.id, Bytes::from_static(b"HI")), "a job is answered once");
+        assert_eq!(stats(), (1, 0, 1, 0));
+
+        let completions = reactor.poll(Some(Duration::from_secs(2)));
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].id, op);
+        let Outcome::Blob(Some(result)) = &completions[0].outcome else { panic!("{:?}", completions[0].outcome) };
+        assert_eq!(result, &Bytes::from_static(b"HI"));
+    }
+
+    #[test]
+    fn submitting_without_a_pool_names_the_flag() {
+        let (_runtime, reactor) = caller();
+        assert_eq!(submit(reactor, "f".into(), Bytes::new(), None), Err("no offload pool (start ignis with --offload N)"));
+    }
+
+    #[test]
+    fn affinity_outside_the_worker_range_is_rejected() {
+        init(2);
+        let (_runtime, reactor) = caller();
+        assert!(submit(reactor.clone(), "f".into(), Bytes::new(), Some(1)).is_ok());
+        let inflight_after_the_accepted_job = reactor.inflight();
+
+        assert_eq!(submit(reactor.clone(), "f".into(), Bytes::new(), Some(2)), Err("no such offload worker"));
+        // A refused submit must cost nothing. Reserving the op before the range check left an entry
+        // in JOBS and raised inflight forever, which also costs poll() its empty-reactor fast path.
+        assert_eq!(reactor.inflight(), inflight_after_the_accepted_job, "a refused submit reserved an op");
+
+        assert_eq!(stats().3, 0, "a pinned job never reaches the shared queue");
+        assert_eq!(next(1).expect("the pinned job").func, "f");
+    }
+
+    #[test]
+    fn a_worker_stops_at_the_shutdown_poison() {
+        init(1);
+        shutdown();
+        assert!(next(0).is_none());
+    }
+
+    #[test]
+    fn unknown_ids_are_rejected_rather_than_panicking() {
+        init(1);
+        assert!(!done(404, Bytes::new()));
+        assert!(!callback_result(404, 1, Bytes::new()));
+        assert!(next(7).is_none(), "there is no worker 7");
     }
 }

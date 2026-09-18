@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Ignis gRPC runtime (E10, ADR-0014). Server handlers and the client are plain PHP over four
  * module functions:
@@ -44,9 +45,7 @@ final class Call
     public bool $ended = false;
     public int $sent = 0;
 
-    public function __construct(public readonly Request $request)
-    {
-    }
+    public function __construct(public readonly Request $request) {}
 
     /** `/package.Service/Method` */
     public function method(): string
@@ -93,12 +92,16 @@ final class Call
  * Build an Ignis\serve handler from a method map. A method handler receives the Call and either
  * returns the single reply (unary) or streams with $call->send() and returns null.
  *
- * @param array<string, callable(Call): (string|null)> $methods keyed by `/package.Service/Method`
- * @param null|callable(Request): Response $fallback for non-gRPC requests (default 404)
+ * A gRPC call is answered through the gRPC channel (ignis_grpc_send/end), so the handler returns
+ * null and the loop sends nothing — the contract `Ignis\serve()` documents for E10.
+ *
+ * @param  array<string, callable(Call): (string|null)> $methods keyed by `/package.Service/Method`
+ * @param  null|callable(Request): Response            $fallback for non-gRPC requests (default 404)
+ * @return callable(Request): ?Response
  */
 function router(array $methods, ?callable $fallback = null): callable
 {
-    return static function (Request $request) use ($methods, $fallback): Response {
+    return static function (Request $request) use ($methods, $fallback): ?Response {
         if (!str_starts_with($request->headers['content-type'] ?? '', 'application/grpc')) {
             return $fallback !== null ? $fallback($request) : Response::text("404 not a gRPC request\n", 404);
         }
@@ -106,7 +109,7 @@ function router(array $methods, ?callable $fallback = null): callable
         $handler = $methods[$call->method()] ?? null;
         if ($handler === null) {
             $call->end(Status::UNIMPLEMENTED, 'unknown method ' . $call->method());
-            return null;   // answered through the gRPC channel (ignis_grpc_send/end)
+            return null;
         }
         try {
             $reply = $handler($call);
@@ -121,16 +124,14 @@ function router(array $methods, ?callable $fallback = null): callable
         } catch (\Throwable $e) {
             $call->end(Status::INTERNAL, $e::class . ': ' . $e->getMessage());
         }
-        return null;   // answered through the gRPC channel (ignis_grpc_send/end)
+        return null;
     };
 }
 
 /** gRPC client over the runtime's h2 channels; every call parks the current fiber. */
 final class Client
 {
-    public function __construct(private readonly string $url)
-    {
-    }
+    public function __construct(private readonly string $url) {}
 
     public function unary(string $method, string $message): string
     {
@@ -217,26 +218,40 @@ final class Proto
         return $out;
     }
 
-    public static function varint(int $v): string
+    public static function varint(int $value): string
     {
-        $s = '';
+        $encoded = '';
         do {
-            $b = $v & 0x7f;
-            $v >>= 7;
-            $s .= \chr($v !== 0 ? $b | 0x80 : $b);
-        } while ($v !== 0);
-        return $s;
+            $septet = $value & 0x7f;
+            // Logical, not arithmetic: PHP's >> sign-extends, so a negative value would shift to -1
+            // for ever and this loop appended a byte per iteration until the thread died of OOM.
+            // Masking to 57 bits after the shift gives protobuf's canonical ten-byte int64.
+            $value = ($value >> 7) & 0x01ffffffffffffff;
+            $encoded .= \chr($value !== 0 ? $septet | 0x80 : $septet);
+        } while ($value !== 0);
+
+        return $encoded;
     }
 
-    private static function readVarint(string $bytes, int &$i): int
+    /**
+     * @throws \InvalidArgumentException when the varint runs off the end of the message
+     */
+    private static function readVarint(string $bytes, int &$offset): int
     {
-        $v = 0;
+        $value = 0;
         $shift = 0;
         do {
-            $b = \ord($bytes[$i++]);
-            $v |= ($b & 0x7f) << $shift;
+            // These bytes come off the network, so the end of the string is a case, not an
+            // impossibility: without this a truncated message read past the end and returned a
+            // fabricated value instead of being refused.
+            if ($offset >= \strlen($bytes)) {
+                throw new \InvalidArgumentException('truncated varint');
+            }
+            $byte = \ord($bytes[$offset++]);
+            $value |= ($byte & 0x7f) << $shift;
             $shift += 7;
-        } while ($b & 0x80);
-        return $v;
+        } while ($byte & 0x80);
+
+        return $value;
     }
 }

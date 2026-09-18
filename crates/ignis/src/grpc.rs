@@ -61,11 +61,7 @@ impl Decoder for RawDecoder {
 }
 
 /// True for requests that must be framed as gRPC.
-pub fn is_grpc(req: &http::Request<hyper::body::Incoming>) -> bool {
-    is_grpc_parts(req)
-}
-
-fn is_grpc_parts<B>(req: &http::Request<B>) -> bool {
+pub fn is_grpc<B>(req: &http::Request<B>) -> bool {
     req.method() == http::Method::POST
         && req.headers().get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| ct.starts_with("application/grpc"))
 }
@@ -130,12 +126,7 @@ impl ServerStreamingService<Bytes> for PhpGrpc {
 
 /// Serve one gRPC request (unary or server-streaming: PHP decides how many messages to send).
 pub async fn serve(reactor: Arc<Reactor>, req: http::Request<hyper::body::Incoming>) -> http::Response<tonic::body::Body> {
-    let uri = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
-    let headers = req
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
-        .collect();
+    let (headers, uri) = crate::http::request_parts(&req);
     let svc = PhpGrpc { reactor, uri, headers };
     let mut grpc = tonic::server::Grpc::new(RawCodec);
     grpc.server_streaming(svc, req).await
@@ -149,7 +140,10 @@ pub fn plain_body(bytes: Bytes) -> tonic::body::Body {
 // ---------------------------------------------------------------- client side
 
 static CHANNELS: OnceLock<Mutex<HashMap<String, Channel>>> = OnceLock::new();
-static STREAMS: OnceLock<Mutex<HashMap<u64, Arc<tokio::sync::Mutex<Streaming<Bytes>>>>>> = OnceLock::new();
+/// A server-streaming call in flight, shared with the fiber reading it.
+type OpenStream = Arc<tokio::sync::Mutex<Streaming<Bytes>>>;
+
+static STREAMS: OnceLock<Mutex<HashMap<u64, OpenStream>>> = OnceLock::new();
 static NEXT_STREAM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn channel(url: &str) -> Result<Channel, Status> {
@@ -241,10 +235,18 @@ mod tests {
             }
             b.body(()).unwrap()
         };
-        assert!(is_grpc_parts(&mk("POST", Some("application/grpc"))));
-        assert!(is_grpc_parts(&mk("POST", Some("application/grpc+proto"))));
-        assert!(!is_grpc_parts(&mk("GET", Some("application/grpc"))));
-        assert!(!is_grpc_parts(&mk("POST", Some("application/json"))));
-        assert!(!is_grpc_parts(&mk("POST", None)));
+        assert!(is_grpc(&mk("POST", Some("application/grpc"))));
+        assert!(is_grpc(&mk("POST", Some("application/grpc+proto"))));
+        assert!(!is_grpc(&mk("GET", Some("application/grpc"))));
+        assert!(!is_grpc(&mk("POST", Some("application/json"))));
+        assert!(!is_grpc(&mk("POST", None)));
+    }
+
+    #[test]
+    fn failed_carries_the_code_and_message_php_sees() {
+        let Outcome::Failed(message) = failed("unary", Status::new(Code::NotFound, "no such method")) else {
+            panic!("failed() must produce Outcome::Failed");
+        };
+        assert_eq!(message, "grpc unary: code=5 no such method");
     }
 }

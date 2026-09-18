@@ -11,43 +11,43 @@ use Ignis\Http\Request;
 use Ignis\Http\Response;
 
 /** Ends the current script now (the classic-mode replacement for exit()). */
-function finish(): never { throw new Finished(); }
+function finish(): never
+{
+    throw new Finished();
+}
 
 /**
  * The top-level worker loop: the only shape in which an entry script's top-level variables become
- * real globals (V-53 measured every alternative — a function, a closure, a fiber and
- * `extract($GLOBALS, EXTR_REFS)` all leave `$GLOBALS` empty). Legacy apps that keep state in
- * globals — WordPress's `$wpdb`, Drupal, any procedural docroot — need this; a framework front
- * controller (Symfony, Laravel) does not and can keep using `Ignis\Classic\serve()`.
- *
- *     require '.../php/packages/runtime/src/ignis.php';
- *     require '.../php/packages/runtime/src/classic.php';
- *     Ignis\Classic\listen('/var/www/html/public', '0.0.0.0:8080');
- *     while ($script = Ignis\Classic\accept()) {
- *         include $script;              // top level of the main script: real globals
- *         Ignis\Classic\respond();
- *     }
- *
- * One request at a time per thread, by construction — the loop is the caller's `while`, so nothing
- * else runs while the script does. That is the same trade `Ignis\Classic` already documents ("a
- * classic script must not suspend") and the same shape RoadRunner and FrankenPHP's worker mode use.
- * Functions the script declares at top level still live for the life of the worker, so a script
- * that declares them unguarded fatals on the second request (V-53): `require_once`, or guard with
- * `function_exists()` — the rule in every worker runtime.
+ * real globals, and therefore the mode a legacy docroot needs. One request at a time per thread.
+ * See docs/classic-mode.md — V-53 measured every alternative and they all leave `$GLOBALS` empty.
  *
  * @param array<string,string> $server extra $_SERVER entries
  */
 function listen(string $docroot, string $addr, ?string $index = 'index.php', array $server = []): void
 {
+    configureRunner($docroot, $index, $server, null);
+    \Ignis\Loop::$rawRequestHandler = Runner::queue(...);
+    \ignis_serve($addr);
+}
+
+/**
+ * Everything both entry points need before a request can arrive: the docroot, the `$_SERVER`
+ * extras, and the `php://` wrapper that makes `php://input` this request's body.
+ *
+ * @param array<string,string>       $server
+ * @param null|callable(string):void $run   runs one script file; the default is a plain `include`
+ */
+function configureRunner(string $docroot, ?string $index, array $server, ?callable $run): void
+{
     Runner::$docroot = rtrim($docroot, '/');
     Runner::$index = $index;
     Runner::$extra = $server;
     Runner::$env = getenv();
-    Runner::$run = static function (string $file): void { include $file; };
+    Runner::$run = $run ?? static function (string $file): void {
+        include $file;
+    };
     stream_wrapper_unregister('php');
     stream_wrapper_register('php', InputStream::class);
-    \Ignis\Loop::$rawRequestHandler = Runner::queue(...);
-    \ignis_serve($addr);
 }
 
 /**
@@ -67,20 +67,20 @@ function respond(): void
 }
 
 /** Sends the response now and lets the script go on (fastcgi_finish_request() analogue); later output is dropped. */
-function finish_request(): bool { return Runner::finishRequest(); }
+function finish_request(): bool
+{
+    return Runner::finishRequest();
+}
 
 /**
+ * A docroot behind the fiber-per-request loop: the mode for a framework front controller, where
+ * requests overlap. See docs/classic-mode.md for the choice between this and `listen()`.
+ *
  * @param array<string,string> $server extra $_SERVER entries (like FrankenPHP's `env` subdirective)
  * @param null|callable(string):void $run runs one script file; the default is a plain `include`
  */
 function serve(string $docroot, string $addr, ?string $index = 'index.php', array $server = [], ?callable $run = null): void
 {
-    Runner::$docroot = rtrim($docroot, '/');
-    Runner::$index = $index;
-    Runner::$extra = $server;
-    Runner::$env = getenv();
-    Runner::$run = $run ?? static function (string $file): void { include $file; };
-    stream_wrapper_unregister('php');
-    stream_wrapper_register('php', InputStream::class);
+    configureRunner($docroot, $index, $server, $run);
     \Ignis\serve(Runner::handle(...), $addr);
 }

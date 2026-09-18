@@ -1,4 +1,5 @@
 <?php
+
 // A4 kill-criterion #2 (ADR-0018): cost of the hook on the NON-parking path.
 //
 // A UDP socket is always writable, so every socket_sendto takes the ready_now() fast path and

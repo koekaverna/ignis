@@ -1,6 +1,6 @@
 {
     "name": "ignis/php",
-    "description": "The Ignis PHP userland, as packages. This root is the monorepo: it is not installed anywhere \u2014 install the package you need from packages/*, which is what the path repository below is for.",
+    "description": "The Ignis PHP userland, as packages. This root is the monorepo: it is not installed anywhere — install the package you need from packages/*, which is what the path repository below is for. Installing this root gives every agent one vendor/ with the dev tooling (phpunit, phpstan, php-cs-fixer, rector) for the whole tree.",
     "type": "project",
     "license": "MIT",
     "repositories": [
@@ -8,26 +8,66 @@
             "type": "path",
             "url": "packages/*",
             "options": {
-                "symlink": false
+                "symlink": true
             }
         }
     ],
     "require": {
         "php": ">=8.4",
-        "ignis/runtime": "@dev",
-        "ignis/symfony-runtime": "@dev",
-        "ignis/pg": "@dev",
-        "ignis/offload": "@dev",
+        "ignis/doctrine": "@dev",
         "ignis/grpc": "@dev",
+        "ignis/offload": "@dev",
+        "ignis/pg": "@dev",
+        "ignis/runtime": "@dev",
         "ignis/swoole": "@dev",
+        "ignis/symfony-runtime": "@dev",
         "ignis/temporal": "@dev",
         "ignis/temporal-core-transport": "@dev",
-        "ignis/temporal-prototype": "@dev",
-        "ignis/doctrine": "@dev"
+        "ignis/temporal-prototype": "@dev"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "ignis/revolt": "@dev",
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^12.5",
+        "rector/rector": "^2.6",
+        "symfony/runtime": "^7.0 || ^8.0",
+        "symfony/security-core": "^7.0 || ^8.0"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ignis\\Tests\\": "tests/"
+        }
     },
     "minimum-stability": "dev",
     "prefer-stable": true,
     "config": {
-        "allow-plugins": false
+        "allow-plugins": false,
+        "sort-packages": true,
+        "platform-check": false,
+        "platform": {
+            "php": "8.5.10"
+        }
+    },
+    "scripts": {
+        "lint": "find packages tests ../examples ../bench ../scripts -name '*.php' -not -path '*/vendor/*' -not -path '*/var/cache/*' -exec php -l {} \\; | grep -v '^No syntax errors detected' ; test $? -eq 1",
+        "stan": ["@php vendor/bin/phpstan analyse --no-progress", "@php vendor/bin/phpstan analyse --no-progress -c packages/revolt/phpstan.neon"],
+        "cs": "@php vendor/bin/php-cs-fixer check --diff --show-progress=none",
+        "fix": "@php vendor/bin/php-cs-fixer fix --show-progress=none",
+        "rector": "@php vendor/bin/rector process --dry-run",
+        "test": "@php vendor/bin/phpunit --colors=never",
+        "check": [
+            "@lint",
+            "@stan",
+            "@cs",
+            "@test"
+        ]
+    },
+    "scripts-descriptions": {
+        "lint": "php -l over every tracked PHP file (find, not git ls-files: git refuses to run in the container).",
+        "stan": "PHPStan level 6 over every package, then the 8.1 override for ignis/revolt.",
+        "cs": "php-cs-fixer dry run; run under the stock 8.3 php, it refuses to start above its supported max.",
+        "rector": "Dry run only — rector is a local one-shot tool here, never a CI gate.",
+        "check": "What CI runs: lint, stan, cs, test."
     }
 }

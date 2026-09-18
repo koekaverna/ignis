@@ -1,4 +1,5 @@
 <?php
+
 /** symfony/runtime adapter: worker mode on Ignis (ADR-0011). Select with APP_RUNTIME=Ignis\Symfony\IgnisRuntime. */
 declare(strict_types=1);
 

@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Offload worker loop (E16, ADR-0016). Runs on a synchronous PHP thread with its own TSRM context;
  * embedded into the ignis binary and evaluated on every offload thread. IGNIS_OFFLOAD_PRELUDE
@@ -8,19 +9,27 @@ declare(strict_types=1);
 
 namespace Ignis\Offload;
 
-/** Serializable stand-in for a caller-side closure; the worker turns it into a stub that calls back. */
-final class CallbackRef
-{
-    public function __construct(public readonly int $id)
+/**
+ * Serializable stand-in for a caller-side closure; the worker turns it into a stub that calls back.
+ *
+ * Guarded like the identical pair in `ignis-offload.php`, and for the same reason: a worker thread
+ * evaluates this file with nothing else loaded, but anything that has already required the caller
+ * side (a prelude, a test) would otherwise hit "cannot redeclare".
+ */
+if (!class_exists(CallbackRef::class, false)) {
+    final class CallbackRef
     {
+        public function __construct(public readonly int $id) {}
     }
 }
 
-final class RemoteException extends \RuntimeException
-{
-    public function __construct(public readonly string $remoteClass, string $message, int $code, public readonly string $remoteTrace = '')
+if (!class_exists(RemoteException::class, false)) {
+    final class RemoteException extends \RuntimeException
     {
-        parent::__construct($message, $code);
+        public function __construct(public readonly string $remoteClass, string $message, int $code, public readonly string $remoteTrace = '')
+        {
+            parent::__construct($message, $code);
+        }
     }
 }
 
@@ -59,7 +68,14 @@ final class WorkerRuntime
     private static int $nextHandle = 1;
     private const ROUTABLE = ['CurlHandle', 'CurlMultiHandle', 'CurlShareHandle', 'PDO', 'PDOStatement', 'SQLite3', 'SQLite3Stmt', 'SQLite3Result'];
 
-    /** Auto-routed call from a fiber thread: "fn:name" / "new:Class" / "method:name" / "free". */
+    /**
+     * Auto-routed call from a fiber thread: "fn:name" / "new:Class" / "method:name" / "free".
+     *
+     * The name is data that arrived from another thread, so `fn:` and `new:` are answered only for
+     * the names the runtime itself routes — anything else reaching this channel is a bug or worse.
+     *
+     * @param array<int|string, mixed> $args
+     */
     public static function routed(string $what, array $args): mixed
     {
         if ($what === 'free') {
@@ -69,14 +85,45 @@ final class WorkerRuntime
         $args = self::resolveRefs($args);
         [$kind, $name] = explode(':', $what, 2);
         $result = match ($kind) {
-            'fn' => $name(...$args),
-            'new' => new $name(...$args),
+            'fn' => self::callFunction($name, $args),
+            'new' => self::construct($name, $args),
             'method' => self::callMethod(array_shift($args), $name, $args),
             default => throw new \InvalidArgumentException("bad routed call $what"),
         };
         return self::registerObjects($result);
     }
 
+    /** @param array<int|string, mixed> $args */
+    private static function callFunction(string $function, array $args): mixed
+    {
+        if (!\in_array($function, self::routedNames('IGNIS_OFFLOAD_FUNCTIONS', ''), true) || !\is_callable($function)) {
+            throw new \InvalidArgumentException("offload: $function is not a routed function");
+        }
+        return $function(...$args);
+    }
+
+    /** @param array<int|string, mixed> $args */
+    private static function construct(string $class, array $args): object
+    {
+        if (!\in_array($class, self::routedNames('IGNIS_OFFLOAD_CLASSES', 'SQLite3'), true) || !class_exists($class)) {
+            throw new \InvalidArgumentException("offload: $class is not a routed class");
+        }
+        return new $class(...$args);
+    }
+
+    /**
+     * What `route.rs` installed its trampolines for: same variables, same defaults, read here so a
+     * worker accepts exactly the names the runtime is configured to send it.
+     *
+     * @return list<string>
+     */
+    private static function routedNames(string $variable, string $fallback): array
+    {
+        $configured = getenv($variable);
+        return array_values(array_filter(array_map('trim', explode(',', $configured ?: $fallback))));
+    }
+
+    /** @param array<int|string, mixed> $args */
     private static function callMethod(mixed $obj, string $method, array $args): mixed
     {
         if (!\is_object($obj)) {
@@ -147,4 +194,9 @@ final class WorkerRuntime
     }
 }
 
-WorkerRuntime::run();
+// The job channel only exists inside the ignis binary, which is also the only place that evaluates
+// this file (crates/ignis/src/main.rs `include_str!`s it onto every offload thread). Guarding the
+// call is what lets a test require the file for WorkerRuntime alone.
+if (\function_exists('ignis_offload_next')) {
+    WorkerRuntime::run();
+}

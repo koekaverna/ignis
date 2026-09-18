@@ -1,4 +1,5 @@
 <?php
+
 // Probe: ext/pgsql in async mode parked on ignis_watch (research 24). No Rust change — libpq's own
 // socket is handed to the reactor, the fiber parks on the one poll point like any other op.
 // Env: PG_DSN, FIBERS (default 20), SLEEP (seconds per query, default 0.2), N (SELECT 1 count, default 2000).
@@ -6,6 +7,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 use Ignis\Loop;
+
 use function Ignis\all;
 use function Ignis\async;
 
@@ -87,7 +89,7 @@ if ($mode === 'all' || $mode === 'concurrency') {
     $t = hrtime(true);
     $futures = [];
     foreach ($conns as $c) {
-        $futures[] = async(fn () => pg_aquery($c, 'SELECT pg_sleep($1::float8) AS s', [$sleep]));
+        $futures[] = async(fn() => pg_aquery($c, 'SELECT pg_sleep($1::float8) AS s', [$sleep]));
     }
     all($futures);
     $async = (hrtime(true) - $t) / 1e6;
@@ -100,8 +102,14 @@ if ($mode === 'all' || $mode === 'concurrency') {
     }
     $sync = (hrtime(true) - $t) / 1e6;
 
-    printf("concurrency: %d fibers x %.0f ms  async=%.1f ms  sync-control=%.1f ms  speedup=%.1fx\n",
-        $fibers, $sleep * 1000, $async, $sync, $sync / $async);
+    printf(
+        "concurrency: %d fibers x %.0f ms  async=%.1f ms  sync-control=%.1f ms  speedup=%.1fx\n",
+        $fibers,
+        $sleep * 1000,
+        $async,
+        $sync,
+        $sync / $async,
+    );
     foreach ($conns as $c) {
         \pg_close($c);
     }
@@ -123,7 +131,12 @@ if ($mode === 'all' || $mode === 'overhead') {
         \pg_query($c, 'SELECT 1 AS one');
     }
     $us2 = (hrtime(true) - $t) / 1e3 / $n;
-    printf("overhead(stock sync)  : %d x SELECT 1 -> %.1f us/query, %.0f q/s  (ratio %.2fx)\n",
-        $n, $us2, 1e6 / $us2, $us / $us2);
+    printf(
+        "overhead(stock sync)  : %d x SELECT 1 -> %.1f us/query, %.0f q/s  (ratio %.2fx)\n",
+        $n,
+        $us2,
+        1e6 / $us2,
+        $us / $us2,
+    );
     \pg_close($c);
 }

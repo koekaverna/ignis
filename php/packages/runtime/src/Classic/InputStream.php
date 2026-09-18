@@ -33,6 +33,9 @@ final class InputStream
     }
     public function stream_read(int $n): string|false
     {
+        if ($n < 1) {
+            return '';
+        }
         $chunk = $this->inner ? fread($this->inner, $n) : substr(self::$body, $this->pos, $n);
         $this->pos += \strlen((string) $chunk);
         return $chunk;
@@ -42,13 +45,36 @@ final class InputStream
         if ($this->inner) {
             return fseek($this->inner, $offset, $whence) === 0;
         }
-        $this->pos = match ($whence) { SEEK_SET => $offset, SEEK_CUR => $this->pos + $offset, default => \strlen(self::$body) + $offset };
+        $this->pos = match ($whence) {
+            SEEK_SET => $offset, SEEK_CUR => $this->pos + $offset, default => \strlen(self::$body) + $offset,
+        };
         return true;
     }
-    public function stream_write(string $data): int|false { return $this->inner ? fwrite($this->inner, $data) : false; }
-    public function stream_eof(): bool { return $this->inner ? feof($this->inner) : $this->pos >= strlen(self::$body); }
-    public function stream_tell(): int { return $this->inner ? (int) ftell($this->inner) : $this->pos; }
-    public function stream_stat(): array|false { return $this->inner ? fstat($this->inner) : ['size' => strlen(self::$body)]; }
-    public function stream_flush(): bool { return $this->inner ? fflush($this->inner) : true; }
-    public function stream_close(): void { if ($this->inner) { fclose($this->inner); } }
+    public function stream_write(string $data): int|false
+    {
+        return $this->inner ? fwrite($this->inner, $data) : false;
+    }
+    public function stream_eof(): bool
+    {
+        return $this->inner ? feof($this->inner) : $this->pos >= strlen(self::$body);
+    }
+    public function stream_tell(): int
+    {
+        return $this->inner ? (int) ftell($this->inner) : $this->pos;
+    }
+    /** @return array<int|string, int>|false */
+    public function stream_stat(): array|false
+    {
+        return $this->inner ? fstat($this->inner) : ['size' => strlen(self::$body)];
+    }
+    public function stream_flush(): bool
+    {
+        return $this->inner ? fflush($this->inner) : true;
+    }
+    public function stream_close(): void
+    {
+        if ($this->inner) {
+            fclose($this->inner);
+        }
+    }
 }

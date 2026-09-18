@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    packages/revolt/tests is deliberately not in the suite: IgnisDriverTest drives the real
+    reactor and only means anything inside the ignis binary, where bench/e15-revolt.sh runs it
+    against the gate `revolt.pass 80`.
+
+    Caching is off so a test run leaves nothing behind in the working tree; both suites are
+    small enough that the cache buys nothing.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         cacheResult="false"
+         colors="false"
+         failOnWarning="true"
+         failOnRisky="true"
+         failOnNotice="true"
+         beStrictAboutOutputDuringTests="true">
+    <testsuites>
+        <testsuite name="userland">
+            <directory>packages/*/tests</directory>
+            <exclude>packages/revolt/tests</exclude>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory>packages/*/src</directory>
+        </include>
+    </source>
+</phpunit>

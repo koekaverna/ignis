@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Ignis PostgreSQL client (E14, ADR-0015): connections belong to the runtime; PHP holds leases.
  * Module functions: ignis_pg_open(dsn, max): int; ignis_pg_acquire(pool): op; ignis_pg_query(lease, sql, paramsJson): op;
@@ -11,13 +12,19 @@ namespace Ignis\Pg;
 use Ignis\Loop;
 use Ignis\Scope;
 
-final class LeaseError extends \LogicException
-{
-}
+final class LeaseError extends \LogicException {}
 
-final class QueryError extends \RuntimeException
-{
-}
+final class QueryError extends \RuntimeException {}
+
+/**
+ * The pool could not hand out a connection: the wait hit `IGNIS_PG_ACQUIRE_TIMEOUT_MS`, or the
+ * breaker is open and we have stopped calling PostgreSQL for a cooldown.
+ *
+ * Separate from `QueryError` because no query happened, and separate from `LeaseError` because
+ * nothing was used wrongly -- this is the database being unreachable, which is a runtime condition
+ * an operator acts on, not a programming mistake. The message says which of the two it was.
+ */
+final class PoolError extends \RuntimeException {}
 
 /** A process-wide pool; `max` connections shared by every PHP thread and fiber. */
 final class Pool
@@ -39,52 +46,61 @@ final class Pool
         $r = \ignis_pg_acquire($this->id);
         $leaseId = \is_array($r)
             ? (int) $r['lease'] // idle connection: no reactor hop
-            : (int) json_decode(self::result(Loop::awaitOp($r)), true, 8, JSON_THROW_ON_ERROR)['lease'];
-        $lease = new Lease($this, $leaseId, $key);
+            : (int) json_decode(self::orThrow(Loop::awaitOp($r), PoolError::class), true, 8, JSON_THROW_ON_ERROR)['lease'];
+        $lease = new Lease($leaseId, $key);
         Scope::set($key, $lease);
         return $lease;
     }
 
-    /** One statement on a fresh lease: acquire → query → release. @return list<array<string,mixed>> */
+    /**
+     * One statement on a fresh lease: acquire → query → release.
+     * @param  array<array-key, mixed> $params
+     * @return list<array<string,mixed>>
+     */
     public function query(string $sql, array $params = []): array
     {
-        $l = $this->acquire();
+        $lease = $this->acquire();
         try {
-            return $l->query($sql, $params);
+            return $lease->query($sql, $params);
         } finally {
-            $l->release();
+            $lease->release();
         }
     }
 
+    /** @param array<array-key, mixed> $params */
     public function exec(string $sql, array $params = []): int
     {
-        $l = $this->acquire();
+        $lease = $this->acquire();
         try {
-            return $l->exec($sql, $params);
+            return $lease->exec($sql, $params);
         } finally {
-            $l->release();
+            $lease->release();
         }
     }
 
     /** Runs $fn(Lease) inside BEGIN/COMMIT on one leased connection; any throwable rolls back. */
     public function transaction(callable $fn): mixed
     {
-        $l = $this->acquire();
+        $lease = $this->acquire();
         try {
-            $l->exec('BEGIN');
+            $lease->exec('BEGIN');
             try {
-                $r = $fn($l);
-                $l->exec('COMMIT');
-                return $r;
+                $result = $fn($lease);
+                $lease->exec('COMMIT');
+                return $result;
             } catch (\Throwable $e) {
-                try { $l->exec('ROLLBACK'); } catch (\Throwable) { /* reset on release rolls back anyway */ }
+                try {
+                    $lease->exec('ROLLBACK');
+                } catch (\Throwable) { /* reset on release rolls back anyway */
+                }
                 throw $e;
             }
         } finally {
-            $l->release();
+            $lease->release();
         }
     }
 
+    /** @return null|array<string, mixed> [idle, created, available]; null when the pool id is unknown. */
     public function stats(): ?array
     {
         return \ignis_pg_stats($this->id);
@@ -93,9 +109,20 @@ final class Pool
     /** @internal */
     public static function result(mixed $payload): mixed
     {
+        return self::orThrow($payload, QueryError::class);
+    }
+
+    /**
+     * @param class-string<\Throwable> $error
+     *
+     * @internal
+     */
+    public static function orThrow(mixed $payload, string $error): mixed
+    {
         if (\is_array($payload) && ($payload['kind'] ?? '') === 'error') {
-            throw new QueryError((string) $payload['message']);
+            throw new $error((string) $payload['message']);
         }
+
         return $payload;
     }
 }
@@ -106,16 +133,18 @@ final class Lease
     private bool $released = false;
 
     /** @internal */
-    public function __construct(private readonly Pool $pool, public readonly int $id, private readonly string $scopeKey)
-    {
-    }
+    public function __construct(public readonly int $id, private readonly string $scopeKey) {}
 
-    /** @return list<array<string,mixed>> */
+    /**
+     * @param  array<array-key, mixed> $params
+     * @return list<array<string,mixed>>
+     */
     public function query(string $sql, array $params = []): array
     {
         return $this->run($sql, $params)['rows'];
     }
 
+    /** @param array<array-key, mixed> $params */
     public function exec(string $sql, array $params = []): int
     {
         return (int) $this->run($sql, $params)['affected'];
@@ -147,6 +176,12 @@ final class Lease
         }
     }
 
+    /**
+     * `array_values` because the wire format is positional: an associative array would encode as a
+     * JSON object and PostgreSQL would see no parameters at all.
+     * @param  array<array-key, mixed> $params
+     * @return array{rows: list<array<string,mixed>>, affected: int}
+     */
     private function run(string $sql, array $params): array
     {
         if ($this->released) {

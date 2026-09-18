@@ -1,0 +1,1 @@
+this file is OUTSIDE the docroot; Classic\Runner::resolve() must never reach it

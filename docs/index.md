@@ -37,3 +37,5 @@ threads — and the numbers below are what that architecture measures out to tod
 - [Install](getting-started/install.md) and [Quickstart](getting-started/quickstart.md) — running
   it in minutes.
 - [Compatibility](compatibility.md) — what works unchanged, and what does not.
+- [Classic mode](classic-mode.md) — running a legacy docroot, and which of its two entry points
+  gives an entry script real top-level globals (V-53).

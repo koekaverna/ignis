@@ -384,6 +384,336 @@ exactly which library made it impossible and why.
 
 ## Product hygiene (small, `agent`)
 
+### R-LIMITS-CONFIG The four listener limits are env-only and were promised in comments `agent` `open — 2026-09-17`
+**What.** `http.rs` carried four `// Future ignis.toml key: …` comments. A promise in a comment is
+tracked by nobody, so they are here instead and deleted from the source. Each is an environment
+variable today with no `ignis.toml` key and no default in `config.rs`:
+`limits.max_body_bytes` (`IGNIS_MAX_BODY_BYTES`, 8 MiB), `limits.max_connections`
+(`IGNIS_MAX_CONNECTIONS`, 8192, ~34 kB per held connection per V-5),
+`limits.header_timeout_ms` (`IGNIS_HEADER_TIMEOUT_MS`, 10 000),
+`limits.idle_timeout_ms` (`IGNIS_IDLE_TIMEOUT_MS`, 60 000).
+**Why.** M1 made `ignis.toml` the one configuration file, and these four are the last listener knobs
+that are not in it. `max_connections` is also ADR-0025's connection cap, which M4-3 needs.
+**Acceptance.** A `[limits]` table in `Config` with `deny_unknown_fields`, bridged by
+`serve_to_legacy_args` the way `budget` already is, env still winning over the file; a test in
+`config.rs` covering the precedence for at least one of them; `ignis.toml.example` updated.
+
+## Cycle 2026-09-18 — bugs, stabilisation, production readiness (owner)
+
+Framing the owner set: "production readiness" is the question *what stops someone running this
+today*. The answer comes from our own measurements, and it orders the cycle. Stage 0 first because
+a gate that does not gate makes every later claim unverifiable.
+
+### S0-E9 The negative control does not detect nondeterminism `main` `open`
+**What.** `bench/e9-temporal.sh` greps for `REPLAY_FAILED`; the mutated replay prints
+`REPLAY_OK activations=3 eviction_errors=0` while the same log carries
+`evicted: reason=NONDETERMINISM ... [TMPRL1100] Activity machine does not handle this event`.
+sdk-core rejects the mutated history and the harness counts zero eviction errors.
+**Why.** V-19's "a mutated workflow FAILS" is not being re-verified by anything, whatever the run
+says. A green negative control that cannot go red is worse than no control.
+**Acceptance.** With the timer removed, the script prints `REPLAY_FAILED` and names the eviction
+reason; with the history intact it still prints `REPLAY_OK`. Assert on the eviction, not on a counter.
+
+### S0-FRANK One frankenphp test regressed and nobody knows which `main` `open`
+**What.** `passed=28` against baseline 29. The arithmetic pins it at exactly one test: 28+5+33 and
+29+4+33 are both 66. Five fail now — `server-variable.php`, `cookies.php`, `autoloader.php`,
+`env/putenv.php` (`got 'test=8'`, a value surviving into the next request), `file-upload.php`.
+**Acceptance.** `scripts/ci-gate.sh frankenphp` passes, with the regressing test named and either
+fixed or re-baselined against evidence. Bisect over the 2026-09-17 16:50–18:26 window (V-76/V-77, E22).
+
+### S1-SESS Refuse to start on `session.save_handler=files` `main` `NOT BUILT — premise refuted by V-80`
+**What.** The files handler takes a blocking `flock(LOCK_EX)` and holds it across a yield, so a
+second fiber blocks the OS thread and the loop can never resume the holder. Measured: two fibers,
+killed at 12 s, no progress (V-58). Owner's decision: turn the hang into a message at boot rather
+than build a session store tonight.
+**Outcome (V-80).** The measurement said no, so nothing was built. `ext/session` is a per-thread
+singleton: a second fiber's `session_start()` joins the first's session rather than taking a second
+lock, so there is no second `flock` to deadlock on. Across threads two requests on one session id
+serialise and both finish — 818 ms against a 401 ms baseline, no thread lost — which is php-fpm's
+behaviour for a shared session. A boot refusal would have forbidden a configuration that works.
+V-58's rule is unaffected: it was measured with a raw `flock`, not through `ext/session`.
+**Replaced by S1-FLOCK**, which is where the real exposure turned out to be.
+
+### S1-FLOCK A blocking `flock` inside a fiber kills the thread, silently `main` `DONE 2026-09-18 — V-81`
+**What.** V-58's rule is real: a blocking `flock(LOCK_EX)` held across a yield takes the OS thread
+down for good, because a regular file is not epoll-able (research 30 group (d)) so the call cannot
+park. V-80 then showed the path everyone assumed — `ext/session`'s files handler — is not how you
+reach it. Application code taking its own lock is, and **`flock` is not in the interposed set**:
+`crates/ignis/build.rs` lists read, write, recv, send, recvfrom, sendto, poll, connect, nanosleep,
+usleep, sleep, accept and more, and no `flock`. So today that call blocks the thread with no
+warning, no `ignis_park_failed_total` increment and nothing in the log — the operator sees a worker
+stop and a supervisor respawn, with no cause.
+**Why this shape rather than a boot refusal.** A refusal keyed on a configuration value cannot see
+user code, and V-80 measured that the configuration it would have refused works fine.
+**The design, and it is a policy row rather than a mechanism** (CLAUDE.md's budget is untouched):
+interpose `flock`; outside a fiber pass through; inside one, turn a blocking `LOCK_EX` into
+`LOCK_NB` plus a parked retry on a timer. That is exactly what Symfony's cache does by hand, and
+V-58 already measured that shape working — 607 ms for three losers with park on, never finishing
+with park off. The fallback, if the retry is judged too clever, is to count and warn: increment
+`PARK_FAILED` and log the symbol once, so the cause is visible even when the thread dies.
+**Acceptance.** A probe that holds `flock(LOCK_EX)` across a yield in one fiber while another asks
+for the same file: both complete, the thread keeps serving, and the timing shows the second waited
+rather than spun. `IGNIS_PARK` gets a row so the behaviour can be turned off. The E15 phpt suites do
+not drop.
+**Done (V-81).** Interposed with a `LOCK_NB` + parked-retry loop, 200 us doubling to a 20 ms
+ceiling; `libphp:flock` is a `SEED` row. With the hook `{"holder_released_ms":401,
+"waiter_acquired_ms":405,"ticks":45}`; without the row, killed at the 20 s timeout with no
+output. `smoke.sh` gates on it and was verified to go red under the negative-control policy.
+
+### S1-COOKIES `ignis_respond` cannot carry two headers with the same name `main` `open` — owner: change the boundary shape
+**What.** R-HEADERS-MULTI. The header map is `array<string, string>`, so a response with two
+`Set-Cookie` lines keeps the last. `IgnisWorkerRunner::headers()` assigns `$headers['set-cookie']`
+inside a foreach over the cookie bag. A session cookie plus a CSRF cookie is the most ordinary pair
+there is.
+**Acceptance.** `array<string, string|list<string>>` across the boundary, `header_pairs` emitting one
+pair per value, and a response with two cookies arrives with two `Set-Cookie` lines. Every adapter
+(symfony-runtime, classic, gRPC) updated; the PHP test that currently pins the wrong behaviour flips
+to pin the right one.
+
+### S1-ANSWER `Loop::answer()` loses the request and kills the loop `main` `open`
+**What.** `runHandler()` now guards entering the request, but `answer()`/`produce()` runs after it
+and is guarded only by `poolBody()`, which rejects a Future `admitRequest()` discarded. A
+`StreamedResponse` whose `ignis_stream_bind` fails produces no response and no log line; the
+throwable surfaces later as an unobserved rejection and `runUntil()` rethrows it, killing the loop
+instead of the request. Test exists: `LoopTest::testAThrowOutsideTheHandlersTryLosesTheRequestEntirelyBug`.
+**Acceptance.** That test is renamed without "Bug" and asserts a 500 plus a log line; the loop
+survives.
+
+### S1-CAP Cap concurrent connections at the listener (M4-3/B8) `main` `open`
+**What.** ADR-0025. Nothing bounds accepted connections, and V-37 measured ~33 kB per held one, so
+RSS is unbounded under load — the half of B1's acceptance a fiber budget cannot reach.
+**Acceptance.** `limits.max_connections` enforced at accept; over the cap the listener stops
+accepting rather than queueing unboundedly; RSS at 2× the cap is flat. Lands with S3-LIMITS.
+
+### S1-BULKHEAD Per-dependency bulkhead and breaker (M4-2/B2) `main` `open`
+**What.** `pg::acquire` waits unboundedly, so one slow dependency stalls every fiber that wants it.
+pain-map PHP-FPM 2, still NOT STARTED.
+**Acceptance.** A bounded wait with a configurable ceiling; past it the caller gets an error rather
+than a hang; a breaker opens after N consecutive failures and half-opens on a timer. Gate: with
+PostgreSQL stopped, `/users` answers an error inside the ceiling and `/` keeps serving.
+
+### S2-LEAKS The four smaller defects the tests pinned `agent` `open`
+**What.** Each already has a failing-or-pinning test from the 2026-09-17 suite.
+`Offload\Router::release()` does not mark the Handle released, so every proxied object is freed
+twice. `Client::$pending` grows one closure per offload call for ever, while `Client::$callbacks`
+beside it is written, unset and never read. `Request::query()` returns the literal string `'Array'`
+for `?x[]=1&x[]=2` while `$_GET` has the real list. `cancelRequest()` throws into the parent before
+its children (`array_reverse` over `[...children, parent]`), so the parent answers 499 and returns
+its fiber to the pool while the children are still unwinding.
+**Acceptance.** Each test renamed off "Bug" and asserting the correct behaviour; `Client::$pending`
+empty after a completed offload call with a closure argument.
+
+### S2-STREAM-CANCEL A streaming handler never learns the client left `main` `open`
+**What.** R-STREAM-CANCEL. `guard.answered` is set when the oneshot resolves, which for a streamed
+response is when the *headers* go out, so a later hang-up is never delivered as `Outcome::Cancelled`.
+A fiber parked in `Stream::write()` still finds out; one parked on a slow query between chunks does
+not, and keeps producing for a client that is gone.
+**Acceptance.** Start a stream, kill the client mid-body, the handler's fiber is cancelled inside the
+bound E11 uses for whole-body responses. Lands with S4-ANSWER-MAP.
+
+### S3-RSS-DRIFT 13 MB of RSS growth that is not the extensions `main` `DONE 2026-09-18 — V-82`
+**What.** The E3 re-measurement (S3-NUMBERS) came back with worker-mode RSS at **42.7 MB** against
+V-10's 26.2 MB, +16.5 MB. The framing in the brief -- "that is the cost of building the extensions
+in" -- did not survive the measurement, and the bencher said so rather than confirming it:
+
+- the owner's own 2026-09-17 before/after puts the extensions at **~3.0 MB**;
+- that measurement's *pre-extension* baseline was already **34.6 MB, 7.7 MB above V-10**;
+- `mimalloc` (8.1 MB resident) landed 2026-09-15, before V-10, so it is not new;
+- `libphp.so` grew 50.3 -> 67.5 MB on disk but is demand-paged, only 8,956 kB resident -- 17 MB of
+  disk cannot become 16.5 MB of RSS.
+
+So it decomposes as roughly **~8 MB before the extensions, ~3 MB extensions, ~5 MB since**, across
+the 281 commits between V-10 and HEAD. Nobody has ever asked where that went.
+**Why.** E3 is one of the project's headline claims and the absolute is now quoted wrong either way
+-- as a regression it is not, or as an extension cost it mostly is not.
+**Acceptance.** A `git bisect run` over `bench/rss-1m.sh` at a fixed request count naming the commits
+that moved it, or a recorded decomposition (allocator, tokio, added statics) that accounts for the
+~13 MB. Then V-10 is amended with the true figure and its reason.
+**Constraints.** Needs a quiet box: the same instrument measured ~52k req/s under contention against
+V-10's ~167k, so throughput from a loaded run is junk even though RSS at a given request count is
+not -- the two runs agreed on RSS to 0.3% across a 5x load difference, which is what makes the
+flatness claim safe to keep and the throughput claim unsafe to quote.
+**Done (V-82), and the decomposition above was wrong in its largest term.** Bisected on startup
+RSS, not soak RSS: its noise floor is **232 kB (0.6 %)** over six repeats, against +/-6.7 % for
+throughput, which is what makes a bisect possible at all. Building `7a5c43f` -- V-10's own commit --
+in a worktree against **today's** engine gives **36 888 kB** where V-10 recorded 26 920 kB. So
+**~10 MB is outside this repository**, not ~3 MB: the engine rebuild with the toolchain extensions
+is the large term, and no bisect could ever have found it because no commit here contains it. The
+repo's own share is **4.7 MB over 281 commits**, and one commit carries 2.08 MB of it -- `17a2ceb`
+("sockets.rs + accept.rs deleted"), parent 38 496-38 800 over three runs against 40 616-40 980 over
+five, non-overlapping. Two candidate causes inside that commit are **killed by their own
+off-switches**: the 19-row park policy measures the same as the old 7-row one on HEAD (and the whole
+park mechanism is worth 1.1 MB), and the stream transport hook measures the same as the stock
+transport on the parent. The remaining cause is recorded open rather than guessed. It is not
+chased further because it is a **fixed footprint, not a leak** -- the same session's E3 run holds
+RSS flat across 1.15 M requests with the heap flat to the byte -- and it bought the deletion of 641
+lines of Rust that the mechanism budget wanted gone.
+
+### S3-STATS-SCOPE `/stats` reports one thread's PHP heap, not the process's `agent` `DONE 2026-09-18 — renamed`
+**What.** `examples/hello_server.php`'s `/stats` reports `mem` from `memory_get_usage()`, and the
+Zend MM heap is thread-local under ZTS. At `--threads 1` -- V-10 and every E3 run so far -- that is
+the whole PHP side, so "flat to the byte" is honest. At `--threads N` it is one worker's heap and
+the number means much less than a reader would assume.
+**Acceptance.** Either a per-thread sum across the registry, or the field renamed and documented so
+it cannot be read as process-wide. The summing version touches `module.rs`, so it is a `main` item
+if that route is taken.
+**Done.** Renamed, not summed: `mem` -> `mem_this_thread` and `mem_real` -> `mem_real_this_thread`
+in `examples/hello_server.php` and `bench/php/a3-soak.php`. Nothing parses those two fields, so the
+rename is free; summing would have meant reading other threads' Zend heaps, which is a new
+cross-thread mechanism on the hottest boundary for a diagnostic field. `rss_kb` is process-wide
+already and `ignis_stats()` comes from the Rust side. `resumes`/`fibers`/`idle` are equally
+thread-local and keep their names deliberately: `bench/a3-soak.sh` parses them by name.
+
+### S3-NUMBERS The numbers this work made stale `main` `DONE 2026-09-18 — V-10 addendum, V-79 addendum 2, V-82`
+**What.** V-10's 26.2 MB predates the toolchain extensions (+2.9 MB, DECISIONS 2026-09-17); the PHP
+coverage floor V-79's addendum calls for is not in CI; H-12's 58k-vs-128k has never been bisected.
+**Acceptance.** V-10 re-run and its entry amended; `scripts/ci-coverage-gate.sh` enforcing
+`achieved − 5` in the `php-unit` job; `git bisect run` over `bench/wrk-hello.sh` naming the commit,
+or a recorded conclusion that the drop is the box.
+**Done, all three.** V-10 re-run by me and amended (flatness CONFIRMED again at -1.2 % over 1.15 M
+requests, heap flat to the byte; the absolutes are stale and now decomposed in V-82).
+`scripts/ci-coverage-gate.sh` is in the `php-unit` job at `FLOOR=31.6`, set from my own 36.60 %, and
+was proved to fail three ways -- under the floor, over it, and on a log with no coverage summary at
+all. The `wrk-hello` bisect is **refused with a number**: five consecutive runs on one HEAD server
+spread 50.8k-54.2k req/s (+/-6.7 %), and the residual code-side drop V-46 addendum 3 left open is
+4-5 %, i.e. under the noise. A bisect gated on it would name an innocent commit. V-82.
+
+### S3-LIMITS `[limits]` in `ignis.toml` `agent` `open`
+Already filed as R-LIMITS-CONFIG; it is the config half of S1-CAP and lands with it.
+
+### S3-STAN8 PHPStan level 8 `agent` `done 2026-09-18 — level: 8 in php/phpstan.neon, both configs clean`
+**What.** Measured 2026-09-18 with level 6 at zero: level 7 = 36, **level 8 = 39**, level 9 = 349,
+level 10 = 399. The 39 are worth taking and four are bug-shaped — `$pdo->query(...)->fetchAll()` on
+a `PDOStatement|false` in `examples/app.php`, a string invoked without a callable check in the
+offload worker (a method name arriving from another thread), and two protobuf methods called on a
+bare `object` in `CoreServiceClient`.
+**Acceptance.** `level: 8` in `php/phpstan.neon`, 0 errors, no new `ignoreErrors` entry.
+
+### S4-MIXED Validate what crosses the boundary (PHPStan level 9) `main` `open`
+**What.** Level 9 costs +310 over level 8, and the composition says what it is:
+`offsetAccess.nonOffsetAccessible` 122, `argument.type` 90, `cast.string` 35, `cast.int` 33. That is
+"you indexed or cast something typed `mixed` without checking it" — and our boundary with Rust and
+with the network *is* `mixed`: `ignis_poll()` returns `array<int, mixed>`, protobuf maps and JSON
+payloads likewise. **This is the same defect family the tests caught by hand**: `Proto::decode`
+inventing a value for a truncated message was an unchecked offset access on `mixed`.
+**Why it is not just a config bump.** Honest fixes are validation at the boundary, with new throws on
+malformed input — real behaviour change, roughly the size of the whole 2026-09-17 PHP effort.
+**The trap.** PHPStan prints it itself: do not silence these with casts, `assert()` or inline
+`@var`. 349 findings closed by casts would make the types a lie and leave us worse off than an
+honest level 6.
+**Owner's question, 2026-09-18: can the `mixed` be typed at the language level instead?** Yes, and it
+is the better route. Two steps, and the first must be tried before the second:
+
+1. **The `mixed` is ours.** `ignis_poll(): array<int, mixed>` is a declaration we wrote in
+   `stubs/ignis.php`, not a fact about PHP. A completion is a tagged union with a known set of
+   shapes (Request, Slept, Ready, Error, Blob, Json). Declared as a union of array shapes with a
+   literal-string `kind` discriminator, PHPStan narrows on `match ($payload['kind'])` by itself.
+   Zero runtime cost, and most of those 122 accesses were never unchecked -- the type just could not
+   say so. **Measure how many of the 349 survive this before writing a single runtime check.**
+2. **Objects across the boundary**, if step 1 leaves a meaningful residue: `ignis_poll()` returning
+   typed objects rather than assoc arrays makes PHP's own type system do the work -- `instanceof`,
+   `match(true)`, no phpdoc at all. But building zend objects costs more than an array on the
+   hottest path in the system (one poll per loop tick, against E2's 4.5 µs per-fiber budget), so it
+   is a measured trade, not an obvious win. Same fork on the Rust side: `serde_json::Value` versus
+   typed structs.
+
+**Step 1 is done and measured (2026-09-18).** The completion union is declared in
+`stubs/ignis.php` as a `@phpstan-type` with a literal `kind` discriminator, and `ignis_poll()`'s
+`@return` names it. Level 9 went **349 -> 307**, level 10 **399 -> 356**: 42 findings, a tenth, at
+zero runtime cost.
+
+**And it answered the question about step 2: don't.** The remaining 307 are concentrated, not
+diffuse --
+
+| file | findings |
+|---|---|
+| `temporal-core-transport/src/CoreCodec.php` | 108 |
+| `temporal-prototype/src/ignis-temporal.php` | 59 |
+| `temporal-core-transport/tests/conformance.php` | 27 |
+| `offload/src/ignis-offload.php` + `worker.php` | 40 |
+| `runtime/src/Loop.php` | 13 |
+
+-- and the top two are the protojson decoders, i.e. documents off the network indexed without
+being checked. That is validation work in two files, not a reason to pay allocation per completion
+on the hottest path in the system. Step 2 stays unbuilt unless something else argues for it.
+
+**Acceptance.** Level 9 clean with zero added casts whose only purpose is silence; every new throw
+covered by a test that feeds the malformed input.
+
+### S4-ANSWER-MAP One `HashMap<u64, Answer>` instead of three `main` `open`
+Already filed as R-ANSWER-MAP. Owner included it in this cycle. Lands with S2-STREAM-CANCEL and the
+lock-free `Registry::pick`, and needs E4/E10/E11 re-measured on a quiet box before it is called done.
+
+### R-MAIN-RED `main` has been red since before the quality work, on two gates `main` `open — evidence 2026-09-17`
+**What.** Every one of the last six `ci.yml` runs on `main` failed, including runs that predate this
+body of work (35249027373 at 16:50, 35249914989, 35258827928, 35259213051). Three jobs were failing;
+`E15 revolt` recovered by itself once `unzip` reached the image and composer could install, leaving two.
+
+**E9 temporal — the negative control does not detect what it exists to detect.** The gate greps for
+`REPLAY_FAILED`, and the mutated replay prints `REPLAY_OK activations=3 eviction_errors=0` even
+though the same log carries `evicted: reason=NONDETERMINISM ... [TMPRL1100] Activity machine does not
+handle this event: HistoryEvent(id: 11, TimerStarted)`. So sdk-core *did* reject the mutated history
+and the harness counted zero eviction errors. Either the eviction is no longer surfaced the way the
+harness counts it, or the counter never covered this path. Until it is fixed, V-19's "mutated
+workflow FAILS" claim is not being re-verified by CI, whatever the run says.
+
+**E15 frankenphp — `passed=28` against a baseline of 29.** Five failures in the run:
+`server-variable.php` (REMOTE_HOST/ADDR/PORT/IDENT), `cookies.php` (four cookies absent),
+`autoloader.php`, `env/putenv.php` (`got 'test=8'` — a value leaking across requests), and
+`file-upload.php` (no `Upload OK`). The counts say exactly one of the five is newer than the
+baseline: 28 + 5 + 33 skipped = 66, and 29 + 4 + 33 is the same 66. The window is the
+stream/multipart work of 2026-09-17 16:50–18:26 (V-76/V-77 and E22).
+
+**Correction, 2026-09-18 (owner):** an earlier version of this entry, and a JOURNAL line before it,
+attributed those commits to "a parallel session working in this repository". There is no parallel
+session and there never was; `git log --format=%an` over that window is one author. Nothing here is
+anyone else's territory, and the frankenphp half is ours to diagnose like any other regression.
+
+**Why it matters.** `main` is the branch of record, and a permanently red gate is a gate nobody
+reads. It also means the E15 per-test `check_set` regression detector is warning-only in CI
+(`scripts/ci-gate.sh`: `[ -n "${CI:-}" ] || fail=1`), so a swap of one passing test for another is
+invisible there.
+**Acceptance.** `scripts/ci-gate.sh frankenphp` and the E9 grep both pass on `main`, and the E9
+negative control is proven to fail when the history is mutated — assert on the eviction reason, not
+only on a counter.
+**Constraints.** Not this work's scope (it is the quality gate), and the frankenphp half overlaps a
+parallel session's files. Diagnose from `bench/results/e15-phpt/*.tsv` and the frankenphp runner
+rather than by re-running blind.
+
+### R-LINT-GATE Blocking fmt/clippy/deny + real coverage, Rust side `main` `done (V-78)`
+**What.** ADR-0041. `[workspace.lints]`, `rustfmt.toml` (140 cols, measured), `deny.toml`,
+`.config/nextest.toml`, `ignis-sys` narrowed to its bindgen module, the debt driven to zero, tests
+on the tokio-side modules, `cargo llvm-cov` reported as a number, and a blocking `lint` job in CI.
+**Why.** There was no linter of any kind in CI, on either side, and its absence had already cost two
+things nobody noticed: `--no-default-features` had stopped compiling although the manifest documents
+that configuration, and 92 `unsafe` blocks had no SAFETY comment while CLAUDE.md claimed every one
+of them did.
+**Acceptance.** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings` (in the CI image, it has
+protoc), `cargo check --workspace --no-default-features`, `cargo deny check` all clean;
+`cargo nextest run --workspace` green with the new tests; `scripts/smoke.sh` GREEN;
+`scripts/ci-gate.sh phpt` no drop; coverage recorded as a V-n.
+**Constraints.** The four allocation items in R-REVIEW-CHORES stay out: they are hot-path claims and
+need a before/after on a quiet box, which is `bencher` work and its own V-n.
+
+### R-PHP-GATE Blocking php -l/phpstan/cs-fixer + phpunit with coverage `agent` `done (V-79)`
+**What.** The root `php/composer.json` gains dev tooling and scripts; `phpstan.neon` at level 6
+(plus a six-line override for `revolt`, whose 8.1 floor is a promise to AMPHP users);
+`.php-cs-fixer.dist.php` at @PER-CS; `rector.php` as a one-shot local tool, never a gate;
+`phpunit.xml`; a fake reactor so `Loop.php` is unit-testable; tests for the nine packages that have
+none; pcov-based line coverage; and `php-lint` + `php-unit` jobs in CI.
+**Why.** **The PHP unit tests had never executed in CI.** The image had no zip/unzip/7z, so
+`composer install` could not extract a dist archive; both composer steps ended in `|| echo`;
+`smoke.sh` then found neither vendor nor docker and printed `skipped`; the job went green. Fixed by
+building the extensions in (owner, DECISIONS 2026-09-17) and putting `unzip` in the image.
+**Acceptance.** `cd php && composer check` exits 0 with phpstan reporting 0 errors at its committed
+level, cs-fixer clean, the suite green, coverage above the committed floor,
+`git status --porcelain` empty after a test run (the bootstrap is no longer rewritten), and
+`scripts/smoke.sh` GREEN.
+**Constraints.** No `phpstan-baseline.neon` — it is the file that makes "debt to zero" optional. If
+the real error count exceeds 250, gate at level 4 and file level 6 separately (ADR-0041 §7).
+
+
 ### H-1 Remaining hardcoded `127.0.0.1:8080` in benches `agent` `done (validated by main: quoted grep clean, wrk-hello over IGNIS_LISTEN 24,884 req/s)`
 `bench/{e8-symfony,rss-1m,soak-threads,e10-grpc,e10-compare,e12-inflight,e16-offload,ab-sleep,compare,wrk-hello}.sh`
 and `examples/{classic_server,grpc_server}.php`, `php/packages/revolt/examples/amp-socket-client.php`: the
@@ -473,7 +803,7 @@ Measured before deciding, and the numbers are kept because they are the point: t
 
 ### R-HEADERS-MULTI The response header map cannot hold two headers with the same name `main` `open — architecture review 2026-09-17, confirmed by reading`. `ignis_respond` takes `array<string,string>` and hyper is handed one value per name, so a response with two `Set-Cookie` headers loses all but the last: `IgnisWorkerRunner::headers()` assigns `$headers['set-cookie']` inside a `foreach` over the cookie bag (`IgnisWorkerRunner.php:88-90`), which is a correctness bug, not the "E8 caveat" the comment calls it. Every framework that sets more than one cookie per response is affected, and so is any `Link`/`Vary`/`Warning` pair. Fix is a list-valued header shape across the boundary (`array<string, string|list<string>>`) and `header_pairs` emitting one pair per value. Gate: a response with two cookies arrives with two `Set-Cookie` lines.
 
-### R-LOOP-SPLIT `Loop::runUntil` is 124 lines doing seven things — and one flag silently skips two of them `main` `open — architecture review 2026-09-17; the flag defect confirmed by reading`. **The defect first:** `$chaosInit` (`Loop.php:306`) gates three unrelated initialisations at `runUntil:172-176` — `chaosInit()`, `gcInit()` **and** the `ignis_publish_stats` probe — but `awaitOp:78-79` calls `chaosInit()` alone, which sets the flag (`:368`). So on any path where `awaitOp` runs before `runUntil` — a script that awaits before serving — `IGNIS_LOOP_GC` never initialises and `$publishStats` stays false, which means that loop **never publishes its metrics** and `/_ignis/metrics` reports it as one whose numbers are ageing without bound. A flag standing in for a state machine. **The rest:** `runUntil` wants to be the same `while` over four named calls — `startPending()` (180-189), `resumeReady()` (191-203), `idle()` and `dispatchEvents($events)` (252-278); the six-term idle condition is written twice (`:209`, `:249`) and must be one predicate; the event demux decodes a Rust tagged union with an `is_array`/`isset`/string-ladder instead of one `match ($payload['kind'] ?? null)`; `$budgetInit` (`:50`) is checked per request (`:410-412`) for an environment variable that cannot change; `$requestHandler`/`$rawRequestHandler` (`:30`, `:402`) are two nullable callables tested together in three places where one typed handler would say which mode it is. All of it belongs in one `boot()` called from `serve()`.
+### R-LOOP-SPLIT `Loop::runUntil` is 124 lines doing seven things — and one flag silently skips two of them `main` `done 2026-09-17 (8613a4a): runUntil 125 -> 30 lines, one boot(); the metrics half of the claim did NOT hold ($publishStats defaults true) and the confirmed damage was gc_disable() never running on the await-before-serve path — architecture review 2026-09-17; the flag defect confirmed by reading`. **The defect first:** `$chaosInit` (`Loop.php:306`) gates three unrelated initialisations at `runUntil:172-176` — `chaosInit()`, `gcInit()` **and** the `ignis_publish_stats` probe — but `awaitOp:78-79` calls `chaosInit()` alone, which sets the flag (`:368`). So on any path where `awaitOp` runs before `runUntil` — a script that awaits before serving — `IGNIS_LOOP_GC` never initialises and `$publishStats` stays false, which means that loop **never publishes its metrics** and `/_ignis/metrics` reports it as one whose numbers are ageing without bound. A flag standing in for a state machine. **The rest:** `runUntil` wants to be the same `while` over four named calls — `startPending()` (180-189), `resumeReady()` (191-203), `idle()` and `dispatchEvents($events)` (252-278); the six-term idle condition is written twice (`:209`, `:249`) and must be one predicate; the event demux decodes a Rust tagged union with an `is_array`/`isset`/string-ladder instead of one `match ($payload['kind'] ?? null)`; `$budgetInit` (`:50`) is checked per request (`:410-412`) for an environment variable that cannot change; `$requestHandler`/`$rawRequestHandler` (`:30`, `:402`) are two nullable callables tested together in three places where one typed handler would say which mode it is. All of it belongs in one `boot()` called from `serve()`.
 
 ### R-REVIEW-CHORES Small, safe deletions and allocations, from the same review `agent` `open — architecture review 2026-09-17; every item suspected unless marked`. Each is independent; none changes behaviour. **Rust:** `http::handle` (`http.rs:294-366`) routes two `/_ignis/*` paths with two `if`s that want one `match` above the gRPC check; `CancelOnDrop` is declared inside the function body and wants module scope; header+uri extraction is the same five lines in `http.rs:325-330` and `grpc.rs:133-138`; `zif_ignis_poll`'s match (`module.rs:154-215`) has three guard arms doing two registry lookups where `resume_parked` already returns a bool, and four arms repeating the same zeroed/set_new_array/fill/update block that an `unsafe fn push_event` would collapse; `grpc::is_grpc` (`grpc.rs:64-66`) is a wrapper that exists for a test and should be generic instead. **Allocations, all suspected:** ~12 per request for request headers (`http.rs:325-329`) where `HeaderName` is a cheap copy and `from_utf8_lossy` copies an already-borrowed `Cow`, then `request_to_zval` copies each again; response headers cross `String` and are re-parsed into `HeaderName`/`HeaderValue`; `Arc<Mutex<Instant>>` per connection (`http.rs:223`) locked twice per request where an `AtomicU64` of millis would do; `msg.clone()` per `Error` completion (`module.rs:160-161`) for a `debug!` line that is almost never printed; `output.rs` does a `SINKS` hash lookup per `echo` (`:56-65`) where the fiber-switch observer could keep a `Cell<*mut Vec<u8>>`, and drops the capture `Vec` per request instead of clearing it. **Must stay a copy** and deserves a comment saying so: the response body and each chunk — a ZTS `zend_string` refcount is thread-local, so `Bytes::from_owner` cannot borrow it. **PHP:** `IgnisWorkerRunner::toSymfony` builds a Symfony `Request` with `createFromGlobals()` and then **throws it away and builds a second** for any non-urlencoded body (`:71-76`) — decide first, construct once; `Ignis\Http\Request` scans the URI for `?` three times (`:24`, `:31`, `:52`) and runs `parse_str` twice when a handler uses both `query()` and the superglobals; `Loop::spawn` wraps the callable in a second closure when a request id exists, so a request handler runs two closures deep; `throwInto` scans `$waiting` linearly per cancellation, which is fine normally and suspect in a disconnect storm; `Output.php`'s class docblock still says "neither path streams (BACKLOG R-STREAM)" while `captureChunked()` eighty lines below streams.
 
@@ -485,7 +815,7 @@ Measured before deciding, and the numbers are kept because they are the point: t
 
 ### H-12 E4 hello throughput is 58k req/s on this box today, V-6 measured 128k `main` `open — measured (V-46 addendum 3): V-6's own commit gives 61.5–63.1k on this box, so 128k → 62k is the box; the code-side drop 2026-09-15 → HEAD is ≈ 4–5 % (58.3–60.0k) and still worth one bisect in a quiet slot` — V-46 addendum 2: park on and off both ~58k, p99 1.8 ms, quiet box, same wrk shape as V-6 (`-t2 -c64 -d10s`, 1 PHP thread). Either the box changed (WSL2 kernel 6.18 now; V-6's kernel not recorded) or something landed between 2026-09-15 and cycle 1 (budget admission, health route, superglobals lazy swap, log floor). Bisect with `git bisect run` over `bench/wrk-hello.sh` before any perf claim cites V-6 again.
 
-### H-12 `php/packages/runtime/src/ignis.php` at phpstan level 6 `agent` `open`
+### H-12 `php/packages/runtime/src/ignis.php` at phpstan level 6 `agent` `done 2026-09-17 (V-79 addendum): level 6 is 0 across every package, not just this file; the entry's path was stale after the package split`
 **What.** The H-11 agent's run reported ~30 level-6 findings in `php/packages/runtime/src/ignis.php` (generics on
 `Fiber`/`WeakMap`, untyped iterables, always-true conditions); main's raw-format count read 0, so
 the number is not established. Establish it, then fix the ones that are real without changing

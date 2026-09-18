@@ -6,6 +6,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Helper servers a step starts are killed on the way out, not only on the step's happy path: under
+# `set -e` a failing curl exits before the step's own `kill`, and the orphan then holds its port and
+# poisons the next run's measurements. Kill by PID, never by pattern (owner rule).
+HELPERS=()
+trap 'for h in ${HELPERS+"${HELPERS[@]}"}; do kill "$h" 2>/dev/null || true; done' EXIT
+
 # --image <tag>: smoke the built image instead of the local binary. Port publishing is broken on
 # this docker daemon (image.yml), so every probe is `docker exec <c> bash -c 'exec 3<>/dev/tcp/...'`
 # instead of curl against a published port. Two containers: one with CMD overridden to serve
@@ -67,14 +73,16 @@ PGHOST="${PGHOST:-127.0.0.1}"
 
 echo "== build (release)"; timeout 900 cargo build --release -q -p ignis
 echo "== unit tests";      timeout 900 cargo nextest run --workspace 2>&1 | tail -1
-echo "== php unit tests (Scope, Request parsing, Response, Future — no binary needed)"
-if [ -f php/packages/runtime/vendor/autoload.php ] || command -v docker >/dev/null 2>&1; then
-  timeout 900 scripts/test-php.sh 2>&1 | tail -1
-  # PIPESTATUS keeps the runner's own verdict, not tail's
-  [ "${PIPESTATUS[0]}" = 0 ] || { echo "php unit tests FAILED"; exit 1; }
-else
-  echo "skipped (no vendor and no docker to install phpunit)"
-fi
+echo "== php unit tests (no binary needed)"
+# This used to skip when php/vendor was absent, and that skip is how the suite went unnoticed in CI
+# for its whole life: the image could not extract a composer dist archive, both install steps ended
+# in `|| echo`, and this branch then printed "skipped" into a green run. A missing vendor is now a
+# failure with the command that fixes it, never a silent pass.
+[ -f php/vendor/autoload.php ] || {
+  echo "php unit tests: php/vendor is missing — run (cd php && composer install)"; exit 1; }
+timeout 900 scripts/test-php.sh 2>&1 | tail -3
+# PIPESTATUS keeps the runner's own verdict, not tail's
+[ "${PIPESTATUS[0]}" = 0 ] || { echo "php unit tests FAILED"; exit 1; }
 echo "== output isolation (a fiber's body must not collect another fiber's echo)"
 # The control uses a plain ob_start() and MUST leak; if it stops leaking the probe stopped
 # measuring. `if !` rather than `[ $? = 1 ]` because `set -e` would kill the run on the failure we
@@ -139,6 +147,44 @@ awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || echo "  NOTE: over the 1
 echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 $T ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
 echo "== E13 (isolation)"; $T ./target/release/ignis bench/php/e13_isolation.php
 echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
+# S1-FLOCK (V-58): a blocking flock held across a yield used to take the OS thread down for good —
+# a regular file cannot be parked on, so the loop could never resume the holder. Interposed, it
+# becomes LOCK_NB plus a parked retry. The tick count is the evidence the thread kept serving.
+echo "== a blocking flock across a yield parks instead of killing the thread"
+fl=$($T ./target/release/ignis --threads 1 bench/php/flock_park.php | tail -1)
+echo "  $fl"
+ticks=$(sed -n 's/.*"ticks":\([0-9]*\).*/\1/p' <<<"$fl")
+grep -q '"waiter_acquired_ms":[0-9]' <<<"$fl" || { echo "flock FAILED: the waiter never got the lock"; exit 1; }
+[ "${ticks:-0}" -ge 30 ] || { echo "flock FAILED: the thread stopped serving (ticks=${ticks:-0})"; exit 1; }
+
+# R-STREAM-CANCEL: a streaming handler must learn the client left. The cancel guard used to be
+# disarmed when the *headers* went out, and the Loop dropped the request's fiber mapping at the same
+# moment, so a hang-up mid-body reached nobody and the producer kept working for an absent client.
+echo "== a streaming producer is cancelled when the client leaves"
+SC_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 8 ))
+IGNIS_LISTEN="$SC_PORT" ./target/release/ignis --threads 1 bench/php/stream_cancel.php & sc=$!; HELPERS+=("$sc")
+for _ in $(seq 1 50); do curl -sf -m 2 "http://$SC_PORT/state" >/dev/null 2>&1 && break; sleep 0.2; done
+# `|| true` because the timeout IS the test: curl exits 28 when it hangs up, and this script runs
+# under `set -e`.
+curl -s -m 0.6 "http://$SC_PORT/slow" >/dev/null 2>&1 || true
+sleep 1.2
+sc_state=$(curl -s -m 3 "http://$SC_PORT/state" || true)
+kill $sc 2>/dev/null; wait $sc 2>/dev/null || true
+echo "  $sc_state"
+grep -q '"cancelled":1' <<<"$sc_state" && grep -q '"finally_ran":1' <<<"$sc_state" \
+  || { echo "stream cancellation FAILED (the producer never learned the client left)"; exit 1; }
+
+# R-HEADERS-MULTI: a response may repeat a header name, and Set-Cookie is the one RFC 7230 says must
+# not be comma-joined. The boundary was a flat map until 2026-09-18 and kept only the last value.
+echo "== multi-valued response headers (three Set-Cookie, two Vary)"
+COOKIE_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 7 ))
+IGNIS_LISTEN="$COOKIE_PORT" ./target/release/ignis bench/php/multi_cookie.php & ck=$!; HELPERS+=("$ck")
+for _ in $(seq 1 50); do [ "$(curl -s -o /dev/null -w '%{http_code}' "http://$COOKIE_PORT/" 2>/dev/null)" = 200 ] && break; sleep 0.1; done
+cookies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^set-cookie:')
+varies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^vary:')
+kill $ck 2>/dev/null; wait $ck 2>/dev/null || true
+echo "  set-cookie=$cookies vary=$varies"
+[ "$cookies" = 3 ] && [ "$varies" = 2 ] || { echo "multi-valued headers FAILED (want 3 and 2)"; exit 1; }
 echo "== E13 (200 concurrent HTTP)"; timeout 120 bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 timeout 120 bench/e6-fetch.sh | tail -2
 if [ -d php/packages/revolt/vendor ]; then echo "== E7 (Revolt/AMPHP examples: IgnisDriver must match a stock event loop)"; timeout 180 bench/e7-revolt.sh > /tmp/ignis-e7.log 2>&1; e7rc=$?; grep -E "^(DIFFER|e7)" /tmp/ignis-e7.log || true; [ "$e7rc" = 0 ] || { echo "E7 FAILED (see /tmp/ignis-e7.log)"; exit 1; }; else echo "== E7 skipped (run: cd php/packages/revolt && composer install --prefer-source)"; fi

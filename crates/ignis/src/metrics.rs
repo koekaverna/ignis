@@ -83,23 +83,59 @@ pub fn render() -> String {
     let _ = writeln!(out, "# TYPE ignis_build_info gauge");
     let _ = writeln!(out, "ignis_build_info{{version=\"{}\"}} 1", env!("CARGO_PKG_VERSION"));
 
-    metric(&mut out, "ignis_uptime_seconds", "gauge", "Seconds since the runtime started.", START.get().map_or(0, |t| t.elapsed().as_secs()));
+    metric(
+        &mut out,
+        "ignis_uptime_seconds",
+        "gauge",
+        "Seconds since the runtime started.",
+        START.get().map_or(0, |t| t.elapsed().as_secs()),
+    );
 
     let (stalled, threads) = crate::http::stalled_threads(std::time::Duration::from_secs(1));
     metric(&mut out, "ignis_threads", "gauge", "PHP worker threads registered for dispatch.", threads);
     metric(&mut out, "ignis_threads_stalled", "gauge", "Threads with pending requests that have not entered the reactor for 1 s.", stalled);
-    metric(&mut out, "ignis_thread_restarts_total", "counter", "Worker threads respawned by the supervisor (ADR-0012).", crate::RESTARTS.load(Ordering::Relaxed));
-    metric(&mut out, "ignis_park_failed_total", "counter", "Calls whose policy says park that could not park and blocked the thread (ADR-0037 §4).", PARK_FAILED.load(Ordering::Relaxed));
+    metric(
+        &mut out,
+        "ignis_thread_restarts_total",
+        "counter",
+        "Worker threads respawned by the supervisor (ADR-0012).",
+        crate::RESTARTS.load(Ordering::Relaxed),
+    );
+    metric(
+        &mut out,
+        "ignis_park_failed_total",
+        "counter",
+        "Calls whose policy says park that could not park and blocked the thread (ADR-0037 §4).",
+        PARK_FAILED.load(Ordering::Relaxed),
+    );
 
     let t = crate::http::totals();
     metric(&mut out, "ignis_requests_inflight", "gauge", "Requests dispatched to a PHP thread and not yet answered.", t.pending);
     metric(&mut out, "ignis_ops_inflight", "gauge", "Reactor operations submitted and not yet completed.", t.ops);
-    metric(&mut out, "ignis_stats_published_age_seconds", "gauge", "Age of the oldest PHP loop's published numbers; grows without bound while a loop is wedged.", t.oldest_publish_age_ms as f64 / 1000.0);
+    metric(
+        &mut out,
+        "ignis_stats_published_age_seconds",
+        "gauge",
+        "Age of the oldest PHP loop's published numbers; grows without bound while a loop is wedged.",
+        t.oldest_publish_age_ms as f64 / 1000.0,
+    );
     metric(&mut out, "ignis_fiber_budget", "gauge", "Concurrent request fibers allowed per thread (ADR-0019); 0 = unlimited.", t.budget);
-    metric(&mut out, "ignis_queue_depth_limit", "gauge", "Waiting requests allowed past the budget before a 503, per thread.", t.queue_depth);
+    metric(
+        &mut out,
+        "ignis_queue_depth_limit",
+        "gauge",
+        "Waiting requests allowed past the budget before a 503, per thread.",
+        t.queue_depth,
+    );
     metric(&mut out, "ignis_requests_queued", "gauge", "Requests waiting for a fiber right now.", t.queued);
     metric(&mut out, "ignis_requests_queued_peak", "gauge", "High-water mark of the wait queue, summed over threads.", t.queued_peak);
-    metric(&mut out, "ignis_requests_queued_admitted_total", "counter", "Requests that waited in the queue and were then admitted.", t.queued_admitted);
+    metric(
+        &mut out,
+        "ignis_requests_queued_admitted_total",
+        "counter",
+        "Requests that waited in the queue and were then admitted.",
+        t.queued_admitted,
+    );
     metric(&mut out, "ignis_requests_rejected_total", "counter", "Requests answered 503 because the queue was full.", t.rejected);
     metric(&mut out, "ignis_requests_handled_total", "counter", "Requests the PHP side has finished answering.", t.handled);
     metric(&mut out, "ignis_fibers_idle", "gauge", "Parked fibers in the pool, reusable without allocation (V-4).", t.fibers_idle);
@@ -108,7 +144,13 @@ pub fn render() -> String {
 
     let (oldest_ms, over_warn, leases) = crate::pg::lease_metrics();
     metric(&mut out, "ignis_pg_leases", "gauge", "PostgreSQL connections leased to a fiber right now (ADR-0015).", leases);
-    metric(&mut out, "ignis_pg_lease_age_seconds_max", "gauge", "Age of the oldest live lease; older than IGNIS_PG_LEASE_WARN_MS means a held connection.", oldest_ms as f64 / 1000.0);
+    metric(
+        &mut out,
+        "ignis_pg_lease_age_seconds_max",
+        "gauge",
+        "Age of the oldest live lease; older than IGNIS_PG_LEASE_WARN_MS means a held connection.",
+        oldest_ms as f64 / 1000.0,
+    );
     metric(&mut out, "ignis_pg_leases_over_warn", "gauge", "Live leases older than IGNIS_PG_LEASE_WARN_MS.", over_warn);
 
     out
@@ -120,7 +162,9 @@ pub struct Totals {
     pub pending: usize,
     pub ops: u64,
     pub oldest_publish_age_ms: u64,
+    /// A per-thread setting, identical across threads: reported as the max, not the sum.
     pub budget: u64,
+    /// A per-thread setting, identical across threads: reported as the max, not the sum.
     pub queue_depth: u64,
     pub queued: u64,
     pub queued_peak: u64,
@@ -137,7 +181,6 @@ impl Totals {
         let p = &r.published;
         self.pending += r.pending_requests();
         self.ops += r.inflight();
-        // budget and queue_depth are per-thread settings, identical across threads: report one.
         self.budget = self.budget.max(p.budget.load(Ordering::Relaxed));
         self.queue_depth = self.queue_depth.max(p.queue_depth.load(Ordering::Relaxed));
         self.queued += p.queued.load(Ordering::Relaxed);
@@ -152,5 +195,80 @@ impl Totals {
         if at != 0 {
             self.oldest_publish_age_ms = self.oldest_publish_age_ms.max(now_ms().saturating_sub(at));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metric_names(document: &str, prefix: &str) -> Vec<String> {
+        document
+            .lines()
+            .filter(|line| line.starts_with(prefix))
+            .map(|line| line.split_whitespace().nth(2).expect("a name after the keyword").to_string())
+            .collect()
+    }
+
+    fn sample_names(document: &str) -> Vec<String> {
+        document
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+            .map(|line| line.split(['{', ' ']).next().unwrap().to_string())
+            .collect()
+    }
+
+    /// A scrape is rejected outright by Prometheus if these do not hold.
+    #[test]
+    fn render_is_a_well_formed_scrape_document() {
+        let document = render();
+        let help = metric_names(&document, "# HELP ");
+        let types = metric_names(&document, "# TYPE ");
+        let samples = sample_names(&document);
+
+        assert_eq!(help, types, "every metric needs both a HELP and a TYPE, in order");
+        assert_eq!(help, samples, "every declared metric needs exactly one sample, in order");
+        assert!(!help.is_empty());
+
+        let mut unique = help.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), help.len(), "a duplicate metric name breaks the scrape: {help:?}");
+
+        assert!(help.iter().all(|name| name.starts_with("ignis_")), "{help:?}");
+        assert!(document.contains("ignis_build_info{version=\""), "{document}");
+    }
+
+    /// `Published::set` is called from PHP with a string; a typo must not silently drop a metric.
+    #[test]
+    fn published_set_round_trips_every_field_and_ignores_a_typo() {
+        type Slot = fn(&Published) -> &AtomicU64;
+        let fields: [(&str, Slot); 10] = [
+            ("budget", |p| &p.budget),
+            ("queue_depth", |p| &p.queue_depth),
+            ("queued", |p| &p.queued),
+            ("queued_peak", |p| &p.queued_peak),
+            ("queued_admitted", |p| &p.queued_admitted),
+            ("rejected", |p| &p.rejected),
+            ("fibers_idle", |p| &p.fibers_idle),
+            ("fibers_created", |p| &p.fibers_created),
+            ("resumes", |p| &p.resumes),
+            ("handled", |p| &p.handled),
+        ];
+        let published = Published::default();
+        for (index, (name, slot)) in fields.iter().enumerate() {
+            let value = index as u64 + 1;
+            published.set(name, value);
+            assert_eq!(slot(&published).load(Ordering::Relaxed), value, "{name} did not round-trip");
+        }
+
+        published.set("queud", 999);
+        published.set("at_ms", 999);
+        for (index, (name, slot)) in fields.iter().enumerate() {
+            assert_eq!(slot(&published).load(Ordering::Relaxed), index as u64 + 1, "{name} was clobbered by an unknown field");
+        }
+        assert_eq!(published.at_ms.load(Ordering::Relaxed), 0, "at_ms is stamped, never set by name");
+        published.stamp();
+        assert!(published.at_ms.load(Ordering::Relaxed) > 0);
     }
 }

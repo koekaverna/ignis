@@ -15,6 +15,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr;
 
+#[cfg(feature = "universal-park")]
+use super::tsrm;
 use ignis_sys as sys;
 
 use crate::reactor::Outcome;
@@ -26,18 +28,18 @@ thread_local! {
     static RESULTS: RefCell<HashMap<u64, Outcome>> = RefCell::new(HashMap::new());
 }
 
-unsafe fn eg() -> *mut sys::zend_executor_globals {
-    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
-}
-
 /// Parks the running fiber until op `id` completes. `None` = could not park
 /// (not in a fiber, switching blocked, or the fiber was unwound meanwhile).
 ///
 /// # Safety
 /// PHP thread, inside an internal call on the current fiber's stack.
+#[cfg(feature = "universal-park")]
 pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
+    // SAFETY: the caller upholds `# Safety` above -- PHP thread, internal call, current fiber's
+    // stack. `fiber` is checked non-null and switching unblocked before it is suspended, and the
+    // zval handed to zend_fiber_suspend is zeroed storage this frame owns.
     unsafe {
-        let fiber = (*eg()).active_fiber;
+        let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() {
             return None;
         }
@@ -48,7 +50,7 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
         // being destroyed (then EG(exception) carries an unwind exit).
         sys::zend_fiber_suspend(fiber, ptr::null_mut(), &mut ret);
         sys::zval_ptr_dtor(&mut ret);
-        if !(*eg()).exception.is_null() {
+        if !(*tsrm::executor_globals()).exception.is_null() {
             PARKED.with(|p| p.borrow_mut().remove(&id));
             return None;
         }
@@ -61,9 +63,12 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
 ///
 /// # Safety
 /// PHP thread, inside an internal call on the current fiber's stack.
+#[cfg(feature = "universal-park")]
 pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
+    // SAFETY: as `await_op` -- the caller upholds `# Safety` above, and the same non-null and
+    // switch-blocked checks guard the suspension.
     unsafe {
-        let fiber = (*eg()).active_fiber;
+        let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() || ids.is_empty() {
             return None;
         }
@@ -83,7 +88,7 @@ pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
                 p.remove(id);
             }
         });
-        if !(*eg()).exception.is_null() {
+        if !(*tsrm::executor_globals()).exception.is_null() {
             return None;
         }
         RESULTS.with(|r| {
@@ -110,6 +115,9 @@ pub fn is_parked(id: u64) -> bool {
 /// PHP thread, from inside `ignis_poll` (an internal function frame on the
 /// loop's stack), which is a valid resumer context.
 pub unsafe fn resume_parked(id: u64, outcome: Outcome) -> bool {
+    // SAFETY: the caller upholds `# Safety` above (inside ignis_poll, a valid resumer frame). The
+    // fiber pointer comes out of PARKED, which only this thread writes and only while that fiber is
+    // suspended, so it is live and resumable exactly once -- the remove() makes it once.
     unsafe {
         let Some(fiber) = PARKED.with(|p| p.borrow_mut().remove(&id)) else { return false };
         RESULTS.with(|r| r.borrow_mut().insert(id, outcome));

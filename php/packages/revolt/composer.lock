@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e4ccd242ecd52e4978923fb58354eb91",
+    "content-hash": "71d1e19c9b4bed3c8724c57be256d746",
     "packages": [
         {
             "name": "amphp/amp",
@@ -782,6 +782,43 @@
                 "source": "https://github.com/DaveRandom/LibDNS/tree/v2.1.0"
             },
             "time": "2024-04-12T12:12:48+00:00"
+        },
+        {
+            "name": "ignis/runtime",
+            "version": "dev-night-2",
+            "dist": {
+                "type": "path",
+                "url": "../runtime",
+                "reference": "0f0f9d9cb47d63a9b8aa201fef34dc8e35b4263c"
+            },
+            "require": {
+                "php": ">=8.4"
+            },
+            "require-dev": {
+                "phpunit/phpunit": "^12"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Ignis\\": "src/"
+                },
+                "files": [
+                    "src/functions.php"
+                ]
+            },
+            "autoload-dev": {
+                "files": [
+                    "stubs/ignis.php"
+                ]
+            },
+            "license": [
+                "MIT"
+            ],
+            "description": "The Ignis userland: the fiber scheduler (Ignis\\Loop, async/all/sleep/deadline/serve), Future, Scope, Request/Response, and the classic worker loop. Requires the ignis binary; does nothing under php-fpm or php-cli.",
+            "transport-options": {
+                "symlink": true,
+                "relative": true
+            }
         },
         {
             "name": "kelunik/certificate",
@@ -2901,12 +2938,14 @@
     ],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": {},
+    "stability-flags": {
+        "ignis/runtime": 20
+    },
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
         "php": ">=8.1"
     },
-    "platform-dev": {},
+    "platform-dev": [],
     "plugin-api-version": "2.6.0"
 }

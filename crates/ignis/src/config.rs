@@ -31,6 +31,8 @@ pub struct Config {
     pub log: Option<String>,
     #[serde(default)]
     pub budget: Budget,
+    #[serde(default)]
+    pub limits: Limits,
     /// Path prefixes admitted regardless of the budget (ADR-0019 §5). Default `["/_ignis/"]`.
     pub exempt: Option<Vec<String>>,
 }
@@ -48,10 +50,34 @@ pub struct Budget {
     pub queue: Option<usize>,
 }
 
+/// The front door's bounds. Each was an environment variable with no key in this file, promised by a
+/// `// Future ignis.toml key:` comment in `http.rs` that nobody tracked (R-LIMITS-CONFIG).
+#[derive(Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// Largest request body accepted, in bytes. Default 8 MiB; a bigger one is answered 413.
+    pub max_body_bytes: Option<usize>,
+    /// Connections held at once. Default 8192. ADR-0025: V-37 measured ~33 kB of RSS per held
+    /// connection, so this is what bounds memory under load — a fiber budget cannot.
+    pub max_connections: Option<usize>,
+    /// How long a connection may take to send its request head. Default 10 s (slowloris).
+    pub header_timeout_ms: Option<u64>,
+    /// How long an idle keep-alive connection is kept. Default 60 s.
+    pub idle_timeout_ms: Option<u64>,
+    /// How long in-flight requests get after SIGTERM before the process exits. Default 10 s.
+    pub drain_timeout_ms: Option<u64>,
+}
+
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Config> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+        Self::parse(&text).with_context(|| format!("parsing {}", path.display()))
+    }
+
+    /// Reading the file and understanding it are separate jobs; this is the second, so the
+    /// `deny_unknown_fields` contract can be tested without one.
+    pub fn parse(text: &str) -> anyhow::Result<Config> {
+        Ok(toml::from_str(text)?)
     }
 }
 
@@ -119,6 +145,21 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
         default_env("IGNIS_BUDGET_EXEMPT", &v.join(","));
     }
     default_env("IGNIS_BUDGET_EXEMPT", "/_ignis/");
+    if let Some(v) = cfg.limits.max_body_bytes {
+        default_env("IGNIS_MAX_BODY_BYTES", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.max_connections {
+        default_env("IGNIS_MAX_CONNECTIONS", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.header_timeout_ms {
+        default_env("IGNIS_HEADER_TIMEOUT_MS", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.idle_timeout_ms {
+        default_env("IGNIS_IDLE_TIMEOUT_MS", &v.to_string());
+    }
+    if let Some(v) = cfg.limits.drain_timeout_ms {
+        default_env("IGNIS_DRAIN_TIMEOUT_MS", &v.to_string());
+    }
 
     let mut out = Vec::new();
     if cfg.supervise.unwrap_or(true) {
@@ -127,4 +168,117 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
     out.push(entry.to_string_lossy().into_owned());
     out.extend(args.into_iter().skip(1)); // anything after the entry goes to `$argv`
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    //! These mutate the process environment, so they rely on nextest giving each test its own
+    //! process. Under `cargo test` they would fight each other (DECISIONS, 2026-09-17).
+    use super::*;
+
+    /// A path that certainly exists, so `serve_to_legacy_args`'s `is_file` check passes without a
+    /// fixture. The function only ever asks whether the entry exists.
+    const EXISTING_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+
+    fn config_file(body: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("ignis-config-test-{}.toml", std::process::id()));
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    fn serve_with(config_body: &str, extra: &[&str]) -> Vec<String> {
+        let path = config_file(config_body);
+        let mut args = vec!["--config".to_string(), path.to_string_lossy().into_owned()];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let out = serve_to_legacy_args(args).unwrap();
+        std::fs::remove_file(&path).ok();
+        out
+    }
+
+    #[test]
+    fn a_misspelled_key_fails_loudly() {
+        let err = Config::parse("threads = 2\nthredas = 4\n").unwrap_err().to_string();
+        assert!(err.contains("thredas"), "the error must name the key: {err}");
+    }
+
+    #[test]
+    fn an_empty_config_is_all_defaults() {
+        let parsed = Config::parse("").unwrap();
+        assert!(parsed.entry.is_none() && parsed.threads.is_none());
+        assert!(parsed.budget.fibers.is_none() && parsed.budget.queue.is_none());
+    }
+
+    #[test]
+    fn the_environment_beats_the_file() {
+        // SAFETY: nextest gives this test its own process and no thread has been spawned in it.
+        unsafe { std::env::set_var("IGNIS_THREADS", "8") };
+        serve_with(&format!("threads = 2\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_THREADS").unwrap(), "8");
+    }
+
+    #[test]
+    fn the_file_beats_the_default() {
+        serve_with(&format!("threads = 2\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_THREADS").unwrap(), "2");
+        assert_eq!(std::env::var("IGNIS_FIBER_BUDGET").unwrap(), "1024");
+        assert_eq!(std::env::var("IGNIS_QUEUE_DEPTH").unwrap(), "4096");
+        assert_eq!(std::env::var("IGNIS_BUDGET_EXEMPT").unwrap(), "/_ignis/");
+    }
+
+    #[test]
+    fn a_positional_entry_beats_the_files_entry() {
+        let out = serve_with("entry = \"/nonexistent/from-the-file.php\"\n", &[EXISTING_FILE]);
+        assert!(out.last().unwrap().ends_with("Cargo.toml"), "{out:?}");
+    }
+
+    #[test]
+    fn without_an_entry_anywhere_it_says_so() {
+        let path = config_file("threads = 1\n");
+        let err = serve_to_legacy_args(vec!["--config".into(), path.to_string_lossy().into_owned()]).unwrap_err().to_string();
+        std::fs::remove_file(&path).ok();
+        assert!(err.contains("serve needs an entry script"), "{err}");
+    }
+
+    #[test]
+    fn supervise_is_on_by_default_and_can_be_turned_off() {
+        let on = serve_with(&format!("entry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(on.first().unwrap(), "--supervise");
+        let off = serve_with(&format!("supervise = false\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_ne!(off.first().unwrap(), "--supervise");
+    }
+
+    #[test]
+    fn the_limits_table_reaches_the_front_door() {
+        serve_with(
+            &format!(
+                "entry = {EXISTING_FILE:?}\n[limits]\nmax_connections = 512\nmax_body_bytes = 1048576\nheader_timeout_ms = 3000\nidle_timeout_ms = 15000\ndrain_timeout_ms = 2000\n"
+            ),
+            &[],
+        );
+        assert_eq!(std::env::var("IGNIS_MAX_CONNECTIONS").unwrap(), "512");
+        assert_eq!(std::env::var("IGNIS_MAX_BODY_BYTES").unwrap(), "1048576");
+        assert_eq!(std::env::var("IGNIS_HEADER_TIMEOUT_MS").unwrap(), "3000");
+        assert_eq!(std::env::var("IGNIS_IDLE_TIMEOUT_MS").unwrap(), "15000");
+        assert_eq!(std::env::var("IGNIS_DRAIN_TIMEOUT_MS").unwrap(), "2000");
+    }
+
+    #[test]
+    fn the_environment_still_beats_the_limits_table() {
+        // SAFETY: nextest gives this test its own process and no thread has been spawned in it.
+        unsafe { std::env::set_var("IGNIS_MAX_CONNECTIONS", "99") };
+        serve_with(&format!("entry = {EXISTING_FILE:?}\n[limits]\nmax_connections = 512\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_MAX_CONNECTIONS").unwrap(), "99");
+    }
+
+    #[test]
+    fn a_misspelled_limits_key_fails_loudly() {
+        let err = Config::parse("[limits]\nmax_connection = 1\n").unwrap_err().to_string();
+        assert!(err.contains("max_connection"), "the error must name the key: {err}");
+    }
+
+    #[test]
+    fn arguments_after_the_entry_reach_argv() {
+        let out = serve_with("", &[EXISTING_FILE, "--verbose", "seven"]);
+        assert_eq!(&out[out.len() - 2..], &["--verbose".to_string(), "seven".to_string()]);
+    }
 }

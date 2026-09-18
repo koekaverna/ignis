@@ -15,8 +15,16 @@
 //!   stored in a zval handed back to PHP we must not free them ourselves.
 //! - **Lifetimes of C strings passed in.** `zend_function_entry.fname` and
 //!   arg-info names must live for the whole process (`&'static CStr`).
-#![allow(non_upper_case_globals, non_camel_case_types, non_snake_case, dead_code)]
-#![allow(clippy::all)]
-#![allow(unsafe_op_in_unsafe_fn)]
 
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+/// Bindgen output. The lint levels are named one by one rather than by group, because
+/// `clippy::all` does not contain `undocumented_unsafe_blocks` (it is a `restriction` lint) and 270
+/// warnings from generated code would otherwise reach the gate. Naming them on the module also keeps
+/// any hand-written code in this crate linted, which a crate-level blanket would not.
+#[allow(non_upper_case_globals, non_camel_case_types, non_snake_case, dead_code)]
+#[allow(unsafe_op_in_unsafe_fn, unused_qualifications)]
+#[allow(clippy::all, clippy::undocumented_unsafe_blocks)]
+mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
+
+pub use bindings::*;

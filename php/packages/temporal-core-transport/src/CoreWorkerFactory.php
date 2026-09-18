@@ -27,6 +27,7 @@ final class CoreWorkerFactory extends WorkerFactory
         return $factory;
     }
 
+    /** @param ActivationSource::WORKFLOW|ActivationSource::ACTIVITY $kind */
     public function host(ActivationSource $source, string $kind = ActivationSource::WORKFLOW): CoreHost
     {
         return new CoreHost($source, $this->coreCodec, $kind);
