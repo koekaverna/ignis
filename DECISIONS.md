@@ -424,3 +424,16 @@ made green tonight without either re-baselining (refused above) or explaining a 
 independent runs could not explain. Merging with the single red row named here is the honest
 reading; `STATUS.md`'s "green on all ten jobs" is true of `b6c3936` and stops being true of `main`
 with this merge, which is why it is recorded rather than quietly left behind.
+
+## 2026-09-18 — the night branches are deleted, `main` is the only line of work
+
+`night-1` and `night-2` have been ancestors of `main` since their merges; `night-3`'s last two
+commits (`b7d3cc3`, `d8ba4b5`) are merged here as `80344d1` under the same terms as the earlier
+night-3 merge — CI 9 of 10 green on `d8ba4b5` with one named red row, `phpt.fiber.Zend_tests_fibers=77`
+against baseline 78 (S0-FIBER, `gh9916-009.phpt`), unchanged and not re-baselined.
+
+All three are then deleted locally and on `origin`. Nothing is lost: every commit is reachable from
+`main`, which is what makes the deletion safe rather than tidy. `gh-pages` is a deployment branch
+and stays; the tags `night-1-done` and `v0.1.0-rc.1` stay. No new night branch is created until
+there is a night's work to put on it — `ci.yml` still triggers on `main` and `night-*`, so the next
+one costs nothing to make.
