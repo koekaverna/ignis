@@ -77,7 +77,7 @@ Ignis\serve(static function (Request $req): Response {
             'fibers'   => Ignis\Loop::$fibersCreated,
             'idle'     => Ignis\Loop::idleFibers(),
             'runtime'  => function_exists('ignis_stats') ? ignis_stats() : null,
-            'mem_real' => memory_get_usage(true),
+            'mem_real_this_thread' => memory_get_usage(true),
             'rss_kb'   => (int) (preg_match('/^VmRSS:\s+(\d+)/m', (string) file_get_contents('/proc/self/status'), $m) ? $m[1] : -1),
         ]),
         default      => Response::text("not found\n", 404),
