@@ -5,7 +5,7 @@
 //! timeout. HTTP requests arrive on the same completion channel as timer
 //! completions, so the PHP loop has exactly one wait point.
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -184,6 +184,20 @@ async fn watch_fd(fd: i32, write: bool) -> Outcome {
     }
 }
 
+/// A timer or fd watch that `Op::CancelWatch` can still call off, and the claim that decides which
+/// of the two announces it.
+///
+/// `AbortHandle::abort()` stops a task only at its next await point, so a task that has already
+/// produced its outcome runs on and sends it — a cancel that arrived in that window announced the
+/// same op a second time. Two completions for one submission drove `Reactor::inflight` below zero,
+/// where it wrapped: `poll()` then never saw an empty reactor again, so an idle thread blocked for
+/// ever and `ignis_inflight()` never reached the zero a graceful drain waits for. Whoever wins the
+/// swap sends; the loser stays quiet.
+struct CancellableTask {
+    abort: tokio::task::AbortHandle,
+    completed: Arc<AtomicBool>,
+}
+
 impl Reactor {
     /// Spawns the dispatcher task on `rt` and returns the PHP-side handle.
     pub fn new(rt: &tokio::runtime::Handle) -> Arc<Reactor> {
@@ -191,7 +205,7 @@ impl Reactor {
         let (done_tx, from_tokio) = crossbeam_channel::unbounded::<Completion>();
         let done_for_task = done_tx.clone();
         rt.spawn(async move {
-            let cancellable_tasks_by_op: Arc<Mutex<HashMap<u64, tokio::task::AbortHandle>>> = Arc::new(Mutex::new(HashMap::new()));
+            let cancellable_tasks_by_op: Arc<Mutex<HashMap<u64, CancellableTask>>> = Arc::new(Mutex::new(HashMap::new()));
             while let Some((id, op)) = rx.recv().await {
                 let done_tx: Sender<Completion> = done_for_task.clone();
                 match op {
@@ -205,14 +219,17 @@ impl Reactor {
                         // Cancellable like a watch (E6'': a stream_select timeout that lost the race
                         // must not keep the loop alive until it lapses).
                         let cancellable_tasks_by_op2 = cancellable_tasks_by_op.clone();
+                        let completed = Arc::new(AtomicBool::new(false));
+                        let completed_in_task = completed.clone();
                         let handle = tokio::spawn(async move {
                             tokio::time::sleep_until(deadline).await;
                             let late_us = deadline.elapsed().as_micros() as u64;
                             cancellable_tasks_by_op2.lock().unwrap().remove(&id);
-
-                            let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us } });
+                            if !completed_in_task.swap(true, Ordering::AcqRel) {
+                                let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us } });
+                            }
                         });
-                        cancellable_tasks_by_op.lock().unwrap().insert(id, handle.abort_handle());
+                        cancellable_tasks_by_op.lock().unwrap().insert(id, CancellableTask { abort: handle.abort_handle(), completed });
                     }
                     Op::Custom(fut) => {
                         tokio::spawn(async move {
@@ -222,17 +239,23 @@ impl Reactor {
                     }
                     Op::Watch { fd, write } => {
                         let cancellable_tasks_by_op2 = cancellable_tasks_by_op.clone();
+                        let completed = Arc::new(AtomicBool::new(false));
+                        let completed_in_task = completed.clone();
                         let handle = tokio::spawn(async move {
                             let outcome = watch_fd(fd, write).await;
                             cancellable_tasks_by_op2.lock().unwrap().remove(&id);
-                            let _ = done_tx.send(Completion { id, outcome });
+                            if !completed_in_task.swap(true, Ordering::AcqRel) {
+                                let _ = done_tx.send(Completion { id, outcome });
+                            }
                         });
-                        cancellable_tasks_by_op.lock().unwrap().insert(id, handle.abort_handle());
+                        cancellable_tasks_by_op.lock().unwrap().insert(id, CancellableTask { abort: handle.abort_handle(), completed });
                     }
                     Op::CancelWatch { target } => {
-                        if let Some(h) = cancellable_tasks_by_op.lock().unwrap().remove(&target) {
-                            h.abort(); // drops the AsyncFd → closes the dup'd fd
-                            let _ = done_tx.send(Completion { id: target, outcome: Outcome::Error("cancelled".into()) });
+                        if let Some(task) = cancellable_tasks_by_op.lock().unwrap().remove(&target) {
+                            task.abort.abort(); // drops the AsyncFd → closes the dup'd fd
+                            if !task.completed.swap(true, Ordering::AcqRel) {
+                                let _ = done_tx.send(Completion { id: target, outcome: Outcome::Error("cancelled".into()) });
+                            }
                         }
                         let _ = done_tx.send(Completion { id, outcome: Outcome::Error("cancelled".into()) });
                     }
@@ -505,7 +528,7 @@ impl Reactor {
             while let Ok(c) = self.from_tokio.try_recv() {
                 out.push(c);
             }
-            self.inflight.fetch_sub(out.len() as u64, Ordering::Relaxed);
+            self.inflight.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(out.len() as u64))).ok();
             self.start_the_time_in_php_clock();
         }
         out
@@ -515,6 +538,32 @@ impl Reactor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tripwire for the consumers of `Outcome` that no build here compiles.
+    ///
+    /// `backend/async_core.rs` matches on this enum and is gated behind `cfg(php_async_abi)`, which
+    /// needs the true-async engine: no CI job and no developer box builds it. So when `Outcome` grew
+    /// from two variants to nine, that file stopped compiling and nothing said so. Adding a variant
+    /// breaks this match, here, where everything is compiled -- and the fix is to teach
+    /// `async_core::outcome_payload` about it as well.
+    fn every_variant_is_accounted_for(outcome: &Outcome) {
+        match outcome {
+            Outcome::Slept { .. }
+            | Outcome::Request(_)
+            | Outcome::Ready
+            | Outcome::Cancelled { .. }
+            | Outcome::Json(_)
+            | Outcome::Failed(_)
+            | Outcome::Blob(_)
+            | Outcome::OffloadCallback { .. }
+            | Outcome::Error(_) => {}
+        }
+    }
+
+    #[test]
+    fn a_new_outcome_variant_has_to_be_taught_to_backend_b() {
+        every_variant_is_accounted_for(&Outcome::Ready);
+    }
 
     fn rt() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap()
@@ -642,6 +691,32 @@ mod tests {
     }
 
     /// E15b: a cancelled watch leaked the descriptor the reactor had dup'd. Both ops must complete.
+    /// A cancel that arrives after its target already completed must add its own completion and
+    /// nothing else. Two completions for one submission drove `inflight` below zero, and an
+    /// unsigned counter that wraps there never reads empty again -- an idle `poll(-1)` would block
+    /// for ever and a graceful drain would never see the zero it waits for.
+    #[test]
+    fn cancelling_an_op_that_already_finished_counts_once() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let sleep = r.submit(Op::Sleep { us: 1_000 });
+        let mut seen = Vec::new();
+        while seen.is_empty() {
+            seen.extend(r.poll(Some(Duration::from_secs(2))).into_iter().map(|c| c.id));
+        }
+        assert_eq!(seen, vec![sleep]);
+        assert_eq!(r.inflight(), 0);
+
+        let cancel = r.submit(Op::CancelWatch { target: sleep });
+        let mut after = Vec::new();
+        while after.is_empty() {
+            after.extend(r.poll(Some(Duration::from_secs(2))).into_iter().map(|c| c.id));
+        }
+        assert_eq!(after, vec![cancel], "the finished op must not complete a second time");
+        assert_eq!(r.inflight(), 0);
+        assert!(r.poll(Some(Duration::from_millis(50))).is_empty());
+    }
+
     #[test]
     fn a_cancelled_watch_completes_both_ops() {
         use std::os::fd::AsRawFd;

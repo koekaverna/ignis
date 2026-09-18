@@ -48,6 +48,32 @@ pub fn try_reactor() -> Option<Arc<Reactor>> {
     REACTOR.with(|c| c.get().cloned())
 }
 
+/// The calling thread's reactor, or a thrown PHP `Error` and `None`.
+///
+/// Offload workers have no reactor on purpose (ADR-0016), and every runtime function is registered
+/// on every thread, so an offloaded job that called one of these reached `reactor()`'s `expect`.
+/// A panic in a `zif_` frame is not a failed job: `extern "C"` cannot unwind, so the process aborted
+/// with SIGABRT. Measured 2026-09-18 with `Ignis\offload('ignis_inflight')` — exit 134, whole server
+/// gone. Refusing in PHP makes it what it always should have been: this job throws, the pool and the
+/// server carry on.
+///
+/// # Safety
+/// PHP thread inside a `zif_` frame, where a thrown error is picked up on return.
+unsafe fn reactor_or_throw() -> Option<Arc<Reactor>> {
+    if let Some(reactor) = try_reactor() {
+        return Some(reactor);
+    }
+    // SAFETY: the caller upholds `# Safety` above -- a VM frame on a PHP thread, which is where
+    // zend_throw_error is defined to be called; the message is a 'static NUL-terminated literal.
+    unsafe {
+        sys::zend_throw_error(
+            ptr::null_mut(),
+            c"this Ignis runtime function needs a reactor; it is not available on an offload worker thread".as_ptr(),
+        );
+    }
+    None
+}
+
 /// Wrapper so a struct holding raw pointers can be a `static`. The pointees
 /// are `'static` string literals and other statics; nothing is ever mutated
 /// after process start, so sharing across threads is sound.
@@ -107,7 +133,8 @@ unsafe extern "C" fn zif_ignis_submit_sleep(ex: *mut sys::zend_execute_data, rv:
             sys::zend_type_error(c"ignis_submit_sleep(): argument #1 ($ms) must be of type int".as_ptr());
             return;
         };
-        let id = reactor().submit(Op::Sleep { us: (ms.max(0) as u64) * 1000 });
+        let Some(reactor) = reactor_or_throw() else { return };
+        let id = reactor.submit(Op::Sleep { us: (ms.max(0) as u64) * 1000 });
         zval::set_long(rv, id as i64);
     }
 }
@@ -149,7 +176,8 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
             return;
         };
         let timeout = if timeout_ms < 0 { None } else { Some(Duration::from_millis(timeout_ms as u64)) };
-        let done: Vec<Completion> = reactor().poll(timeout);
+        let Some(reactor) = reactor_or_throw() else { return };
+        let done: Vec<Completion> = reactor.poll(timeout);
         zval::set_new_array(rv);
         for c in done {
             match c.outcome {
@@ -240,15 +268,15 @@ unsafe extern "C" fn zif_ignis_watch(ex: *mut sys::zend_execute_data, rv: *mut s
         }
         // Already ready? Complete synchronously so a `poll(0)` right after arming sees it
         // (E15b: Revolt's DriverTest expects a writable fd to dispatch in the tick that armed it).
+        let Some(reactor) = reactor_or_throw() else { return };
         let mut pfd = libc::pollfd { fd, events: if mode == 2 { libc::POLLOUT } else { libc::POLLIN }, revents: 0 };
         if libc::poll(&mut pfd, 1, 0) > 0 && pfd.revents != 0 {
-            let r = reactor();
-            let id = r.reserve_op();
-            r.complete(id, Outcome::Ready);
+            let id = reactor.reserve_op();
+            reactor.complete(id, Outcome::Ready);
             zval::set_long(rv, id as i64);
             return;
         }
-        let id = reactor().submit(Op::Watch { fd, write: mode == 2 });
+        let id = reactor.submit(Op::Watch { fd, write: mode == 2 });
         zval::set_long(rv, id as i64);
     }
 }
@@ -261,7 +289,8 @@ unsafe extern "C" fn zif_ignis_cancel(ex: *mut sys::zend_execute_data, rv: *mut 
         if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut target) != sys::SUCCESS {
             return;
         }
-        let id = reactor().submit(Op::CancelWatch { target: target as u64 });
+        let Some(reactor) = reactor_or_throw() else { return };
+        let id = reactor.submit(Op::CancelWatch { target: target as u64 });
         zval::set_long(rv, id as i64);
     }
 }
@@ -294,7 +323,8 @@ unsafe extern "C" fn zif_ignis_publish_stats(ex: *mut sys::zend_execute_data, _r
         if ht.is_null() {
             return;
         }
-        let published = &reactor().published;
+        let Some(reactor) = reactor_or_throw() else { return };
+        let published = &reactor.published;
         let mut key: *mut sys::zend_string = ptr::null_mut();
         let mut val: *mut sys::zval;
         let mut pos: sys::HashPosition = 0;
@@ -320,8 +350,11 @@ unsafe extern "C" fn zif_ignis_publish_stats(ex: *mut sys::zend_execute_data, _r
 }
 
 unsafe extern "C" fn zif_ignis_inflight(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: rv is VM-owned writable storage.
-    unsafe { zval::set_long(rv, reactor().inflight() as i64) }
+    // SAFETY: rv is VM-owned writable storage, and reactor_or_throw() is called from this zif frame.
+    unsafe {
+        let Some(reactor) = reactor_or_throw() else { return };
+        zval::set_long(rv, reactor.inflight() as i64)
+    }
 }
 
 unsafe extern "C" fn zif_ignis_serve(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
@@ -335,7 +368,8 @@ unsafe extern "C" fn zif_ignis_serve(ex: *mut sys::zend_execute_data, rv: *mut s
         }
         let addr = String::from_utf8_lossy(std::slice::from_raw_parts(s as *const u8, len)).into_owned();
         let rt = RUNTIME.get().expect("runtime not installed");
-        match crate::http::start(rt, reactor(), &addr) {
+        let Some(reactor) = reactor_or_throw() else { return };
+        match crate::http::start(rt, reactor, &addr) {
             Ok(local) => {
                 tracing::info!(%local, "listening");
                 zval::set_bool(rv, true);
@@ -364,7 +398,8 @@ unsafe extern "C" fn zif_ignis_respond(ex: *mut sys::zend_execute_data, rv: *mut
         }
         let headers = header_pairs(ht, "ignis_respond");
         let body = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(body as *const u8, body_len));
-        let ok = reactor().respond(
+        let Some(reactor) = reactor_or_throw() else { return };
+        let ok = reactor.respond(
             id as u64,
             HttpResponse { status: status.clamp(100, 599) as u16, headers, body: crate::reactor::ResponseBody::Full(body) },
         );
@@ -455,7 +490,8 @@ unsafe extern "C" fn zif_ignis_respond_start(ex: *mut sys::zend_execute_data, rv
             return;
         }
         let headers = header_pairs(ht, "ignis_respond_start");
-        zval::set_bool(rv, reactor().respond_start(id as u64, status.clamp(100, 599) as u16, headers, stream_chunks()));
+        let Some(reactor) = reactor_or_throw() else { return };
+        zval::set_bool(rv, reactor.respond_start(id as u64, status.clamp(100, 599) as u16, headers, stream_chunks()));
     }
 }
 
@@ -486,14 +522,15 @@ unsafe extern "C" fn zif_ignis_respond_chunk(ex: *mut sys::zend_execute_data, rv
 /// costs ~93 µs even unloaded (`reactor.rs`). Ordering is safe because a slow-path write is awaited
 /// before the next one starts.
 pub(super) fn send_chunk(id: u64, chunk: bytes::Bytes) -> i64 {
-    let Some(tx) = reactor().stream_sender(id) else { return -1 };
+    let Some(reactor) = try_reactor() else { return -1 };
+    let Some(tx) = reactor.stream_sender(id) else { return -1 };
     let chunk = match tx.try_send(chunk) {
         Ok(()) => return 0,
         Err(tokio::sync::mpsc::error::TrySendError::Full(c)) => c,
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return -1, // the client hung up
     };
     // Full: now it is worth an op, because awaiting it is exactly the back-pressure.
-    reactor().submit(Op::Custom(Box::pin(async move {
+    reactor.submit(Op::Custom(Box::pin(async move {
         match tx.send(chunk).await {
             Ok(()) => Outcome::Ready,
             // The receiver is gone: the client hung up. The handler sees it and can stop.
@@ -510,7 +547,8 @@ unsafe extern "C" fn zif_ignis_respond_end(ex: *mut sys::zend_execute_data, rv: 
         if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut id) != sys::SUCCESS {
             return;
         }
-        zval::set_bool(rv, reactor().respond_end(id as u64));
+        let Some(reactor) = reactor_or_throw() else { return };
+        zval::set_bool(rv, reactor.respond_end(id as u64));
     }
 }
 
@@ -525,7 +563,8 @@ unsafe extern "C" fn zif_ignis_grpc_send(ex: *mut sys::zend_execute_data, rv: *m
             return;
         }
         let b = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(msg as *const u8, len));
-        zval::set_bool(rv, reactor().stream_send(id as u64, b));
+        let Some(reactor) = reactor_or_throw() else { return };
+        zval::set_bool(rv, reactor.stream_send(id as u64, b));
     }
 }
 
@@ -541,7 +580,8 @@ unsafe extern "C" fn zif_ignis_grpc_end(ex: *mut sys::zend_execute_data, rv: *mu
             return;
         }
         let m = String::from_utf8_lossy(std::slice::from_raw_parts(msg as *const u8, len)).into_owned();
-        zval::set_bool(rv, reactor().stream_end(id as u64, code as i32, m));
+        let Some(reactor) = reactor_or_throw() else { return };
+        zval::set_bool(rv, reactor.stream_end(id as u64, code as i32, m));
     }
 }
 
@@ -569,7 +609,8 @@ unsafe extern "C" fn zif_ignis_grpc_call(ex: *mut sys::zend_execute_data, rv: *m
         let url = String::from_utf8_lossy(std::slice::from_raw_parts(u as *const u8, ul)).into_owned();
         let path = String::from_utf8_lossy(std::slice::from_raw_parts(p as *const u8, pl)).into_owned();
         let msg = bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(m as *const u8, ml));
-        let id = reactor().submit(Op::Custom(crate::grpc::call(url, path, msg, streaming)));
+        let Some(reactor) = reactor_or_throw() else { return };
+        let id = reactor.submit(Op::Custom(crate::grpc::call(url, path, msg, streaming)));
         zval::set_long(rv, id as i64);
     }
 }
@@ -582,7 +623,8 @@ unsafe extern "C" fn zif_ignis_grpc_recv(ex: *mut sys::zend_execute_data, rv: *m
         if sys::zend_parse_parameters(zval::num_args(ex), c"l".as_ptr(), &mut h) != sys::SUCCESS {
             return;
         }
-        let id = reactor().submit(Op::Custom(crate::grpc::recv(h as u64)));
+        let Some(reactor) = reactor_or_throw() else { return };
+        let id = reactor.submit(Op::Custom(crate::grpc::recv(h as u64)));
         zval::set_long(rv, id as i64);
     }
 }
@@ -646,7 +688,8 @@ unsafe extern "C" fn zif_ignis_offload_submit(ex: *mut sys::zend_execute_data, r
             return;
         }
         let affinity = if aff >= 0 { Some(aff as usize) } else { None };
-        match crate::offload::submit(reactor(), str_arg(f, fl), bytes_arg(a, al), affinity) {
+        let Some(reactor) = reactor_or_throw() else { return };
+        match crate::offload::submit(reactor, str_arg(f, fl), bytes_arg(a, al), affinity) {
             Ok(op) => zval::set_long(rv, op as i64),
             Err(e) => {
                 tracing::warn!("ignis_offload_submit: {e}");
@@ -824,9 +867,12 @@ unsafe extern "C" fn zif_ignis_watch_end_reload(_ex: *mut sys::zend_execute_data
 /// The front door stops sending it requests; the ones already in flight are still its own to finish,
 /// which is what separates a reload from a thread that died (`http::unregister`).
 unsafe extern "C" fn zif_ignis_stop_accepting(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    crate::http::leave_dispatch(&reactor());
-    // SAFETY: rv is VM-owned writable storage.
-    unsafe { zval::set_null(rv) }
+    // SAFETY: rv is VM-owned writable storage, and reactor_or_throw() is called from this zif frame.
+    unsafe {
+        let Some(reactor) = reactor_or_throw() else { return };
+        crate::http::leave_dispatch(&reactor);
+        zval::set_null(rv)
+    }
 }
 
 const fn fe(

@@ -285,6 +285,12 @@ fn run_inline_code(mut engine: php::embed::Engine, rt: tokio::runtime::Runtime, 
 
 /// E16: offload workers — synchronous PHP threads (own TSRM context, no reactor) running the
 /// embedded worker loop; jobs arrive over channels, answers go back to the caller's reactor.
+///
+/// No reactor is deliberate (ADR-0016: these threads are the place blocking code is allowed to
+/// block) and two other mechanisms read the absence as the marker of such a thread — `route.rs`
+/// refuses to route from one, and `park.rs` falls through to the blocking call. The runtime
+/// functions that need a reactor therefore refuse in PHP here rather than reaching for one; see
+/// `module::reactor_or_throw`.
 fn spawn_offload_workers(offload: usize) -> Vec<std::thread::JoinHandle<()>> {
     if offload == 0 {
         return Vec::new();

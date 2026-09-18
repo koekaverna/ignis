@@ -4534,3 +4534,114 @@ same within noise.
 Gates: `cargo nextest` 51/51, PHP suite 307 tests / 720 assertions, PHPStan `[OK] No errors`,
 php-cs-fixer 0 of 143, `cargo fmt`/`clippy` clean, `bench/e25-reload.sh` GREEN, `scripts/smoke.sh`
 GREEN, `mkdocs build --strict` clean.
+
+## V-91 — four defects in the Rust half, found auditing before adding anything (CONFIRMED; one of them refuted)
+
+Date: 2026-09-18T21:1xZ. Box: 24 vCPU, PHP 8.5.10 ZTS+embed at `/opt/php85-zts`, `target/release/ignis`
+rebuilt for each arm. The cycle's rule was "polish the current concept before growing it"; this is what
+the audit of `crates/ignis/**` turned up, with what each claim is worth.
+
+### 1. `IGNIS_NO_SUPERGLOBALS=1` plus one request is undefined behaviour (CONFIRMED, fixed)
+
+`superglobals.rs` claims its reserved-slot index at MINIT — but only inside
+`if IGNIS_NO_SUPERGLOBALS is unset`, and it also skips it when `zend_get_resource_handle` returns a
+negative handle. `ignis_set_superglobals` is in the function table either way, and `Loop.php` calls it
+whenever `function_exists()` says so, which is always. So `slot_of()` reached
+`*SLOT.get().unwrap_unchecked()` on an empty `OnceLock`.
+
+What it does in practice, measured rather than assumed: `IGNIS_NO_SUPERGLOBALS=1 ignis
+examples/hello_server.php`, one `GET /` → **http=200, server alive**. It does not crash, because the
+uninitialised read yields 0 and `reserved[0]` is currently claimed by nobody — the failure is silent
+corruption of whichever extension claims that slot next, not a fault. That is the whole reason to fix
+it rather than leave it: it works by luck, and the luck is another extension's business.
+
+Fix: `slot_of()` returns `Option` and its four callers handle the missing slot — the one guard all of
+them route through, rather than one per caller. The hook-off control keeps its meaning: the four
+arrays are installed unscoped, which is what "no superglobal isolation" means.
+
+| arm | before | after |
+|---|---|---|
+| `IGNIS_NO_SUPERGLOBALS=1`, one request | 200, alive (by luck) | **200, alive** (by construction) |
+| hook on, `bench/php/e13_isolation.php` | — | **fibers=3 checks=300 mismatches=0 main_leak=0** |
+
+Regression test: `php::superglobals::tests::a_context_has_no_slot_until_minit_claims_one`, which can
+run without an engine because the missing slot is answered before the context is touched.
+
+### 2. `Ignis\offload()` of anything that touches the runtime aborts the whole process (CONFIRMED, fixed)
+
+Offload workers have no reactor on purpose (ADR-0016), `module::reactor()` ends in `.expect(...)`, and
+a panic in a `zif_` frame cannot unwind out of `extern "C"` — so Rust aborts. Twenty-one call sites
+reached that `expect`, `ignis_submit_sleep` — `Ignis\sleep()` — among them.
+
+Probe: `Ignis\offload('ignis_inflight')` under `--offload 2`.
+
+| | result |
+|---|---|
+| before | `thread caused non-unwinding panic. aborting.` — **SIGABRT, exit 134**, whole server gone |
+| after | `RemoteException` delivered to the caller; **process exits 0** |
+
+The first fix written was to give offload workers a reactor. It was reverted before it could ship,
+because two other mechanisms read the *absence* of a reactor as the marker of such a thread
+(`route::routing_here` says so in its own comment; `park.rs` falls through to the blocking call) — with
+one installed, an offloaded `SQLite3` call routed itself to offload again and the E16 bench hung. That
+hang is the measurement that chose the other design; see DECISIONS.md 2026-09-18.
+
+E16 after the fix, `bench/e16-offload.sh 8`: **100 × 200 ms through 100 workers in 338 ms**, 100
+distinct worker threads, fiber thread ticked 29 times meanwhile (V-24 recorded 243 ms on a quiet box;
+this run shared the machine with a build). The `pdo_pgsql` arms fail for want of a PostgreSQL server
+here, as they always have on this box.
+
+### 3. One submitted op could complete twice, and the counter wrapped (CONFIRMED by inspection, fixed)
+
+`AbortHandle::abort()` stops a task at its next await point, so a watch or timer task that has already
+produced its outcome runs on and sends it; a `CancelWatch` arriving in that window sent a second
+completion for the same id. Two completions against one `submit()` drove `Reactor::inflight` below
+zero, where an unsigned counter wraps — and `poll()`'s empty-reactor fast path then never fires again,
+so an idle `ignis_poll(-1)` blocks for ever and `ignis_inflight()` never reaches the zero
+`Loop::windingDown()` waits for. `park_pollfds` submits a cancel for every loser, so every parked
+`poll`/`select` over more than one fd opens the window.
+
+Honest limit: the race is narrow and I did not reproduce it; it is read off the code. What is measured
+is that the fix costs nothing and that the accounting is right afterwards.
+
+Fix: the task and the cancel share a claim; whoever wins the swap sends. The drain also uses a
+saturating subtraction now, so a future double-send cannot turn an accounting slip into a hang.
+
+| arm | number |
+|---|---|
+| E1, 10k fibers × 1000 ms, 3 runs | **1148.9 / 1181.9 / 1163.7 ms** (recorded band 1168–1178 cold, 1175–1195 on a quiet re-run) |
+| E2, `all()` of 3 × 200 ms | **202.04 ms**, per-fiber warm **4.13 µs** (E2' bar: < 5 µs) |
+
+New test: `reactor::tests::cancelling_an_op_that_already_finished_counts_once`.
+
+### 4. `backend/async_core.rs` has not compiled for some time (CONFIRMED by inspection)
+
+It matches `Outcome` with two arms against an enum that now has nine. Nothing builds it: it is behind
+`cfg(php_async_abi)`, which needs the true-async engine, and there is no CI job for that backend and no
+async engine on this box — so it cannot be compiled here to prove the fix either, and that is the point.
+The match is exhaustive again, and the guard against a third rot is a tripwire where everything *is*
+compiled: `reactor::tests::a_new_outcome_variant_has_to_be_taught_to_backend_b` breaks on the next
+variant and names the file to update. A CI job for backend (b) is a backlog item, not this cycle.
+
+### 5. A fiber unwound after its completion arrived left the outcome behind (CONFIRMED, fixed)
+
+`await_op`/`await_any` remove from `PARKED` on the unwind path but not from `RESULTS`, so a
+cancellation that lands after `ignis_poll` has already delivered the outcome leaks one entry per park
+for the life of the thread. Bounded by cancellations, not by requests; fixed in both paths.
+
+### Refuted: `ignis_cancel_parked_any` does not leave stale entries behind
+
+The audit reported that cancelling a fiber parked on N ids (`await_any` inserts the fiber under every
+one) removes a single key and leaves the rest pointing at a fiber that is unwinding. Reading the
+resume path says otherwise: `zend_fiber_resume_exception` switches into the fiber, which returns inside
+`await_any`'s own frame and removes **all** of its ids before the exception is examined. A PHP-level
+exception does not skip Rust statements. No change made; recorded because a refuted finding is a
+result and the next reader should not have to re-derive it.
+
+### Gate
+
+`scripts/gate.sh --fast` green after the batch: fmt, clippy `-D warnings`, `--no-default-features`
+check, `cargo deny`, **56 nextest tests** (54 before, +2 regression tests), and the PHP half inside
+`ghcr.io/koekaverna/ignis-php:8.5.10-zts` — phpstan level 9 on both configs, php-cs-fixer, **307
+PHPUnit tests / 720 assertions**. (`STATUS.md`'s "60 Rust tests / 209 PHP tests" is stale in both
+directions and belongs to the documentation stage of this cycle.)

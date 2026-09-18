@@ -53,6 +53,11 @@ if [ "$FAST" = 1 ]; then
 fi
 
 step "smoke";  scripts/smoke.sh
-step "e15 phpt"; bench/e15-phpt.sh
+
+# The suites gate on their pass counts, so the run has to be kept and handed to ci-gate.sh -- a
+# green e15-phpt.sh only means it finished, not that nothing regressed.
+step "e15 phpt"
+bench/e15-phpt.sh 2>&1 | tee /tmp/ignis-gate-e15-phpt.log
+scripts/ci-gate.sh phpt /tmp/ignis-gate-e15-phpt.log
 
 echo; echo "GATE GREEN"

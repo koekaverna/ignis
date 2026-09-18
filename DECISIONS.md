@@ -63,23 +63,21 @@ recommendation in every case ("применяй ко всем рекоменда
   so the build will start flapping on its own; and B1's acceptance is measured with the same storm
   shape, so the 0.1–0.3 % unanswered floor would sit inside its numbers and read as queueing.
 
-## Owner decisions outstanding
+## Owner decisions that were outstanding — all five closed (audit, 2026-09-18)
 
-- **ADR-0018 kill criterion 2 (A4, `ext/sockets` overhead).** Measured at roughly 1–2 µs against a 0.36 µs bar (V-29); the bar was set at 10 % of the fiber round trip but the hook adds a syscall to an already syscall-bound call, which no readiness-probe design meets on this box. A replacement criterion is proposed in the ADR addendum (hook cost < 25 % of the wrapped operation, measured where a syscall can be resolved, compared against blocking the whole thread). Accept or reject.
-- **A6 (TLS read-ahead invisible to `stream_select`) is handed on, not fixed.** The sound fix is an eventfd the stream owns, handed out by `op_cast` — reproduced and diagnosed (docs/research/23), but judged larger than a Phase A item. Schedule it into Phase B, or leave it open.
-- **A3's acceptance criterion ("RSS within ±2 % between the 1M and 10M checkpoints") was shown unsatisfiable by construction** (V-30): RSS is front-loaded, growth stops trending around 5M, and readings past that swing ±10–12 % between adjacent checkpoints — wider than the ±2 % the criterion asks of two single points. Proposed restatement: "no monotonic trend past 5M". Accept or reject.
-- ~~**Five bench scripts still hardcode `/home/user`.**~~ **Done 2026-09-16** — all five fixed with a
-  CI-first fallback (`$PHPSRC`/`$FP`/`$SWOOLE_SRC` → `/home/user/...` when present → `$HOME`), so the
-  CI symlink keeps working. Two were worse than "untidy": `e7-revolt.sh` pointed `IGNIS_PHP_INI` at
-  another machine, so the ini silently did not apply, and `e15-chaos.sh` generated a `run.php` that
-  required an absolute path from that box. `bench/frankenphp/Caddyfile` and `bench/fpm/nginx.conf`
-  were left alone on purpose: neither comparison server is installed here, so a change is
-  unverifiable.
-- **H31 — a request accepted and never answered, ~1 in 400–1200 under inbound load (V-34).** Found
-  once the port collision stopped hiding E6. Characterised and reproducible
-  (`bench/php/e6_underload.php`), root cause not found; it is accept-path/hyper work. It sits
-  under B1's acceptance numbers, which are measured with the same storm shape, so: fix before B1,
-  or accept that B1's numbers carry a 0.1–0.3 % unanswered floor and say so in its V-n.
+This section carried five questions under the heading "outstanding" while the section directly above
+it, "Owner decisions — resolved 2026-09-16", answered four of them and the fifth was struck through
+in place. `STATUS.md` pointed here for "owner sign-off still needed on four points from Phase A", so
+the owner has been asked, for two days, to decide things he had already decided. Kept as an index
+rather than deleted, because the questions are the reason the answers read the way they do:
+
+| question | where it was answered |
+|---|---|
+| ADR-0018 kill criterion 2 (A4, `ext/sockets` overhead): accept the replacement bar or reject it | **accepted**, resolved-2026-09-16 (a); written into `docs/adr/0018-…` |
+| A6 (TLS read-ahead invisible to `stream_select`): schedule into Phase B or leave open | **scheduled as B7, design 2**, resolved-2026-09-16 (b); since made moot — V-49 deleted the mechanism and records A6/B7 PASS in 22.9 µs |
+| A3's acceptance criterion, shown unsatisfiable by construction: accept "no monotonic trend past 5M" or reject | **accepted**, resolved-2026-09-16 (c), re-run by the main agent — **V-35**, not V-30 as this section and `STATUS.md` both said |
+| Five bench scripts hardcoding `/home/user` | **done 2026-09-16**, struck through here at the time |
+| H31, a request accepted and never answered (~1 in 400–1200, V-34): fix before B1 or carry the floor | **fixed before B1**, resolved-2026-09-16 (d) — V-36; reproducer kept as `bench/php/e6_underload.php` |
 
 ## Mission changed by the owner: R&D → product (2026-09-16)
 
@@ -467,3 +465,31 @@ This was caught by CI, not locally: the commit that added the dependency claimed
 `cargo deny` among them. `cargo deny check` belongs in the pre-commit gate list next to fmt and
 clippy whenever `Cargo.toml` changes.
 
+
+## 2026-09-18 — an offload worker keeps no reactor, and the runtime functions say so in PHP
+
+Found auditing the Rust half before adding anything: `Ignis\offload('ignis_inflight')` aborts the
+whole process. Not the job, not the worker thread — SIGABRT, exit 134. The runtime's functions are
+registered once at MINIT and therefore exist on every PHP thread, offload workers included, while
+`module::reactor()` ends in `.expect("reactor not installed on this PHP thread")`. A panic inside a
+`zif_` frame cannot unwind out of `extern "C"`, so Rust aborts rather than propagating. Twenty-one
+call sites reached that `expect`, `ignis_submit_sleep` — that is, `Ignis\sleep()` — among them.
+
+The obvious fix was to give offload workers a reactor: one line, and every call site works. It was
+written, and then reverted, because two other mechanisms read the *absence* of a reactor as the
+marker of such a thread — `route::routing_here()` says so in its own comment ("never on offload
+workers: they have no reactor") and `park.rs` falls through to the blocking call. Installing one
+made an offloaded `SQLite3` call route itself to offload again; the E16 bench hung, which is how
+this was caught rather than shipped. It would also have let a fiber created inside an offloaded job
+park on a reactor nobody polls: a hang in place of an abort.
+
+So the decision is the other way round, and it matches ADR-0016 rather than working against it: an
+offload worker is a synchronous thread and has no reactor **by definition**, that absence stays the
+one marker the other mechanisms read, and the runtime functions that need a reactor refuse in PHP —
+`module::reactor_or_throw()` throws a `Error`, the job fails with a `RemoteException`, the pool and
+the server carry on. Verified: the same probe now returns the exception to its caller and the
+process exits 0.
+
+Kill criterion: if a legitimate offloaded workload needs one of these functions, the answer is not
+to install a reactor behind its back but to decide what that function means on a thread with no
+event loop — and to write that down here first.

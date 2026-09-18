@@ -142,17 +142,35 @@ pub unsafe extern "C" fn ub_write(str_: *const c_char, str_length: usize) -> usi
     }
 
     // Nobody is capturing: stdout, unbuffered, the way a script expects.
+    write_all_to_stdout(bytes)
+}
+
+/// Writes the whole buffer to fd 1 and returns how much of it went out.
+///
+/// The raw syscall, not `libc::write`, for the reason `park.rs` states at the top of the module: that
+/// wrapper is a symbol this binary exports, so calling it here lets a handler re-enter itself the day
+/// the policy table names this binary. And a signal is not the end of the write: `EINTR` used to break
+/// the loop, dropping the rest of the output while the caller was told the whole string had gone out.
+fn write_all_to_stdout(bytes: &[u8]) -> usize {
     let mut written = 0;
-    while written < str_length {
-        // SAFETY: a plain write of the caller's buffer to fd 1.
-        let n = unsafe { libc::write(1, bytes[written..].as_ptr() as *const libc::c_void, str_length - written) };
-        if n <= 0 {
+    while written < bytes.len() {
+        // SAFETY: `bytes` is the caller's live buffer and the offset is inside it, so write(2) reads
+        // only bytes that exist; fd 1 is not dereferenced.
+        let n = unsafe { libc::syscall(libc::SYS_write, 1, bytes[written..].as_ptr(), bytes.len() - written) };
+        if n < 0 {
+            // SAFETY: __errno_location() is the thread's own errno slot.
+            if unsafe { *libc::__errno_location() } == libc::EINTR {
+                continue;
+            }
+            break;
+        }
+        if n == 0 {
             break;
         }
         written += n as usize;
     }
 
-    str_length
+    written
 }
 
 /// `ignis_capture_start(): bool` — this fiber's output goes to a fresh buffer until it is taken.

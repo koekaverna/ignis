@@ -48,7 +48,7 @@ unsafe fn save_current_view() {
     // before being overwritten, so no entry is dropped without its refcount.
     unsafe {
         let owner = VIEW.with(|v| v.get());
-        let snap = snapshot();
+        let mut snap = snapshot();
         if owner.is_null() {
             BASE.with(|b| {
                 let mut b = b.borrow_mut();
@@ -58,7 +58,10 @@ unsafe fn save_current_view() {
                 *b = Some(snap);
             });
         } else {
-            let slot = slot_of(owner);
+            let Some(slot) = slot_of(owner) else {
+                release(&mut snap);
+                return;
+            };
             if (*slot).is_null() {
                 *slot = Box::into_raw(Box::new(snap));
             } else {
@@ -79,7 +82,9 @@ unsafe fn isolate_current() {
             return; // {main}: the base world itself
         }
         let ctx = &raw mut (*fiber).context;
-        let slot = slot_of(ctx);
+        let Some(slot) = slot_of(ctx) else {
+            return; // isolation was never installed: the four arrays stay unscoped, as asked
+        };
         if (*slot).is_null() {
             // Whatever is installed right now belongs to the current view's owner (the base world,
             // or an isolated ancestor): save it there, then this fiber takes over as owner.
@@ -95,10 +100,17 @@ unsafe fn undef4() -> [sys::zval; 4] {
     unsafe { [undef(), undef(), undef(), undef()] }
 }
 
-unsafe fn slot_of(ctx: *mut sys::zend_fiber_context) -> *mut *mut [sys::zval; 4] {
-    // SAFETY: `reserved` is a fixed array of ZEND_MAX_RESERVED_RESOURCES void*
-    // and SLOT is < that (checked at MINIT).
-    unsafe { (&raw mut (*ctx).reserved[*SLOT.get().unwrap_unchecked()]) as *mut *mut [sys::zval; 4] }
+/// The context's own `[zval; 4]`, or `None` when no slot was ever claimed.
+///
+/// `SLOT` stays unset in two supported cases — `IGNIS_NO_SUPERGLOBALS`, the hook-off control every
+/// hook claim needs, and an exhausted reserved-slot table — while `ignis_set_superglobals` is in the
+/// function table either way. Returning an index that was never handed out read an uninitialised
+/// `OnceLock` and indexed `reserved[]` with whatever it held.
+unsafe fn slot_of(ctx: *mut sys::zend_fiber_context) -> Option<*mut *mut [sys::zval; 4]> {
+    let index = *SLOT.get()?;
+    // SAFETY: `reserved` is a fixed array of ZEND_MAX_RESERVED_RESOURCES void* and `index` came from
+    // zend_get_resource_handle, which hands out one of those (MINIT refuses a negative handle).
+    Some(unsafe { (&raw mut (*ctx).reserved[index]) as *mut *mut [sys::zval; 4] })
 }
 
 /// `&EG(symbol_table)` for the calling thread.
@@ -172,7 +184,9 @@ unsafe extern "C" fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys:
     unsafe {
         SWITCHES.with(|c| c.set(c.get() + 1));
         let _ = from;
-        let to_slot = slot_of(to);
+        let Some(to_slot) = slot_of(to) else {
+            return;
+        };
         let to_isolated = !(*to_slot).is_null();
         let to_main = to == (*tsrm::executor_globals()).main_fiber_context;
         let owner = VIEW.with(|v| v.get());
@@ -204,7 +218,9 @@ unsafe extern "C" fn on_destroy(ctx: *mut sys::zend_fiber_context) {
     // SAFETY: called from zend_fiber_destroy_context on the owning thread;
     // the box was created by on_switch and is not referenced anywhere else.
     unsafe {
-        let slot = slot_of(ctx);
+        let Some(slot) = slot_of(ctx) else {
+            return;
+        };
         if !(*slot).is_null() {
             let mut b = Box::from_raw(*slot);
             release(&mut b);
@@ -267,5 +283,18 @@ pub unsafe extern "C" fn zif_ignis_set_superglobals(ex: *mut sys::zend_execute_d
         isolate_current(); // captures the base world first (E13')
         install(&vals);
         zval::set_null(rv);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The hook-off control (`IGNIS_NO_SUPERGLOBALS`) and an exhausted reserved-slot table both leave
+    /// `SLOT` unset while `ignis_set_superglobals` stays callable, so "no slot" has to be an answer
+    /// rather than an index nobody handed out.
+    #[test]
+    fn a_context_has_no_slot_until_minit_claims_one() {
+        // SAFETY: MINIT never runs in a test binary, so `SLOT` is empty and `slot_of` returns before
+        // it forms a pointer into the context -- the null argument is never read.
+        assert!(unsafe { super::slot_of(std::ptr::null_mut()) }.is_none());
     }
 }

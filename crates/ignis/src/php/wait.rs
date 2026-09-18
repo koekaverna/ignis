@@ -24,7 +24,10 @@ use crate::reactor::Outcome;
 thread_local! {
     /// op id → fiber parked inside a stream op.
     static PARKED: RefCell<HashMap<u64, *mut sys::zend_fiber>> = RefCell::new(HashMap::new());
-    /// op id → outcome delivered by `ignis_poll` before the fiber is resumed.
+    /// op id → outcome delivered by `ignis_poll` before the fiber is resumed. An outcome is taken
+    /// out by the fiber it was delivered for, including when that fiber wakes into an unwind: a
+    /// cancellation arriving after the completion left one entry per cancelled park behind for the
+    /// life of the thread.
     static RESULTS: RefCell<HashMap<u64, Outcome>> = RefCell::new(HashMap::new());
 }
 
@@ -52,6 +55,7 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
         sys::zval_ptr_dtor(&mut ret);
         if !(*tsrm::executor_globals()).exception.is_null() {
             PARKED.with(|p| p.borrow_mut().remove(&id));
+            RESULTS.with(|r| r.borrow_mut().remove(&id));
             return None;
         }
         RESULTS.with(|r| r.borrow_mut().remove(&id))
@@ -89,6 +93,12 @@ pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
             }
         });
         if !(*tsrm::executor_globals()).exception.is_null() {
+            RESULTS.with(|r| {
+                let mut r = r.borrow_mut();
+                for id in ids {
+                    r.remove(id);
+                }
+            });
             return None;
         }
         RESULTS.with(|r| {

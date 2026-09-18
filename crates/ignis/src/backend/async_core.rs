@@ -38,6 +38,9 @@ thread_local! {
 /// # Safety
 /// PHP thread after startup.
 unsafe fn current_coroutine() -> *mut sys::zend_coroutine_t {
+    // SAFETY: the caller upholds `# Safety` above -- a PHP thread after startup, so the TSRM cache
+    // for this thread exists and `zend_async_globals_offset` is the offset the engine published for
+    // it. The result is a pointer into this thread's own globals, taken without forming a reference.
     unsafe {
         let base = sys::tsrm_get_ls_cache() as *mut u8;
         let g = base.add(sys::zend_async_globals_offset) as *mut sys::zend_async_globals_t;
@@ -98,10 +101,7 @@ unsafe extern "C" fn idle_hook() -> bool {
         let done = crate::php::module::reactor().poll(None);
         let mut any = false;
         for c in done {
-            let payload = match c.outcome {
-                Outcome::Slept { late_us } => late_us as i64,
-                Outcome::Request(_) => -2, // HTTP on backend (b) is out of scope for H9b
-            };
+            let payload = outcome_payload(c.outcome);
             RESULTS.with(|r| r.borrow_mut().insert(c.id, payload));
             if let Some(co) = WAITING.with(|w| w.borrow_mut().remove(&c.id)) {
                 // ZEND_ASYNC_ENQUEUE_COROUTINE(co): status QUEUED, pushed on the FIFO.
@@ -118,4 +118,24 @@ unsafe extern "C" fn idle_hook() -> bool {
 pub fn install() {
     // SAFETY: the exported setter only stores the pointer.
     unsafe { sys::test_scheduler_set_idle_hook(Some(idle_hook)) }
+}
+
+/// A completion as backend (b) sees it: the timer's lateness, or `-2` for everything H9b does not
+/// carry there (HTTP, gRPC, offload and the Custom-op results all belong to the mainline backend).
+///
+/// It is a function with an exhaustive match rather than two arms inline, because two arms is what
+/// it was: `Outcome` grew to nine variants while this file, which no build on the developer box and
+/// no CI job compiles, kept matching two of them and stopped compiling without anyone noticing.
+fn outcome_payload(outcome: Outcome) -> i64 {
+    match outcome {
+        Outcome::Slept { late_us } => late_us as i64,
+        Outcome::Request(_)
+        | Outcome::Ready
+        | Outcome::Cancelled { .. }
+        | Outcome::Json(_)
+        | Outcome::Failed(_)
+        | Outcome::Blob(_)
+        | Outcome::OffloadCallback { .. }
+        | Outcome::Error(_) => -2,
+    }
 }
