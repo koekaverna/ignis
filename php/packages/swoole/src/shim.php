@@ -126,11 +126,13 @@ namespace Swoole {
 
         public static function getCid(): int
         {
-            return (int) \Ignis\Scope::get('swoole.cid', -1);
+            $cid = \Ignis\Scope::get('swoole.cid', -1);
+            return \is_int($cid) ? $cid : -1;
         }
         public static function getPcid(): int
         {
-            return (int) \Ignis\Scope::get('swoole.pcid', -1);
+            $pcid = \Ignis\Scope::get('swoole.pcid', -1);
+            return \is_int($pcid) ? $pcid : -1;
         }
         public static function exists(int $cid): bool
         {
@@ -143,8 +145,8 @@ namespace Swoole {
         /** @param array<string, mixed> $options */
         public static function set(array $options): void
         {
-            if (isset($options['hook_flags'])) {
-                Runtime::$configured = (int) $options['hook_flags'];
+            if (\is_int($options['hook_flags'] ?? null)) {
+                Runtime::$configured = $options['hook_flags'];
             }
         }
         /** @return array<string, int> */

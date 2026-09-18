@@ -52,6 +52,9 @@ final class StubsMatchTheBinaryTest extends TestCase
         foreach ([$root . '/php/packages', $root . '/examples'] as $directory) {
             $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory));
             foreach ($files as $file) {
+                if (!$file instanceof \SplFileInfo) {
+                    continue;
+                }
                 if ($file->getExtension() !== 'php' || str_contains($file->getPathname(), '/vendor/')) {
                     continue;
                 }

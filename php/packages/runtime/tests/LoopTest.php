@@ -88,6 +88,27 @@ final class LoopTest extends LoopTestCase
         self::assertSame(1, Loop::$fibersCreated);
     }
 
+    /**
+     * `Fiber::suspend()` erases the resume value's type to `mixed`, so the only place left to
+     * enforce "a pool fiber is only ever resumed with a Job" is a runtime check on the value itself.
+     */
+    public function testAPoolFiberResumedWithSomethingOtherThanAJobIsRejected(): void
+    {
+        Loop::spawn(static fn(): int => 1);
+        Loop::run();
+
+        $idle = self::get('idle');
+        if (!\is_array($idle) || !isset($idle[0]) || !$idle[0] instanceof \Fiber) {
+            self::fail('expected one idle fiber after the first job finished');
+        }
+        self::set('idle', []);
+        self::set('ready', [[$idle[0], 'not-a-job']]);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('a pool fiber was resumed with something other than a Job');
+        Loop::run();
+    }
+
     // ---- admission control (ADR-0019) ------------------------------------------------------
 
     public function testRequestsAreAdmittedUpToTheBudgetAndThenQueuedAsData(): void
@@ -237,6 +258,20 @@ final class LoopTest extends LoopTestCase
         Loop::deadline(5);
     }
 
+    /** `Ignis\Scope` is a generic bag, so a request id that is not an int is a bug, not a `mixed` PHPStan has to trust. */
+    public function testDeadlineRejectsARequestScopeThatIsNotAnInt(): void
+    {
+        Scope::set('ignis.request', 'not-an-int');
+
+        try {
+            $this->expectException(\LogicException::class);
+            $this->expectExceptionMessage('the ignis.request scope holds something other than an int');
+            Loop::deadline(5);
+        } finally {
+            Scope::set('ignis.request', null);
+        }
+    }
+
     public function testDeadlineRegistersATimerAgainstTheCurrentRequest(): void
     {
         Scope::set('ignis.request', 42);
@@ -330,7 +365,11 @@ final class LoopTest extends LoopTestCase
         });
         $fiber->start();
 
-        self::assertArrayHasKey(7, self::get('waiting'));
+        $waiting = self::get('waiting');
+        if (!\is_array($waiting)) {
+            self::fail('Loop::$waiting is not an array');
+        }
+        self::assertArrayHasKey(7, $waiting);
         self::assertNotSame([], self::get('parkedOn'));
 
         self::call('throwInto', $fiber, new CancelledException('bye'));
@@ -366,6 +405,36 @@ final class LoopTest extends LoopTestCase
 
         self::assertSame([$fromFinally], Loop::$unobserved, 'a genuine user error is kept for the unobserved report');
         Loop::$unobserved = [];
+    }
+
+    // ---- unawaited reactor completions, off the wire (S4-MIXED) ----------------------------
+
+    public function testAnUnawaitedRequestCompletionWithANonStringMethodIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('a malformed request completion');
+        self::call('dispatchUnawaited', 1, ['method' => 7, 'uri' => '/', 'headers' => [], 'body' => '']);
+    }
+
+    public function testAnUnawaitedRequestCompletionWithAMalformedHeaderIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('a malformed request completion header');
+        self::call('dispatchUnawaited', 1, ['method' => 'GET', 'uri' => '/', 'headers' => ['x' => 7], 'body' => '']);
+    }
+
+    public function testAnUnawaitedCancelCompletionMissingAgeUsIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('a cancel completion is missing an int age_us');
+        self::call('dispatchUnawaited', 1, ['kind' => 'cancel']);
+    }
+
+    public function testAnUnawaitedOffloadCallbackCompletionMissingAFieldIsRejected(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('a malformed offload_cb completion');
+        self::call('dispatchUnawaited', 1, ['kind' => 'offload_cb', 'job' => 1, 'seq' => 1, 'cb' => 1]);
     }
 
     // ---- response dispatch -----------------------------------------------------------------
@@ -524,7 +593,13 @@ final class LoopTest extends LoopTestCase
 
     private static function queued(): int
     {
-        return \count(self::get('requestQueue')) - self::get('queueHead');
+        $requestQueue = self::get('requestQueue');
+        $queueHead = self::get('queueHead');
+        if (!\is_array($requestQueue) || !\is_int($queueHead)) {
+            self::fail('Loop::$requestQueue or Loop::$queueHead has an unexpected type');
+        }
+
+        return \count($requestQueue) - $queueHead;
     }
 
     private static function serveOnce(int $id, callable $handler): void

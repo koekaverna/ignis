@@ -125,6 +125,9 @@ final class ShimTest extends TestCase
         Coroutine::defer(static function (): void {});
 
         $defers = (new \ReflectionProperty(Coroutine::class, 'defers'))->getValue();
+        self::assertIsArray($defers);
+        self::assertArrayHasKey(4, $defers);
+        self::assertIsArray($defers[4]);
         self::assertCount(2, $defers[4], 'they run in reverse at the end of coroutine 4');
     }
 

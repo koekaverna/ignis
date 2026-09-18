@@ -16,7 +16,19 @@ final class FiberRequestStack extends RequestStack
     /** @return list<Request> */
     private function stack(): array
     {
-        return Scope::get(self::KEY, []);
+        $stack = Scope::get(self::KEY, []);
+        if (!\is_array($stack)) {
+            throw new \LogicException('Ignis\\Symfony\\FiberRequestStack: scope key "' . self::KEY . '" holds something other than an array');
+        }
+        $requests = [];
+        foreach ($stack as $item) {
+            if (!$item instanceof Request) {
+                throw new \LogicException('Ignis\\Symfony\\FiberRequestStack: scope key "' . self::KEY . '" holds something other than a Request');
+            }
+            $requests[] = $item;
+        }
+
+        return $requests;
     }
 
     public function push(Request $request): void

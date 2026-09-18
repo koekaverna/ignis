@@ -160,7 +160,11 @@ final class RequestTest extends TestCase
             ['name' => 'n[]', 'value' => 'next'],
         ]);
         [, , $post] = (new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body))->superglobals();
-        self::assertSame(['name' => 'ada'], $post['u']['profile']);
+        $profile = $post['u'];
+        if (!\is_array($profile)) {
+            self::fail('expected $post[\'u\'] to be an array');
+        }
+        self::assertSame(['name' => 'ada'], $profile['profile']);
         self::assertSame(['3' => 'three', '4' => 'next'], $post['n'], 'parse_str continues after the highest numeric key');
     }
 

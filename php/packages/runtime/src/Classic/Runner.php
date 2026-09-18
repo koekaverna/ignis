@@ -68,7 +68,7 @@ final class Runner
                 return null; // the loop stopped and nothing is pending
             }
             [$id, $raw] = $next;
-            $req = new Request($raw['method'], $raw['uri'], $raw['headers'], $raw['body'], $id);
+            $req = self::requestFrom($id, $raw);
             [$file, $script, $pathInfo] = self::resolve($req->path());
             if ($file === null) {
                 \ignis_respond($id, 404, ['content-type' => 'text/plain'], "404 Not Found\n");
@@ -117,6 +117,40 @@ final class Runner
         $r = self::response();
         self::$sent = $id;
         return \ignis_respond($id, $r->status, $r->headers, $r->body);
+    }
+
+    /**
+     * The raw request handed over by the loop is data off the reactor, not a fact about its shape.
+     * @param array<string, mixed> $raw
+     */
+    private static function requestFrom(int $id, array $raw): Request
+    {
+        $method = $raw['method'] ?? null;
+        $uri = $raw['uri'] ?? null;
+        $headers = $raw['headers'] ?? null;
+        $body = $raw['body'] ?? null;
+        if (!\is_string($method) || !\is_string($uri) || !\is_array($headers) || !\is_string($body)) {
+            throw new \UnexpectedValueException('Ignis\\Classic\\Runner: malformed raw request');
+        }
+
+        return new Request($method, $uri, self::stringHeaders($headers), $body, $id);
+    }
+
+    /**
+     * @param array<array-key, mixed> $headers
+     * @return array<string, string>
+     */
+    private static function stringHeaders(array $headers): array
+    {
+        $out = [];
+        foreach ($headers as $name => $value) {
+            if (!\is_string($name) || !\is_string($value)) {
+                throw new \UnexpectedValueException('Ignis\\Classic\\Runner: malformed raw request headers');
+            }
+            $out[$name] = $value;
+        }
+
+        return $out;
     }
 
     /** @return array{0:?string,1:string,2:string} [file, SCRIPT_NAME, PATH_INFO]: the longest prefix that is a file wins. */
@@ -254,7 +288,9 @@ final class Runner
             return null; // native cookie handling needs SG(headers_sent)=0, which php_embed_init() never leaves
         }
         unset($_SESSION); // left over from the previous request on this thread (no RSHUTDOWN in worker mode)
-        session_id($sid = $_COOKIE[session_name()] ?? '');
+        $cookie = $_COOKIE[session_name()] ?? '';
+        $sid = \is_string($cookie) ? $cookie : '';
+        session_id($sid);
         return $sid;
     }
 

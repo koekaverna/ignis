@@ -6,7 +6,7 @@ namespace Ignis;
 
 /**
  * @phpstan-type Job array{0: callable, 1: array<array-key, mixed>, 2: Future}
- * @phpstan-type RawRequest array<string, mixed>
+ * @phpstan-type RawRequest array{method: string, uri: string, headers: array<string, string>, body: string}
  */
 final class Loop
 {
@@ -141,15 +141,32 @@ final class Loop
                 $future->reject($e);
             }
             self::$idle[] = $self;
-            $job = \Fiber::suspend();
+            $job = self::nextJob();
         }
+    }
+
+    /**
+     * A pool fiber is only ever resumed by resumeReady(), which only ever hands it a Job — but
+     * that guarantee lives outside the type system, on the other side of Fiber::suspend()'s erased
+     * generic, so the boundary is checked rather than assumed.
+     * @return Job
+     */
+    private static function nextJob(): array
+    {
+        $job = \Fiber::suspend();
+        if (!\is_array($job) || !\array_key_exists(0, $job) || !\array_key_exists(1, $job) || !\array_key_exists(2, $job)
+            || !\is_callable($job[0]) || !\is_array($job[1]) || !$job[2] instanceof Future) {
+            throw new \LogicException('Ignis\\Loop: a pool fiber was resumed with something other than a Job');
+        }
+
+        return [$job[0], $job[1], $job[2]];
     }
 
     /** Run $fn concurrently; a parked pool fiber is reused when available. */
     public static function spawn(callable $fn, mixed ...$args): Future
     {
         $future = new Future();
-        $requestId = Scope::get('ignis.request');
+        $requestId = self::currentRequestId();
         if ($requestId !== null) {
             $fn = self::attributedToRequest($fn, $args, $requestId);
             $args = [];
@@ -181,6 +198,17 @@ final class Loop
             throw new \LogicException('Ignis\\Loop: this runs inside a fiber, never on the main stack');
         }
         return $fiber;
+    }
+
+    /** Scope is a generic key-value bag, but this key only ever holds the request id it was set to. */
+    private static function currentRequestId(): ?int
+    {
+        $requestId = Scope::get('ignis.request');
+        if ($requestId !== null && !\is_int($requestId)) {
+            throw new \LogicException('Ignis\\Loop: the ignis.request scope holds something other than an int');
+        }
+
+        return $requestId;
     }
 
     /**
@@ -375,18 +403,86 @@ final class Loop
 
     /**
      * A completion no fiber is waiting for, as the reactor's tagged union: a cancelled request, an
-     * offload callback (E16), or a new request — which carries no tag, only a method.
-     * @param array<string, mixed> $payload
+     * offload callback (E16), or a new request — which carries no tag, only a method. It arrives
+     * off the reactor as `array<array-key, mixed>`, so every field is checked before use.
+     * @param array<array-key, mixed> $payload
      */
     private static function dispatchUnawaited(int $id, array $payload): void
     {
-        $kind = $payload['kind'] ?? (isset($payload['method']) ? 'request' : '');
-        match ($kind) {
-            'cancel' => self::cancelRequest($id, new CancelledException('client disconnected'), (int) $payload['age_us']),
-            'offload_cb' => (self::$offloadCallbackHandler ?? static fn() => null)($payload),
-            'request' => self::dispatchRequest($id, $payload),
-            default => null,
-        };
+        if (($payload['method'] ?? null) !== null) {
+            self::dispatchRequest($id, self::asRawRequest($payload));
+            return;
+        }
+        if (($payload['kind'] ?? null) === 'cancel') {
+            self::cancelRequest($id, new CancelledException('client disconnected'), self::asAgeUs($payload));
+            return;
+        }
+        if (($payload['kind'] ?? null) === 'offload_cb') {
+            (self::$offloadCallbackHandler ?? static fn() => null)(self::asOffloadCallback($payload));
+        }
+    }
+
+    /** @param array<array-key, mixed> $payload */
+    private static function asAgeUs(array $payload): int
+    {
+        $ageUs = $payload['age_us'] ?? null;
+        if (!\is_int($ageUs)) {
+            throw new \UnexpectedValueException('Ignis\\Loop: a cancel completion is missing an int age_us');
+        }
+
+        return $ageUs;
+    }
+
+    /**
+     * @param array<array-key, mixed> $payload
+     * @return array{kind: string, job: int, seq: int, cb: int, args: string}
+     */
+    private static function asOffloadCallback(array $payload): array
+    {
+        $job = $payload['job'] ?? null;
+        $seq = $payload['seq'] ?? null;
+        $cb = $payload['cb'] ?? null;
+        $args = $payload['args'] ?? null;
+        if (!\is_int($job) || !\is_int($seq) || !\is_int($cb) || !\is_string($args)) {
+            throw new \UnexpectedValueException('Ignis\\Loop: a malformed offload_cb completion');
+        }
+
+        return ['kind' => 'offload_cb', 'job' => $job, 'seq' => $seq, 'cb' => $cb, 'args' => $args];
+    }
+
+    /**
+     * The request handed over by the loop is data off the reactor, not a fact about its shape.
+     * @param array<array-key, mixed> $payload
+     * @return RawRequest
+     */
+    private static function asRawRequest(array $payload): array
+    {
+        $method = $payload['method'] ?? null;
+        $uri = $payload['uri'] ?? null;
+        $headers = $payload['headers'] ?? null;
+        $body = $payload['body'] ?? null;
+        if (!\is_string($method) || !\is_string($uri) || !\is_array($headers) || !\is_string($body)) {
+            throw new \UnexpectedValueException('Ignis\\Loop: a malformed request completion');
+        }
+
+        return ['method' => $method, 'uri' => $uri, 'headers' => self::asStringHeaders($headers), 'body' => $body];
+    }
+
+    /**
+     * @param array<array-key, mixed> $headers
+     * @return array<string, string>
+     */
+    private static function asStringHeaders(array $headers): array
+    {
+        $out = [];
+        foreach ($headers as $name => $value) {
+            if (!\is_string($name) || !\is_string($value)) {
+                throw new \UnexpectedValueException('Ignis\\Loop: a malformed request completion header');
+            }
+            $out[$name] = $value;
+        }
+
+        return $out;
     }
 
     /**
@@ -528,7 +624,7 @@ final class Loop
             return;
         }
         if (self::$fiberBudget > 0 && self::$inflightRequests >= self::$fiberBudget
-            && !self::isExempt((string) ($raw['uri'] ?? ''))) {
+            && !self::isExempt($raw['uri'])) {
             self::queueRequest($id, $raw);
             return;
         }
@@ -571,7 +667,7 @@ final class Loop
         while (self::$queueHead < \count(self::$requestQueue)
             && (self::$fiberBudget <= 0 || self::$inflightRequests < self::$fiberBudget)) {
             [$id, $raw] = self::$requestQueue[self::$queueHead];
-            self::$requestQueue[self::$queueHead] = [$id, []];
+            self::$requestQueue[self::$queueHead] = [$id, ['method' => '', 'uri' => '', 'headers' => [], 'body' => '']];
             ++self::$queueHead;
             if (isset(self::$queueCancelled[$id])) {
                 unset(self::$queueCancelled[$id]);
@@ -592,10 +688,10 @@ final class Loop
         ++self::$inflightRequests;
         $handler = self::$requestHandler;
         $request = new Http\Request(
-            (string) $raw['method'],
-            (string) $raw['uri'],
-            (array) $raw['headers'],
-            (string) $raw['body'],
+            $raw['method'],
+            $raw['uri'],
+            $raw['headers'],
+            $raw['body'],
             $id,
         );
         self::spawn(static function () use ($handler, $request, $id): void {
@@ -842,7 +938,7 @@ final class Loop
     /** Wall-clock deadline for the current request (E11): after $ms the request fiber and its children get DeadlineExceededException. */
     public static function deadline(int $ms): void
     {
-        $requestId = Scope::get('ignis.request');
+        $requestId = self::currentRequestId();
         if ($requestId === null) {
             throw new \LogicException('Ignis\\deadline() must be called inside a request');
         }

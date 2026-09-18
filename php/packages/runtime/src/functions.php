@@ -78,7 +78,8 @@ function write(string $chunk): void
     }
     $r = Loop::awaitOp($op);
     if (\is_array($r)) {
-        throw new \RuntimeException($r['message'] ?? 'stream write failed');
+        $message = $r['message'] ?? null;
+        throw new \RuntimeException(\is_string($message) ? $message : 'stream write failed');
     }
 }
 
