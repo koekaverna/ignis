@@ -44,38 +44,28 @@ final class FiberEntityManager implements EntityManagerInterface, ResetInterface
     /** This fiber's manager, built on first use and replaced once Doctrine has closed it. */
     private function em(): EntityManagerInterface
     {
-        $em = Scope::get($this->key);
-        if (!$em instanceof EntityManagerInterface || !$em->isOpen()) {
-            /** @var EntityManagerInterface $em */
-            $em = $this->locator->get($this->innerId);
-            Scope::set($this->key, $em);
+        $held = Scope::get($this->key);
+        if (!$held instanceof FiberManager || !$held->manager->isOpen()) {
+            /** @var EntityManagerInterface $manager */
+            $manager = $this->locator->get($this->innerId);
+            $held = new FiberManager($manager);
+            Scope::set($this->key, $held);
         }
 
-        return $em;
+        return $held->manager;
     }
 
     /**
-     * Request end. `clear()` alone is not enough: `EntityManager::clear()` is `UnitOfWork::clear()`
-     * and nothing more (`EntityManager.php:425-428` in orm 3.7.1) — it does **not** roll back, and
-     * nothing in DoctrineBundle does either, so a request that dies between `beginTransaction()` and
-     * `commit()` would hand its open transaction to the next request on the same pooled fiber.
+     * Request end, when Symfony's own resetter runs. It is not what makes the release happen under
+     * Ignis — `Scope::clear()` drops the fiber's `FiberManager` and its destructor does the work,
+     * on every request, whether or not anything resets services. Both paths land in the same
+     * idempotent `release()`.
      */
     public function reset(): void
     {
-        $em = Scope::get($this->key);
-        if (!$em instanceof EntityManagerInterface) {
-            return;
-        }
-        try {
-            $connection = $em->getConnection();
-            while ($connection->isTransactionActive()) {
-                $connection->rollBack();
-            }
-        } catch (\Throwable) {
-            // A connection that is already gone needs no rollback.
-        }
-        if ($em->isOpen()) {
-            $em->clear();
+        $held = Scope::get($this->key);
+        if ($held instanceof FiberManager) {
+            $held->release();
         }
         Scope::set($this->key, null);
     }

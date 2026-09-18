@@ -4081,3 +4081,38 @@ implemented; the compiled container shows the manager taking
 Gates for the change: `cargo nextest` 60/60, PHP suite **302 tests / 718 assertions** (five new cases
 on the compiler pass), `bench/e24` GREEN (four arms), `bench/e21` GREEN, `bench/e23` GREEN,
 `scripts/smoke.sh` GREEN.
+
+### V-85 addendum — the connection was not reused, and until this addendum it was not released either
+
+Date: 2026-09-18T15:5xZ. Owner's follow-up: are connections reused once a request lets them go? The
+measurement says no to the first half and found something worse in the second. `bench/e24`'s new
+sequential arm sends 30 requests one after another and reads `pg_backend_pid()` out of each answer:
+
+| | distinct backends for 30 sequential requests | still open on the server at the end |
+|---|---|---|
+| loop GC on (the default) | 30 | **8** |
+| loop GC off, PHP's own collector | 30 | **31** |
+| after the fix below, both policies | 30 | **0** |
+
+**No reuse, by design so far:** a fresh connection per request, which is what `S-DBAL-POOL` exists to
+change. **No release either, which was a defect:** `Scope`'s contract says a resource "releases
+through its destructor when the reference goes" — and for Doctrine the reference going frees nothing,
+because `EntityManager` and `UnitOfWork` hold each other. The cycle waits for a collection that the
+request boundary does not schedule, so open connections tracked requests *served* since the last
+collection rather than requests in flight. At 31 of them against a stock `max_connections` of 100,
+one thread exhausts the server in about a hundred requests.
+
+`FiberEntityManager::reset()` could not have saved it: nothing calls it per request under Ignis.
+Symfony's resetter is what fires `kernel.reset`, and research 36 already found that it effectively
+never runs while requests overlap; the per-request cleanup here is `Loop`'s `Scope::clear()` (V-67),
+which drops the value and nothing more.
+
+**The fix** is `Ignis\Doctrine\FiberManager`: the scope holds a small handle instead of the manager
+itself. The handle is in no cycle, so `Scope::clear()` takes its refcount to zero and its destructor
+rolls back whatever is open, closes the connection and clears the manager — on every request, with no
+collector involved. `reset()` now routes into the same idempotent `release()`, so the Symfony path
+still works where it does run. Gate: the sequential arm fails if more than two connections are left
+open, which is the shape the defect had.
+
+Also corrected in this entry: the price paragraph above said "open connections equal to requests in
+flight". That was the intent, not the measurement — it is true only with this addendum applied.

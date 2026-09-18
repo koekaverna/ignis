@@ -26,7 +26,7 @@ $dsn = getenv('PG_PDO_DSN') ?: 'pgsql:host=e24-pg;dbname=ignis';
 $user = getenv('PG_USER') ?: 'ignis';
 $password = getenv('PG_PASSWORD') ?: 'ignis';
 
-$connect = static fn (): PDO => new PDO($dsn, $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+$connect = static fn(): PDO => new PDO($dsn, $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 
 $ok = 0;
 $wrong = 0;

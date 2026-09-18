@@ -23,14 +23,15 @@ final class PgProbe
         $seconds = (float) $request->query->get('sleep', 0);
 
         try {
-            $marker = $this->em->getConnection()
-                ->executeQuery('SELECT pg_sleep(CAST(? AS double precision)), CAST(? AS text) AS marker', [$seconds, $tag])
-                ->fetchAssociative()['marker'] ?? null;
+            $row = $this->em->getConnection()
+                ->executeQuery('SELECT pg_sleep(CAST(? AS double precision)), CAST(? AS text) AS marker, pg_backend_pid() AS backend', [$seconds, $tag])
+                ->fetchAssociative();
 
             return new JsonResponse([
                 'tag' => $tag,
-                'marker' => $marker,
-                'match' => $marker === $tag,
+                'marker' => $row['marker'] ?? null,
+                'match' => ($row['marker'] ?? null) === $tag,
+                'backend' => $row['backend'] ?? null,
                 'connection' => spl_object_id($this->em->getConnection()),
                 'error' => null,
             ]);

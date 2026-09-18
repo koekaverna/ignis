@@ -57,8 +57,11 @@ BIN=${IGNIS_BIN:-./target/release/ignis}
 fail=0
 
 echo "== raw PDO handles"
-own=$(timeout 120 "$BIN" --threads 1 bench/php/e24_pdo_sharing.php own "$FIBERS" 2>&1 | grep '^e24 ')
-shared=$(timeout 120 "$BIN" --threads 1 bench/php/e24_pdo_sharing.php shared "$FIBERS" 2>&1 | grep '^e24 ')
+own=$(timeout -k 5 60 "$BIN" --threads 1 bench/php/e24_pdo_sharing.php own "$FIBERS" 2>&1 | grep '^e24 ')
+# -k, because the third failure mode of a shared handle is a fiber that never comes back: it waits
+# for bytes another fiber already took, and then a graceful shutdown waits for that fiber forever.
+shared=$(timeout -k 5 30 "$BIN" --threads 1 bench/php/e24_pdo_sharing.php shared "$FIBERS" 2>&1 | grep '^e24 ')
+[ -n "$shared" ] || shared="e24 shared fibers=$FIBERS ok=0 — the fibers never came back (wedged, killed at 30 s)"
 echo "  $own"
 echo "  $shared"
 case "$own" in *"ok=$FIBERS "*"errors=0 "*) ;; *) echo "  FAIL: the control arm did not answer $FIBERS correct rows"; fail=1;; esac
@@ -109,6 +112,45 @@ symfony_probe() {
   if [ "$want" = clean ] && [ "$mismatches" != 0 ]; then echo "  FAIL: $label must keep every request on its own connection"; fail=1; fi
   if [ "$want" = control ] && [ "$mismatches" = 0 ]; then echo "  FAIL: the control stopped reproducing the bug — the probe is measuring nothing"; fail=1; fi
 }
+
+# Sequential requests: is a finished request's connection reused by the next one, and when is it
+# closed? The per-fiber EntityManager is dropped at request end (V-67), but EntityManager and
+# UnitOfWork reference each other, so refcounting cannot free the cycle — only the collector can,
+# and `IGNIS_LOOP_GC` takes it off the hot path by default (gc_disable + a collection at an idle
+# point once the root buffer crosses IGNIS_LOOP_GC_ROOTS).
+# $1 label, rest: env for the server
+reuse_probe() {
+  local label="$1"; shift
+  rm -rf "$APP/var/cache"
+  ( export IGNIS_THREADS=1 IGNIS_LISTEN=127.0.0.1:$PORT APP_ENV=prod APP_DEBUG=0 IGNIS_PHP_INI="$PWD/$APP/php.ini" "$@"
+    exec "$BIN" --threads 1 "$APP/public/index.php" ) > /tmp/e24-server.log 2>&1 &
+  local server=$! up=0
+  for _ in $(seq 1 100); do curl -sf -u alice:alicepw "http://127.0.0.1:$PORT/pg?tag=warm&sleep=0" >/dev/null && { up=1; break; }; sleep 0.2; done
+  if [ "$up" != 1 ]; then echo "  FAIL: $label — the app never answered"; kill -9 $server 2>/dev/null; fail=1; return; fi
+
+  local n=${SEQUENTIAL:-30} backends="" i
+  for i in $(seq 1 "$n"); do
+    backends="$backends $(curl -s -m 30 -u alice:alicepw "http://127.0.0.1:$PORT/pg?tag=s$i&sleep=0" | grep -o '"backend":[0-9]*' | cut -d: -f2)"
+  done
+  local live
+  live=$(psql "postgresql://ignis:ignis@$PG:5432/ignis" -tAc \
+    "select count(*) from pg_stat_activity where datname='ignis' and application_name <> 'psql'" 2>/dev/null)
+  kill $server 2>/dev/null
+  for _ in $(seq 1 20); do kill -0 $server 2>/dev/null || break; sleep 0.5; done
+  kill -9 $server 2>/dev/null; wait $server 2>/dev/null
+
+  echo "  $label: $(echo $backends | tr ' ' '\n' | sort -u | grep -c '[0-9]') distinct backends for $n sequential requests, ${live:-?} still open on the server at the end"
+  # Not a pool: a new backend per request is expected. What must not come back is the leak — a
+  # connection released only when a cycle collection happens to run (V-85: 8 and 31 left open here).
+  if [ "${live:-99}" -gt 2 ]; then
+    echo "  FAIL: $label left ${live} connections open after $n sequential requests"
+    fail=1
+  fi
+}
+
+echo "== are connections reused once a request releases them?"
+reuse_probe "loop GC on (the default)"
+reuse_probe "loop GC off, PHP collects cycles itself" IGNIS_LOOP_GC=0
 
 echo "== symfony through Doctrine, $REQUESTS overlapping requests on one thread"
 symfony_probe "with fiber scoping" clean

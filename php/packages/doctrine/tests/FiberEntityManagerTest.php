@@ -98,6 +98,30 @@ final class FiberEntityManagerTest extends TestCase
         self::assertNotSame($inner, self::em($manager), 'the next use builds a new one');
     }
 
+    /**
+     * The path that actually runs under Ignis: nothing calls `reset()` per request — `Loop` calls
+     * `Scope::clear()` (V-67), and the release has to happen there or the socket stays open until a
+     * cycle collection that the request boundary does not schedule (V-85).
+     */
+    public function testClearingTheFiberScopeRollsBackAndClosesTheConnection(): void
+    {
+        $transactionActive = [true, false];
+        $connection = $this->createMock(Connection::class);
+        $connection->method('isTransactionActive')->willReturnCallback(static function () use (&$transactionActive): bool {
+            return array_shift($transactionActive) ?? false;
+        });
+        $connection->expects($this->once())->method('rollBack');
+        $connection->expects($this->once())->method('close');
+
+        $inner = $this->openManager();
+        $inner->method('getConnection')->willReturn($connection);
+
+        $manager = new FiberEntityManager($this->locatorReturning([$inner, $this->openManager()]), 'doctrine.orm.inner');
+        self::em($manager);
+
+        Scope::clear();
+    }
+
     public function testResettingSomethingThatWasNeverUsedDoesNothing(): void
     {
         $locator = $this->createMock(ContainerInterface::class);
