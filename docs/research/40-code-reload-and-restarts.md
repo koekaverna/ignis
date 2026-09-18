@@ -71,16 +71,43 @@ reloads, so a reload costs a fraction of capacity rather than an outage. This is
 The gate writes itself: `wrk` against `/` across a reload, zero non-2xx, and the new code answering
 afterwards.
 
-### O3 — a file watcher, development only
+### O3 — a file watcher, development only: watch signals, not directories
 
-`notify` on the project directory, a debounce (a save often produces several events, and composer
-rewrites hundreds), and then O2. FrankenPHP's watcher and RoadRunner's `reload` service are exactly
-this. It belongs behind an explicit flag — `ignis --watch` or `watch = ["src", "config"]` in
-`ignis.toml` — and must be off in production, where a stray `touch` reloading the fleet is an
-incident, not a feature.
+The naive version of this — "watch `src/`, ignore `var/cache`, `var/log`, `vendor`" — is wrong, and
+it is wrong in the two places that matter most. `var/cache` is where Symfony keeps its **compiled
+container**: 173 PHP files in this repository's own fixture, including the class the whole
+application is wired from. `vendor/` is where a library's code lives, and `composer update` is
+exactly the moment a worker is serving stale code with no way to know.
 
-Debounce and ignore rules matter more than the watching: `var/cache`, `var/log`, `vendor` during an
-install, and anything the app writes at runtime are what make a naive watcher restart in a loop.
+The reason to be careful with those two directories is not their content, it is their **volume and
+their feedback loop**: an install writes tens of thousands of files over minutes, and a cache warmup
+writes files *as a result of the reload you just did* — reload, warm, write, reload.
+
+So the design is per signal:
+
+| what changed | watch this | not this, and why |
+|---|---|---|
+| application code | `src/`, `config/`, whatever the app calls source | — |
+| a library | **`composer.lock`** and **`vendor/composer/installed.php`** | `vendor/**` is tens of thousands of files written over minutes; the lock changes once, at the end, and says "dependencies are now different" |
+| the compiled container | `var/cache/<env>/*Container.php` — the artifact | the tree, because the application writes into it during the request that follows the reload |
+
+Two guards make it usable, and both are needed:
+
+1. **A settle window.** Act only after the watched set has been quiet for a few hundred milliseconds.
+   One composer install becomes one reload, not ten thousand.
+2. **A grace period after a reload.** Ignore events for a moment once the workers are back, so the
+   kernel's own cache warmup cannot trigger the next reload. Without this, watching `var/cache` at
+   all is a loop.
+
+**The simplest correct version watches no cache directory.** Its inputs — `config/`, `src/`, the lock
+— are what make the container stale, and the reload gives the new kernel the chance to rebuild it.
+Watching the container artifact is worth adding only for the person who runs `cache:clear` by hand
+and expects that to be noticed.
+
+**And whatever the watcher does, an explicit trigger stays the reliable path.** After
+`composer update` you want the reload once, when you decide it is finished — `ignis reload` or
+`SIGHUP` from the shell, which is O2 with a different caller. A watcher is a convenience layered on
+that, never the mechanism.
 
 ### O4 — opcache is a separate decision, and the default is deliberately wrong for dev
 
@@ -122,7 +149,9 @@ PHP's inability to unload a class leaves available.
    possible without it, and it is independently useful for tests.
 2. **`SIGHUP` rolling restart**, one worker at a time, gated on "zero non-2xx across a reload under
    load" and on the new code actually answering.
-3. **`--watch`, development only**, with the ignore list treated as part of the feature.
+3. **`--watch`, development only**, watching signals rather than directories — the lock file for
+   dependencies, source directories for code — with a settle window and a post-reload grace period,
+   because the cache a reload warms is what would otherwise trigger the next one.
 4. **opcache reset on an explicit reload**, and a line in the documentation for anyone running
    `validate_timestamps=0`.
 
