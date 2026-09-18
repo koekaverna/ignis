@@ -188,6 +188,45 @@ These three hold everywhere in the codebase, and every FFI change is checked aga
    is what makes the channel crossing safe without a lock: nothing shared is mutable, nothing
    mutable is shared.
 
+## Why fibers are pooled
+
+A fiber is not a cheap object. Zend gives each one a freshly `mmap`'d C stack with a guard page,
+and in a multi-threaded process freeing that stack costs cross-CPU TLB shootdowns to every other
+thread — including the tokio ones. A profile of the 10,000-fiber benchmark, PHP-thread samples only:
+
+| where the PHP thread's time went | share |
+|---|---|
+| page faults | 20.9 % |
+| `munmap` — freeing the fiber's stack, TLB shootdown IPIs included | 19.7 % |
+| `mprotect` (guard page) + `mmap` | 9.1 % |
+| all of libphp (VM, `zend_fiber_execute`, `zend_fiber_init_context`) | 14.4 % |
+| the Rust side | 0.3 % |
+
+Half the thread's time was the kernel managing memory maps for stacks. So `Ignis\Loop` keeps parked
+fibers and dispatches the next job into one instead of building a new one:
+
+| | per job |
+|---|---|
+| cold — a fiber per job | 16.0–16.4 µs |
+| warm — a pooled fiber | **4.4–4.6 µs** |
+
+Creation and teardown were about **12 µs of the 16**, three times the cost of everything the loop
+actually does in a turn. On E1 (10,000 fibers, 1 s sleep each) the non-sleep overhead falls from
+146–153 ms to **37–41 ms**, and the resume phase alone from 87–90 ms to 25 ms, because a pooled
+fiber parks instead of terminating (V-4, ADR-0002).
+
+**What the pool costs** is memory: a parked fiber holds its stack. The marginal cost of a held
+request is 47.7 kB, of which **14.7 kB is the fiber** and ~33 kB the connection (hyper's buffers
+plus the kernel socket) — which is why `IGNIS_FIBER_BUDGET` exists. Past the budget a request waits
+as a few hundred bytes of data rather than as a fiber: 4,000 held requests cost 132 MB instead of
+189 MB, about 30 % less RSS for the same offered load (V-37).
+
+**And it costs one trap**, worth stating because it produced two security bugs here: a pooled fiber
+outlives the request that used it, so *per fiber* is not *per request*. Anything kept in
+`Ignis\Scope` — or in a service keyed by it — must be cleared at the request boundary, which is what
+`Loop` does in its `finally`. Before it did, request B could read request A's security token
+(V-68) and Doctrine's identity map carried entities between them (V-69).
+
 ## Why the scheduler is in PHP userland, not Rust
 
 `Ignis\Loop` — the fiber pool, `Future`, `async()`, `all()`, `sleep()`, `deadline()` — is
