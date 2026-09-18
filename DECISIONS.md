@@ -452,3 +452,18 @@ the native client on both the sequential and the concurrent axis (V-86). What th
 recorded rather than hidden: the runtime pool was process-wide where the userland one is per thread,
 and it had lease age, an acquire timeout and a breaker — `S-POOL-LEASE-AGE` carries those forward for
 the pool that remains.
+
+## 2026-09-18 — `CC0-1.0` joins the licence allow list, for `notify`
+
+The development watcher (V-90) brought in `notify 8.2.0`, which is `CC0-1.0`, and `cargo deny`
+rejected it — correctly: `deny.toml` says a new licence is a decision, not a build failure to wave
+through. CC0-1.0 is a public-domain dedication with no attribution or source obligation, the same
+category as `0BSD` and `Unlicense` which are already allowed tree-wide, so it goes in `allow` rather
+than becoming a per-crate exception. It reaches us through one crate today; a second CC0 dependency
+needs no new decision, which is the cost of allowing rather than excepting, and is accepted because
+the licence asks nothing of us either way.
+
+This was caught by CI, not locally: the commit that added the dependency claimed green gates without
+`cargo deny` among them. `cargo deny check` belongs in the pre-commit gate list next to fmt and
+clippy whenever `Cargo.toml` changes.
+

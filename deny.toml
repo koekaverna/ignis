@@ -16,9 +16,10 @@ ignore = []
 [licenses]
 version = 2
 # Every permissive licence that actually appears across those 367 packages. A new one is a decision,
-# not a build failure to wave through. 0BSD is here rather than in exceptions because it carries no
-# obligations at all -- it is public-domain-equivalent.
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unlicense", "Zlib", "BSL-1.0", "Unicode-3.0", "0BSD"]
+# not a build failure to wave through. 0BSD, Unlicense and CC0-1.0 are here rather than in exceptions
+# because they carry no obligations at all -- they are public-domain-equivalent. CC0-1.0 arrived with
+# `notify` (the development watcher, V-90) and is the licence of that crate alone.
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unlicense", "Zlib", "BSL-1.0", "Unicode-3.0", "0BSD", "CC0-1.0"]
 
 # MPL-2.0 is weak copyleft, a different category from everything above, so it is granted to one named
 # crate rather than allowed tree-wide: a NEW MPL dependency must trip this gate and be decided on.
