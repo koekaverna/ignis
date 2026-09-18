@@ -384,7 +384,7 @@ exactly which library made it impossible and why.
 
 ## Product hygiene (small, `agent`)
 
-### R-LIMITS-CONFIG The four listener limits are env-only and were promised in comments `agent` `open — 2026-09-17`
+### R-LIMITS-CONFIG The four listener limits are env-only and were promised in comments `agent` `DONE 2026-09-18`
 **What.** `http.rs` carried four `// Future ignis.toml key: …` comments. A promise in a comment is
 tracked by nobody, so they are here instead and deleted from the source. Each is an environment
 variable today with no `ignis.toml` key and no default in `config.rs`:
@@ -460,7 +460,7 @@ ceiling; `libphp:flock` is a `SEED` row. With the hook `{"holder_released_ms":40
 "waiter_acquired_ms":405,"ticks":45}`; without the row, killed at the 20 s timeout with no
 output. `smoke.sh` gates on it and was verified to go red under the negative-control policy.
 
-### S1-COOKIES `ignis_respond` cannot carry two headers with the same name `main` `open` — owner: change the boundary shape
+### S1-COOKIES `ignis_respond` cannot carry two headers with the same name `main` `DONE 2026-09-18`
 **What.** R-HEADERS-MULTI. The header map is `array<string, string>`, so a response with two
 `Set-Cookie` lines keeps the last. `IgnisWorkerRunner::headers()` assigns `$headers['set-cookie']`
 inside a foreach over the cookie bag. A session cookie plus a CSRF cookie is the most ordinary pair
@@ -469,8 +469,12 @@ there is.
 pair per value, and a response with two cookies arrives with two `Set-Cookie` lines. Every adapter
 (symfony-runtime, classic, gRPC) updated; the PHP test that currently pins the wrong behaviour flips
 to pin the right one.
+**Done.** `header_pairs` takes a list under one key (`push_each_value` in `module.rs`),
+`IgnisWorkerRunner::headers()` returns `array<string, list<string>>` and its extra `getCookies()`
+foreach — which was double-adding, masked by the overwrite — is gone. `smoke.sh` gates it:
+`set-cookie=3 vary=2`.
 
-### S1-ANSWER `Loop::answer()` loses the request and kills the loop `main` `open`
+### S1-ANSWER `Loop::answer()` loses the request and kills the loop `main` `DONE 2026-09-18`
 **What.** `runHandler()` now guards entering the request, but `answer()`/`produce()` runs after it
 and is guarded only by `poolBody()`, which rejects a Future `admitRequest()` discarded. A
 `StreamedResponse` whose `ignis_stream_bind` fails produces no response and no log line; the
@@ -478,6 +482,8 @@ throwable surfaces later as an unobserved rejection and `runUntil()` rethrows it
 instead of the request. Test exists: `LoopTest::testAThrowOutsideTheHandlersTryLosesTheRequestEntirelyBug`.
 **Acceptance.** That test is renamed without "Bug" and asserts a 500 plus a log line; the loop
 survives.
+**Done.** `Loop::answerFailed()`, and the test is now
+`LoopTest::testAFailureWhileAnsweringBecomesA500AndTheLoopKeepsServing`.
 
 ### S1-CAP Cap concurrent connections at the listener (M4-3/B8) `main` `open`
 **What.** ADR-0025. Nothing bounds accepted connections, and V-37 measured ~33 kB per held one, so
@@ -485,14 +491,17 @@ RSS is unbounded under load — the half of B1's acceptance a fiber budget canno
 **Acceptance.** `limits.max_connections` enforced at accept; over the cap the listener stops
 accepting rather than queueing unboundedly; RSS at 2× the cap is flat. Lands with S3-LIMITS.
 
-### S1-BULKHEAD Per-dependency bulkhead and breaker (M4-2/B2) `main` `open`
+### S1-BULKHEAD Per-dependency bulkhead and breaker (M4-2/B2) `main` `DONE 2026-09-18`
 **What.** `pg::acquire` waits unboundedly, so one slow dependency stalls every fiber that wants it.
 pain-map PHP-FPM 2, still NOT STARTED.
 **Acceptance.** A bounded wait with a configurable ceiling; past it the caller gets an error rather
 than a hang; a breaker opens after N consecutive failures and half-opens on a timer. Gate: with
 PostgreSQL stopped, `/users` answers an error inside the ceiling and `/` keeps serving.
+**Done.** `IGNIS_PG_ACQUIRE_TIMEOUT_MS` (5000), `IGNIS_PG_BREAKER_FAILURES` (5),
+`IGNIS_PG_BREAKER_COOLDOWN_MS` (5000) in `pg.rs`, with two nextest cases covering the ceiling and
+the breaker's open/half-open transition.
 
-### S2-LEAKS The four smaller defects the tests pinned `agent` `open`
+### S2-LEAKS The four smaller defects the tests pinned `agent` `DONE 2026-09-18`
 **What.** Each already has a failing-or-pinning test from the 2026-09-17 suite.
 `Offload\Router::release()` does not mark the Handle released, so every proxied object is freed
 twice. `Client::$pending` grows one closure per offload call for ever, while `Client::$callbacks`
@@ -502,14 +511,20 @@ its children (`array_reverse` over `[...children, parent]`), so the parent answe
 its fiber to the pool while the children are still unwinding.
 **Acceptance.** Each test renamed off "Bug" and asserting the correct behaviour; `Client::$pending`
 empty after a completed offload call with a closure argument.
+**Done.** All four. No test named `*Bug*` remains anywhere under `php/packages`; the dead
+`Client::$callbacks` static is gone and its local replacement is unset from `self::$pending` on
+completion; `Request::query()` returns `string|array|null`; cancellation walks children first.
 
-### S2-STREAM-CANCEL A streaming handler never learns the client left `main` `open`
+### S2-STREAM-CANCEL A streaming handler never learns the client left `main` `DONE 2026-09-18`
 **What.** R-STREAM-CANCEL. `guard.answered` is set when the oneshot resolves, which for a streamed
 response is when the *headers* go out, so a later hang-up is never delivered as `Outcome::Cancelled`.
 A fiber parked in `Stream::write()` still finds out; one parked on a slow query between chunks does
 not, and keeps producing for a client that is gone.
 **Acceptance.** Start a stream, kill the client mid-body, the handler's fiber is cancelled inside the
 bound E11 uses for whole-body responses. Lands with S4-ANSWER-MAP.
+**Done.** `guard.answered = !streamed`, so the guard stays armed for a streamed response, and the
+Loop keeps the request's fiber mapping until the body ends. `smoke.sh` gates it:
+`{"cancelled":1,"finally_ran":1,"chunks_written":3,"loop_cancelled":1}`.
 
 ### S3-RSS-DRIFT 13 MB of RSS growth that is not the extensions `main` `DONE 2026-09-18 — V-82`
 **What.** The E3 re-measurement (S3-NUMBERS) came back with worker-mode RSS at **42.7 MB** against
@@ -578,7 +593,7 @@ all. The `wrk-hello` bisect is **refused with a number**: five consecutive runs 
 spread 50.8k-54.2k req/s (+/-6.7 %), and the residual code-side drop V-46 addendum 3 left open is
 4-5 %, i.e. under the noise. A bisect gated on it would name an innocent commit. V-82.
 
-### S3-LIMITS `[limits]` in `ignis.toml` `agent` `open`
+### S3-LIMITS `[limits]` in `ignis.toml` `agent` `DONE 2026-09-18`
 Already filed as R-LIMITS-CONFIG; it is the config half of S1-CAP and lands with it.
 
 ### S3-STAN8 PHPStan level 8 `agent` `done 2026-09-18 — level: 8 in php/phpstan.neon, both configs clean`
@@ -640,11 +655,22 @@ on the hottest path in the system. Step 2 stays unbuilt unless something else ar
 **Acceptance.** Level 9 clean with zero added casts whose only purpose is silence; every new throw
 covered by a test that feeds the malformed input.
 
-### S4-ANSWER-MAP One `HashMap<u64, Answer>` instead of three `main` `open`
+### S4-ANSWER-MAP One `HashMap<u64, Answer>` instead of three `main` `PARTLY DONE 2026-09-18`
 Already filed as R-ANSWER-MAP. Owner included it in this cycle. Lands with S2-STREAM-CANCEL and the
 lock-free `Registry::pick`, and needs E4/E10/E11 re-measured on a quiet box before it is called done.
+**Done:** the map. `enum Answer { Whole | Streaming | Grpc }` behind one `answers: Mutex<HashMap<u64,
+Answer>>`, with `take_answer(id, expected)` checking the variant *before* removing — the first cut of
+this change reintroduced V-75's bug class by removing without checking, and the new test caught it.
+`cancel_request`, `fail_pending` and `pending_requests` are one map each now instead of three, which
+is what made `pending_requests` correct by construction.
+**Not done, deliberately:** the lock-free `Registry::pick`. `pending_requests()` is still
+`answers.lock().len()`, so `pick` holds `reactors.lock()` and takes one more lock per candidate —
+down from three, not to zero. The remaining change is an `AtomicUsize` bumped on deliver and dropped
+on answer. It is a hot-path performance claim, and this box measures +/-6.7 % run to run on hello
+throughput (V-82), so its effect is under the instrument. Landing it here would be exactly the
+unmeasured optimisation the cycle's own rule forbids. **Needs a quiet box and E4/E10 before/after.**
 
-### R-MAIN-RED `main` has been red since before the quality work, on two gates `main` `open — evidence 2026-09-17`
+### R-MAIN-RED `main` has been red since before the quality work, on two gates `main` `DONE 2026-09-18 — green on all ten jobs`
 **What.** Every one of the last six `ci.yml` runs on `main` failed, including runs that predate this
 body of work (35249027373 at 16:50, 35249914989, 35258827928, 35259213051). Three jobs were failing;
 `E15 revolt` recovered by itself once `unzip` reached the image and composer could install, leaving two.
