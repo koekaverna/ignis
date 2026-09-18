@@ -11,14 +11,18 @@ use Doctrine\DBAL\DriverManager;
 /**
  * The switch between the two connection modes, and the home of the pools in pool mode.
  *
- * **Per fiber** (`IGNIS_DOCTRINE_POOL` unset or below 1, the default): `wrap()` hands the driver
- * back untouched, every request opens its own connection and closes it at request end (V-85). No
- * shared state, no limit, and the bill is one connect per request that touches the database.
+ * **Per fiber** (`pool.size: 0`, the default): `wrap()` hands the driver back untouched, every
+ * request opens its own connection and closes it at request end (V-85). No shared state, no limit,
+ * and the bill is one connect per request that touches the database.
  *
- * **Pool** (`IGNIS_DOCTRINE_POOL=N`): `connect()` leases from a per-thread pool of at most N
- * connections, opened when the thread boots rather than when the first request needs them, and
- * returned — session state cleared — at request end. The process therefore opens `threads × N`
- * connections and no more, which is the number a database administrator can plan for.
+ * **Pool** (`pool.size: N`): `connect()` leases from a per-thread pool of at most N connections,
+ * opened when the thread boots rather than when the first request needs them, and returned — session
+ * state cleared — at request end. The process therefore opens `threads × N` connections and no more,
+ * which is the number a database administrator can plan for.
+ *
+ * Configured in `config/packages/ignis_doctrine.yaml` (see `Configuration`), not from the
+ * environment: the numbers are service arguments like any other, and a deployment that wants them
+ * outside the code writes `%env(int:DB_POOL)%` there.
  *
  * Registered as a `doctrine.middleware`, which DoctrineBundle turns into one instance per connection
  * name, so a pool belongs to one set of connection parameters by construction.
@@ -34,25 +38,26 @@ final class PoolingMiddleware implements Middleware
     private readonly int $warmCount;
 
     /**
-     * Arguments are for tests; in an application every value comes from the environment, so the
-     * compiled container never bakes in a number that was true when the cache was warmed.
+     * @param int $limit connections per thread, or 0 for a connection per fiber
+     * @param int $waitMilliseconds how long a fiber waits for a free connection before it is refused
+     * @param int|null $warmCount connections opened at boot; null means as many as the limit
      */
-    public function __construct(?int $limit = null, ?int $waitMilliseconds = null, ?int $warmCount = null)
+    public function __construct(int $limit, int $waitMilliseconds = 5000, ?int $warmCount = null)
     {
-        $this->limit = $limit ?? self::limitFromEnvironment();
-        $this->waitMilliseconds = $waitMilliseconds ?? self::environmentInteger('IGNIS_DOCTRINE_POOL_WAIT_MS', 5000);
-        $this->warmCount = $warmCount ?? self::environmentInteger('IGNIS_DOCTRINE_POOL_WARM', $this->limit);
+        $this->limit = \max(0, $limit);
+        $this->waitMilliseconds = $waitMilliseconds;
+        $this->warmCount = $warmCount ?? $this->limit;
     }
 
-    /** How many connections a thread may hold, or 0 for a connection per fiber. */
-    public static function limitFromEnvironment(): int
+    /** Whether this is pool mode at all — what `IgnisDoctrineBundle::boot()` asks before warming. */
+    public function isPooling(): bool
     {
-        return \max(0, self::environmentInteger('IGNIS_DOCTRINE_POOL', 0));
+        return $this->limit >= 1;
     }
 
     public function wrap(Driver $driver): Driver
     {
-        return $this->limit < 1 ? $driver : new PoolingDriver($driver, $this);
+        return $this->isPooling() ? new PoolingDriver($driver, $this) : $driver;
     }
 
     /**
@@ -100,12 +105,5 @@ final class PoolingMiddleware implements Middleware
 
         return 'ROLLBACK; CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ALL; UNLISTEN *;'
             . ' SELECT pg_advisory_unlock_all(); DISCARD TEMP; DISCARD SEQUENCES';
-    }
-
-    private static function environmentInteger(string $name, int $default): int
-    {
-        $value = \getenv($name);
-
-        return $value === false || !\is_numeric($value) ? $default : (int) $value;
     }
 }

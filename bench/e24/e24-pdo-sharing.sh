@@ -72,9 +72,12 @@ if [ ! -f "$APP/vendor/autoload.php" ]; then
   echo "== installing the fixture (composer)"
   COMPOSER_HOME=/tmp/composer timeout 900 composer --working-dir="$APP" update --no-scripts --no-interaction 2>&1 | tail -2
 fi
-# The path repository copies the packages in, so a source change needs copying over the copy.
+# The path repository copies the packages in, so a source change needs copying over the copy —
+# replacing the directory rather than merging into it, or a class deleted upstream lives on here.
 for package in runtime symfony-runtime doctrine; do
-  [ -d "$APP/vendor/ignis/$package" ] && cp -r "php/packages/$package/." "$APP/vendor/ignis/$package/"
+  [ -d "$APP/vendor/ignis/$package" ] || continue
+  rm -rf "$APP/vendor/ignis/$package"
+  cp -r "php/packages/$package" "$APP/vendor/ignis/$package"
 done
 
 # $1 label, $2 "clean" (every request must get its own row) or "control" (some must not), rest: env
@@ -161,17 +164,17 @@ reuse_probe "loop GC on (the default)" "$SEQUENTIAL" 2
 reuse_probe "loop GC off, PHP collects cycles itself" "$SEQUENTIAL" 2 IGNIS_LOOP_GC=0
 
 echo "== pool mode: the same requests over a fixed set of connections"
-reuse_probe "pool of 4, warmed at boot" 4 4 IGNIS_DOCTRINE_POOL=4
+reuse_probe "pool of 4, warmed at boot" 4 4 E24_POOL=4
 
 echo "== symfony through Doctrine, $REQUESTS overlapping requests on one thread"
 symfony_probe "with fiber scoping" clean
 echo "== the same, in pool mode with fewer connections than requests"
-symfony_probe "pool of 2 for $REQUESTS requests" clean IGNIS_DOCTRINE_POOL=2
+symfony_probe "pool of 2 for $REQUESTS requests" clean E24_POOL=2
 
 # A saturated pool must refuse, not hang: six 0.3 s requests over one connection cannot all fit in
 # a 100 ms wait, and the ones that do not must come back as errors rather than parked forever.
 echo "== control: a pool of 1 with a 100 ms wait must time some requests out"
-symfony_probe "pool of 1, 100 ms wait" control IGNIS_DOCTRINE_POOL=1 IGNIS_DOCTRINE_POOL_WAIT_MS=100
+symfony_probe "pool of 1, 100 ms wait" control E24_POOL=1 E24_POOL_WAIT_MS=100
 
 echo "== control: the same app with the Ignis Doctrine bundle removed"
 symfony_probe "without fiber scoping" control IGNIS_NO_DOCTRINE_SCOPE=1

@@ -65,6 +65,13 @@ final class Kernel extends BaseKernel
             ],
         ]);
 
+        if (!getenv('IGNIS_NO_DOCTRINE_SCOPE')) {
+            $c->extension('ignis_doctrine', ['pool' => [        // E24 drives both connection modes from here
+                'size' => (int) (getenv('E24_POOL') ?: 0),
+                'wait_ms' => (int) (getenv('E24_POOL_WAIT_MS') ?: 5000),
+            ]]);
+        }
+
         $s = $c->services();
         $s->defaults()->autowire()->autoconfigure();
         if (!getenv('IGNIS_NO_SCOPE')) {

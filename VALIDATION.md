@@ -4120,9 +4120,9 @@ flight". That was the intent, not the measurement — it is true only with this 
 ### V-85 addendum 2 — two connection modes, and the pool measured against the same suite
 
 Date: 2026-09-18T16:4xZ. Owner asked for both modes: a connection per fiber, and a pool that comes up
-cold with a set limit. `IGNIS_DOCTRINE_POOL` is the switch — unset or below 1 keeps the per-fiber
-mode, `N` gives every **thread** a pool of at most N. Same `bench/e24`, same fixture, arms added
-rather than replaced.
+cold with a set limit. The switch is `ignis_doctrine.pool.size` in the application's own container
+configuration — 0 (the default) keeps the per-fiber mode, `N` gives every **thread** a pool of at
+most N. Same `bench/e24`, same fixture, arms added rather than replaced.
 
 | arm | distinct backends | still open at the end |
 |---|---|---|
@@ -4146,7 +4146,7 @@ Every request got its own rows; the extra wall time is the queue, and the fibers
 parked — the thread kept serving. That is the whole difference from the defect this suite was written
 for: two fibers never share a socket, they take turns holding one.
 
-**A saturated pool refuses instead of hanging.** Pool of 1, `IGNIS_DOCTRINE_POOL_WAIT_MS=100`, six
+**A saturated pool refuses instead of hanging.** Pool of 1, `pool.wait_ms: 100`, six
 0.3 s requests: one succeeds and five come back in 0.102–0.104 s with
 `no database connection became free within 100 ms (pool limit 1, N waiting)`. The arm fails if they
 ever all succeed, because that would mean the bound stopped applying.
@@ -4163,4 +4163,38 @@ consuming capacity, a dead connection being dropped): 12 cases across `Connectio
 under plain php-cli where there is no loop to park in.
 
 Gates: PHP suite **315 tests / 741 assertions**, `bench/e24` GREEN (nine arms), `bench/e21` GREEN,
+`scripts/smoke.sh` GREEN, phpstan and php-cs-fixer clean on everything this work touches.
+
+### V-85 addendum 3 — the pool is configured in code, not from the environment
+
+Date: 2026-09-18T17:2xZ. Owner: "не енвы, должно настраиваться через код (параметры сервисов)". The
+three numbers moved from `getenv()` inside `PoolingMiddleware` to ordinary constructor arguments,
+wired by a bundle extension from `config/packages/ignis_doctrine.yaml`:
+
+```yaml
+ignis_doctrine:
+    pool:
+        size: 10          # connections per thread; 0 keeps a connection per fiber
+        warm: 10          # opened at boot; defaults to size
+        wait_ms: 5000     # before Ignis\Doctrine\Pool\PoolTimeoutException
+```
+
+The objection that sent me to the environment in the first place — a warmed container cache pinning
+a number — is answered by Symfony's own mechanism rather than by reading the environment ourselves:
+`size: '%env(int:DB_POOL)%'` resolves at runtime, and the extension passes the placeholder straight
+through (one of the five cases in `IgnisDoctrineExtensionTest`).
+
+`DoctrinePoolPass` is **deleted**: registering in the extension is not just equivalent but strictly
+safer, because extensions all run before any compiler pass, which is what the priority-1 dance
+existed to guarantee against DoctrineBundle's `MiddlewaresPass`.
+
+Re-measured after the rewrite, every arm identical to addendum 2: pool of 4 → **1** backend for 30
+sequential requests with 4 left open, pool of 2 → 6 of 6 requests correct over **2** backends, pool
+of 1 with a 100 ms wait → 5 of 6 refused in ~0.1 s, per-fiber → 30 backends and 0 left open.
+
+Also fixed while here: the gate replaced the fixture's vendored packages by copying *into* the
+directory, so a class deleted upstream (this pass, as it happens) lived on in the copy. It now
+removes the directory first.
+
+Gates: PHP suite **320 tests / 747 assertions**, `bench/e24` GREEN (nine arms), `bench/e21` GREEN,
 `scripts/smoke.sh` GREEN, phpstan and php-cs-fixer clean on everything this work touches.
