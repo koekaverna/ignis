@@ -28,8 +28,10 @@ use Symfony\Contracts\Service\ResetInterface;
  * fixed at construction time.
  *
  * Lifetime: `Ignis\Scope` is keyed by the fiber and fibers are reused, so `Loop` clears the scope at
- * request end (V-67). That is what makes the manager per *request* while its database connection is
- * still opened once per pooled fiber instead of once per request.
+ * request end (V-67). That is what makes the manager per *request* — and since E24 its database
+ * connection is per request too, because `DoctrineFiberScopePass` marks the connection non-shared:
+ * one `Doctrine\DBAL\Connection` in two fibers is one PostgreSQL socket in two fibers, and libpq
+ * answers the queries in arrival order, not in the order the fibers expect them.
  */
 final class FiberEntityManager implements EntityManagerInterface, ResetInterface
 {

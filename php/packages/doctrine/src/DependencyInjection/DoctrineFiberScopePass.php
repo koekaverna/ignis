@@ -54,6 +54,44 @@ final class DoctrineFiberScopePass implements CompilerPassInterface
 
             $container->setDefinition($id, $scoped);
         }
+
+        foreach ($this->connectionIds($container) as $id) {
+            $container->getDefinition($id)->setShared(false)->setLazy(false);
+        }
+    }
+
+    /**
+     * A shared connection is one PostgreSQL socket for every fiber on the thread, and libpq is not
+     * reentrant per connection: the second fiber to enter gets `SQLSTATE[HY000] 7 timeout expired`,
+     * or — when the answers happen to line up — another request's row with a 200 (E24).
+     *
+     * Non-shared means the fiber's own manager builds its own connection, which `Scope::clear()`
+     * drops at request end. The bill is therefore one connect per request that touches the database
+     * (~1 ms of SCRAM, V-45) and open connections equal to requests in flight, which is what
+     * php-fpm does without `pconnect`. A pool that leases per statement is the way past that
+     * (research 38); it is not this pass's job.
+     *
+     * Services that inject `Doctrine\DBAL\Connection` directly rather than through a manager keep
+     * one instance for the life of the thread and are **not** fixed here.
+     *
+     * @return list<string>
+     */
+    private function connectionIds(ContainerBuilder $container): array
+    {
+        if (!$container->hasParameter('doctrine.connections')) {
+            return [];
+        }
+
+        $ids = [];
+        /** @var array<string,string> $connections */
+        $connections = $container->getParameter('doctrine.connections');
+        foreach ($connections as $id) {
+            if ($container->hasDefinition($id)) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
     }
 
     /** @return list<string> */

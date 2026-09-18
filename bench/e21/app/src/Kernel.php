@@ -57,7 +57,9 @@ final class Kernel extends BaseKernel
         ]);
 
         $c->extension('doctrine', [
-            'dbal' => ['driver' => 'pdo_sqlite', 'path' => '%kernel.project_dir%/var/probe.sqlite'],
+            'dbal' => getenv('DATABASE_URL')
+                ? ['url' => getenv('DATABASE_URL')]                                      // E24 runs the same app on PostgreSQL
+                : ['driver' => 'pdo_sqlite', 'path' => '%kernel.project_dir%/var/probe.sqlite'],
             'orm'  => [
                 'mappings' => ['App' => ['type' => 'attribute', 'dir' => '%kernel.project_dir%/src/Entity', 'prefix' => 'App\\Entity', 'is_bundle' => false]],
             ],
@@ -71,12 +73,14 @@ final class Kernel extends BaseKernel
         $s->load('App\\', '../src/')->exclude('../src/Kernel.php');
         $s->get(\App\Controller\WhoAmI::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\EmProbe::class)->tag('controller.service_arguments');
+        $s->get(\App\Controller\PgProbe::class)->tag('controller.service_arguments');
     }
 
     protected function configureRoutes(RoutingConfigurator $routes): void
     {
         $routes->add('whoami', '/whoami')->controller([\App\Controller\WhoAmI::class, '__invoke']);
         $routes->add('em', '/em')->controller([\App\Controller\EmProbe::class, '__invoke']);
+        $routes->add('pg', '/pg')->controller([\App\Controller\PgProbe::class, '__invoke']);
     }
 
     public function getCacheDir(): string

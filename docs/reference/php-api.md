@@ -254,8 +254,11 @@ APP_RUNTIME=Ignis\Symfony\IgnisRuntime
 
 ## `namespace Ignis\Doctrine` (`php/packages/doctrine/src/*`)
 
-Doctrine ORM under fibers: one `EntityManager` per fiber instead of one per process, so two
-overlapping requests never share an identity map or a transaction the other one left open. Requires
+Doctrine ORM under fibers: one `EntityManager` **and one database connection** per fiber instead of
+one per process, so two overlapping requests never share an identity map, a transaction the other
+one left open, or a PostgreSQL socket. The price of the connection half is one connect per request
+that touches the database (~1 ms of TCP plus SCRAM), which is what php-fpm does without `pconnect`;
+a pool that leases per statement is the way past it and is not built (`S-DBAL-POOL`). Requires
 `ignis/symfony-runtime`. Register `IgnisDoctrineBundle` **after** `DoctrineBundle` in
 `config/bundles.php`:
 
@@ -265,7 +268,7 @@ Ignis\Doctrine\IgnisDoctrineBundle::class => ['all' => true],
 
 | Class | What it does |
 |---|---|
-| `IgnisDoctrineBundle extends Bundle` | Adds `DoctrineFiberScopePass`, a compiler pass that rewrites the `EntityManager` service definition so every fiber resolves its own instance from a non-shared inner definition. Without this bundle Doctrine's `EntityManager` stays one shared object across every fiber on the thread. |
+| `IgnisDoctrineBundle extends Bundle` | Adds `DoctrineFiberScopePass`, a compiler pass that rewrites the `EntityManager` service definition so every fiber resolves its own instance from a non-shared inner definition, and marks every connection in `doctrine.connections` non-shared so the fiber's manager opens its own. Without this bundle Doctrine's `EntityManager` stays one shared object across every fiber on the thread, **and so does its database connection** — which under PostgreSQL means two overlapping requests inside one socket: measured as one request receiving another's row with a 200, plus `SQLSTATE[HY000] 7 timeout expired` for the rest (V-85). |
 | `FiberEntityManager implements EntityManagerInterface, ResetInterface` | The shared object every application service keeps injected; each of its ~35 interface methods forwards to `Ignis\Scope`'s per-fiber real `EntityManager`, resolved on every call rather than fixed at construction — the decorator itself is not extended from Doctrine's own `EntityManagerDecorator`, which reads `$this->wrapped` directly, exactly the thing that must stay dynamic. Not constructed directly by application code. |
 
 Not covered in full here: `DependencyInjection\DoctrineFiberScopePass`, the compiler pass itself.

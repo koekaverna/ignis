@@ -4010,3 +4010,74 @@ the two answers differ: a **tagged union of array shapes** types beautifully, be
 discriminator is data PHPStan can read; a **generic container** does not, because the type has to
 flow through a constructor call PHPStan cannot see. That is the rule to carry forward, not
 "generics are bad".
+
+## V-85 — Symfony hands one PostgreSQL socket to every fiber on the thread (CONFIRMED, fixed)
+
+Date: 2026-09-18T15:0xZ. Question from the owner: per fiber or per thread, and which driver? The
+answer for the product path — Symfony → Doctrine → DBAL → `pdo_pgsql` — was **per thread**, and that
+is not a counting detail: one connection in two fibers is one PostgreSQL socket in two fibers.
+
+Setup: `postgres:17-alpine` in its own container; the server and `curl` together in
+`ghcr.io/koekaverna/ignis-php:8.5.10-zts` on the same docker network (published ports do not reach
+this box, so everything that talks to the database runs inside it). Command:
+`bench/e24/e24-pdo-sharing.sh`. Fixture: the E21 Symfony app, now with `DATABASE_URL` honoured and a
+`/pg` route that runs `SELECT pg_sleep(?), ? AS marker` through `EntityManager::getConnection()`;
+six overlapping requests on **one** thread, sleeps 0.31 s down to 0.11 s.
+
+**The defect, reproduced (control arm: the Ignis Doctrine bundle removed — which is exactly what the
+shipped bundle did, since it never touched the connection):**
+
+```
+r1 marker=r1  ok
+r2 marker=r4  *** another request's row, HTTP 200, no error ***
+r3..r6        SQLSTATE[HY000]: General error: 7 timeout expired
+1 distinct DBAL connection object for 6 requests, 1 backend on the server
+```
+
+A second run of the same control gave `r2 marker=r4` again with four errors; an earlier six-request
+run gave `r6 marker=r5` with four errors. The mix moves, the shape does not: PostgreSQL answers the
+queries in the order they arrived on the socket, not in the order the fibers expect them, so a fiber
+either takes another fiber's result set or libpq gives up on the one it is owed.
+
+**After the fix** (`DoctrineFiberScopePass` marks every id in `doctrine.connections` non-shared, so
+the fiber's own manager builds its own connection):
+
+```
+6 of 6 requests got their own row, 6 distinct connection objects, 7 backends
+elapsed 0.334 0.293 0.258 0.216 0.173 0.131 s for sleeps 0.31 … 0.11 — fully overlapped,
+not 1.26 s serialised
+```
+
+**The two raw-PDO arms, which say the hazard is libpq's and not ours:**
+
+| arm | result |
+|---|---|
+| one handle per fiber, 4 fibers | `ok=4 wrong=0 errors=0 wall_ms=324` (ideal 300, serial 450) |
+| one handle shared by 4 fibers | `ok=0 errors=4` — and in one run `ok=1 wrong=1 errors=3`: a fiber got a row that belonged to another |
+
+`shared` is a control that **must keep failing**: libpq is not reentrant per connection and no
+amount of runtime work will make it so. The suite fails if it ever passes, the same rule E21 uses.
+
+**Why nothing caught this before.** The E21 fixture is SQLite, and `pdo_sqlite` blocks the whole OS
+thread (V-59 — a regular file is not epoll-able), so two fibers can never be inside one query there.
+The gate was structurally blind to the class of bug; V-45 and V-59 measured `pdo_pgsql` at 303 ms for
+100 concurrent queries, but in that shape every fiber opened its **own** handle.
+
+**The price, stated plainly.** One connect per request that touches the database — about 1 ms of TCP
+plus SCRAM (V-45) — and open connections equal to requests in flight rather than to threads. That is
+what php-fpm does without `pconnect`, so it is parity with the baseline, not a regression; the way
+past it is a pool that leases per statement (research 38), which is not this pass's job.
+
+**Not fixed, and recorded as `S-DBAL-DIRECT`:** a service that injects `Doctrine\DBAL\Connection`
+directly rather than through a manager still gets one instance for the life of the thread.
+
+**Two records corrected.** V-69 said "one manager per fiber means one connection per fiber" and
+`FiberEntityManager`'s docblock said the connection is "opened once per pooled fiber". Both described
+research 38's plan (its point 3, `setShared(false)` on the connection ids), which was never
+implemented; the compiled container shows the manager taking
+`$container->services['doctrine.dbal.default_connection']` — the shared instance cache. V-69's own
+"Unmeasured, and stated plainly" paragraph is why this was findable at all.
+
+Gates for the change: `cargo nextest` 60/60, PHP suite **302 tests / 718 assertions** (five new cases
+on the compiler pass), `bench/e24` GREEN (four arms), `bench/e21` GREEN, `bench/e23` GREEN,
+`scripts/smoke.sh` GREEN.
