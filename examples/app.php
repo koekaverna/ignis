@@ -29,7 +29,7 @@ use Ignis\Http\Response;  // → E4
 /**
  * The three upstreams, fetched concurrently. Keyed `mixed` because `Ignis\all()` over futures of
  * different shapes can only say `mixed` per value -- a precise shape here would be a promise this
- * function does not keep (V-83).
+ * function does not keep (V-84).
  *
  * @return array<string, mixed>
  */
