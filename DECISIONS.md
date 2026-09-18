@@ -402,3 +402,25 @@ Two neighbouring status lines were stale for the same reason and were corrected 
 said "H32–H36 open" when only H34 (`getaddrinfo`, no fd to watch, offload's problem — `R-DNS`) still
 is, and ADR-0016's Decision item 3 still described `curl_*`/`PDO`/`Redis` auto-routing as current
 when its own addendum three paragraphs below had already shrunk the shipped default to `SQLite3`.
+
+## 2026-09-18 — night-3 merges into `main` with one gate red, named
+
+Owner asked for the refreshed documentation to be published. `docs.yml` deploys the site on a push
+to `main` and on nothing else, so publishing is the merge.
+
+CI on `44af49c` is **9 of 10 green**. The one failure is `E15 phpt`, and inside it exactly one gate
+row: `phpt.fiber.Zend_tests_fibers=77 < baseline 78 REGRESSION`. Every other row is at or above
+baseline, three of them above it (`main.ext_sockets_tests=92 ≥ 89`, `fiber.ext_sockets_tests=87 ≥
+83`, `fiber.ext_standard_tests_streams=126 ≥ 124`).
+
+That row is `S0-FIBER`, already measured and written up before this work: `gh9916-009.phpt`, the
+same 77 on the HEAD binary and on one rebuilt at night-3's branch point, so **the branch does not
+contain the cause** — merging surfaces it on `main` rather than introducing it there. It is
+deliberately not re-baselined to 77, because a baseline lowered to hide an unexplained result stops
+being a gate.
+
+The working agreement says the night branch merges after CI is green. It is not green and cannot be
+made green tonight without either re-baselining (refused above) or explaining a result that four
+independent runs could not explain. Merging with the single red row named here is the honest
+reading; `STATUS.md`'s "green on all ten jobs" is true of `b6c3936` and stops being true of `main`
+with this merge, which is why it is recorded rather than quietly left behind.
