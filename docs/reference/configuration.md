@@ -14,8 +14,8 @@ environment beats whatever `ignis.toml` says, and a `--threads` flag on the plai
 already run under `serve`. This bridging happens **before any other thread exists** (`config.rs`
 comment), which is why it's safe to call `std::env::set_var` there and nowhere else.
 
-`ignis.toml` itself is parsed with `#[serde(deny_unknown_fields)]` on both `Config` and `Budget` —
-a misspelled or renamed key is a parse **error**, not a silently-ignored default. There is no key
+`ignis.toml` itself is parsed with `#[serde(deny_unknown_fields)]` on `Config`, `Budget` and
+`Limits` alike — a misspelled or renamed key is a parse **error**, not a silently-ignored default. There is no key
 that reads a per-field default from `serde(default = ...)`; every field is `Option<T>`, and the
 "default" behavior is entirely `serve_to_legacy_args`'s explicit `default_env` fallback calls.
 
@@ -38,6 +38,11 @@ defaults with no file at all). Reference copies: `ignis.toml.example` (repo root
 | `budget.fibers` | `IGNIS_FIBER_BUDGET` | `1024` | Admitted request fibers per thread at once (ADR-0019). A held fiber is ~15 kB (some comments say ~34 kB, see caveat below) of RSS; past the budget a request waits as **data**, not as a Fiber. `0` = unlimited. | Read back on the PHP side by `Ignis\Loop::budgetInit()` via `getenv('IGNIS_FIBER_BUDGET')`, not by any Rust code — the Rust side only ever *writes* this env var. |
 | `budget.queue` | `IGNIS_QUEUE_DEPTH` | `4096` | Requests allowed to wait as queued data once the fiber budget is full. Past it, the answer is `503` + `retry-after: 1`. `0` = unbounded. | Same read-side note as `budget.fibers`: consumed only by `php/packages/runtime/src/ignis.php`. |
 | `exempt` | `IGNIS_BUDGET_EXEMPT` | `["/_ignis/"]` | Path **prefixes** admitted regardless of the budget, so health/metrics endpoints stay reachable on a saturated server. Written to the env as a comma-joined string. | `Ignis\Loop::isExempt()` does a plain `str_starts_with`; entries with a literal comma in the path can't be expressed this way. Also read only by `php/packages/runtime/src/ignis.php`. |
+| `limits.max_body_bytes` | `IGNIS_MAX_BODY_BYTES` | `8388608` (8 MiB) | Largest request body accepted; a bigger one is refused with `413` as soon as a frame would exceed it. | Added by commit `c031408` — previously env-var only. Full behaviour, the ADR-0025 rationale and the measured numbers are under [Front door: limits and shutdown](#front-door-limits-and-shutdown) below. |
+| `limits.max_connections` | `IGNIS_MAX_CONNECTIONS` | `8192` | Concurrent accepted connections; over the cap a raw `503` + `Connection: close` is written and the socket dropped, never queued. | Same as above; this is the RSS bound (ADR-0025, V-37: ~33 kB per held connection). |
+| `limits.header_timeout_ms` | `IGNIS_HEADER_TIMEOUT_MS` | `10000` | A connection that has not finished sending its request head by then is closed (slowloris). | Same as above. |
+| `limits.idle_timeout_ms` | `IGNIS_IDLE_TIMEOUT_MS` | `60000` | An accepted connection with no request for this long is shut down gracefully. | Same as above. |
+| `limits.drain_timeout_ms` | `IGNIS_DRAIN_TIMEOUT_MS` | `10000` | On `SIGTERM`/`SIGINT`, how long in-flight requests get to finish once the listener has closed. | Same as above. `IGNIS_DRAIN_DELAY_MS` (the pre-drain "still accepting" window) has **no** `ignis.toml` key — it stays environment-only; see below. |
 
 `crates/ignis/src/config.rs` doc comment says a fiber costs "~15 kB (V-37)"; `php/packages/runtime/src/ignis.php`'s own
 comment on `$fiberBudget` says "~34 KB (V-5)". Both are cited to different VALIDATION.md entries —
@@ -59,24 +64,46 @@ Everything below is read directly with `std::env::var`/`var_os` somewhere in `cr
 | `IGNIS_OFFLOAD_CLASSES` | `crates/ignis/src/php/route.rs` | `SQLite3` (was `PDO,SQLite3` until 2026-09-17: routing every `PDO` sent `pgsql` to a worker too, 9× slower than parking — V-59 addendum. Add `PDO` back for a `pdo_sqlite` app) | Comma-separated class names whose `new` is auto-routed to the offload pool inside a fiber. |
 | `IGNIS_NO_OFFLOAD_ROUTE` | `crates/ignis/src/php/route.rs` | unset (routing installed) | Any value disables auto-routing installation entirely (`route::install()` returns immediately) — the E16 hook-off control. |
 | `IGNIS_PG_LEASE_WARN_MS` | `crates/ignis/src/pg.rs` | `5000` | A PostgreSQL connection lease held longer than this is counted in `ignis_pg_lease_age_seconds_max` / `ignis_pg_leases_over_warn` (`/metrics`, `crates/ignis/src/metrics.rs`) and in `ignis_pg_stats()['leases_over_warn']`. Does not itself kill or reclaim the lease. |
+| `IGNIS_PG_ACQUIRE_TIMEOUT_MS` | `crates/ignis/src/pg.rs` | `5000` | M4-2/B2: ceiling on `ignis_pg_acquire`'s wait for a permit and a connection. Past it the fiber's `await()` throws with `acquire timed out after <n> ms (IGNIS_PG_ACQUIRE_TIMEOUT_MS)` instead of waiting on a database that may never answer. |
+| `IGNIS_PG_BREAKER_FAILURES` | `crates/ignis/src/pg.rs` | `5` | Consecutive `acquire` failures (connect errors or an acquire-timeout) that open the pool's circuit breaker. `0` turns the breaker off — every acquire is tried against the database again. |
+| `IGNIS_PG_BREAKER_COOLDOWN_MS` | `crates/ignis/src/pg.rs` | `5000` | How long an open breaker refuses acquires outright (no connection attempt, no wait) before letting exactly one caller probe the database again. See the breaker note below. |
+| `IGNIS_STREAM_CHUNKS` | `crates/ignis/src/php/module.rs` | `2` | How many chunks of a streamed response (`Ignis\Http\StreamedResponse`/`Ignis\write()`, R-STREAM) may sit in the channel between PHP and the socket before the producing fiber's `ignis_respond_chunk`/`ignis_stream_write` has to wait. Read once per process. |
+| `IGNIS_STREAM_FRAME_BYTES` | `crates/ignis/src/php/output.rs` | `8192` | Bytes a streaming fiber accumulates before a frame is pushed to the socket rather than held for the next `echo`/`Ignis\write()` call. Read once per process. |
 | `IGNIS_LOCKLIB` | `crates/ignis/src/php/locklib.rs` | unset (the `ignis_locklib_*` functions are never registered) | Path to the H36 lock-hazard test shim (`bench/e18/locklib.c`), `dlopen`ed with `RTLD_GLOBAL`. Exists only to prove that `park` deadlocks a library holding a non-recursive mutex across a blocking syscall while `block` does not (ADR-0037 §5) — not something an application ever sets. Listed here rather than under diagnostics because it gates whether a whole function family exists, not just a runtime behavior. |
 | `IGNIS_POLL_SPIN_US` | `crates/ignis/src/reactor.rs` | `0` | Microseconds the reactor's `poll` spins on `try_recv` before parking the OS thread (H30). `0` means never spin — go straight to the blocking receive. |
 | `IGNIS_LOOP_GC` | `php/packages/runtime/src/ignis.php` (`Loop::gcInit`, read via `getenv`) | on (any value other than `""`/`"0"`, **including unset**, counts as on) | Takes PHP's automatic cycle collector off the hot path: `gc_disable()`, and the userland loop calls `gc_collect_cycles()` itself at an idle point (never mid-request) once the root buffer crosses `IGNIS_LOOP_GC_ROOTS`. |
 | `IGNIS_LOOP_GC_ROOTS` | `php/packages/runtime/src/ignis.php` | `5000` (floored at `100`) | Root-buffer size that triggers the loop's own `gc_collect_cycles()` when `IGNIS_LOOP_GC` is on. |
 
+!!! note "The PostgreSQL breaker: closed, open, half-open"
+
+    M4-2/B2 (`crates/ignis/src/pg.rs`, pain-map "PHP-FPM 2"). Each pool tracks consecutive `acquire`
+    failures. Below `IGNIS_PG_BREAKER_FAILURES` the breaker is **closed** and every `acquire` is tried
+    normally. At the threshold it **opens**: for `IGNIS_PG_BREAKER_COOLDOWN_MS`, every `acquire` fails
+    immediately with `circuit breaker open after <n> consecutive failures; not connecting for another
+    <ms> ms` — no socket touched, no wait. Once the cooldown passes, the breaker is **half-open**: the
+    next caller is let through as a probe (a second caller arriving while that probe is in flight fails
+    fast with `...half-open...one probe is already in flight`); the probe's own outcome either resets
+    the failure count to zero (closed again) or reopens the breaker for another cooldown. A successful
+    `acquire` at any point resets the count.
+
 ### Front door: limits and shutdown
 
-Added for production (V-55, V-56). All four limits and both drain knobs are environment variables
-today; none has an `ignis.toml` key yet (each is marked in `http.rs` with the key it will take).
+Added for production (V-55, V-56) as environment variables. Commit `c031408` gave five of the six a
+`[limits]` table key in `ignis.toml` — see the main table above — with the same contract as
+everywhere else in this file: **the environment wins over the table**, checked by
+`the_environment_still_beats_the_limits_table` in `config.rs`, and `[limits]` is
+`#[serde(deny_unknown_fields)]` too, so a misspelled key such as `max_connection` is a parse
+**error**, not a silently-ignored default (`a_misspelled_limits_key_fails_loudly`). `IGNIS_DRAIN_DELAY_MS`
+is the one limit with no `ignis.toml` key at all — the file cannot express it yet.
 
-| Env var | Read in | Default | What it does |
-|---|---|---|---|
-| `IGNIS_MAX_BODY_BYTES` | `crates/ignis/src/http.rs` | `8388608` (8 MiB) | Request bodies over this are refused with **413** as soon as a frame would exceed it — the rest is never buffered. |
-| `IGNIS_HEADER_TIMEOUT_MS` | `crates/ignis/src/http.rs` | `10000` | A client that has not finished sending headers by then has its connection closed (slowloris). |
-| `IGNIS_IDLE_TIMEOUT_MS` | `crates/ignis/src/http.rs` | `60000` | An accepted connection with no request for this long is shut down gracefully. |
-| `IGNIS_MAX_CONNECTIONS` | `crates/ignis/src/http.rs` | `8192` | Concurrent accepted connections. Over the cap a raw `503` + `Connection: close` is written and the socket dropped — never queued. ADR-0025: this is the RSS bound, because a held connection costs ~33 kB (V-37). |
-| `IGNIS_DRAIN_DELAY_MS` | `crates/ignis/src/http.rs` | `0` | On `SIGTERM`/`SIGINT`: how long `/_ignis/health` answers `503 {"status":"draining"}` **while still accepting**, so a load balancer can take the instance out of rotation before the socket closes. |
-| `IGNIS_DRAIN_TIMEOUT_MS` | `crates/ignis/src/http.rs` | `10000` | After the listener closes, how long in-flight requests get to finish. Past it the process exits and logs how many were still pending. |
+| Env var | `ignis.toml` key | Read in | Default | What it does |
+|---|---|---|---|---|
+| `IGNIS_MAX_BODY_BYTES` | `limits.max_body_bytes` | `crates/ignis/src/http.rs` | `8388608` (8 MiB) | Request bodies over this are refused with **413** as soon as a frame would exceed it — the rest is never buffered. |
+| `IGNIS_HEADER_TIMEOUT_MS` | `limits.header_timeout_ms` | `crates/ignis/src/http.rs` | `10000` | A client that has not finished sending headers by then has its connection closed (slowloris). |
+| `IGNIS_IDLE_TIMEOUT_MS` | `limits.idle_timeout_ms` | `crates/ignis/src/http.rs` | `60000` | An accepted connection with no request for this long is shut down gracefully. |
+| `IGNIS_MAX_CONNECTIONS` | `limits.max_connections` | `crates/ignis/src/http.rs` | `8192` | Concurrent accepted connections. Over the cap a raw `503` + `Connection: close` is written and the socket dropped — never queued. ADR-0025: this is the RSS bound, because a held connection costs ~33 kB (V-37). |
+| `IGNIS_DRAIN_DELAY_MS` | *(none)* | `crates/ignis/src/http.rs` | `0` | On `SIGTERM`/`SIGINT`: how long `/_ignis/health` answers `503 {"status":"draining"}` **while still accepting**, so a load balancer can take the instance out of rotation before the socket closes. |
+| `IGNIS_DRAIN_TIMEOUT_MS` | `limits.drain_timeout_ms` | `crates/ignis/src/http.rs` | `10000` | After the listener closes, how long in-flight requests get to finish. Past it the process exits and logs how many were still pending. |
 
 Measured behaviour: 413 on an oversized body, connections closed on both timeouts, 76,969 `503`s
 under `wrk -c64` against a cap of 8 with the server still healthy afterwards, and a `SIGTERM` drain
@@ -120,12 +147,17 @@ Built-in seed (`SEED` constant, `park.rs`):
 ```
 libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,
 libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,
-libphp:connect,libphp:read,libphp:write,libcurl,libpq,libssl,libcrypto
+libphp:connect,libphp:read,libphp:write,libphp:flock,libcurl,libpq,libssl,libcrypto
 ```
 
 This is research 27's verdicts for the third-party libraries (libcurl, libpq, OpenSSL: park) plus
 research 30's audited `libphp` groups (sleep family, socket family, stream/network/openssl —
-"every row lock-free").
+"every row lock-free") plus `libphp:flock` (commit `a6c1a56`, S1-FLOCK/V-58/V-81): a blocking
+`flock()` inside a fiber is retried as `LOCK_NB`, backing off from 200 microseconds to 20
+milliseconds between attempts, and falls back to the real blocking call if the fiber cannot park.
+Without it, a lock held across a yield point took its OS thread down for good — the holder could
+never be resumed to release it (the V-58 deadlock). This is also why `ext/session` on the
+`files` handler does not deadlock a thread (V-80): its `flock()` calls park like any other.
 
 **A library named in the policy but never actually reached refuses startup.** After PHP's MINIT
 (so `dlopen(RTLD_NOLOAD)` can see already-loaded extensions) and before any worker thread exists,
@@ -155,13 +187,8 @@ mechanism itself:
 | `IGNIS_CHAOS_P` | `php/packages/runtime/src/ignis.php` | `0.5` | Probability of the extra yield when `IGNIS_CHAOS` is on. Clamped to `[0.0, 1.0]`. |
 | `IGNIS_CHAOS_SEED` | `php/packages/runtime/src/ignis.php` | current `hrtime()` (non-reproducible) | Seeds `mt_srand()` so a chaos run is reproducible. |
 
-### Mentioned in `CLAUDE.md` but not found in the current source
-
-`IGNIS_NO_STREAM_HOOK` and `IGNIS_NO_SLEEP_HOOK` (listed in the project's `CLAUDE.md` "Useful env"
-line) do not appear anywhere under `crates/ignis/src/**` in this checkout, and the files that name
-implies (`stream.rs`, `sleep.rs`) don't exist either — `crates/ignis/src/php/` currently has
-`embed.rs`, `locklib.rs`, `mod.rs`, `module.rs`, `park.rs`, `route.rs`, `superglobals.rs`,
-`wait.rs`, `zval.rs`. This reads as pre-ADR-0020 history: the old per-mechanism stream/sleep hooks
-were superseded by the single universal-park mechanism (`IGNIS_NO_UNIVERSAL_PARK` above covers
-"hook off" for all of read/write/connect/sleep/etc. today). Flagged rather than documented as if
-still current.
+`crates/ignis/src/php/` currently has `embed.rs`, `locklib.rs`, `mod.rs`, `module.rs`, `output.rs`,
+`park.rs`, `route.rs`, `superglobals.rs`, `tsrm.rs`, `wait.rs`, `zval.rs` — the old per-mechanism
+`IGNIS_NO_STREAM_HOOK`/`IGNIS_NO_SLEEP_HOOK` hooks this project's `CLAUDE.md` used to mention are
+gone from both the source and `CLAUDE.md` itself; `IGNIS_NO_UNIVERSAL_PARK` above is the single
+"hook off" control for all of read/write/connect/sleep/etc. today (ADR-0020).

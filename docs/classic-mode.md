@@ -13,8 +13,11 @@ Ignis\Classic\serve('/var/www/html/public', '0.0.0.0:8080');
 ```
 
 Each request runs in its own fiber, so requests overlap exactly as they do for a native
-`Ignis\serve()` handler. This is the mode for a framework front controller — Symfony, Laravel — and
-for any application that keeps its state in objects rather than in globals.
+`Ignis\serve()` handler. This is the mode for a framework front controller — Symfony today (V-16,
+V-40) — and for any application that keeps its state in objects rather than in globals. Laravel is
+not supported yet: `Container::$instance` is a process-global static that two interleaved fibers
+clobber, and the fix is open work (research 25, M3-5a/M3-5b). Serialising it with
+`budget.fibers = 1` is the route being tried, not a shipped one.
 
 ## `Ignis\Classic\listen()` — real globals, one request at a time
 

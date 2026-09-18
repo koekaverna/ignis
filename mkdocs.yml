@@ -61,7 +61,11 @@ nav:
       - Configuration: reference/configuration.md
       - PHP API: reference/php-api.md
       - CLI: reference/cli.md
+      - Classic mode: classic-mode.md
   - Operations: operate.md
+  - Deploy: deploy.md
+  - Migrate: migrate.md
   - Compatibility: compatibility.md
   - Comparison: comparison.md
+  - Releasing: release.md
   - ADRs: adr/README.md

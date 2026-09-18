@@ -93,21 +93,25 @@ Ship a fixed version under a new tag rather than reusing the bad one.
 
 ## What is still unproven
 
-Never run against a real tag as of this writing (ROADMAP.md M5). Everything below is reviewed by
-reading, not observed:
+The workflow has since run against a real tag — `v0.1.0-rc.1` was published and verified by
+pulling the image and the tarball and running `--version` on both (V-57), after the first attempt
+failed on the tarball step and was fixed. What is still unobserved is narrower than it was, and is
+what follows; it is reviewed by reading, not by running:
 
-- That `packages: write` + `contents: write` from a **tag-push** event (as opposed to `image.yml`'s
-  proven branch-push event) actually grants `docker push` to `ghcr.io` and lets
-  `softprops/action-gh-release` create the tag object and the Release.
-- The "extract runtime binaries" step (`docker create` + `docker cp` of `libphp.so` out of a
-  *published* image) — never executed; only the Dockerfile's own `COPY` of that same path has run.
-- `softprops/action-gh-release@v2` itself: creating the release, attaching the tarball, marking
-  prerelease for a `-rc.1`-style tag.
 - Whether the job finishes inside its 45-minute timeout on a cold GHA cache (image.yml's build has
   always run warm-cached and finished in 2-3 minutes; a tag push after a long gap could miss cache).
-- Registry propagation timing: the job pushes then immediately `docker run`/`docker create`s the
-  same tag back — never observed to race on a real push (only on `image.yml`'s branch pushes).
-- The now-fixed dry-run path (`load` instead of `push`, release step gated off) — the fix in this
-  audit has not itself been dispatched, per the HARD LIMIT on triggering workflows.
-- `scripts/release.sh`'s `cargo update -p ignis --offline` — not run here (no cargo allowed this
-  session); relies on an already-populated local registry cache.
+  `v0.1.0-rc.1` ran warm, so it did not test this.
+- The now-fixed dry-run path (`load` instead of `push`, release step gated off) — the fix has not
+  itself been dispatched, per the HARD LIMIT on triggering workflows.
+- `scripts/release.sh`'s `cargo update -p ignis --offline` — relies on an already-populated local
+  registry cache and has not been run here.
+
+**Proven by `v0.1.0-rc.1` (V-57), and no longer on the list above:** that `packages: write` +
+`contents: write` from a tag-push event grants `docker push` to `ghcr.io` and lets
+`softprops/action-gh-release@v2` create the tag object, the Release and the prerelease marking; that
+the "extract runtime binaries" step (`docker create` + `docker cp` of `libphp.so` out of the
+*published* image) works — it is in fact the step the first tag **failed** on, because `tar -C`
+changes where tar reads and not where it writes, and it was fixed and re-run; and that registry
+propagation does not race, since the job pushed and immediately pulled the same tag back. Verified
+as a user afterwards, both ways: `docker run … --version` and `gh release download` → extract →
+`./ignis --version`, each printing `ignis 0.1.0-rc.1`.

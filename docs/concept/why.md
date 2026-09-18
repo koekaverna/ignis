@@ -21,11 +21,13 @@ all just waiting, and there is nothing left to accept the next connection).
 
 A request is a PHP [Fiber](https://www.php.net/manual/en/language.fibers.php) — a lightweight,
 resumable stack, not a process or a thread. All waiting belongs to a Rust reactor built on tokio:
-every timer, socket, TLS session and PostgreSQL query is a tokio-owned future, and the PHP thread's
-only wait point is one poll of a completion channel that reactor feeds. When a request's Fiber
-reaches an I/O point, it suspends; the underlying OS thread picks up the next ready Fiber and keeps
-working. A slow upstream stalls one Fiber — a few kilobytes of suspended stack — never the thread,
-never the process (see [Architecture](architecture.md) for how the two sides talk).
+every timer, every socket readiness wait and every PostgreSQL query is a tokio-owned future — TLS
+included, but only as a generic socket wait: the handshake and the records are PHP's own
+`ext/openssl`, parked like any other syscall (see [The three mechanisms](mechanisms.md)) — and the
+PHP thread's only wait point is one poll of a completion channel that reactor feeds. When a
+request's Fiber reaches an I/O point, it suspends; the underlying OS thread picks up the next ready
+Fiber and keeps working. A slow upstream stalls one Fiber — a few kilobytes of suspended stack —
+never the thread, never the process (see [Architecture](architecture.md) for how the two sides talk).
 
 The trade is explicit: PHP's synchronous, blocking programming model is kept exactly as written
 (`file_get_contents`, `sleep()`, `fsockopen` — see [Compatibility](../compatibility.md)), but the

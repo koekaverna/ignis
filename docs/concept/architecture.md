@@ -3,16 +3,21 @@
 One process, two worlds that only ever exchange plain data over channels.
 
 - **The tokio side** (`http.rs`, `grpc.rs`, `pg.rs`, `reactor.rs`) — a hyper 1.x auto h1/h2 front
-  door, tonic gRPC on the same listener, rustls where TLS is terminated on the network path, a
-  tokio-postgres connection pool, and every timer and socket in the process.
+  door, tonic gRPC on the same listener, a tokio-postgres connection pool, and every timer and
+  socket readiness wait in the process. The listener itself is plaintext; inbound TLS termination
+  is deferred ([ADR-0032](../adr/0032-inbound-tls-and-http3.md)), and outbound TLS (`ssl://`,
+  `https://`) is PHP's own `ext/openssl`, parked like any other syscall (rustls and the Rust-side
+  TLS actor it used are gone — [The three mechanisms](mechanisms.md), ADR-0037 §6 step 4, V-49).
 - **The PHP side** — N OS threads (`--threads`, default: cores), each with its own embedded ZTS
   engine context and *its own* `Reactor` handle. Requests are dispatched to the least-inflight
   thread (ADR-0010).
 
-`reactor.rs` is the only bridge between the two worlds. PHP calls `ignis_submit_*()` — packaging an
-`Op` (`Sleep`, `Connect`, `Read`, `Write`, `Upgrade`, `Custom`, …) as plain data, no pointers — and
-`ignis_poll(timeout)`. HTTP requests, gRPC calls, timer completions and offload answers all arrive
-on that one completion channel, so a PHP thread has **exactly one wait point**.
+`reactor.rs` is the only bridge between the two worlds. PHP calls one of a small set of
+`ignis_*()` functions — `ignis_submit_sleep()`, `ignis_watch()`, `ignis_grpc_*()`, `ignis_pg_*()`,
+`ignis_offload_*()` — each packaging an `Op` (`Sleep`, `Watch`, `CancelWatch`, `Custom`) as plain
+data, no pointers, and then `ignis_poll(timeout)`. HTTP requests, gRPC calls, timer completions and
+offload answers all arrive on that one completion channel, so a PHP thread has **exactly one wait
+point**.
 
 ```mermaid
 flowchart LR
@@ -20,11 +25,11 @@ flowchart LR
         hyper["hyper (h1/h2)\nauto builder"]
         tonic["tonic gRPC\n(same listener)"]
         pg["tokio-postgres\npool"]
-        timers["timers, sockets,\nTLS sessions"]
+        timers["timers,\nsocket readiness"]
     end
 
     subgraph bridge["reactor.rs — the only bridge"]
-        submit["ignis_submit_*()\nOp: plain data"]
+        submit["ignis_submit_sleep(), ignis_watch(), …\nOp: plain data"]
         completion["completion channel"]
     end
 
@@ -43,7 +48,7 @@ flowchart LR
     poll --> loop_
     loop_ --> fiber1
     loop_ --> fiber2
-    fiber1 -- "Op::Sleep/Read/Write/…" --> submit
+    fiber1 -- "Op::Sleep/Watch/CancelWatch" --> submit
     fiber2 -- "Op::Custom" --> submit
     submit --> tokio
 ```

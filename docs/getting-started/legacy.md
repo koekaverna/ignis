@@ -1,8 +1,12 @@
 # Legacy apps: the classic worker loop
 
-A framework front controller (Symfony, Laravel) keeps its state in objects and runs fine in worker
-mode with a Fiber per request. A procedural docroot usually does not: it assigns variables at the
-top level of `index.php` and reads them back with `global $x` inside functions. That combination
+A framework front controller that keeps its state in objects — Symfony is the one measured (V-16,
+V-40) — runs fine in worker mode with a Fiber per request; see [Symfony](symfony.md). Laravel does
+not belong on that list yet: its container relies on a process-global static,
+`Illuminate\Container\Container::$instance`, that two interleaved fibers can clobber mid-request,
+and making that safe is still open work (research 25, BACKLOG M3-5a/M3-5b). A procedural docroot
+usually does not run fine in worker mode either: it assigns variables at the top level of
+`index.php` and reads them back with `global $x` inside functions. That combination
 only works if the `include` runs at the **top level of the main script** — not inside a function,
 not inside a closure, and not inside a Fiber. V-54 measured all four placements directly: only the
 top-level include leaves `global $probe` seeing the value afterwards; a function, a closure, and a

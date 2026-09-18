@@ -77,9 +77,12 @@ applied to the framework's own state, on top of PHP's superglobals.
 
     The services scoped today are `request_stack`, `security.token_storage` and
     `security.untracked_token_storage`. `$_SESSION` is **not** one of the four superglobals the
-    runtime swaps per fiber, so two overlapping requests share it (V-67) — and `session_start()`
-    does not work under the embed SAPI at all, so server-side sessions are a non-goal here
-    (ADR-0038). Doctrine's `EntityManager` is next and is not scoped yet.
+    runtime swaps per fiber — but that turns out not to matter in practice: `session_start()` fails
+    on every request under the embed SAPI (`php_embed_init()` marks headers as already sent) and
+    never actually starts a session, so nothing routed through `ext/session` — Symfony's native
+    storage included — can leak or deadlock a thread (V-67, V-80). Server-side sessions are a
+    non-goal here for that reason (ADR-0038). Doctrine's `EntityManager` is next and is not scoped
+    yet.
 
 ## Deployment
 
