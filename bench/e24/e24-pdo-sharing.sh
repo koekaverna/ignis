@@ -201,6 +201,35 @@ per_connection_probe() {
   [ "${reportingBackends:-0}" = 1 ] || { echo "  FAIL: the pool of one used ${reportingBackends} backends"; fail=1; }
 }
 
+# A handler that dies holding its lease must still give it back, or a pool of two is empty after two
+# failures. The request path releases in a `finally` (Loop::releaseRequest -> Scope::clear), and this
+# is what proves that reaches the pool.
+crash_probe() {
+  rm -rf "$APP/var/cache"
+  ( export IGNIS_THREADS=1 IGNIS_LISTEN=127.0.0.1:$PORT APP_ENV=prod APP_DEBUG=0 IGNIS_PHP_INI="$PWD/$APP/php.ini" E24_POOL=2
+    exec "$BIN" --threads 1 "$APP/public/index.php" ) > /tmp/e24-server.log 2>&1 &
+  local server=$! up=0 i
+  for _ in $(seq 1 100); do curl -sf -u alice:alicepw "http://127.0.0.1:$PORT/pg?tag=warm&sleep=0" >/dev/null && { up=1; break; }; sleep 0.2; done
+  if [ "$up" != 1 ]; then echo "  FAIL: the app never answered"; tail -3 /tmp/e24-server.log; kill -9 $server 2>/dev/null; fail=1; return; fi
+
+  local crashed=0
+  for i in 1 2 3 4 5 6; do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -m 10 -u alice:alicepw "http://127.0.0.1:$PORT/pg?tag=boom$i&fail=1")" = 500 ] && crashed=$((crashed + 1))
+  done
+  local after
+  after=$(curl -s -m 10 -u alice:alicepw "http://127.0.0.1:$PORT/pg?tag=after&sleep=0")
+  kill $server 2>/dev/null
+  for _ in $(seq 1 20); do kill -0 $server 2>/dev/null || break; sleep 0.5; done
+  kill -9 $server 2>/dev/null; wait $server 2>/dev/null
+
+  echo "  $crashed of 6 handlers died holding a lease; the next request answered: $after"
+  [ "$crashed" = 6 ] || { echo "  FAIL: the failing requests did not fail"; fail=1; }
+  case "$after" in *'"marker":"after"'*) ;; *) echo "  FAIL: the pool never recovered from six dead handlers"; fail=1;; esac
+}
+
+echo "== a handler that dies still gives its connection back"
+crash_probe
+
 echo "== two connections, two pool sizes, one application"
 per_connection_probe
 

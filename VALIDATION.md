@@ -4244,3 +4244,43 @@ files were renamed. The pass/fail assertions read one file at a time and were ne
 
 Gates: PHP suite **323 tests / 757 assertions**, `bench/e24` GREEN (ten arms), `bench/e21` GREEN,
 `scripts/smoke.sh` GREEN, phpstan and php-cs-fixer clean on everything this work touches.
+
+### V-85 addendum 5 — who owns a pooled connection, how it comes back, and the one case where it does not
+
+Date: 2026-09-18T18:4xZ. Owner asked the three questions a pool has to answer.
+
+**Which connection belongs to a fiber: no identifier, a reference graph.** `Scope` is a `WeakMap`
+keyed by `Fiber::getCurrent()`; the fiber's bag holds a `FiberManager`, which holds a manager built
+non-shared for this fiber, which holds its own `Doctrine\DBAL\Connection`, under which
+`PoolingDriver::connect()` put a `PooledConnection`. `ConnectionPool::acquire()` pops the connection
+out of `idle`, so while it is leased it exists in exactly one place and no other fiber can reach it
+— not by agreement, but because there is nowhere to reach it from.
+
+**How it learns it is free: refcounting, not a flag.** `Scope::clear()` drops the handle →
+`FiberManager::release()` → `Connection::close()` sets DBAL's `_conn` to null → the last reference to
+`PooledConnection` goes → its destructor returns it to the pool, which clears the session and wakes
+one waiter. This is why `FiberManager` exists at all: manager and unit of work reference each other,
+so without a handle outside that cycle the moment of return would be a collection, not the request
+boundary (addendum 1).
+
+**A handler that dies still gives it back — measured.** Six requests that throw *after* acquiring,
+through a pool of 2:
+
+```
+6 of 6 handlers died holding a lease; the next request answered:
+{"tag":"after","marker":"after","match":true,"backend":163,...}
+```
+
+With leases leaking, the third crash would have emptied the pool and the last request would have
+timed out. The release is `Loop::admitRequest`'s `finally` → `releaseRequest` → `Scope::clear()`, the
+same path an uncaught exception, a client disconnect and a deadline all take.
+
+**A fiber that hangs does not give it back, and nothing reclaims it.** A fiber parked forever never
+reaches that `finally`; its connection is in no `idle` list and never will be. The pool shrinks
+silently until every request is refused with `PoolTimeoutException` and stays that way until the
+thread restarts. There is no lease age, no reaper and no watchdog: `stats()` reports
+`limit/open/idle/waiting` and nothing about how long a lease has been held. Filed as
+`S-POOL-LEASE-AGE`, and it is the same hole `Ignis\Pg` has had since V-21.
+
+Gates: `bench/e24` GREEN (eleven arms), `bench/e21` GREEN, PHP suite 323 tests / 757 assertions
+(package code unchanged by this entry — the fixture and the suite are).

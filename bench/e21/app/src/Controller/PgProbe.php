@@ -36,6 +36,10 @@ final class PgProbe
                 ->executeQuery('SELECT pg_sleep(CAST(? AS double precision)), CAST(? AS text) AS marker, pg_backend_pid() AS backend', [$seconds, $tag])
                 ->fetchAssociative();
 
+            if ($request->query->get('fail') !== null) {
+                throw new \RuntimeException('the handler dies holding its connection');   // E24: does the lease come back?
+            }
+
             return new JsonResponse([
                 'tag' => $tag,
                 'marker' => $row['marker'] ?? null,
@@ -44,6 +48,8 @@ final class PgProbe
                 'connection' => spl_object_id($connection),
                 'error' => null,
             ]);
+        } catch (\RuntimeException $deliberate) {
+            throw $deliberate;                  // out through the kernel, so the fiber really unwinds
         } catch (\Throwable $e) {
             return new JsonResponse([
                 'tag' => $tag,
