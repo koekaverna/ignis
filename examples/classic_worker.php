@@ -7,8 +7,10 @@
  * entry script's top-level assignments become real globals: `$GLOBALS['wpdb']` is set and
  * `global $wpdb` inside a function sees it (V-53 measured every alternative — a function, a
  * closure, a fiber and `extract($GLOBALS, EXTR_REFS)` all leave it empty). WordPress, Drupal and
- * any procedural docroot need this shape; Symfony and Laravel front controllers do not and can use
- * `Ignis\Classic\serve()` (examples/classic_server.php), which handles requests in fibers.
+ * any procedural docroot need this shape; a Symfony front controller does not and can use
+ * `Ignis\Classic\serve()` (examples/classic_server.php), which handles requests in fibers. Laravel
+ * cannot yet: `Container::$instance` is a process-global static that interleaved fibers clobber
+ * (research 25, M3-5a/M3-5b).
  *
  *     ignis --threads 4 examples/classic_worker.php /var/www/html/public
  *
