@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Working agreement
 
 - The full brief is in BRIEF.md. Re-read it, STATUS.md and the tail of JOURNAL.md after any context reset before doing anything else.
-- Commit at every stage transition of the loop, not only per hypothesis; `wip(cycle-N/stage): …` mid-stage is fine. Push after every commit.
+- Commit at every stage transition of the loop, not only per hypothesis; `wip(cycle-N/stage): …` mid-stage is fine.
+- Push a batch only once `scripts/gate.sh` is green, never on top of a red run. On 2026-09-18 three pushes in a row left `main` red and the second and third were made without reading the first one's verdict; `cargo deny` would have caught the licence on the developer's box in one minute.
 - Never leave more than 30 minutes of work uncommitted.
-- `main` is the branch of record (owner decision 2026-09-16, DECISIONS.md). Work on the night branch (`night-N`); it is merged into `main` with a merge commit after CI is green. Do not rewrite history.
+- `main` is the branch of record and the branch worked on (owner decision 2026-09-16, DECISIONS.md). The `night-N` branch model is gone (owner, 2026-09-18) and so is every night artefact. Do not rewrite history.
 - Never ask for permission or confirmation. Decide, log in DECISIONS.md, continue.
 - Numbers or it didn't happen. Every claim in STATUS.md links to a VALIDATION.md entry.
 

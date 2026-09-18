@@ -2,13 +2,13 @@
 name: ci
 on:
   push:
-    branches: [main, "night-*"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 # H-4 (2026-09-16): with cancel-in-progress unconditional, the orchestrator's push-every-few-minutes
 # cadence on main meant three runs in a row were cancelled and the full gate never completed
 # (run 35115588266 and its successors were all on main; `gh run list` at the time showed only
-# cancelled/superseded runs there). PRs and night-* branches still get superseded on every push
+# cancelled/superseded runs there). Pull requests still get superseded on every push
 # (cheap, no gate to protect); main never does, so every push to main gets one completed run of
 # the full gate — later pushes queue behind the one in flight instead of killing it. Chose this
 # over a workflow_dispatch "full_gate" opt-out because that still lets an ordinary push to main
@@ -157,11 +157,14 @@ jobs:
           find php/packages php/tests examples bench/php bench/e22 -name '*.php' \
                -not -path '*/vendor/*' -not -path '*/var/cache/*' -print0 \
             | xargs -0 -n1 -P4 /opt/php85-zts/bin/php -l > /dev/null
-      - name: phpstan
-        run: cd php && /opt/php85-zts/bin/php vendor/bin/phpstan analyse --no-progress --error-format=github
-      # revolt promises php 8.1 to AMPHP users, so it is analysed against that floor, not the tree's.
-      - name: phpstan (revolt, the 8.1 floor)
-        run: cd php && /opt/php85-zts/bin/php vendor/bin/phpstan analyse -c packages/revolt/phpstan.neon --no-progress --error-format=github
+      # One command, and the same one `composer check` runs locally: both configs (the tree at level 9
+      # and the 8.1 floor revolt promises AMPHP users) and the memory limit live in php/composer.json.
+      # Before this the job ran phpstan directly and inherited the container php.ini's 128M, which a
+      # parallel worker reached on 2026-09-18 and crashed the gate -- a limit only a developer's own
+      # php.ini supplies is a gate that cannot be reproduced off CI. Cost: no `--error-format=github`,
+      # so failures are read from the log rather than as inline annotations.
+      - name: phpstan (both configs, through the composer script)
+        run: cd php && /opt/php85-zts/bin/php "$(command -v composer)" run-script stan
       - name: php-cs-fixer (check only)
         run: cd php && /opt/php85-zts/bin/php vendor/bin/php-cs-fixer check --diff --show-progress=none
 

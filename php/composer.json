@@ -50,7 +50,7 @@
     },
     "scripts": {
         "lint": "find packages tests ../examples ../bench ../scripts -name '*.php' -not -path '*/vendor/*' -not -path '*/var/cache/*' -exec php -l {} \\; | grep -v '^No syntax errors detected' ; test $? -eq 1",
-        "stan": ["@php vendor/bin/phpstan analyse --no-progress", "@php vendor/bin/phpstan analyse --no-progress -c packages/revolt/phpstan.neon"],
+        "stan": ["@php vendor/bin/phpstan analyse --no-progress --memory-limit=1G", "@php vendor/bin/phpstan analyse --no-progress --memory-limit=1G -c packages/revolt/phpstan.neon"],
         "cs": "@php vendor/bin/php-cs-fixer check --diff --show-progress=none",
         "fix": "@php vendor/bin/php-cs-fixer fix --show-progress=none",
         "rector": "@php vendor/bin/rector process --dry-run",
@@ -64,7 +64,7 @@
     },
     "scripts-descriptions": {
         "lint": "php -l over every tracked PHP file (find, not git ls-files: git refuses to run in the container).",
-        "stan": "PHPStan level 9 over every package, then the 8.1 override for ignis/revolt.",
+        "stan": "PHPStan level 9 over every package, then the 8.1 override for ignis/revolt. The memory limit is explicit because CI runs on the container php.ini default of 128M, which a parallel worker reached on 2026-09-18 and crashed the gate; a limit only the developer's php.ini supplies is a gate that cannot be reproduced locally.",
         "cs": "php-cs-fixer dry run; run under the stock 8.3 php, it refuses to start above its supported max.",
         "rector": "Dry run only — rector is a local one-shot tool here, never a CI gate.",
         "check": "What CI runs: lint, stan, cs, test."

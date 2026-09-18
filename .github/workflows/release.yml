@@ -129,10 +129,9 @@ jobs:
         id: notes
         run: |
           git fetch --tags --force
-          # BUG (found in audit): unfiltered `git tag` also matches non-release tags (repo has
-          # "night-1-done"), so the very first real vX.Y.Z release would have picked that as
-          # "previous" and dumped its entire unrelated history into the notes instead of printing
-          # "Initial release." Restrict to v* so only prior releases count as "previous".
+          # Only `v*` counts as "previous": an unfiltered `git tag` matches any tag anyone ever
+          # pushed, and the first real vX.Y.Z release would then take an unrelated one as its
+          # predecessor and dump that whole history into the notes instead of "Initial release."
           prev="$(git tag --list 'v*' --sort=-v:refname | grep -v "^${{ steps.v.outputs.tag }}$" | head -1 || true)"
           range_end="HEAD"
           git rev-parse -q --verify "refs/tags/${{ steps.v.outputs.tag }}" >/dev/null && range_end="${{ steps.v.outputs.tag }}"
