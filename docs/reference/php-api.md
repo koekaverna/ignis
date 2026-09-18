@@ -12,9 +12,9 @@ Also cross-checked against `php/packages/runtime/stubs/ignis.php`, the static-an
 (`scanFiles`, never executed — see below), and `examples/app.php`, the API spec.
 
 The userland ships as one composer package per integration under `php/packages/` — `ignis/runtime`
-is the scheduler and everything else `require`s it. Eleven packages exist today (`composer.json`
+is the scheduler and everything else `require`s it. Ten packages exist today (`composer.json`
 names in parentheses): `runtime` (`ignis/runtime`), `symfony-runtime` (`ignis/symfony-runtime`),
-`pg` (`ignis/pg`), `offload` (`ignis/offload`), `grpc` (`ignis/grpc`), `revolt` (`ignis/revolt`),
+`offload` (`ignis/offload`), `grpc` (`ignis/grpc`), `revolt` (`ignis/revolt`),
 `swoole` (`ignis/swoole`), `doctrine` (`ignis/doctrine`), and three for Temporal:
 `temporal-core-transport` (`ignis/temporal-core-transport`, host-agnostic — no dependency on
 Ignis), `temporal` (`ignis/temporal`, ADR-0040: the current, supported host for the official
@@ -226,7 +226,7 @@ APP_RUNTIME=Ignis\Symfony\IgnisRuntime
 
 Doctrine ORM under fibers: one `EntityManager` **and one database connection** per fiber instead of
 one per process, so two overlapping requests never share an identity map, a transaction the other
-one left open, or a PostgreSQL socket. **Two connection modes**, `IGNIS_DOCTRINE_POOL` picks between them:
+one left open, or a PostgreSQL socket. **Two connection modes**, chosen in `config/packages/ignis_doctrine.yaml` — `pool.size: 0` (or no `pool` key) for per-fiber, `pool.size: N` for the pool. Not an environment variable: the numbers are service arguments like any other, and a deployment that wants them outside the code writes `%env(int:DB_POOL)%` there. (`IGNIS_DOCTRINE_POOL` was documented here until 2026-09-18 and never existed in the code.)
 
 - **per fiber** (default): every request that touches the database opens its own connection and
   closes it at request end — about 1 ms of TCP plus SCRAM per request, which is what php-fpm does
@@ -275,7 +275,7 @@ Ignis\Doctrine\IgnisDoctrineBundle::class => ['all' => true],
 |---|---|
 | `IgnisDoctrineBundle extends Bundle` | Adds `DoctrineFiberScopePass`, a compiler pass that rewrites the `EntityManager` service definition so every fiber resolves its own instance from a non-shared inner definition, and marks every connection in `doctrine.connections` non-shared so the fiber's manager opens its own. Without this bundle Doctrine's `EntityManager` stays one shared object across every fiber on the thread, **and so does its database connection** — which under PostgreSQL means two overlapping requests inside one socket: measured as one request receiving another's row with a 200, plus `SQLSTATE[HY000] 7 timeout expired` for the rest (V-85). |
 | `Pool\PoolingMiddleware implements Doctrine\DBAL\Driver\Middleware` | The switch between the two connection modes, registered per Doctrine connection by `DoctrinePoolPass` (tagged `doctrine.middleware` with that connection's name). With its size at 0 it hands the driver back untouched — a connection per fiber, opened and closed per request. With a size it wraps the driver so `connect()` leases from a per-thread `ConnectionPool` instead. Its three numbers are ordinary constructor arguments, which is what makes them configurable in code. |
-| `Pool\ConnectionPool` | At most `IGNIS_DOCTRINE_POOL` connections per thread, each leased to exactly one fiber at a time. Fills itself to `pool.warm` when created (at boot, via the bundle), parks a fiber that finds every connection leased — `pool.wait_ms`, then `PoolTimeoutException` — and clears the session (`ROLLBACK; CLOSE ALL; RESET ALL; …`, the V-21 expansion of `DISCARD ALL`) before a connection is handed on. PostgreSQL only: other drivers get no reset, so a reused connection carries its session settings into the next request. |
+| `Pool\ConnectionPool` | At most `pool.size` connections per thread, each leased to exactly one fiber at a time. Fills itself to `pool.warm` when created (at boot, via the bundle), parks a fiber that finds every connection leased — `pool.wait_ms`, then `PoolTimeoutException` — and clears the session (`ROLLBACK; CLOSE ALL; RESET ALL; …`, the V-21 expansion of `DISCARD ALL`) before a connection is handed on. PostgreSQL only: other drivers get no reset, so a reused connection carries its session settings into the next request. |
 | `FiberManager` | What the fiber's scope actually holds: the manager plus a destructor that rolls back an open transaction, closes the connection and clears the manager. It exists because `EntityManager` and `UnitOfWork` reference each other, so dropping the manager frees nothing until a cycle collection — measured as 8 to 31 PostgreSQL backends still open after 30 sequential requests (V-85). The handle is in no cycle, so `Scope::clear()` at request end releases the connection there and then. |
 | `FiberEntityManager implements EntityManagerInterface, ResetInterface` | The shared object every application service keeps injected; each of its ~35 interface methods forwards to `Ignis\Scope`'s per-fiber real `EntityManager`, resolved on every call rather than fixed at construction — the decorator itself is not extended from Doctrine's own `EntityManagerDecorator`, which reads `$this->wrapped` directly, exactly the thing that must stay dynamic. Not constructed directly by application code. |
 

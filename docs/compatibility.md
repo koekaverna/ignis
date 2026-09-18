@@ -32,8 +32,10 @@ VALIDATION.md entry that measured it. Nothing here is a claim without a number b
 ## Hook-off controls
 
 Every hook has an off switch — a claim about a hook is only made against a run with that hook
-disabled, never assumed: `IGNIS_NO_STREAM_HOOK`, `IGNIS_NO_SLEEP_HOOK`, `IGNIS_NO_SUPERGLOBALS`,
-`IGNIS_NO_OFFLOAD_ROUTE`, `IGNIS_NO_UNIVERSAL_PARK`. `IGNIS_PARK` is the universal-park policy
+disabled, never assumed: `IGNIS_NO_UNIVERSAL_PARK`, `IGNIS_NO_SUPERGLOBALS`, `IGNIS_NO_OFFLOAD_ROUTE`.
+(`IGNIS_NO_STREAM_HOOK` and `IGNIS_NO_SLEEP_HOOK` stood here until 2026-09-18; the hooks they turned
+off are deleted — V-46 and V-49 — and `IGNIS_NO_UNIVERSAL_PARK` is the one control for all of
+read/write/connect/sleep today.) `IGNIS_PARK` is the universal-park policy
 table ([ADR-0037](adr/0037-three-mechanisms.md)): comma-separated `lib` or `lib:symbol` rows
 naming what may park; unset means the built-in seed — 16 `libphp:` symbols (the sleep family;
 `select`, `accept`, `poll`, `recv`, `send`, `recvfrom`, `sendto`, `recvmsg`, `sendmsg`, `connect`,
