@@ -60,10 +60,10 @@ Useful env: `IGNIS_THREADS`, `IGNIS_PHP_INI` (the embed SAPI has no `-d`/`-c`/`-
 
 One process, two worlds that only ever exchange plain data over channels:
 
-- **tokio side** (`http.rs`, `grpc.rs`, `pg.rs`, `reactor.rs`) — hyper 1.x auto h1/h2 front door, tonic on the same listener, rustls, tokio-postgres pool, all timers and sockets.
+- **tokio side** (`http.rs`, `grpc.rs`, `pg.rs`, `reactor.rs`) — hyper 1.x auto h1/h2 front door, tonic on the same listener, tokio-postgres pool, all timers and socket readiness. The listener is plaintext (ADR-0032) and rustls is gone with the stream transport factory (ADR-0037 cycle 3): outbound TLS is PHP's own `ext/openssl`, parked like any other syscall.
 - **PHP side** — N OS threads, each with its own embedded ZTS engine context and *its own* `Reactor`; requests are dispatched to the least-inflight thread (ADR-0010).
 
-`reactor.rs` is the only bridge. PHP calls `ignis_submit_*()` (an `Op`: Sleep/Connect/Read/Write/Upgrade/Custom…) and `ignis_poll(timeout)`; HTTP requests, gRPC calls, timer completions and offload answers all arrive on that one completion channel, so a PHP thread has **exactly one wait point**. Invariants: no Zend pointer ever crosses to tokio, PHP never awaits a tokio future, an `Op` is plain data.
+`reactor.rs` is the only bridge. PHP calls `ignis_submit_sleep()` / `ignis_watch()` and `ignis_poll(timeout)`; an `Op` is `Sleep`, `Watch`, `CancelWatch` or `Custom` — the `Connect`/`Read`/`Write`/`Upgrade` variants went with the transport factory; HTTP requests, gRPC calls, timer completions and offload answers all arrive on that one completion channel, so a PHP thread has **exactly one wait point**. Invariants: no Zend pointer ever crosses to tokio, PHP never awaits a tokio future, an `Op` is plain data.
 
 `crates/ignis/src/php/` is the FFI/Zend boundary — `embed.rs` (engine lifecycle, `!Send` `Engine`, `WorkerThread::attach` per thread), `module.rs` (the `ignis` internal module: `ignis_submit_sleep`, `ignis_poll`, `ignis_serve`, `ignis_respond`, …), `zval.rs`, `wait.rs` (the C-side park registry: op id → suspended fiber, resumed by `ignis_poll`), `park.rs` + `csrc/park.c` (universal park, ADR-0020/0037: the interposed libc calls, on by default, policy from `IGNIS_PARK` — this is how unmodified `file_get_contents`/`fsockopen`/`ext/sockets`/`sleep()` park the fiber), `superglobals.rs` (zend_observer fiber-switch hook swapping `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` per fiber), `route.rs`. `crates/ignis-sys` is raw bindgen over the embed SAPI headers.
 

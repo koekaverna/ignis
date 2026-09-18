@@ -398,6 +398,24 @@ that are not in it. `max_connections` is also ADR-0025's connection cap, which M
 `serve_to_legacy_args` the way `budget` already is, env still winning over the file; a test in
 `config.rs` covering the precedence for at least one of them; `ignis.toml.example` updated.
 
+### R-HELP The binary has no `--help` `agent` `open`
+**What.** Found 2026-09-18 while refreshing the site documentation against the code.
+`LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis --help` does not print usage: the flag is
+taken for an entry script and the engine fatals with `Failed opening required '--help'` (exit 255).
+`ignis serve --help` answers `ignis serve: entry script --help does not exist` (exit 2). Only
+`--version` works, printing `ignis 0.1.0-rc.1`.
+**Why.** The CLI surface cannot be discovered from the program, so `docs/reference/cli.md` has to be
+transcribed by hand from `main.rs` and re-verified by a human at every change — the documentation
+cannot be checked against the binary, which is how it drifted in the first place. A user's first
+reflex on an unknown command fails with a PHP fatal error about a file they never named.
+**Files.** `crates/ignis/src/main.rs`, `crates/ignis/src/config.rs` (`serve_to_legacy_args`).
+**Acceptance.** `ignis --help`, `ignis -h` and `ignis serve --help` print usage listing every
+subcommand and flag, and exit 0; an unknown leading flag prints usage to stderr and exits 2.
+**Constraints.** Argument parsing is hand-rolled here and a script's own `--` arguments must keep
+passing through untouched (A5/V-32 php-cli parity) — a flag after the script path belongs to the
+script, not to `ignis`. Exit statuses are *not* part of this item: they were measured and are
+already correct (`exit(7)` → 7, a fatal → 255, `serve` with a missing entry → 2).
+
 ## Cycle 2026-09-18 — bugs, stabilisation, production readiness (owner)
 
 Framing the owner set: "production readiness" is the question *what stops someone running this

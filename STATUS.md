@@ -1,6 +1,6 @@
 # STATUS — Ignis (updated 2026-09-18, branch `main`, CI green on all ten jobs — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
 
-**Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer/socket/TLS session. Every number below links to a VALIDATION.md entry; anything without one says "not measured".
+**Thesis holds.** One Rust process embeds PHP 8.5.10 (ZTS), runs many PHP requests per OS thread on native Fibers, and every wait is a tokio timer or a tokio fd-readiness wait (TLS included: since V-49 the records are ext/openssl's, parked on that readiness). Every number below links to a VALIDATION.md entry; anything without one says "not measured".
 
 ## Product (ROADMAP.md M1–M5)
 
@@ -26,7 +26,7 @@
 | **E5** CPU-bound scaling, 4 threads (box has 4 vCPU → target 3.25×) | **3.7–3.98×** in-process, 3.49× over HTTP (`/cpu` 9.3k vs 2.7k req/s) | V-9 |
 | **E5'** raised: least-inflight dispatch on `/cpu`@4 | p99 **12.4–12.8 ms** at 9.1–9.3k req/s (FrankenPHP@4: 15.6 ms) | V-15 |
 | **E6** unmodified `file_get_contents('http://…')` suspends the fiber | 3 × 200 ms in **202.5–202.9 ms** on one thread (server calling itself); 100/100 concurrent; hook-off control stalls | V-12 |
-| **E6'** raised: `ssl://`/`tls://`/`https://` + STARTTLS through the hook (rustls in the reactor) | **210–231 ms hooked vs 613–623 ms unhooked** for 3 × 200 ms; 5/5 verification cases behave like ext/openssl | V-25 |
+| **E6'** raised: `ssl://`/`tls://`/`https://` + STARTTLS through the hook (rustls in the reactor — **the mechanism this was measured on has since been deleted**, V-49; the behaviour is now ext/openssl over park) | **210–231 ms hooked vs 613–623 ms unhooked** for 3 × 200 ms; 5/5 verification cases behave like ext/openssl | V-25 |
 | **E7** Revolt driver, AMPHP examples unchanged | 7/8 byte-identical (8th a timing race in the example); timer benchmarks ≤ 1× of StreamSelectDriver | V-13 |
 | **E8** symfony/skeleton in worker mode, fiber-scoped RequestStack, sessions on | **0/100** mismatches across suspensions; **7.2k req/s (1 thread) / 25.2k (4 threads)** through the kernel | V-16 + addendum |
 | **E9** Temporal: PHP workflow (2 activities + 500 ms timer) as a suspended fiber; deterministic replay | live run **COMPLETED in 1224 ms**, 5 activations; replay of the 22-event history **OK**; mutated workflow **FAILS** (TMPRL1100) | V-18, V-19 |
@@ -35,9 +35,9 @@
 | **E12** fatal / CPU spin in one thread; supervisor respawn | fatal killed 1 of 4 workers, hello uninterrupted at 134k req/s, respawn inside the 50 ms tick, no opcache reset; spin stalled 1 thread (others 90k req/s, p99 2.67 ms); recovery **95.7%** | V-17 |
 | **E13** fiber-scoped `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` + `Ignis\Scope` | **0 mismatches** (300 in-process checks, 200 concurrent HTTP); **+100 ns** per fiber switch | V-11 |
 | **E14** runtime-owned PostgreSQL pool, lease per fiber, transaction pins, one-round-trip reset | 200 fibers over 20 connections in **1046 ms** warm (ideal 1000); LeaseError in 38 µs with 0 ops; SET/temp do not leak; **112 µs/query**, 7.3k q/s on one thread | V-21 |
-| **E15** compat suites — **DONE**, refreshed post-Phase-A on a different (24-core) box | phpt main mode **108/110 fibers, 89/118 sockets, 133/160 streams**; fiber mode **78/110 fibers, 83/118 sockets, 125/160 streams** (suite sizes differ from the 4 vCPU box's 108/80/138 because this box runs more of each suite — an environment/kernel difference, not an Ignis effect, per research 21); Swoole shim **55/153** (up from 44 — A4's `ext/sockets` hooks moved it); FrankenPHP testdata **29 pass** (fail/skip not reported by this CI run); Revolt `DriverTest` and the Symfony/Doctrine chaos numbers unchanged from V-23 addendum / V-27 | V-22, V-23 + addendum, V-26 addendum, V-27 for the original numbers; refreshed phpt/Swoole/FrankenPHP counts are from **CI run 35086872504 on `3112a96`**, not yet a V-n |
-| **E16** offload pool (own TSRM context), `Ignis\offload()`, auto-routing of `curl_*`/`PDO`/`SQLite3` with no code changes | 100 × 200 ms blocking calls: **2608 ms on 8 workers, 243 ms on 100** (fiber thread kept ticking); auto-routed `new PDO`+query 100 × 200 ms: 3454 ms on 8; `curl_exec` + `CURLOPT_WRITEFUNCTION` on the caller; **13–67 µs** copy, 17–45 µs per routed call | V-24 + addendum |
-| **E18** universal park (ADR-0020/0037) — **default build since cycle 1**; `sleep.rs` (cycle 1), `sockets.rs` + `accept.rs` (cycle 2) deleted and the stream transport factory + rustls path (cycle 3) deleted — **−1,436 Rust lines, −42 `unsafe {`, binary 48.7 → 37.2 MB**; three mechanisms left (park, offload, context); every creating test green through park, A6/B7 closed by disappearance | `curl_exec` 100 × 200 ms **279 ms**, `pdo_pgsql` **296–333 ms** with no PHP hook and no offload (controls 20.3 / 20.6 s); through the project bench after the E18-I1 fix **301–308 ms**; gate ≈ 8 ns/call; E1/E2/E4/E5 on vs off indistinguishable from noise (E4 quiet band pending); phpt gate ≥ baseline; policy table `IGNIS_PARK` = `lib[:symbol]` rows, seed `libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto` | V-45, V-46, V-47, V-48, V-49 |
+| **E15** compat suites — **DONE**, refreshed post-Phase-A on a different (24-core) box | phpt refreshed again on 2026-09-18 (`bench/results/e15-phpt/summary.md`, four suites gained, none lost a PASS): stock baseline **108/110 fibers, 91/118 sockets, 140/160 streams**; main mode **108, 91, 134**; fiber mode **78, 85, 126** — but the live gate now reports **77** for fibers in fiber mode, because `gh9916-009.phpt` fails there (`S0-FIBER`, open and deliberately not re-baselined: identical on the HEAD binary and one rebuilt at night-3's branch point, so not this cycle's work, and the same engine reported 78 earlier the same day — unexplained) (suite sizes differ from the 4 vCPU box's 108/80/138 because this box runs more of each suite — an environment/kernel difference, not an Ignis effect, per research 21); Swoole shim **55/153** (up from 44 — A4's `ext/sockets` hooks moved it); FrankenPHP testdata **29 pass** (fail/skip not reported by this CI run); Revolt `DriverTest` and the Symfony/Doctrine chaos numbers unchanged from V-23 addendum / V-27 | V-22, V-23 + addendum, V-26 addendum, V-27 for the original numbers; refreshed phpt/Swoole/FrankenPHP counts are from **CI run 35086872504 on `3112a96`**, not yet a V-n |
+| **E16** offload pool (own TSRM context), `Ignis\offload()`, auto-routing with no code changes — **`curl_*` and `PDO` have since left the default table** (park is faster: `pdo_pgsql` 303 ms parked against 2,753 ms on 8 workers, V-59 addendum), so the default routes `SQLite3` only | 100 × 200 ms blocking calls: **2608 ms on 8 workers, 243 ms on 100** (fiber thread kept ticking); auto-routed `new PDO`+query 100 × 200 ms: 3454 ms on 8; `curl_exec` + `CURLOPT_WRITEFUNCTION` on the caller; **13–67 µs** copy, 17–45 µs per routed call | V-24 + addendum |
+| **E18** universal park (ADR-0020/0037) — **default build since cycle 1**; `sleep.rs` (cycle 1), `sockets.rs` + `accept.rs` (cycle 2) deleted and the stream transport factory + rustls path (cycle 3) deleted — **−1,436 Rust lines, −42 `unsafe {`, binary 48.7 → 37.2 MB**; three mechanisms left (park, offload, context); every creating test green through park, A6/B7 closed by disappearance | `curl_exec` 100 × 200 ms **279 ms**, `pdo_pgsql` **296–333 ms** with no PHP hook and no offload (controls 20.3 / 20.6 s); through the project bench after the E18-I1 fix **301–308 ms**; gate ≈ 8 ns/call; E1/E2/E4/E5 on vs off indistinguishable from noise (E4 quiet band pending); phpt gate ≥ baseline; policy table `IGNIS_PARK` = `lib[:symbol]` rows; the seed has grown with each cycle and is `SEED` in `park.rs` (today: sleep/usleep/nanosleep/select/accept/poll/recv/send/recvfrom/sendto/recvmsg/sendmsg/connect/read/write/flock on libphp, plus libcurl, libpq, libssl, libcrypto) | V-45, V-46, V-47, V-48, V-49 |
 | backend (b): true-async fork builds (61/61 reference-scheduler tests) and runs E1 on engine coroutines via a 14-line idle hook | 1165–1177 ms for 10k × 1000 ms | V-7, V-8 |
 
 ## REFUTED / INCONCLUSIVE / not measured, and why
@@ -74,7 +74,7 @@ Owner sign-off still needed on four points from Phase A — DECISIONS.md "Owner 
 
 ## Quality gate (ADR-0041, proposed — accepted when its gate is green on `main`)
 
-Until this cycle there was **no linter of any kind in CI, on either side, and no coverage number** (ADR-0041 §1). `cargo fmt`, `clippy -D warnings`, `cargo check --no-default-features`, `cargo deny`, `php -l`, PHPStan level 6, php-cs-fixer @PER-CS and PHPUnit now all block a merge.
+Until this cycle there was **no linter of any kind in CI, on either side, and no coverage number** (ADR-0041 §1). `cargo fmt`, `clippy -D warnings`, `cargo check --no-default-features`, `cargo deny`, `php -l`, PHPStan (level 6 when the gate landed, level 9 since `0ec13ba`), php-cs-fixer @PER-CS and PHPUnit now all block a merge.
 
 | | before | after | entry |
 |---|---|---|---|
@@ -89,7 +89,7 @@ What those percentages do not cover, from the entries themselves: `csrc/park.c` 
 
 ```
 cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo deny check   # Rust half of the gate (ADR-0041)
-cd php && composer check                               # php -l, PHPStan level 6, php-cs-fixer, PHPUnit; scripts/test-php.sh --coverage for V-79's number
+cd php && composer check                               # php -l, PHPStan level 9, php-cs-fixer, PHPUnit; scripts/test-php.sh --coverage for V-79's number
 scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (session, iconv, openssl, curl, pdo_pgsql) → /opt/php85-zts (idempotent, ~7 min)
 cargo build --release -p ignis && cargo nextest run     # binary + unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
 scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7, E11, E12
@@ -109,13 +109,13 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
  │ hyper auto (h1/h2) ── service_fn ────┼─► Completion{id,    │ ignis_poll() ──► Ignis\Loop (userland)    │
  │   per connection      oneshot<Resp> ◄┼── Request/Slept}    │   ├─ fiber pool: parked Fibers reused      │
  │ tonic Grpc (same listener, RawCodec) │                     │   ├─ Future / all() / async() / deadline   │
- │ timers, TcpStream + rustls actors    │                     │   └─ dispatch: Request → Fiber → Response  │
+ │ timers, fd readiness (Op::Watch)     │                     │   └─ dispatch: Request → Fiber → Response  │
  │ tokio-postgres pool (process-wide)   │                     │ ignis_respond / ignis_grpc_send|end        │
- │                          mpsc<Op>   ◄┼── ignis_submit_*()  │ libphp.so (ZTS, embed SAPI, module ignis)  │
+ │            mpsc<Op> Sleep|Watch|…   ◄┼── ignis_submit_sleep │ libphp.so (ZTS, embed SAPI, module ignis)  │
  └──────────────────────────────────────┘                     └──────────────────────────────────────────┘
  offload pool (--offload M): synchronous PHP threads, own TSRM context; serialized args in, result/RemoteException out; callbacks run back on the calling fiber (ADR-0016, V-24).
  Per fiber: $_SERVER/$_GET/$_POST/$_COOKIE swapped by the zend_observer fiber-switch hook (reserved slot per context, lazy since E13').
- Streams: tcp/ssl/tls/tlsv1.2/tlsv1.3 factories replaced at MINIT; inside a fiber a stream op parks it (zend_fiber_suspend), the tokio actor does the socket I/O and, for TLS, the rustls handshake/records (STARTTLS = Op::Upgrade); ignis_poll() resumes. Outside fibers, server sockets and unhooked protocols stay on the stock/openssl transports.
+ Streams: no transport factory and no rustls any more (ADR-0037 cycle 3, V-49) — a stream op inside a fiber blocks in libc, the interposed call parks the fiber (zend_fiber_suspend) and submits Op::Watch on the fd, and ignis_poll() resumes it when tokio says the fd is ready. TLS is PHP's own ext/openssl on top of that, so the handshake and the records never leave the PHP thread. Outside fibers every call forwards to libc unchanged.
  gRPC: content-type application/grpc on the same listener → tonic framing → PHP handler fiber; Ignis\Grpc\Client calls are Op::Custom futures on a lazy h2 channel.
  PostgreSQL: pool owned by the runtime (tokio-postgres); a fiber holds a lease (Ignis\Scope), a transaction pins it, return = one-round-trip session reset.
  Rules: no Zend pointer ever crosses to tokio; PHP never awaits a tokio future; one wait point (poll) per thread.
