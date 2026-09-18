@@ -108,11 +108,17 @@ unsafe fn arg_str(zv: *mut c_char, len: usize) -> String {
 
 unsafe fn submit(rv: *mut sys::zval, fut: impl Future<Output = Outcome> + Send + 'static) {
     let id = reactor().submit(Op::Custom(Box::pin(fut)));
+    // SAFETY: `rv` is the caller's return slot, valid for the duration of the VM call; set_long only
+    // writes that slot. The op id is plain data, so nothing Zend-owned reaches the reactor.
     unsafe { zval::set_long(rv, id as i64) }
 }
 
 /// `ignis_temporal_connect(string $url, string $namespace, string $taskQueue): int` → op; result JSON `{"worker": id}`.
 pub unsafe extern "C" fn zif_connect(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let (mut a, mut al, mut b, mut bl, mut c, mut cl): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
             (std::ptr::null_mut(), 0, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0);
@@ -145,6 +151,10 @@ pub unsafe extern "C" fn zif_connect(ex: *mut sys::zend_execute_data, rv: *mut s
 /// fetches the run's history from the server over gRPC (protobuf, no JSON round trip) and
 /// builds a replay worker over it (`init_replay_worker`).
 pub unsafe extern "C" fn zif_replay(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let (mut a, mut al, mut b, mut bl, mut c, mut cl): (*mut c_char, usize, *mut c_char, usize, *mut c_char, usize) =
             (std::ptr::null_mut(), 0, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0);
@@ -207,6 +217,10 @@ fn worker_arg(ex: *mut sys::zend_execute_data) -> Option<(u64, Option<String>)> 
 
 /// `ignis_temporal_poll(int $worker): int` → JSON `WorkflowActivation`, or error (shutdown).
 pub unsafe extern "C" fn zif_poll_activation(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let Some((id, _)) = worker_arg(ex) else { return };
         submit(rv, async move {
@@ -224,6 +238,10 @@ pub unsafe extern "C" fn zif_poll_activation(ex: *mut sys::zend_execute_data, rv
 
 /// `ignis_temporal_complete(int $worker, string $completionJson): int` → `"ok"`.
 pub unsafe extern "C" fn zif_complete_activation(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
@@ -243,6 +261,10 @@ pub unsafe extern "C" fn zif_complete_activation(ex: *mut sys::zend_execute_data
 
 /// `ignis_temporal_poll_activity(int $worker): int` → JSON `ActivityTask`.
 pub unsafe extern "C" fn zif_poll_activity(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let Some((id, _)) = worker_arg(ex) else { return };
         submit(rv, async move {
@@ -260,6 +282,10 @@ pub unsafe extern "C" fn zif_poll_activity(ex: *mut sys::zend_execute_data, rv: 
 
 /// `ignis_temporal_complete_activity(int $worker, string $completionJson): int`.
 pub unsafe extern "C" fn zif_complete_activity(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
@@ -282,6 +308,10 @@ pub unsafe extern "C" fn zif_complete_activity(ex: *mut sys::zend_execute_data, 
 /// `record_activity_heartbeat` only enqueues, so there is nothing to await, and sdk-php calls it
 /// from inside an activity through its RPC seam where a parked fiber would be surprising.
 pub unsafe extern "C" fn zif_heartbeat(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let Some((id, Some(json))) = worker_arg(ex) else { return };
         let Some(w) = worker(id) else {
@@ -301,6 +331,10 @@ pub unsafe extern "C" fn zif_heartbeat(ex: *mut sys::zend_execute_data, rv: *mut
 
 /// `ignis_temporal_shutdown(int $worker): int` — initiates shutdown; pollers return errors afterwards.
 pub unsafe extern "C" fn zif_shutdown(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
+    // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
+    // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
+    // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
         let Some((id, _)) = worker_arg(ex) else { return };
         submit(rv, async move {

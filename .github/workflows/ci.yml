@@ -213,7 +213,11 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Same pin and the same reason as the `lint` job, plus clippy: this job carries the
+      # --all-features clippy run, and @stable ships without the component.
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
