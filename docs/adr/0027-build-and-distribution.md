@@ -10,7 +10,7 @@ Ignis needs PHP 8.5.10 ZTS with the embed SAPI built with `--disable-zend-signal
 distribution package (`libphp8.5-embed`) is NTS and older — checked with `nm -D` on 2026-09-16
 (no `tsrm_startup`, no `ts_resource_ex`), so it cannot be used. The binary links `libphp.so`
 dynamically and, through libcurl, about 35 shared libraries (krb5, gnutls, ldap, ssh2, rtmp…);
-there is no `libphp.a` (`--enable-embed=shared`). What ships: the runtime image (V-39: 64 MB,
+there is no `libphp.a` (`--enable-embed=shared`). What ships: the runtime image (V-39: 64 MB when measured, **84 MB since V-83**,
 `ldd` clean inside, unprivileged) built from the PHP builder image already on GHCR, with
 `release.yml` for tags (M5-1) — not yet exercised by a real tag.
 

@@ -23,9 +23,11 @@ threads — and the numbers below are what that architecture measures out to tod
 
 ## Three numbers that matter
 
-- **128,072 req/s** on a hello-world route with one PHP thread, against FrankenPHP worker mode's
-  27,627 req/s on the same box and the same libphp build — **4.6× the throughput, p99 5.8× lower**
-  (1.11 ms vs 6.42 ms) (V-6).
+- **4.6× FrankenPHP worker mode's throughput** on a hello-world route with one PHP thread, p99
+  **5.8× lower** — 128,072 vs 27,627 req/s and 1.11 vs 6.42 ms, on the same box and the same libphp
+  build (V-6). The ratio is the claim: the absolute figure was measured on the machine of 2026-09-16
+  and this project's current box reads 58–62k req/s for the same code (V-82), so quoting 128k as a
+  number you should expect is a promise nobody made.
 - **10,000 concurrent fibers**, each doing `Ignis\sleep(1000)`, finish in **1,168–1,178 ms wall**
   on a single OS thread — the 1-second sleep plus about 170 ms of fiber lifecycle overhead, not
   10,000× it (V-2).

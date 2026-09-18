@@ -17,7 +17,23 @@ final class Runner
     public static array $env = [];
     /** @var callable(string):void */
     public static $run;
-    private static ?int $sent = null;
+    /**
+     * The request `finish_request()` already answered, if any — fiber-scoped, not per thread.
+     *
+     * `Classic\serve()` runs a request per fiber ("requests overlap" is its own docblock) and under
+     * universal park an ordinary `file_get_contents()` or `session_start()` inside the include does
+     * suspend, so a per-thread static let the second request clear the first one's flag and the
+     * first client was never answered. `Ignis\Scope` falls back to a `{main}` bag outside a fiber,
+     * which is exactly what `Classic\listen()` — one request at a time — used to get from a static.
+     */
+    private const SENT = 'ignis.classic.sent';
+
+    private static function sent(): ?int
+    {
+        $id = \Ignis\Scope::get(self::SENT);
+
+        return \is_int($id) ? $id : null;
+    }
 
     /** Null means the response already went out mid-script through finish_request(); the loop must not answer twice. */
     public static function handle(Request $request): ?Response
@@ -39,7 +55,7 @@ final class Runner
         self::sessionEnd($sessionId);
         $response = self::response();
         ob_clean();
-        return self::$sent === null ? $response : null;
+        return self::sent() === null ? $response : null;
     }
 
     /**
@@ -51,7 +67,7 @@ final class Runner
     {
         $_SERVER = self::server($request, $file, $script, $pathInfo) + $_SERVER;
         $_REQUEST = array_merge($_GET, $_POST, $_COOKIE);
-        InputStream::$body = $request->body;
+        InputStream::setBody($request->body);
     }
 
     /** @var list<array{0: int, 1: array<string, mixed>}> requests handed over by the loop, one at a time */
@@ -111,10 +127,10 @@ final class Runner
         self::sessionEnd(self::$currentSessionId);
         $response = self::response();
         ob_clean();
-        if (self::$sent === null) {
+        if (self::sent() === null) {
             \ignis_respond($id, $response->status, $response->headers, $response->body);
         }
-        self::$sent = null;
+        \Ignis\Scope::set(self::SENT, null);
         self::$current = null;
         self::$currentSessionId = null;
         \Ignis\Scope::set('ignis.request', null);
@@ -124,11 +140,11 @@ final class Runner
     public static function finishRequest(): bool
     {
         $id = \Ignis\Scope::get('ignis.request');
-        if (!\is_int($id) || self::$sent !== null) {
+        if (!\is_int($id) || self::sent() !== null) {
             return false;
         }
         $response = self::response();
-        self::$sent = $id;
+        \Ignis\Scope::set(self::SENT, $id);
         return \ignis_respond($id, $response->status, $response->headers, $response->body);
     }
 
@@ -240,7 +256,7 @@ final class Runner
         header_remove();
         self::clearStatusLine();
         ini_get('expose_php') && header('X-Powered-By: PHP/' . PHP_VERSION);
-        self::$sent = null;
+        \Ignis\Scope::set(self::SENT, null);
     }
 
     /** ob_get_level() 0 is the permanent, non-removable buffer -- a script's `while (ob_end_flush())` loop stops here. */

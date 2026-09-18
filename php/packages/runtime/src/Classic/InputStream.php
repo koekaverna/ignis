@@ -7,7 +7,25 @@ namespace Ignis\Classic;
 /** php://input backed by the current request body; every other php:// path is re-opened with PHP's own wrapper. */
 final class InputStream
 {
-    public static string $body = '';
+    /**
+     * This request's `php://input`, fiber-scoped for the reason `Runner::SENT` gives: `Classic\serve()`
+     * overlaps requests, and a per-thread static handed the second one's body to a script still
+     * reading the first. Outside a fiber — `Classic\listen()`, one request at a time — `Ignis\Scope`
+     * is a plain bag and this behaves as the static did.
+     */
+    private const BODY = 'ignis.classic.body';
+
+    public static function setBody(string $body): void
+    {
+        \Ignis\Scope::set(self::BODY, $body);
+    }
+
+    private static function body(): string
+    {
+        $body = \Ignis\Scope::get(self::BODY, '');
+
+        return \is_string($body) ? $body : '';
+    }
     /** @var resource|null */
     public $context;
     /** @var resource|null */
@@ -34,7 +52,7 @@ final class InputStream
         if ($length < 1) {
             return '';
         }
-        $chunk = $this->inner ? fread($this->inner, $length) : substr(self::$body, $this->position, $length);
+        $chunk = $this->inner ? fread($this->inner, $length) : substr(self::body(), $this->position, $length);
         $this->position += \strlen((string) $chunk);
         return $chunk;
     }
@@ -44,7 +62,7 @@ final class InputStream
             return fseek($this->inner, $offset, $whence) === 0;
         }
         $this->position = match ($whence) {
-            SEEK_SET => $offset, SEEK_CUR => $this->position + $offset, default => \strlen(self::$body) + $offset,
+            SEEK_SET => $offset, SEEK_CUR => $this->position + $offset, default => \strlen(self::body()) + $offset,
         };
         return true;
     }
@@ -54,7 +72,7 @@ final class InputStream
     }
     public function stream_eof(): bool
     {
-        return $this->inner ? feof($this->inner) : $this->position >= strlen(self::$body);
+        return $this->inner ? feof($this->inner) : $this->position >= strlen(self::body());
     }
     public function stream_tell(): int
     {
@@ -63,7 +81,7 @@ final class InputStream
     /** @return array<int|string, int>|false */
     public function stream_stat(): array|false
     {
-        return $this->inner ? fstat($this->inner) : ['size' => strlen(self::$body)];
+        return $this->inner ? fstat($this->inner) : ['size' => strlen(self::body())];
     }
     public function stream_flush(): bool
     {

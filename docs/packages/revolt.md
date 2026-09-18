@@ -10,6 +10,15 @@ reactor. Libraries that already speak Revolt — AMPHP's HTTP client, its socket
 them — keep their API and stop running their own event loop: their timers and readiness waits
 become the same ops every other Ignis fiber uses, on the one wait point a PHP thread has.
 
+## It is the thread's only scheduler
+
+The driver and `Ignis\Loop` cannot both run on one PHP thread. `ignis_poll()` drains the completion
+channel, so whichever of the two polls first takes the other's completions and the fibers waiting on
+them never wake — not an error, a hang. The supported shape is an AMPHP application driven by this
+driver; `Ignis\serve()` is the other shape, and it uses the loop. Constructing the driver while the
+loop is running throws `LogicException` rather than producing the hang, since 2026-09-18 — before
+that the incompatibility was real and written down nowhere.
+
 ## Install
 
 ```

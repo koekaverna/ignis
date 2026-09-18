@@ -493,3 +493,31 @@ process exits 0.
 Kill criterion: if a legitimate offloaded workload needs one of these functions, the answer is not
 to install a reactor behind its back but to decide what that function means on a thread with no
 event loop — and to write that down here first.
+
+## 2026-09-18 — classic mode is concurrent, so its per-request state is fiber-scoped
+
+`Ignis\Classic\serve()` says "requests overlap" in its own doc block and hands each one to a fiber,
+while `Runner::$sent` and `InputStream::$body` were per-thread statics. `classic.php` carried the
+assumption that covered the gap — "a classic script must not suspend" — and universal park retired
+it: an ordinary `file_get_contents()`, `session_start()` or `flock()` inside the included script
+suspends the fiber, the next request enters `handle()`, `reset()` clears the first one's `sent` flag
+and overwrites its `php://input`, and the first client is never answered.
+
+Two ways out. **Serialise** — refuse a second concurrent request, which is `listen()`'s model and
+what ADR-0028 gives Laravel through `budget.fibers = 1`. **Scope it** — move the per-request state
+into `Ignis\Scope`, the ADR-0006 model already used for `$_SERVER` and for Symfony's `RequestStack`.
+
+Scoped, because the two entry points mean different things and both should keep meaning it:
+`listen()` is the one-at-a-time mode a legacy docroot needs (V-53: it is the only shape in which the
+entry script's top-level variables are real globals), and `serve()` is the overlapping mode a front
+controller wants. Serialising `serve()` would have left the product with no concurrent classic mode
+at all and would have made `budget.fibers = 1` mandatory rather than a Laravel-shaped choice.
+`Ignis\Scope` falls back to a `{main}` bag outside a fiber, so `listen()` behaves exactly as it did.
+
+What this does not fix, and is not claimed: everything else a classic script keeps in a static is
+still the application's problem — the architecture gives detection, not immunity (pain map, "remains
+true for Ignis too").
+
+Kill criterion: a classic-mode request that answers the wrong body or nothing at all under
+concurrency, with `Scope` holding the right value at the time — that would mean the state is not
+where the fault is, and the serialising option comes back.

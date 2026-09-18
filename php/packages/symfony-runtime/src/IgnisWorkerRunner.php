@@ -22,8 +22,9 @@ final class IgnisWorkerRunner implements RunnerInterface
     public function run(): int
     {
         $kernel = $this->kernel;
-        \Ignis\serve(static function (IgnisRequest $ignisRequest) use ($kernel): IgnisResponse {
-            $request = self::toSymfony($ignisRequest);
+        [$serverName, $serverPort] = self::listenParts($this->listen);
+        \Ignis\serve(static function (IgnisRequest $ignisRequest) use ($kernel, $serverName, $serverPort): IgnisResponse {
+            $request = self::toSymfony($ignisRequest, $serverName, $serverPort);
             $response = $kernel->handle($request);
             $headers = self::headers($response);
 
@@ -43,15 +44,37 @@ final class IgnisWorkerRunner implements RunnerInterface
         return 0;
     }
 
+    /**
+     * The address the server is actually bound to, as `SERVER_NAME` and `SERVER_PORT`.
+     *
+     * Those two were hardcoded to `localhost` and `8080` until 2026-09-18, with the real address in
+     * the constructor two methods above: every absolute URL Symfony generated — a redirect, a signed
+     * URL, a mail link — named a host the server was not on. `0.0.0.0` becomes `localhost`, because
+     * "every interface" is not a name a client can resolve.
+     *
+     * @return array{0: string, 1: int}
+     */
+    private static function listenParts(string $listen): array
+    {
+        $colon = strrpos($listen, ':');
+        if ($colon === false) {
+            return [$listen, 80];
+        }
+        $host = trim(substr($listen, 0, $colon), '[]');
+        $port = (int) substr($listen, $colon + 1);
+
+        return [$host === '' || $host === '0.0.0.0' || $host === '::' ? 'localhost' : $host, $port > 0 ? $port : 80];
+    }
+
     /** The CGI-shaped request Symfony expects, from the one the runtime handed us. */
-    private static function toSymfony(IgnisRequest $ignisRequest): Request
+    private static function toSymfony(IgnisRequest $ignisRequest, string $serverName, int $serverPort): Request
     {
         // $_SERVER/$_GET/$_POST/$_COOKIE are already this fiber's (ADR-0006); add what the CGI
         // model expects on top.
         $_SERVER['SCRIPT_NAME'] = '/index.php';
         $_SERVER['SCRIPT_FILENAME'] = 'index.php';
-        $_SERVER['SERVER_NAME'] = 'localhost';
-        $_SERVER['SERVER_PORT'] = 8080;
+        $_SERVER['SERVER_NAME'] = $serverName;
+        $_SERVER['SERVER_PORT'] = $serverPort;
         $_SERVER['PATH_INFO'] = $ignisRequest->path();
 
         $request = Request::createFromGlobals();

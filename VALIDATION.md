@@ -4742,3 +4742,63 @@ carried while it did not (V-91 §4).
 `StubsMatchTheBinaryTest` now reads `module.rs` as well as the call sites. Proved by deleting the
 `ignis_inflight` stub: `registered in module.rs but not declared in stubs/ignis.php: ignis_inflight`,
 two failures, both directions.
+
+## V-93 — the rest of the PHP audit: four defects, one refuted gate, one withdrawn finding (CONFIRMED)
+
+Date: 2026-09-18T22:4xZ. Everything here is in the userland packages; the Rust side is V-91 and the
+scheduler V-92.
+
+### 1. Classic mode's per-request state was per thread, while `Classic\serve()` overlaps requests
+
+`Runner::$sent` and `InputStream::$body` were static. `Classic\serve()` hands each request to a fiber
+— "requests overlap" is its own doc block — and under universal park an ordinary `file_get_contents()`
+or `session_start()` inside the included script suspends, so the second request's `reset()` cleared the
+first one's `sent` flag and overwrote its `php://input`. A `finish_request()` that had already answered
+then looked un-answered, and the loop answered a second time; a request still reading `php://input` read
+someone else's body.
+
+Both are `Ignis\Scope` now — the ADR-0006 model `$_SERVER` and Symfony's `RequestStack` already use.
+`Scope` falls back to a `{main}` bag outside a fiber, so `Classic\listen()`, which is one-at-a-time by
+construction (V-53), behaves exactly as it did. The choice between scoping and serialising is in
+DECISIONS.md, with its kill criterion.
+
+`bench/e15-frankenphp.sh` after the change: **passed=29 failed=4 skipped=33** — the recorded count.
+
+### 2. The gRPC decoder trusted a length that came off the network
+
+`Proto::decode` read length-delimited and fixed-width fields with `substr()`, which clamps: a field
+claiming ten bytes with two present decoded to a two-byte value and the caller could not tell. A test
+pinned that as the contract — `testATruncatedLengthDelimitedFieldIsSilentlyShortened` — while
+`readVarint()` three methods below already refused for exactly this reason. Both wire types are refused
+now, and the test asserts the refusal. 18 tests in the package, green.
+
+### 3. Symfony generated absolute URLs for a host the server was not on
+
+`IgnisWorkerRunner` hardcoded `SERVER_NAME=localhost` and `SERVER_PORT=8080` with the real bind address
+in its own constructor. Every redirect, signed URL and mail link named `localhost:8080` on any other
+address. They come from the listen address now; `0.0.0.0` and `::` resolve to `localhost`, because
+"every interface" is not a name a client can use. Four cases pinned in `IgnisWorkerRunnerTest`.
+
+### 4. `IgnisDriver` and `Ignis\Loop` could both drive one thread, and the result was a hang
+
+`ignis_poll()` drains the completion channel, so two consumers on one PHP thread take each other's
+completions and the parked fibers never wake. True since E7 and written nowhere. The driver's
+constructor refuses now (`LogicException`, naming both shapes), `Loop::isRunning()` is what it asks, and
+`docs/packages/revolt.md` says it. Merging the two schedulers is not this cycle.
+
+### Refuted: `revolt.pass` dropping to 79 was not a regression
+
+The first local run of `bench/e15-revolt.sh` after this batch reported `IGNIS_PASSED=79` against a
+baseline of 80, which reads as a regression and is not one. `testExecutionOrderGuarantees` fails in
+**exactly one of the six arms** per run, the arm varies, and the harness reports one arm's number: local
+run 1 = 79, local run 2 = **80**, and CI job 105769856567 on the same code = **80** with the failure in a
+different arm. Upstream's own `StreamSelectDriverTest` fails it too (4 errors / 1 failure in the same
+summary). So the gate cannot tell a coin flip from a regression, which is filed as `R-REVOLT-FLAKE`
+rather than papered over by moving the baseline.
+
+### Withdrawn: "STATUS says ten CI jobs and also seven — a contradiction"
+
+Both numbers are right. `ci.yml` defines seven jobs and `e15` is a four-leg matrix, so a run reports
+ten — `gh run view --json jobs` lists exactly ten. The audit read two counts as one claim; STATUS and
+`docs/adr/README.md` now say which is which. Recorded because an audit that invents a defect costs the
+same trust as a document that hides one.

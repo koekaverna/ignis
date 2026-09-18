@@ -6,6 +6,13 @@
  * Select it with REVOLT_DRIVER=Ignis\Revolt\IgnisDriver — no application change.
  * dispatch() blocks in ignis_poll(); readiness on real fds comes from
  * ignis_watch() (tokio AsyncFd), timers from Revolt's own TimerQueue.
+ *
+ * **It is the thread's only scheduler, or it is a hang.** `ignis_poll()` drains the completion
+ * channel, so this driver and `Ignis\Loop` cannot both run on one PHP thread: whichever polls first
+ * takes the other's completions and the fibers waiting on them never wake. That was true from the
+ * first version and said nowhere; the constructor refuses now instead. An AMPHP application is the
+ * supported shape — the driver drives, `Ignis\serve()` is not used — and a request handler that
+ * wants AMPHP inside `Ignis\serve()` is not something this driver can give.
  */
 declare(strict_types=1);
 
@@ -34,6 +41,13 @@ final class IgnisDriver extends AbstractDriver
     {
         if (!\function_exists('ignis_poll')) {
             throw new UnsupportedFeatureException('IgnisDriver requires the ignis runtime (ignis_poll)');
+        }
+        if (\class_exists(\Ignis\Loop::class, false) && \Ignis\Loop::isRunning()) {
+            throw new \LogicException(
+                'IgnisDriver and Ignis\Loop cannot both drive one PHP thread: ignis_poll() drains the '
+                . 'completion channel, so whichever polls first takes the other\'s completions and its '
+                . 'fibers never wake. Run an AMPHP application on this driver, or Ignis\serve() on the loop.',
+            );
         }
         parent::__construct();
         $this->timerQueue = new TimerQueue();

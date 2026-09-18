@@ -225,17 +225,14 @@ final class Proto
                     $out[$no] = self::readVarint($bytes, $i);
                     break;
                 case 2:
-                    $len = self::readVarint($bytes, $i);
-                    $out[$no] = substr($bytes, $i, $len);
-                    $i += $len;
+                    $length = self::readVarint($bytes, $i);
+                    $out[$no] = self::readBytes($bytes, $i, $length);
                     break;
                 case 1:
-                    $out[$no] = substr($bytes, $i, 8);
-                    $i += 8;
+                    $out[$no] = self::readBytes($bytes, $i, 8);
                     break;
                 case 5:
-                    $out[$no] = substr($bytes, $i, 4);
-                    $i += 4;
+                    $out[$no] = self::readBytes($bytes, $i, 4);
                     break;
                 default:
                     throw new \InvalidArgumentException("unsupported wire type " . ($key & 7));
@@ -257,6 +254,27 @@ final class Proto
         } while ($value !== 0);
 
         return $encoded;
+    }
+
+    /**
+     * A fixed run of bytes, refused rather than shortened when the message does not contain it.
+     *
+     * `substr()` answers a short string for a length that runs off the end, so a truncated frame —
+     * or a length-delimited field whose length came from the same network as the data — used to
+     * decode into a silently shorter value and the caller could not tell. `readVarint()` already
+     * refuses for the same reason; this is the other half of it.
+     *
+     * @throws \InvalidArgumentException when the message is shorter than the field claims
+     */
+    private static function readBytes(string $bytes, int &$offset, int $length): string
+    {
+        if ($length < 0 || $offset + $length > \strlen($bytes)) {
+            throw new \InvalidArgumentException("truncated length-delimited field: {$length} bytes claimed, " . (\strlen($bytes) - $offset) . ' left');
+        }
+        $value = substr($bytes, $offset, $length);
+        $offset += $length;
+
+        return $value;
     }
 
     /**

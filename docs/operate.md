@@ -82,7 +82,7 @@ $ curl -w ' [%{http_code}]' http://127.0.0.1:8096/_ignis/health
 {"status":"ok","threads":2,"stalled":0,"restarts":0} [200]
 ```
 
-`/_ignis/metrics` is the same shape (Rust-answered, never PHP): Prometheus text, 22 metrics,
+`/_ignis/metrics` is the same shape (Rust-answered, never PHP): Prometheus text, **19 metric families** (V-55 measured 22 — the three PostgreSQL ones went with the pool on 2026-09-18, V-87; counted against a live endpoint on 2026-09-18),
 `promtool check metrics` clean, answered in 1.9–5.5 ms under `wrk -c200` (V-55; the count and route
 were re-verified directly against this build with `curl http://127.0.0.1:8096/_ignis/metrics`). It
 carries the thread/queue/park/PostgreSQL counters named in the watch table above, plus one freshness
@@ -236,11 +236,17 @@ not a silently ignored one).
 
 The `[limits]` table (`c031408`) is new this cycle — these five were environment-only before.
 
-Eight more env vars are read directly, not through `ignis.toml` (no file key exists for them):
+Six more env vars are read directly, not through `ignis.toml` (no file key exists for them):
 `IGNIS_PARK` (the park policy table, `lib` or `lib:symbol` rows, ADR-0020/ADR-0037),
 `IGNIS_SKIP_PARK_SELFCHECK` (bypass the boot self-check above), `IGNIS_PARK_TRACE` (one stderr line
-(default `5000`, the threshold in the watch table above), `IGNIS_DRAIN_DELAY_MS` (default `0` — how
-long `/_ignis/health` answers `draining` while the listener keeps accepting, before
-`limits.drain_timeout_ms` starts, V-56), and the PostgreSQL bulkhead's three (S1-BULKHEAD/M4-2,
+per parked call), `IGNIS_STREAM_CHUNKS` and `IGNIS_STREAM_FRAME_BYTES` (how much of a streamed body
+may sit between PHP and the socket), and `IGNIS_DRAIN_DELAY_MS` (default `0` — how long
+`/_ignis/health` answers `draining` while the listener keeps accepting, before
+`limits.drain_timeout_ms` starts, V-56).
+
+This paragraph was mangled until 2026-09-18: cutting the PostgreSQL bulkhead's three variables out
+with ADR-0015 took the middle of two sentences with them, so it ran from "one stderr line" straight
+into a parenthesis about a threshold and ended mid-clause. `mkdocs --strict` catches a broken link,
+not a broken sentence.
 
 `ignis --version` and `ignis serve [--config PATH] [entry.php]` are the CLI surface (V-38).

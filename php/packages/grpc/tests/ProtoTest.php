@@ -102,10 +102,32 @@ final class ProtoTest extends TestCase
         Proto::decode("\x08\x80");   // field 1, varint, continuation bit set, nothing after it
     }
 
-    public function testATruncatedLengthDelimitedFieldIsSilentlyShortened(): void
+    /**
+     * This test pinned the opposite until 2026-09-18: `substr()` clamps, so a field claiming ten
+     * bytes with two present decoded to `'hi'` and the caller had no way to know. The length comes
+     * off the same network as the data, so it is input to validate, not a fact — which is what
+     * `readVarint()` had already concluded for itself.
+     */
+    public function testATruncatedLengthDelimitedFieldIsRefused(): void
     {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('truncated length-delimited field: 10 bytes claimed, 2 left');
+
         // Field 2, wire type 2, declared length 10, two bytes present.
-        self::assertSame([2 => 'hi'], Proto::decode("\x12\x0Ahi"), 'substr() clamps, so a short frame decodes as a short string with no error');
+        Proto::decode("\x12\x0Ahi");
+    }
+
+    public function testAFixedWidthFieldRunningOffTheEndIsRefused(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        // Field 1, wire type 1 (64-bit), three bytes present.
+        Proto::decode("\x09abc");
+    }
+
+    public function testAWholeLengthDelimitedFieldStillDecodes(): void
+    {
+        self::assertSame([2 => 'hello'], Proto::decode("\x12\x05hello"));
     }
 
     public function testAnEmptyMessageDecodesToNothing(): void

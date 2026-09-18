@@ -253,6 +253,19 @@ final class Loop
         return \count(self::$idle);
     }
 
+    /**
+     * True while this thread's loop is the one draining `ignis_poll()`.
+     *
+     * `ignis_poll()` consumes the completion channel, so a second consumer on the same thread takes
+     * completions the fibers of this loop are parked on and those fibers never wake. Anything that
+     * wants to drive the reactor itself — `Ignis\Revolt\IgnisDriver` is the one in the tree — asks
+     * first and refuses rather than producing a hang nobody can read.
+     */
+    public static function isRunning(): bool
+    {
+        return self::$running;
+    }
+
     /** Run until no fiber is waiting on anything (and no server is listening). */
     public static function run(): void
     {

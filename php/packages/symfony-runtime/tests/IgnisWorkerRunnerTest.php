@@ -99,4 +99,19 @@ final class IgnisWorkerRunnerTest extends TestCase
     {
         return IgnisWorkerRunner::headers($response);
     }
+
+    /**
+     * `SERVER_NAME` and `SERVER_PORT` were `localhost` and `8080` whatever the server was bound to,
+     * so every absolute URL Symfony generated — a redirect, a signed URL, a link in a mail — named a
+     * host the server was not on.
+     */
+    public function testTheServerNameAndPortComeFromTheAddressTheServerIsBoundTo(): void
+    {
+        $parts = new \ReflectionMethod(IgnisWorkerRunner::class, 'listenParts');
+
+        self::assertSame(['example.test', 9000], $parts->invoke(null, 'example.test:9000'));
+        self::assertSame(['127.0.0.1', 18080], $parts->invoke(null, '127.0.0.1:18080'));
+        self::assertSame(['localhost', 8080], $parts->invoke(null, '0.0.0.0:8080'), 'every interface is not a name a client can resolve');
+        self::assertSame(['::1', 8080], $parts->invoke(null, '[::1]:8080'));
+    }
 }

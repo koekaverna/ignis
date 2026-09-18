@@ -361,6 +361,22 @@ headers (`main` for the Rust half if needed).
 completions only; measure it on the Symfony skeleton with a local PG (research 24 path) before
 recommending a default.
 
+### R-REVOLT-FLAKE `revolt.pass` reads 79 or 80 on identical code `agent` `open — measured 2026-09-18`
+**What.** `bench/e15-revolt.sh` runs six arms and reports one `IGNIS_PASSED`. `testExecutionOrderGuarantees`
+fails in exactly one arm per run — on this box **and** in CI, on the same commit — and which arm that is
+varies, so the number the gate reads is 79 on one run and 80 on the next with nothing changed. Measured
+2026-09-18: local run 1 = 79 (`both-hooks-on` arm carried the failure), local run 2 = 80, CI job
+105769856567 = 80 with the failure in a different arm. The baseline sits at 80, so half the runs are a
+false regression — and a true one of a single test would be invisible underneath that.
+**Why.** A gate that reads a different arm each time cannot distinguish a regression from a coin flip,
+and `bench/results/e15-baseline.txt` already says as much about `swoole.pass` ("it flapped the same day").
+**Acceptance.** Either the reported number is the **minimum across the arms** (matching how the baseline
+was chosen in the first place), or `testExecutionOrderGuarantees` is quarantined by name with its reason —
+not both silently. `scripts/ci-gate.sh revolt` then means what it says. Three consecutive local runs and
+one CI run must agree on the number.
+**Constraints.** Do not raise or lower the baseline to make a run pass; the timing race is upstream's
+(AMPHP's own `StreamSelectDriverTest` fails it too — the summary line records 4 errors / 1 failure there).
+
 ---
 
 ## Closed — index

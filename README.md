@@ -62,7 +62,7 @@ docker run -p 8080:8080 ghcr.io/koekaverna/ignis
 curl http://127.0.0.1:8080/_ignis/health
 ```
 
-The image (64 MB, built and smoke-tested by CI on every push to `main`) serves the hello entry on
+The image (84 MB since the engine took the toolchain extensions and `libxml2` — V-83; V-39's 64 MB is the figure before that, and several pages still quoted it) serves the hello entry on
 its own. To serve your app, mount it and point the config at its entry script:
 
 ```
