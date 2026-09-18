@@ -9,21 +9,21 @@ declare(strict_types=1);
 namespace Ignis;
 
 /** One wall-clock deadline for the current request, inherited by its Ignis\async children. */
-function deadline(int $ms): void
+function deadline(int $milliseconds): void
 {
-    Loop::deadline($ms);
+    Loop::deadline($milliseconds);
 }
 
 /** Non-blocking sleep: the fiber suspends, tokio owns the timer. */
-function sleep(int $ms): void
+function sleep(int $milliseconds): void
 {
-    Loop::awaitOp(\ignis_submit_sleep($ms));
+    Loop::awaitOp(\ignis_submit_sleep($milliseconds));
 }
 
-/** Run $fn concurrently in a (pooled) fiber. */
-function async(callable $fn, mixed ...$args): Future
+/** Run $function concurrently in a (pooled) fiber. */
+function async(callable $function, mixed ...$arguments): Future
 {
-    return Loop::spawn($fn, ...$args);
+    return Loop::spawn($function, ...$arguments);
 }
 
 /**
@@ -36,8 +36,8 @@ function async(callable $fn, mixed ...$args): Future
 function all(iterable $futures): array
 {
     $out = [];
-    foreach ($futures as $k => $f) {
-        $out[$k] = $f->await();
+    foreach ($futures as $key => $future) {
+        $out[$key] = $future->await();
     }
     return $out;
 }
@@ -65,20 +65,22 @@ function write(string $chunk): void
     if ($chunk === '') {
         return;
     }
-    if (!\function_exists('ignis_stream_write')) {
-        echo $chunk;   // no runtime to frame it: the ordinary output path
+    $streamingSupportedByRuntime = \function_exists('ignis_stream_write');
+    if (!$streamingSupportedByRuntime) {
+        echo $chunk;
         return;
     }
     $op = \ignis_stream_write($chunk);
-    if ($op === 0) {
-        return;            // taken outright
+    $sentOutright = $op === 0;
+    if ($sentOutright) {
+        return;
     }
     if ($op < 0) {
         throw new \RuntimeException('Ignis\\write(): this fiber is not streaming a response');
     }
-    $r = Loop::awaitOp($op);
-    if (\is_array($r)) {
-        $message = $r['message'] ?? null;
+    $result = Loop::awaitOp($op);
+    if (\is_array($result)) {
+        $message = $result['message'] ?? null;
         throw new \RuntimeException(\is_string($message) ? $message : 'stream write failed');
     }
 }
@@ -96,7 +98,7 @@ function write(string $chunk): void
  *
  * @param callable(Http\Request):(Http\Response|null) $handler
  */
-function serve(callable $handler, string $addr = '127.0.0.1:8080'): void
+function serve(callable $handler, string $address = '127.0.0.1:8080'): void
 {
-    Loop::serve($handler, $addr);
+    Loop::serve($handler, $address);
 }

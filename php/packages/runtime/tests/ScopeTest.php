@@ -29,21 +29,22 @@ final class ScopeTest extends TestCase
         self::assertSame('v', Scope::get('k'));
     }
 
+    /** Each fiber sets its tag, yields once so the other can run, then reads its own tag back. */
     public function testTwoFibersDoNotSeeEachOther(): void
     {
         $seen = [];
         $fibers = [];
         foreach (['a', 'b'] as $tag) {
-            $f = new \Fiber(static function () use ($tag, &$seen): void {
+            $fiber = new \Fiber(static function () use ($tag, &$seen): void {
                 Scope::set('tag', $tag);
-                \Fiber::suspend();                 // let the other fiber run and set its own
+                \Fiber::suspend();
                 $seen[$tag] = Scope::get('tag');
             });
-            $f->start();
-            $fibers[] = $f;
+            $fiber->start();
+            $fibers[] = $fiber;
         }
-        foreach ($fibers as $f) {
-            $f->resume();
+        foreach ($fibers as $fiber) {
+            $fiber->resume();
         }
 
         self::assertSame(['a' => 'a', 'b' => 'b'], $seen);
@@ -53,26 +54,26 @@ final class ScopeTest extends TestCase
     {
         Scope::set('k', 'main');
 
-        $f = new \Fiber(static fn(): mixed => Scope::get('k'));
-        $f->start();
+        $fiber = new \Fiber(static fn(): mixed => Scope::get('k'));
+        $fiber->start();
 
-        self::assertNull($f->getReturn());
+        self::assertNull($fiber->getReturn());
         self::assertSame('main', Scope::get('k'));
     }
 
     /** The V-67 defect: a pooled fiber must not carry its values into the next request. */
     public function testClearDropsEverythingThisFiberHolds(): void
     {
-        $f = new \Fiber(static function (): array {
+        $fiber = new \Fiber(static function (): array {
             Scope::set('a', 1);
             Scope::set('b', 2);
             Scope::clear();
 
             return [Scope::get('a'), Scope::get('b', 'gone')];
         });
-        $f->start();
+        $fiber->start();
 
-        self::assertSame([null, 'gone'], $f->getReturn());
+        self::assertSame([null, 'gone'], $fiber->getReturn());
     }
 
     public function testClearInOneFiberLeavesAnotherAlone(): void

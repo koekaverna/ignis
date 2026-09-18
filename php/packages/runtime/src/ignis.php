@@ -34,22 +34,24 @@ declare(strict_types=1);
     }
     $loaded = true;
 
-    $src = __DIR__;
-    $autoload = static function (string $class) use ($src): void {
+    $sourceDirectory = __DIR__;
+    $autoload = static function (string $class) use ($sourceDirectory): void {
         if (!\str_starts_with($class, 'Ignis\\')) {
             return;
         }
-        $path = $src . '/' . \str_replace('\\', '/', \substr($class, 6)) . '.php';
+        $path = $sourceDirectory . '/' . \str_replace('\\', '/', \substr($class, 6)) . '.php';
         if (\is_file($path)) {
             require $path;
         }
     };
 
-    // A class file is the one whose basename starts with a capital -- the convention this tree
-    // already follows. functions.php, classic.php and polyfills.php are not classes and are
-    // required deliberately elsewhere, not swept up here.
-    $classFiles = static function (string $dir): iterable {
-        $entries = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS));
+    /**
+     * A class file is the one whose basename starts with a capital -- the convention this tree
+     * already follows. functions.php, classic.php and polyfills.php are not classes and are
+     * required deliberately elsewhere, not swept up here.
+     */
+    $classFiles = static function (string $directory): iterable {
+        $entries = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS));
         foreach ($entries as $entry) {
             /** @var \SplFileInfo $entry */
             if ($entry->getExtension() === 'php' && \ctype_upper($entry->getBasename()[0])) {
@@ -58,14 +60,19 @@ declare(strict_types=1);
         }
     };
 
-    // The autoloader is registered only for the walk. Declaring a subclass resolves its parent
-    // through it, so the directory order does not matter -- DeadlineExceededException extends
-    // CancelledException and StreamedResponse extends Response.
-    \spl_autoload_register($autoload);
-    foreach ($classFiles($src) as $file) {
-        require_once $file;
-    }
-    \spl_autoload_unregister($autoload);
+    /**
+     * The autoloader is registered only for the walk. Declaring a subclass resolves its parent
+     * through it, so the directory order does not matter -- DeadlineExceededException extends
+     * CancelledException and StreamedResponse extends Response.
+     */
+    $requireEveryClassFile = static function () use ($autoload, $classFiles, $sourceDirectory): void {
+        \spl_autoload_register($autoload);
+        foreach ($classFiles($sourceDirectory) as $file) {
+            require_once $file;
+        }
+        \spl_autoload_unregister($autoload);
+    };
+    $requireEveryClassFile();
 })();
 
 // Functions are not autoloadable; this is the one thing the file has to do eagerly.

@@ -32,19 +32,19 @@ final class RequestTest extends TestCase
 
     public function testQueryReadsOneParameterAndNullsTheRest(): void
     {
-        $r = self::get('/x?a=1&b=two&empty=');
-        self::assertSame('1', $r->query('a'));
-        self::assertSame('two', $r->query('b'));
-        self::assertSame('', $r->query('empty'));
-        self::assertNull($r->query('missing'));
+        $request = self::get('/x?a=1&b=two&empty=');
+        self::assertSame('1', $request->query('a'));
+        self::assertSame('two', $request->query('b'));
+        self::assertSame('', $request->query('empty'));
+        self::assertNull($request->query('missing'));
     }
 
     public function testHeaderLookupIsCaseInsensitive(): void
     {
-        $r = self::get('/', ['content-type' => 'text/plain']);
-        self::assertSame('text/plain', $r->header('Content-Type'));
-        self::assertSame('text/plain', $r->header('CONTENT-TYPE'));
-        self::assertNull($r->header('x-missing'));
+        $request = self::get('/', ['content-type' => 'text/plain']);
+        self::assertSame('text/plain', $request->header('Content-Type'));
+        self::assertSame('text/plain', $request->header('CONTENT-TYPE'));
+        self::assertNull($request->header('x-missing'));
     }
 
     public function testServerCarriesMethodAndUri(): void
@@ -64,15 +64,15 @@ final class RequestTest extends TestCase
 
     public function testUrlencodedBodyBecomesPost(): void
     {
-        $r = new Request('POST', '/', ['content-type' => 'application/x-www-form-urlencoded'], 'a=1&b[]=x&b[]=y');
-        [, , $post] = $r->superglobals();
+        $request = new Request('POST', '/', ['content-type' => 'application/x-www-form-urlencoded'], 'a=1&b[]=x&b[]=y');
+        [, , $post] = $request->superglobals();
         self::assertSame(['a' => '1', 'b' => ['x', 'y']], $post);
     }
 
     public function testABodyOnGetIsNotParsed(): void
     {
-        $r = new Request('GET', '/', ['content-type' => 'application/x-www-form-urlencoded'], 'a=1');
-        [, , $post] = $r->superglobals();
+        $request = new Request('GET', '/', ['content-type' => 'application/x-www-form-urlencoded'], 'a=1');
+        [, , $post] = $request->superglobals();
         self::assertSame([], $post);
     }
 
@@ -80,8 +80,8 @@ final class RequestTest extends TestCase
     public function testMultipartFieldsBecomePost(): void
     {
         $body = self::multipart([['name' => 'a', 'value' => '1'], ['name' => 'b[]', 'value' => 'x'], ['name' => 'b[]', 'value' => 'y']]);
-        $r = new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body);
-        [, , $post] = $r->superglobals();
+        $request = new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body);
+        [, , $post] = $request->superglobals();
         self::assertSame(['a' => '1', 'b' => ['x', 'y']], $post);
     }
 
@@ -91,8 +91,8 @@ final class RequestTest extends TestCase
             ['name' => 'a', 'value' => '1'],
             ['name' => 'upload', 'value' => "binary\r\ndata", 'filename' => 'x.bin'],
         ]);
-        $r = new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body);
-        [, , $post] = $r->superglobals();
+        $request = new Request('POST', '/', ['content-type' => 'multipart/form-data; boundary=BNDRY'], $body);
+        [, , $post] = $request->superglobals();
         self::assertSame(['a' => '1'], $post, 'a file part belongs in $_FILES, which is not fiber-scoped');
     }
 
@@ -183,24 +183,24 @@ final class RequestTest extends TestCase
      */
     public function testTheThreeQuestionMarkScansAgreeOnWhereTheQueryStarts(): void
     {
-        $r = self::get('/a?b=1?c=2');
-        [$server, $get] = $r->superglobals();
+        $request = self::get('/a?b=1?c=2');
+        [$server, $get] = $request->superglobals();
 
-        self::assertSame('/a', $r->path(), 'the first ? ends the path');
+        self::assertSame('/a', $request->path(), 'the first ? ends the path');
         self::assertSame('b=1?c=2', $server['QUERY_STRING'], 'every later ? belongs to the query string');
-        self::assertSame('1?c=2', $r->query('b'));
+        self::assertSame('1?c=2', $request->query('b'));
         self::assertSame(['b' => '1?c=2'], $get, 'the lazy query() cache and the eager $_GET parse must not diverge');
     }
 
     public function testAQueryThatIsEmptyOrAbsentLooksTheSameEverywhere(): void
     {
         foreach (['/a?' => '/a', '/a' => '/a', '?x=1' => ''] as $uri => $path) {
-            $r = self::get($uri);
-            [$server, $get] = $r->superglobals();
+            $request = self::get($uri);
+            [$server, $get] = $request->superglobals();
 
-            self::assertSame($path, $r->path(), $uri);
+            self::assertSame($path, $request->path(), $uri);
             self::assertSame(ltrim(strstr($uri, '?') ?: '', '?'), $server['QUERY_STRING'], $uri);
-            self::assertSame($r->query('x'), $get['x'] ?? null, $uri);
+            self::assertSame($request->query('x'), $get['x'] ?? null, $uri);
         }
     }
 
@@ -214,11 +214,11 @@ final class RequestTest extends TestCase
     public function testARepeatedParameterIsTheListThatIsInGet(): void
     {
         foreach (['/a?x[]=1&x[]=2' => ['1', '2'], '/a?x=1&x=2' => '2', '/a?x[a]=1&x[b]=2' => ['a' => '1', 'b' => '2']] as $uri => $expected) {
-            $r = self::get($uri);
-            [, $get] = $r->superglobals();
+            $request = self::get($uri);
+            [, $get] = $request->superglobals();
 
-            self::assertSame($expected, $r->query('x'), $uri);
-            self::assertSame($get['x'], $r->query('x'), $uri . ': query() and $_GET are the same parse');
+            self::assertSame($expected, $request->query('x'), $uri);
+            self::assertSame($get['x'], $request->query('x'), $uri . ': query() and $_GET are the same parse');
         }
     }
 
@@ -231,12 +231,12 @@ final class RequestTest extends TestCase
     private static function multipart(array $parts, string $boundary = 'BNDRY'): string
     {
         $out = '';
-        foreach ($parts as $p) {
-            $disposition = 'form-data; name="' . $p['name'] . '"';
-            if (isset($p['filename'])) {
-                $disposition .= '; filename="' . $p['filename'] . '"';
+        foreach ($parts as $part) {
+            $disposition = 'form-data; name="' . $part['name'] . '"';
+            if (isset($part['filename'])) {
+                $disposition .= '; filename="' . $part['filename'] . '"';
             }
-            $out .= "--{$boundary}\r\nContent-Disposition: {$disposition}\r\n\r\n{$p['value']}\r\n";
+            $out .= "--{$boundary}\r\nContent-Disposition: {$disposition}\r\n\r\n{$part['value']}\r\n";
         }
 
         return $out . "--{$boundary}--\r\n";

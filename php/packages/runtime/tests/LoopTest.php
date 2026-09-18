@@ -25,10 +25,11 @@ require_once __DIR__ . '/LoopTestCase.php';
 #[CoversClass(Loop::class)]
 final class LoopTest extends LoopTestCase
 {
+    /** {main} has no fiber, so Scope falls back to one static array — clear it between tests too. */
     protected function setUp(): void
     {
         parent::setUp();
-        Scope::clear();   // {main} has no fiber, so Scope falls back to one static array
+        Scope::clear();
     }
 
     // ---- fiber pool ------------------------------------------------------------------------
@@ -64,7 +65,7 @@ final class LoopTest extends LoopTestCase
         self::assertSame(3, Loop::$fibersCreated);
         self::assertSame(3, Loop::idleFibers());
         self::assertSame(100, FakeReactor::clockMilliseconds(), 'three 100 ms sleeps settle together, not one after another');
-        self::assertSame(['job0', 'job1', 'job2'], array_map(static fn($f) => $f->await(), $futures));
+        self::assertSame(['job0', 'job1', 'job2'], array_map(static fn($future) => $future->await(), $futures));
 
         Loop::spawn(static fn(): null => null);
         Loop::run();
@@ -114,7 +115,7 @@ final class LoopTest extends LoopTestCase
     public function testRequestsAreAdmittedUpToTheBudgetAndThenQueuedAsData(): void
     {
         self::budget(2);
-        self::set('requestHandler', static fn(Request $r): Response => Response::text('x'));
+        self::set('requestHandler', static fn(Request $request): Response => Response::text('x'));
 
         self::call('dispatchRequest', 1, self::rawRequest());
         self::call('dispatchRequest', 2, self::rawRequest());
@@ -129,11 +130,14 @@ final class LoopTest extends LoopTestCase
     public function testOverTheQueueDepthARequestIsShedWith503(): void
     {
         self::budget(1, 1);
-        self::set('requestHandler', static fn(Request $r): Response => Response::text('x'));
+        self::set('requestHandler', static fn(Request $request): Response => Response::text('x'));
 
-        self::call('dispatchRequest', 1, self::rawRequest());   // admitted
-        self::call('dispatchRequest', 2, self::rawRequest());   // queued
-        self::call('dispatchRequest', 3, self::rawRequest());   // shed
+        $admittedRequestId = 1;
+        $queuedRequestId = 2;
+        $shedRequestId = 3;
+        self::call('dispatchRequest', $admittedRequestId, self::rawRequest());
+        self::call('dispatchRequest', $queuedRequestId, self::rawRequest());
+        self::call('dispatchRequest', $shedRequestId, self::rawRequest());
 
         self::assertSame(1, Loop::$rejected);
         self::assertSame(
@@ -147,7 +151,7 @@ final class LoopTest extends LoopTestCase
     {
         self::budget(1);
         self::set('budgetExempt', ['/_ignis/']);
-        self::set('requestHandler', static fn(Request $r): Response => Response::text('x'));
+        self::set('requestHandler', static fn(Request $request): Response => Response::text('x'));
 
         self::call('dispatchRequest', 1, self::rawRequest('/work'));
         self::call('dispatchRequest', 2, self::rawRequest('/_ignis/metrics'));
@@ -188,10 +192,10 @@ final class LoopTest extends LoopTestCase
     {
         $seen = [];
         self::budget(1);
-        self::set('requestHandler', static function (Request $r) use (&$seen): Response {
-            $seen[] = $r->id;
+        self::set('requestHandler', static function (Request $request) use (&$seen): Response {
+            $seen[] = $request->id;
 
-            return Response::text((string) $r->id);
+            return Response::text((string) $request->id);
         });
 
         foreach ([11, 12, 13] as $id) {
@@ -208,7 +212,7 @@ final class LoopTest extends LoopTestCase
     public function testTheQueueCountersAreWhatMetricsReport(): void
     {
         self::budget(1);
-        self::set('requestHandler', static fn(Request $r): Response => Response::text('x'));
+        self::set('requestHandler', static fn(Request $request): Response => Response::text('x'));
 
         foreach ([11, 12, 13] as $id) {
             FakeReactor::inject($id, self::rawRequest());
@@ -229,7 +233,7 @@ final class LoopTest extends LoopTestCase
     public function testARequestCancelledWhileStillQueuedIsNeverAdmitted(): void
     {
         self::budget(1);
-        self::set('requestHandler', static fn(Request $r): Response => Response::text('x'));
+        self::set('requestHandler', static fn(Request $request): Response => Response::text('x'));
 
         self::call('dispatchRequest', 1, self::rawRequest());
         self::call('dispatchRequest', 2, self::rawRequest());
@@ -288,7 +292,7 @@ final class LoopTest extends LoopTestCase
 
     public function testAnExpiredDeadlineAnswers504AndCountsAsACancellation(): void
     {
-        self::set('requestHandler', static function (Request $r): Response {
+        self::set('requestHandler', static function (Request $request): Response {
             \Ignis\deadline(10);
             \Ignis\sleep(1000);
 
@@ -312,13 +316,15 @@ final class LoopTest extends LoopTestCase
      * intent ("cancel walks children first") and the mechanism gives the reason: unwinding the
      * parent answers 499 and returns its fiber to the pool, which `drainQueue()` may hand to the
      * next request while a child of the cancelled one is still running its `finally`.
+     *
+     * The ops below are ones the fake reactor will never complete, so the loop stops with
+     * everything still parked and the cancellation arrives in a poll of its own — which is how a
+     * disconnect really lands.
      */
     public function testCancellationWalksTheChildrenBeforeTheRequestFiber(): void
     {
         $order = [];
-        // Ops the fake reactor will never complete, so the loop stops with everything still parked
-        // and the cancellation arrives in a poll of its own — which is how a disconnect really lands.
-        self::set('requestHandler', static function (Request $r) use (&$order): Response {
+        self::set('requestHandler', static function (Request $request) use (&$order): Response {
             foreach ([1, 2] as $n) {
                 \Ignis\async(static function () use (&$order, $n): void {
                     try {
@@ -384,9 +390,7 @@ final class LoopTest extends LoopTestCase
     {
         $injected = new CancelledException('client disconnected');
 
-        $unguarded = new \Fiber(static function (): void {
-            \Fiber::suspend();   // no try/catch: Fiber::throw() re-throws straight back at the caller
-        });
+        $unguarded = self::unguardedFiber();
         $unguarded->start();
         self::call('throwAndAbsorb', $unguarded, $injected);
 
@@ -441,7 +445,7 @@ final class LoopTest extends LoopTestCase
 
     public function testAResponseGoesOutThroughIgnisRespond(): void
     {
-        self::serveOnce(3, static fn(Request $r): Response => Response::json(['ok' => true], 201));
+        self::serveOnce(3, static fn(Request $request): Response => Response::json(['ok' => true], 201));
 
         self::assertSame(
             [['id' => 3, 'status' => 201, 'headers' => ['content-type' => 'application/json'], 'body' => '{"ok":true}']],
@@ -452,7 +456,7 @@ final class LoopTest extends LoopTestCase
 
     public function testNullMeansAnsweredElsewhereAndNothingIsSent(): void
     {
-        self::serveOnce(3, static fn(Request $r): ?Response => null);
+        self::serveOnce(3, static fn(Request $request): ?Response => null);
 
         self::assertSame([], FakeReactor::responses(), 'gRPC (E10) answers through its own channel');
         self::assertSame(1, Loop::$handled, 'and the slot is still released');
@@ -461,7 +465,7 @@ final class LoopTest extends LoopTestCase
 
     public function testAnythingElseTheHandlerReturnsIsA500WithTheContractMessage(): void
     {
-        self::serveOnce(3, static fn(Request $r): string => 'a bare string');
+        self::serveOnce(3, static fn(Request $request): string => 'a bare string');
 
         self::assertSame(
             [['id' => 3, 'status' => 500, 'headers' => ['content-type' => 'text/plain'], 'body' => "handler must return Ignis\\Http\\Response or null\n"]],
@@ -471,7 +475,7 @@ final class LoopTest extends LoopTestCase
 
     public function testAThrowingHandlerBecomesA500NamingTheExceptionClass(): void
     {
-        self::serveOnce(3, static function (Request $r): Response {
+        self::serveOnce(3, static function (Request $request): Response {
             throw new \DomainException('bad input');
         });
 
@@ -484,9 +488,9 @@ final class LoopTest extends LoopTestCase
     public function testTheFibersScopeIsClearedBetweenTwoRequestsOnTheSameFiber(): void
     {
         $seen = [];
-        self::set('requestHandler', static function (Request $r) use (&$seen): Response {
-            $seen[$r->id] = Scope::get('leaked');
-            Scope::set('leaked', 'from request ' . $r->id);
+        self::set('requestHandler', static function (Request $request) use (&$seen): Response {
+            $seen[$request->id] = Scope::get('leaked');
+            Scope::set('leaked', 'from request ' . $request->id);
 
             return Response::text('ok');
         });
@@ -509,7 +513,7 @@ final class LoopTest extends LoopTestCase
      */
     public function testAFailureWhileAnsweringBecomesA500AndTheLoopKeepsServing(): void
     {
-        self::set('requestHandler', static fn(Request $r): Response => $r->path() === '/stream'
+        self::set('requestHandler', static fn(Request $request): Response => $request->path() === '/stream'
             ? new StreamedResponse(static function (): void {})
             : Response::text('the next request'));
 
@@ -607,5 +611,16 @@ final class LoopTest extends LoopTestCase
         self::set('requestHandler', $handler);
         FakeReactor::inject($id, self::rawRequest());
         self::drive();
+    }
+
+    /**
+     * No try/catch: Fiber::throw() re-throws straight back at the caller.
+     * @return \Fiber<mixed,mixed,mixed,mixed>
+     */
+    private static function unguardedFiber(): \Fiber
+    {
+        return new \Fiber(static function (): void {
+            \Fiber::suspend();
+        });
     }
 }

@@ -23,11 +23,11 @@ function finish(): never
  *
  * @param array<string,string> $server extra $_SERVER entries
  */
-function listen(string $docroot, string $addr, ?string $index = 'index.php', array $server = []): void
+function listen(string $docroot, string $address, ?string $index = 'index.php', array $server = []): void
 {
     configureRunner($docroot, $index, $server, null);
     \Ignis\Loop::$rawRequestHandler = Runner::queue(...);
-    \ignis_serve($addr);
+    \ignis_serve($address);
 }
 
 /**
@@ -79,8 +79,8 @@ function finish_request(): bool
  * @param array<string,string> $server extra $_SERVER entries (like FrankenPHP's `env` subdirective)
  * @param null|callable(string):void $run runs one script file; the default is a plain `include`
  */
-function serve(string $docroot, string $addr, ?string $index = 'index.php', array $server = [], ?callable $run = null): void
+function serve(string $docroot, string $address, ?string $index = 'index.php', array $server = [], ?callable $run = null): void
 {
     configureRunner($docroot, $index, $server, $run);
-    \Ignis\serve(Runner::handle(...), $addr);
+    \Ignis\serve(Runner::handle(...), $address);
 }

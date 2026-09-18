@@ -134,9 +134,9 @@ final class Loop
     {
         $self = self::currentFiber();
         for (;;) {
-            [$fn, $args, $future] = $job;
+            [$function, $arguments, $future] = $job;
             try {
-                $future->resolve($fn(...$args));
+                $future->resolve($function(...$arguments));
             } catch (\Throwable $e) {
                 $future->reject($e);
             }
@@ -162,16 +162,16 @@ final class Loop
         return [$job[0], $job[1], $job[2]];
     }
 
-    /** Run $fn concurrently; a parked pool fiber is reused when available. */
-    public static function spawn(callable $fn, mixed ...$args): Future
+    /** Run $function concurrently; a parked pool fiber is reused when available. */
+    public static function spawn(callable $function, mixed ...$arguments): Future
     {
         $future = new Future();
         $requestId = self::currentRequestId();
         if ($requestId !== null) {
-            $fn = self::attributedToRequest($fn, $args, $requestId);
-            $args = [];
+            $function = self::attributedToRequest($function, $arguments, $requestId);
+            $arguments = [];
         }
-        $job = [$fn, $args, $future];
+        $job = [$function, $arguments, $future];
         $fiber = array_pop(self::$idle);
         if ($fiber !== null) {
             self::$ready[] = [$fiber, $job];
@@ -213,13 +213,13 @@ final class Loop
 
     /**
      * The request id is fiber-scoped, so a child fiber has to be handed it explicitly (E11).
-     * @param array<array-key, mixed> $args named arguments keep their names through the spread
+     * @param array<array-key, mixed> $arguments named arguments keep their names through the spread
      */
-    private static function attributedToRequest(callable $fn, array $args, mixed $requestId): \Closure
+    private static function attributedToRequest(callable $function, array $arguments, mixed $requestId): \Closure
     {
-        return static function () use ($fn, $requestId, $args) {
+        return static function () use ($function, $requestId, $arguments) {
             Scope::set('ignis.request', $requestId);
-            return $fn(...$args);
+            return $function(...$arguments);
         };
     }
 
@@ -285,12 +285,12 @@ final class Loop
         while (self::$pending !== []) {
             $batch = self::$pending;
             self::$pending = [];
-            $t = hrtime(true);
+            $phaseStart = hrtime(true);
             foreach ($batch as [$fiber, $job]) {
                 ++self::$resumes;
                 $fiber->start($job);
             }
-            self::$phaseNs['start'] += hrtime(true) - $t;
+            self::$phaseNs['start'] += hrtime(true) - $phaseStart;
         }
     }
 
@@ -303,12 +303,12 @@ final class Loop
             if (self::$chaos) {
                 shuffle($batch);
             }
-            $t = hrtime(true);
+            $phaseStart = hrtime(true);
             foreach ($batch as [$fiber, $value]) {
                 ++self::$resumes;
                 $fiber->resume($value);
             }
-            self::$phaseNs['ready'] += hrtime(true) - $t;
+            self::$phaseNs['ready'] += hrtime(true) - $phaseStart;
         }
     }
 
@@ -366,16 +366,16 @@ final class Loop
      */
     private static function poll(): array
     {
-        $t = hrtime(true);
+        $phaseStart = hrtime(true);
         $events = \ignis_poll(-1);
-        self::$phaseNs['poll'] += hrtime(true) - $t;
+        self::$phaseNs['poll'] += hrtime(true) - $phaseStart;
         return $events;
     }
 
     /** @param array<int, mixed> $events */
     private static function dispatchEvents(array $events): void
     {
-        $t = hrtime(true);
+        $phaseStart = hrtime(true);
         if (self::$chaos && \count($events) > 1) {
             $events = self::shuffled($events);
         }
@@ -398,7 +398,7 @@ final class Loop
             ++self::$resumes;
             $fiber->resume($payload);
         }
-        self::$phaseNs['resume'] += hrtime(true) - $t;
+        self::$phaseNs['resume'] += hrtime(true) - $phaseStart;
     }
 
     /**
@@ -440,14 +440,14 @@ final class Loop
     private static function asOffloadCallback(array $payload): array
     {
         $job = $payload['job'] ?? null;
-        $seq = $payload['seq'] ?? null;
-        $cb = $payload['cb'] ?? null;
-        $args = $payload['args'] ?? null;
-        if (!\is_int($job) || !\is_int($seq) || !\is_int($cb) || !\is_string($args)) {
+        $sequence = $payload['seq'] ?? null;
+        $callback = $payload['cb'] ?? null;
+        $arguments = $payload['args'] ?? null;
+        if (!\is_int($job) || !\is_int($sequence) || !\is_int($callback) || !\is_string($arguments)) {
             throw new \UnexpectedValueException('Ignis\\Loop: a malformed offload_cb completion');
         }
 
-        return ['kind' => 'offload_cb', 'job' => $job, 'seq' => $seq, 'cb' => $cb, 'args' => $args];
+        return ['kind' => 'offload_cb', 'job' => $job, 'seq' => $sequence, 'cb' => $callback, 'args' => $arguments];
     }
 
     /**
@@ -598,9 +598,9 @@ final class Loop
     }
 
     /** @param callable(Http\Request):?Http\Response $handler */
-    public static function serve(callable $handler, string $addr): void
+    public static function serve(callable $handler, string $address): void
     {
-        \ignis_serve($addr);
+        \ignis_serve($address);
         self::$requestHandler = $handler;
         self::run();
     }
@@ -710,20 +710,20 @@ final class Loop
      * returns is discarded — so without this a failing `ignis_stream_bind` answers nobody, logs
      * nothing, and surfaces later as an unobserved rejection that kills the loop, not the request.
      */
-    private static function answerFailed(int $id, \Throwable $e): void
+    private static function answerFailed(int $id, \Throwable $exception): void
     {
-        self::logFailure('answering the request failed', $e);
+        self::logFailure('answering the request failed', $exception);
         try {
-            \ignis_respond($id, 500, ['content-type' => 'text/plain'], '500 ' . $e::class . ': ' . $e->getMessage() . "\n");
+            \ignis_respond($id, 500, ['content-type' => 'text/plain'], '500 ' . $exception::class . ': ' . $exception->getMessage() . "\n");
         } catch (\Throwable $second) {
             self::logFailure('and so did answering it with a 500', $second);
         }
     }
 
     /** Loop-level failures the client may never see. `error_log()` is stderr under the embed SAPI. */
-    private static function logFailure(string $what, \Throwable $e): void
+    private static function logFailure(string $what, \Throwable $exception): void
     {
-        \error_log('ignis: ' . $what . ': ' . $e::class . ': ' . $e->getMessage());
+        \error_log('ignis: ' . $what . ': ' . $exception::class . ': ' . $exception->getMessage());
     }
 
     /**
@@ -747,11 +747,18 @@ final class Loop
         } catch (\Throwable $e) {
             return Http\Response::text('500 ' . $e::class . ': ' . $e->getMessage() . "\n", 500);
         } finally {
-            // The fiber stays mapped: a StreamedResponse is produced *after* this returns, and
-            // cancelling it needs to find this fiber. releaseRequest() drops the mapping once the
-            // answer is actually complete (R-STREAM-CANCEL).
-            Scope::set('ignis.request', null);
+            self::leaveRequestScope();
         }
+    }
+
+    /**
+     * The fiber stays mapped: a StreamedResponse is produced *after* runHandler() returns, and
+     * cancelling it needs to find this fiber. releaseRequest() drops the mapping once the answer
+     * is actually complete (R-STREAM-CANCEL).
+     */
+    private static function leaveRequestScope(): void
+    {
+        Scope::set('ignis.request', null);
     }
 
     /** Gives this fiber the request id and its own $_SERVER/$_GET/$_POST/$_COOKIE (E13, ADR-0006). */
@@ -845,28 +852,28 @@ final class Loop
     }
 
     /**
-     * Throw $e into the request's children and only then into its own fiber, at their suspension
+     * Throw $exception into the request's children and only then into its own fiber, at their suspension
      * points (ADR-0009; research 08: "cancel walks children first"). The parent goes last because
      * its unwinding answers 499 and hands its fiber back to the pool, which the next request may
      * take while a child is still in its `finally`. Children unwind in reverse spawn order.
      * A request that is still only queued (B1) has no fiber to throw into: it is never admitted.
      */
-    private static function cancelRequest(int $requestId, CancelledException $e, int $ageUs): void
+    private static function cancelRequest(int $requestId, CancelledException $exception, int $ageUs): void
     {
-        $t0 = hrtime(true);
+        $cancelStart = hrtime(true);
         if (self::$queueHead < \count(self::$requestQueue) && !isset(self::$requestFibers[$requestId])) {
             self::$queueCancelled[$requestId] = true;
         }
         $parent = self::$requestFibers[$requestId] ?? null;
         foreach (array_reverse(self::$children[$requestId] ?? []) as $child) {
-            self::throwInto($child, $e);
+            self::throwInto($child, $exception);
         }
         if ($parent !== null) {
-            self::throwInto($parent, $e);
+            self::throwInto($parent, $exception);
         }
         ++self::$cancelled;
         self::$cancelAgeUsMax = max(self::$cancelAgeUsMax, $ageUs);
-        self::$cancelLatencyUsMax = max(self::$cancelLatencyUsMax, $ageUs + (int) ((hrtime(true) - $t0) / 1000));
+        self::$cancelLatencyUsMax = max(self::$cancelLatencyUsMax, $ageUs + (int) ((hrtime(true) - $cancelStart) / 1000));
     }
 
     /**
@@ -875,13 +882,13 @@ final class Loop
      * killed the worker thread — see "Absorbing the injected exception" in ADR-0009.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
-    private static function throwAndAbsorb(\Fiber $fiber, \Throwable $e): void
+    private static function throwAndAbsorb(\Fiber $fiber, \Throwable $exception): void
     {
         try {
-            $fiber->throw($e);
-        } catch (\Throwable $t) {
-            if ($t !== $e) {
-                self::$unobserved[] = $t;
+            $fiber->throw($exception);
+        } catch (\Throwable $caught) {
+            if ($caught !== $exception) {
+                self::$unobserved[] = $caught;
             }
         }
     }
@@ -891,7 +898,7 @@ final class Loop
      * scanned for one parked in a C stream op; anything else is a park only Rust can find.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
-    private static function throwInto(\Fiber $fiber, \Throwable $e): void
+    private static function throwInto(\Fiber $fiber, \Throwable $exception): void
     {
         if ($fiber->isTerminated() || !$fiber->isSuspended()) {
             return;
@@ -900,18 +907,18 @@ final class Loop
         if ($opId !== null) {
             unset(self::$waiting[$opId]);
             ++self::$resumes;
-            self::throwAndAbsorb($fiber, $e);
+            self::throwAndAbsorb($fiber, $exception);
             return;
         }
         foreach (self::$waiting as $op => $waiter) {
             if ($waiter === $fiber) {
                 unset(self::$waiting[$op]);
                 ++self::$resumes;
-                self::throwAndAbsorb($fiber, $e);
+                self::throwAndAbsorb($fiber, $exception);
                 return;
             }
         }
-        self::cancelCPark($fiber, $e);
+        self::cancelCPark($fiber, $exception);
     }
 
     /**
@@ -921,27 +928,27 @@ final class Loop
      * so it surfaces on return here with no throwInto frame in the trace (ADR-0009).
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
-    private static function cancelCPark(\Fiber $fiber, \Throwable $e): void
+    private static function cancelCPark(\Fiber $fiber, \Throwable $exception): void
     {
         if (!\function_exists('ignis_cancel_parked_any')) {
             return;
         }
         try {
-            \ignis_cancel_parked_any($fiber, $e);
-        } catch (\Throwable $t) {
-            if ($t !== $e) {
-                self::$unobserved[] = $t;
+            \ignis_cancel_parked_any($fiber, $exception);
+        } catch (\Throwable $caught) {
+            if ($caught !== $exception) {
+                self::$unobserved[] = $caught;
             }
         }
     }
 
-    /** Wall-clock deadline for the current request (E11): after $ms the request fiber and its children get DeadlineExceededException. */
-    public static function deadline(int $ms): void
+    /** Wall-clock deadline for the current request (E11): after $milliseconds the request fiber and its children get DeadlineExceededException. */
+    public static function deadline(int $milliseconds): void
     {
         $requestId = self::currentRequestId();
         if ($requestId === null) {
             throw new \LogicException('Ignis\\deadline() must be called inside a request');
         }
-        self::$deadlines[\ignis_submit_sleep($ms)] = $requestId;
+        self::$deadlines[\ignis_submit_sleep($milliseconds)] = $requestId;
     }
 }

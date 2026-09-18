@@ -135,7 +135,7 @@ final class RunnerTest extends TestCase
 
         self::assertSame('prod', $server['APP_ENV'], '$extra wins over $env');
         self::assertSame('/root', $server['HOME'], '$env fills in what $extra does not set');
-        self::assertSame('Ignis', $server['SERVER_SOFTWARE'], 'the CGI entries win over both: `$s + $extra + $env`');
+        self::assertSame('Ignis', $server['SERVER_SOFTWARE'], 'the CGI entries win over both: `$server + $extra + $env`');
     }
 
     public function testPathInfoAndPathTranslatedAppearOnlyWhenThereIsPathInfo(): void
