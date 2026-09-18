@@ -4491,6 +4491,10 @@ Gate: `bench/e25-reload.sh`, six arms, all green.
 | `SIGHUP` with no file change | workers respawn, the code is unchanged |
 | `IGNIS_WATCH` without `--supervise` | refuses, says why, and keeps serving |
 
+Re-run on the shipped release binary after the last change (the table above is the run that found
+the fixes): **319,340 requests, 0 non-2xx**, 39,423 req/s, overlap 416 ms, the spanning request 200
+in 0.403 s — `IGNIS_BIN=./target/release/ignis bench/e25-reload.sh`, E25 GREEN.
+
 ### Six defects, found by review, each now an arm above
 
 The first version passed a single-request test and failed every one of these. Three reviews ran in

@@ -198,13 +198,16 @@ fix would cost the worker model's own bootstrap saving.
 - **Linux-only, by construction.** Universal park depends on `epoll`, raw `syscall` numbers and
   `dladdr` semantics that are Linux-specific (ADR-0037's build/distribution table); there is no
   other-OS target.
-- **`SIGTERM` and `SIGINT` drain; `SIGHUP` reload is not built.** On either signal the runtime
-  reports `503 {"status":"draining"}` from `/_ignis/health` for `IGNIS_DRAIN_DELAY_MS` (default 0,
-  env-only) while still accepting, then closes the listener and gives in-flight requests
+- **`SIGTERM` and `SIGINT` drain; `SIGHUP` reloads code, not configuration.** On `SIGTERM`/`SIGINT`
+  the runtime reports `503 {"status":"draining"}` from `/_ignis/health` for `IGNIS_DRAIN_DELAY_MS`
+  (default 0, env-only) while still accepting, then closes the listener and gives in-flight requests
   `limits.drain_timeout_ms` / `IGNIS_DRAIN_TIMEOUT_MS` (default 10 s, in `ignis.toml` since
-  `c031408`) to finish before exiting 0 — measured in V-56. What is still missing is reload
-  *without* a restart: a config change needs a new process, so a rolling deploy behind a balancer is
-  the way to change configuration without a gap (BACKLOG M4-5).
+  `c031408`) to finish before exiting 0 — measured in V-56. `SIGHUP` brings the workers back one at a
+  time with the code re-read from disk, without closing the listener, when `supervise` and
+  `[watch] enabled` are both on (V-90: 0 non-2xx of 319,340 requests while a file changed under
+  `wrk -t4 -c32`). That is a development mechanism — `ignis.toml` is parsed once at startup, so a
+  *configuration* change still needs a new process and a rolling deploy behind a balancer is the way
+  to make one without a gap (BACKLOG M4-5).
 
 ## Configuration reference
 

@@ -76,8 +76,10 @@ Ordinary, unmodified PHP keeps working — no code change to adopt Ignis:
   researched but not implemented — BACKLOG M3-5 (blocked on the M3-4 research note).
 - **`/_ignis/metrics` (Prometheus).** `/_ignis/stats`/`/_ignis/health` exist; a Prometheus text
   endpoint does not — BACKLOG M4-4.
-- **Graceful reload on `SIGHUP`.** A config or code change needs a process restart today, which
-  drops in-flight connections; drain-and-respawn is designed but not built — BACKLOG M4-5.
+- **Graceful reload of *configuration*.** Code reload is built (`[watch] enabled` + `supervise`, or
+  `SIGHUP`): the workers come back one at a time with the new code and nothing in flight is dropped
+  (V-90). `ignis.toml` is still read once at startup, so changing a setting is a process restart —
+  BACKLOG M4-5.
 - **A static binary.** The shipped artifact is the Docker image; `libphp.so` pulls in ~35 shared
   libraries through libcurl, so there is no dependency-free binary yet — BACKLOG M5-5 (research
   first).

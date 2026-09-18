@@ -84,6 +84,16 @@ applied to the framework's own state, on top of PHP's superglobals.
     non-goal here for that reason (ADR-0038). Doctrine's `EntityManager` is next and is not scoped
     yet.
 
+## Editing code
+
+The kernel is booted once per worker, so a saved file changes nothing until that worker goes away.
+Turn on watching in development (`supervise = true` plus `[watch] enabled = true`, or
+`IGNIS_WATCH=1` with `--supervise`) and a save brings the workers back one at a time, including a
+rebuilt `var/cache` container and anything under `vendor/` the app actually loaded — the watcher
+follows PHP's own list of loaded files, not a directory tree. Requests still overlap while it
+happens, which is the point: a fiber-scope bug needs two requests at once to show itself. Details
+and limits: [Runtime package](../packages/runtime.md#reloading-code-while-you-work).
+
 ## Deployment
 
 For a production deployment recipe — process supervision, TLS termination in front, rolling

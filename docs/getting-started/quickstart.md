@@ -48,6 +48,10 @@ listen = "127.0.0.1:8080"
 # threads = 4              # default: available parallelism
 # offload = 4              # synchronous workers for what cannot park (SQLite3, file-backed PDO,
 #                           # CPU-bound calls); default 0. curl parks, it needs no worker.
+# supervise = true
+# [watch]
+# enabled = true           # development: a saved file brings the workers back with it, one at a
+#                          # time, without dropping anything — see the runtime package page.
 ```
 
 ## An async call, unmodified

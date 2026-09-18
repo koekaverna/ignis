@@ -98,6 +98,13 @@ alongside `threads - 1` additional worker threads, and the process exits once al
 | `--` | raw `ignis <script>` form | — | Reads the script from stdin, like `php --`, runs it on the main thread only. |
 | `--version` / `-V` | any invocation, first token only | — | Prints the version and exits 0. |
 
+## Signals
+
+| Signal | What happens |
+|---|---|
+| `SIGTERM`, `SIGINT` | Drain and exit: `/_ignis/health` answers `503 {"status":"draining"}` for `IGNIS_DRAIN_DELAY_MS` while the listener is still accepting, then it closes and in-flight requests get `limits.drain_timeout_ms` to finish (V-56). |
+| `SIGHUP` | Reload the workers: each leaves dispatch in turn, finishes what it is holding, and comes back on a fresh engine with the code re-read from disk (V-90). Needs `--supervise` **and** watching on (`[watch] enabled` / `IGNIS_WATCH`) — with either missing the signal is logged and ignored, because nothing would bring the worker back. Configuration is not re-read; `ignis.toml` is parsed once at startup. |
+
 ## Exit codes
 
 | Code | When |
