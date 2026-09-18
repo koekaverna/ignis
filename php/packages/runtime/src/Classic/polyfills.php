@@ -31,6 +31,6 @@ if (!function_exists('getallheaders')) {
     /** @return array<string, string> Apache's own table is flat, so a repeated name keeps its last line. */
     function apache_response_headers(): array
     {
-        return array_map(static fn (array $values): string => $values[array_key_last($values)], \Ignis\Classic\Runner::headerMap());
+        return array_map(static fn(array $values): string => $values[array_key_last($values)], \Ignis\Classic\Runner::headerMap());
     }
 }

@@ -274,7 +274,7 @@ final class Runner
     /**
      * headers_list() as name => list of values, in the spelling PHP stored: `apache_response_headers()`
      * hands it back to the script, and hyper lower-cases names on the wire anyway.
-     * @return array<string, list<string>>
+     * @return array<string, non-empty-list<string>>
      */
     public static function headerMap(): array
     {
@@ -288,8 +288,11 @@ final class Runner
      * than once (several `Set-Cookie`) keeps one entry per line, which is what `ignis_respond`
      * turns into one header line each.
      *
-     * @param  list<string>                $lines
-     * @return array<string, list<string>>
+     * Every list is non-empty by construction — a key exists only because a line appended to it,
+     * which is what lets `apache_response_headers()` take `array_key_last()` without a null check.
+     *
+     * @param  list<string>                          $lines
+     * @return array<string, non-empty-list<string>>
      */
     public static function parseHeaderLines(array $lines): array
     {
