@@ -6,6 +6,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Helper servers a step starts are killed on the way out, not only on the step's happy path: under
+# `set -e` a failing curl exits before the step's own `kill`, and the orphan then holds its port and
+# poisons the next run's measurements. Kill by PID, never by pattern (owner rule).
+HELPERS=()
+trap 'for h in ${HELPERS+"${HELPERS[@]}"}; do kill "$h" 2>/dev/null || true; done' EXIT
+
 # --image <tag>: smoke the built image instead of the local binary. Port publishing is broken on
 # this docker daemon (image.yml), so every probe is `docker exec <c> bash -c 'exec 3<>/dev/tcp/...'`
 # instead of curl against a published port. Two containers: one with CMD overridden to serve
@@ -156,7 +162,7 @@ grep -q '"waiter_acquired_ms":[0-9]' <<<"$fl" || { echo "flock FAILED: the waite
 # moment, so a hang-up mid-body reached nobody and the producer kept working for an absent client.
 echo "== a streaming producer is cancelled when the client leaves"
 SC_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 8 ))
-IGNIS_LISTEN="$SC_PORT" ./target/release/ignis --threads 1 bench/php/stream_cancel.php & sc=$!
+IGNIS_LISTEN="$SC_PORT" ./target/release/ignis --threads 1 bench/php/stream_cancel.php & sc=$!; HELPERS+=("$sc")
 for _ in $(seq 1 50); do curl -sf -m 2 "http://$SC_PORT/state" >/dev/null 2>&1 && break; sleep 0.2; done
 # `|| true` because the timeout IS the test: curl exits 28 when it hangs up, and this script runs
 # under `set -e`.
@@ -172,7 +178,7 @@ grep -q '"cancelled":1' <<<"$sc_state" && grep -q '"finally_ran":1' <<<"$sc_stat
 # not be comma-joined. The boundary was a flat map until 2026-09-18 and kept only the last value.
 echo "== multi-valued response headers (three Set-Cookie, two Vary)"
 COOKIE_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 7 ))
-IGNIS_LISTEN="$COOKIE_PORT" ./target/release/ignis bench/php/multi_cookie.php & ck=$!
+IGNIS_LISTEN="$COOKIE_PORT" ./target/release/ignis bench/php/multi_cookie.php & ck=$!; HELPERS+=("$ck")
 for _ in $(seq 1 50); do [ "$(curl -s -o /dev/null -w '%{http_code}' "http://$COOKIE_PORT/" 2>/dev/null)" = 200 ] && break; sleep 0.1; done
 cookies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^set-cookie:')
 varies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^vary:')
