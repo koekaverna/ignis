@@ -29,18 +29,27 @@ final class CoreHost implements HostConnectionInterface
         private readonly string $kind = ActivationSource::WORKFLOW,
     ) {}
 
+    /** A null result ends sdk-php's loop — this is how shutdown is signaled. */
     public function waitBatch(): ?CommandBatch
     {
         $task = $this->source->poll($this->kind);
         if ($task === null) {
-            return null;   // shutting down: ends sdk-php's loop
+            return null;
         }
 
         $this->codec->forBatch($this->kind);
 
-        // `taskQueue` is what WorkerFactory routes on: without it the factory-level router answers
-        // (and knows only GetWorkerInfo) instead of the worker registered for this queue.
-        return new CommandBatch($task, ['taskQueue' => $this->source->taskQueue()]);
+        return new CommandBatch($task, $this->batchContext());
+    }
+
+    /**
+     * `taskQueue` is what WorkerFactory routes on: without it the factory-level router answers
+     * (and knows only GetWorkerInfo) instead of the worker registered for this queue.
+     * @return array<string, mixed>
+     */
+    private function batchContext(): array
+    {
+        return ['taskQueue' => $this->source->taskQueue()];
     }
 
     /** @param array<string, mixed> $headers */

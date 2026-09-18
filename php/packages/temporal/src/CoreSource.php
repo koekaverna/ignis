@@ -60,6 +60,7 @@ final class CoreSource implements ActivationSource, HeartbeatSink
         return $worker;
     }
 
+    /** A null result means the worker is shutting down; sdk-php ends its loop on that signal. */
     public function poll(string $kind): ?string
     {
         try {
@@ -67,7 +68,7 @@ final class CoreSource implements ActivationSource, HeartbeatSink
                 ? \ignis_temporal_poll_activity($this->worker)
                 : \ignis_temporal_poll($this->worker));
         } catch (\RuntimeException) {
-            return null;   // the worker is shutting down; end sdk-php's loop
+            return null;
         }
     }
 
@@ -137,10 +138,10 @@ final class CoreSource implements ActivationSource, HeartbeatSink
 function serve(CoreSource $source, callable $register, int $activityFibers = 8): void
 {
     $factory = static function () use ($source, $register): CoreWorkerFactory {
-        $f = CoreWorkerFactory::forSource($source);
-        $register($f->newWorker($source->taskQueue()));
+        $workerFactory = CoreWorkerFactory::forSource($source);
+        $register($workerFactory->newWorker($source->taskQueue()));
 
-        return $f;
+        return $workerFactory;
     };
 
     $workflows = $factory();

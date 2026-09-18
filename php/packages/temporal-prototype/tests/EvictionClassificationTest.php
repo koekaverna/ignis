@@ -27,7 +27,12 @@ final class EvictionClassificationTest extends TestCase
         self::assertSame($isError, $classify->invoke(null, $reason));
     }
 
-    /** @return iterable<string, array{0: mixed, 1: bool}> */
+    /**
+     * Cache pressure is routine; counting it as an error would redden a healthy run, which is the
+     * opposite failure and just as bad — a gate nobody trusts is a gate nobody reads.
+     *
+     * @return iterable<string, array{0: mixed, 1: bool}>
+     */
     public static function reasons(): iterable
     {
         yield 'protojson, as the wire spells it' => ['NONDETERMINISM', true];
@@ -37,8 +42,6 @@ final class EvictionClassificationTest extends TestCase
         yield 'fatal' => ['FATAL', true];
         yield 'the prost tag' => [3, true];
 
-        // Cache pressure is routine. Counting it would redden a healthy run, which is the opposite
-        // failure and just as bad: a gate nobody trusts is a gate nobody reads.
         yield 'cache pressure is not a rejection' => ['CACHE_FULL', false];
         yield 'unspecified' => ['Unspecified', false];
         yield 'tag zero' => [0, false];

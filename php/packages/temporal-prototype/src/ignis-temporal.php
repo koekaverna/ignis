@@ -81,13 +81,13 @@ final class Context
 {
     public function __construct(private readonly WorkflowRun $run, private readonly string $taskQueue) {}
 
-    /** @param list<mixed> $args */
-    public function activity(string $type, array $args = [], int $startToCloseSec = 30): mixed
+    /** @param list<mixed> $arguments */
+    public function activity(string $type, array $arguments = [], int $startToCloseSec = 30): mixed
     {
         $seq = ++$this->run->seq;
         $this->run->commands[] = ['scheduleActivity' => [
             'seq' => $seq, 'activityId' => (string) $seq, 'activityType' => $type, 'taskQueue' => $this->taskQueue,
-            'arguments' => array_map(Payloads::encode(...), $args), 'startToCloseTimeout' => $startToCloseSec . 's',
+            'arguments' => array_map(Payloads::encode(...), $arguments), 'startToCloseTimeout' => $startToCloseSec . 's',
         ]];
         return $this->await($seq);
     }
@@ -200,27 +200,27 @@ final class Worker
     /** Runs the workflow-task loop and (unless replaying) the activity loop until the worker shuts down. */
     public function run(bool $replay = false): void
     {
-        $wf = \Ignis\async(fn() => $this->workflowLoop());
+        $workflowLoop = \Ignis\async(fn() => $this->workflowLoop());
         if (!$replay) {
             \Ignis\async(fn() => $this->activityLoop());
         }
         Loop::run();
-        $wf->await();
+        $workflowLoop->await();
     }
 
     private function workflowLoop(): void
     {
         while (true) {
             try {
-                $act = self::decodeActivation(self::call(\ignis_temporal_poll($this->worker)));
+                $activation = self::decodeActivation(self::call(\ignis_temporal_poll($this->worker)));
             } catch (\RuntimeException $e) {
                 fwrite(STDERR, "workflow poll ended: {$e->getMessage()}\n");
                 return;
             }
             ++self::$activations;
-            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(self::jobKind(...), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
+            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $activation['runId'], implode(',', array_map(self::jobKind(...), $activation['jobs'])), var_export($activation['isReplaying'] ?? null, true)));
             try {
-                $completion = $this->handleActivation($act);
+                $completion = $this->handleActivation($activation);
                 self::call(\ignis_temporal_complete($this->worker, json_encode($completion, JSON_THROW_ON_ERROR)));
                 fwrite(STDERR, sprintf("  completed with %d command(s)\n", count($completion['successful']['commands'])));
             } catch (\Throwable $e) {
@@ -254,20 +254,31 @@ final class Worker
     }
 
     /**
-     * @param  WorkflowActivation $act
+     * protojson flattens a oneof to its field name, so a job is identified by its one key.
+     * @param array<array-key, mixed> $job
+     */
+    private static function jobDiscriminator(array $job): string
+    {
+        return (string) array_key_first($job);
+    }
+
+    /**
+     * Query, signal, update and cancel jobs are out of scope for the prototype and fall through
+     * the switch below unhandled.
+     *
+     * @param  WorkflowActivation $activation
      * @return WorkflowActivationCompletion
      */
-    private function handleActivation(array $act): array
+    private function handleActivation(array $activation): array
     {
-        $runId = $act['runId'];
+        $runId = $activation['runId'];
         $run = $this->runs[$runId] ?? null;
         $evicted = false;
-        foreach ($act['jobs'] as $job) {
+        foreach ($activation['jobs'] as $job) {
             if (!is_array($job)) {
                 throw new \RuntimeException('malformed WorkflowActivation job: not an object');
             }
-            // protojson flattens a oneof to its field name: the job IS its single key.
-            $kind = (string) array_key_first($job);
+            $kind = self::jobDiscriminator($job);
             $data = $job[$kind] ?? [];
             if (!is_array($data)) {
                 throw new \RuntimeException(sprintf('malformed WorkflowActivation job "%s": not an object', $kind));
@@ -279,12 +290,12 @@ final class Worker
                         throw new \RuntimeException('malformed initializeWorkflow: "workflowType" is not a string');
                     }
                     $run = $this->runs[$runId] = new WorkflowRun($runId, $workflowType);
-                    $fn = $this->workflows[$workflowType] ?? throw new \RuntimeException("unknown workflow {$workflowType}");
-                    $ctx = new Context($run, $this->taskQueue);
-                    $args = Payloads::decodeList($data['arguments'] ?? []);
-                    $run->fiber = new \Fiber(static function () use ($fn, $ctx, $args, $run): void {
+                    $workflowFunction = $this->workflows[$workflowType] ?? throw new \RuntimeException("unknown workflow {$workflowType}");
+                    $context = new Context($run, $this->taskQueue);
+                    $arguments = Payloads::decodeList($data['arguments'] ?? []);
+                    $run->fiber = new \Fiber(static function () use ($workflowFunction, $context, $arguments, $run): void {
                         try {
-                            $run->result = $fn($ctx, ...$args);
+                            $run->result = $workflowFunction($context, ...$arguments);
                         } catch (\Throwable $e) {
                             $run->error = $e;
                         }
@@ -326,9 +337,6 @@ final class Worker
                     if (self::isEvictionAnError($reason)) {
                         self::$evictionErrors++;
                     }
-                    break;
-                default:
-                    // Query/signal/update/cancel are out of scope for the prototype; ignore.
                     break;
             }
         }
@@ -402,12 +410,12 @@ final class Worker
                     throw new \RuntimeException('malformed ActivityTask: "start" is not an object');
                 }
                 $activityType = self::requireActivityType($start);
-                $fn = $this->activities[$activityType] ?? null;
+                $activityFunction = $this->activities[$activityType] ?? null;
                 try {
-                    if ($fn === null) {
+                    if ($activityFunction === null) {
                         throw new \RuntimeException("unknown activity {$activityType}");
                     }
-                    $result = $fn(...Payloads::decodeList($start['input'] ?? []));
+                    $result = $activityFunction(...Payloads::decodeList($start['input'] ?? []));
                     $done = ['taskToken' => $token, 'result' => ['completed' => ['result' => Payloads::encode($result)]]];
                 } catch (\Throwable $e) {
                     $done = ['taskToken' => $token, 'result' => ['failed' => ['failure' => ['message' => $e->getMessage()]]]];

@@ -146,12 +146,12 @@ final class WorkerTest extends TestCase
     public function testAMalformedJobFailsTheActivation(mixed $job, string $expectedMessage): void
     {
         $worker = new Worker(1, 'ignis', [], []);
-        $act = ['runId' => 'run-1', 'jobs' => [$job]];
+        $activation = ['runId' => 'run-1', 'jobs' => [$job]];
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage($expectedMessage);
 
-        self::reflect('handleActivation')->invoke($worker, $act);
+        self::reflect('handleActivation')->invoke($worker, $activation);
     }
 
     /** @return iterable<string, array{mixed, string}> */

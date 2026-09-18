@@ -16,9 +16,10 @@ use PHPUnit\Framework\TestCase;
  */
 final class DemoWorkflowTest extends TestCase
 {
+    /** DEMO_MUTATE=1 skips the timer, so greet -> shout is the whole run. */
     protected function setUp(): void
     {
-        putenv('DEMO_MUTATE=1');   // skips the timer: greet -> shout is the whole run
+        putenv('DEMO_MUTATE=1');
     }
 
     protected function tearDown(): void

@@ -117,7 +117,7 @@ function job(string $name, array $data): array
  *
  * @param array<string, mixed> $command
  */
-function cmdName(array $command): string
+function commandNameOf(array $command): string
 {
     return (string) \array_key_first($command);
 }
@@ -206,13 +206,13 @@ $worker = $factory->newWorker('ignis');
 $worker->registerWorkflowTypes(GreetWorkflow::class);
 $worker->registerActivityImplementations(new GreetActivity());
 
-$wf = $factory->host($source, ActivationSource::WORKFLOW);
-$act = $factory->host($source, ActivationSource::ACTIVITY);
+$workflowHost = $factory->host($source, ActivationSource::WORKFLOW);
+$activityHost = $factory->host($source, ActivationSource::ACTIVITY);
 
 // Each run() consumes tasks of its own kind until the script's next entry is of the other kind.
-$factory->run($wf);
-$factory->run($act);
-$factory->run($wf);
+$factory->run($workflowHost);
+$factory->run($activityHost);
+$factory->run($workflowHost);
 
 /** A counter rather than a `global`, so what increments it is visible from where it is read. */
 final class Failures
@@ -227,23 +227,23 @@ function check(string $what, mixed $got, mixed $want): void
     \printf("%-46s %s\n", $what, $ok ? 'ok' : \sprintf("FAIL\n    got  %s\n    want %s", \json_encode($got), \json_encode($want)));
 }
 
-$c = $source->completions;
-\printf("completions: %d\n", \count($c));
-foreach ($c as $i => [$kind, $body]) {
+$completions = $source->completions;
+\printf("completions: %d\n", \count($completions));
+foreach ($completions as $i => [$kind, $body]) {
     $successful = $body['successful'] ?? null;
     $commands = \is_array($successful) ? ($successful['commands'] ?? null) : null;
     \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($commands ?? $body));
 }
 
-$names1 = static fn(int $i): array => \array_map(cmdName(...), commandsOf($c[$i][1]));
-$body1 = static fn(int $i, int $j): array => commandBodyOf(commandsOf($c[$i][1])[$j] ?? []);
+$names1 = static fn(int $i): array => \array_map(commandNameOf(...), commandsOf($completions[$i][1]));
+$body1 = static fn(int $i, int $j): array => commandBodyOf(commandsOf($completions[$i][1])[$j] ?? []);
 
 check('1. start -> one scheduleActivity', $names1(0), ['scheduleActivity']);
 check('   activity type reaches core', $body1(0, 0)['activityType'] ?? null, 'greet');
 check('   StartToCloseTimeout as a protojson duration', $body1(0, 0)['startToCloseTimeout'] ?? null, '5s');
 check('   argument survives the DataConverter', \json_decode(\base64_decode(stringPathOf($body1(0, 0), 'arguments', 0, 'data')), true), 'Ada');
-check('2. activity ran, token echoed', $c[1][1]['taskToken'] ?? null, \base64_encode('tok-1'));
-check('   activity result', \json_decode(\base64_decode(stringPathOf($c[1][1], 'result', 'completed', 'result', 'data')), true), 'Hello, Ada!');
+check('2. activity ran, token echoed', $completions[1][1]['taskToken'] ?? null, \base64_encode('tok-1'));
+check('   activity result', \json_decode(\base64_decode(stringPathOf($completions[1][1], 'result', 'completed', 'result', 'data')), true), 'Hello, Ada!');
 check('3. resolve -> startTimer', $names1(2), ['startTimer']);
 check('   timer interval as a duration', $body1(2, 0)['startToFireTimeout'] ?? null, '1s');
 check('4. fire -> completeWorkflowExecution', $names1(3), ['completeWorkflowExecution']);
@@ -311,36 +311,36 @@ $worker2 = $factory2->newWorker('ignis');
 $worker2->registerWorkflowTypes(FeatureWorkflow::class);
 $worker2->registerActivityImplementations(new ProjectionActivity(), new HeartbeatActivity());
 
-$wf2 = $factory2->host($source2, ActivationSource::WORKFLOW);
-$act2 = $factory2->host($source2, ActivationSource::ACTIVITY);
+$workflowHost2 = $factory2->host($source2, ActivationSource::WORKFLOW);
+$activityHost2 = $factory2->host($source2, ActivationSource::ACTIVITY);
 
-$factory2->run($wf2);   // init, update, query
-$factory2->run($act2);  // the local activity
-$factory2->run($wf2);   // its resolution
-$factory2->run($act2);  // the heartbeating activity
+$factory2->run($workflowHost2);   // init, update, query
+$factory2->run($activityHost2);  // the local activity
+$factory2->run($workflowHost2);   // its resolution
+$factory2->run($activityHost2);  // the heartbeating activity
 
-$d = $source2->completions;
-\printf("\ncompletions (scenario 2): %d\n", \count($d));
-foreach ($d as $i => [$kind, $body]) {
+$completions2 = $source2->completions;
+\printf("\ncompletions (scenario 2): %d\n", \count($completions2));
+foreach ($completions2 as $i => [$kind, $body]) {
     $successful = $body['successful'] ?? null;
     $commands = \is_array($successful) ? ($successful['commands'] ?? null) : null;
     \printf("  [%d] %-8s %s\n", $i, $kind, \json_encode($commands ?? $body));
 }
 
-$cmds = static fn(int $i): array => \array_map(cmdName(...), commandsOf($d[$i][1]));
-$cmd = static fn(int $i, int $j): array => commandBodyOf(commandsOf($d[$i][1])[$j] ?? []);
+$commandNames = static fn(int $i): array => \array_map(commandNameOf(...), commandsOf($completions2[$i][1]));
+$commandBody = static fn(int $i, int $j): array => commandBodyOf(commandsOf($completions2[$i][1])[$j] ?? []);
 
-check('6. start -> workflow awaits, no commands', $cmds(0), []);
-check('7. update -> accepted, then a LOCAL activity', $cmds(1), ['updateResponse', 'scheduleLocalActivity']);
-check('   the validator ran and passed', $cmd(1, 0)['protocolInstanceId'] ?? null, 'pi-1');
-check('   accepted, not rejected', \array_key_exists('accepted', $cmd(1, 0)), true);
-check('   prefix from #[LocalActivityInterface]', $cmd(1, 1)['activityType'] ?? null, 'projection.jobStarted');
-check('8. query -> respondToQuery by its own id', $cmds(2), ['respondToQuery']);
-check('   query answered from workflow state', \json_decode(\base64_decode(stringPathOf($cmd(2, 0), 'succeeded', 'response', 'data')), true), 'new');
-check('9. local activity ran on the activity stream', \json_decode(\base64_decode(stringPathOf($d[3][1], 'result', 'completed', 'result', 'data')), true), 'started:x');
-check('10. resolve -> update completes, then workflow', $cmds(4), ['updateResponse', 'completeWorkflowExecution']);
-check('    update result reaches core', \json_decode(\base64_decode(stringPathOf($cmd(4, 0), 'completed', 'data')), true), 'ok:x');
-check('    protocolInstanceId, not the update id', $cmd(4, 0)['protocolInstanceId'] ?? null, 'pi-1');
+check('6. start -> workflow awaits, no commands', $commandNames(0), []);
+check('7. update -> accepted, then a LOCAL activity', $commandNames(1), ['updateResponse', 'scheduleLocalActivity']);
+check('   the validator ran and passed', $commandBody(1, 0)['protocolInstanceId'] ?? null, 'pi-1');
+check('   accepted, not rejected', \array_key_exists('accepted', $commandBody(1, 0)), true);
+check('   prefix from #[LocalActivityInterface]', $commandBody(1, 1)['activityType'] ?? null, 'projection.jobStarted');
+check('8. query -> respondToQuery by its own id', $commandNames(2), ['respondToQuery']);
+check('   query answered from workflow state', \json_decode(\base64_decode(stringPathOf($commandBody(2, 0), 'succeeded', 'response', 'data')), true), 'new');
+check('9. local activity ran on the activity stream', \json_decode(\base64_decode(stringPathOf($completions2[3][1], 'result', 'completed', 'result', 'data')), true), 'started:x');
+check('10. resolve -> update completes, then workflow', $commandNames(4), ['updateResponse', 'completeWorkflowExecution']);
+check('    update result reaches core', \json_decode(\base64_decode(stringPathOf($commandBody(4, 0), 'completed', 'data')), true), 'ok:x');
+check('    protocolInstanceId, not the update id', $commandBody(4, 0)['protocolInstanceId'] ?? null, 'pi-1');
 check('11. heartbeat reached the host', \count($source2->heartbeats), 1);
 check('    with the task token and the detail', \json_decode(\base64_decode(stringPathOf($source2->heartbeats[0]['details'] ?? [], 0, 'data')), true), ['at' => 'beat']);
 
@@ -387,11 +387,11 @@ if ($clientOk) {
     $sent = $transport->calls[0] ?? ['path' => '', 'request' => ''];
     check('    reached the right gRPC method', $sent['path'], '/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution');
 
-    $req = new \Temporal\Api\Workflowservice\V1\StartWorkflowExecutionRequest();
-    $req->mergeFromString($sent['request']);
-    check('    the request is a real protobuf', $req->getWorkflowType()?->getName(), 'GreetWorkflow');
-    check('    task queue survives', $req->getTaskQueue()?->getName(), 'ignis');
-    check('    argument survives', \json_decode($req->getInput()?->getPayloads()[0]?->getData() ?? '', true), 'Ada');
+    $request = new \Temporal\Api\Workflowservice\V1\StartWorkflowExecutionRequest();
+    $request->mergeFromString($sent['request']);
+    check('    the request is a real protobuf', $request->getWorkflowType()?->getName(), 'GreetWorkflow');
+    check('    task queue survives', $request->getTaskQueue()?->getName(), 'ignis');
+    check('    argument survives', \json_decode($request->getInput()?->getPayloads()[0]?->getData() ?? '', true), 'Ada');
 }
 
 if (\getenv('CORE_DUMP_RAW')) {

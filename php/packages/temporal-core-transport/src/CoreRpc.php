@@ -37,23 +37,32 @@ final class CoreRpc implements RPCConnectionInterface
             throw new TransportException('the "temporal.RecordActivityHeartbeat" payload must be array{taskToken: string, details: string}');
         }
 
-        // sdk-php hands the details over as wire bytes of a Payloads message — the one place its
-        // API forces the protobuf wire format on us. Decoding it here keeps the host's contract in
-        // the same plain shape as everything else.
-        $details = new Payloads();
-        $details->mergeFromString(\base64_decode($payload['details']));
+        $details = self::payloadsFromWireBytes($payload['details']);
 
         $out = [];
-        foreach ($details->getPayloads() as $p) {
+        foreach ($details->getPayloads() as $payloadMessage) {
             $metadata = [];
-            foreach ($p->getMetadata() as $k => $v) {
+            foreach ($payloadMessage->getMetadata() as $k => $v) {
                 if (\is_string($k) && \is_string($v)) {
                     $metadata[$k] = \base64_encode($v);
                 }
             }
-            $out[] = ['metadata' => $metadata, 'data' => \base64_encode($p->getData())];
+            $out[] = ['metadata' => $metadata, 'data' => \base64_encode($payloadMessage->getData())];
         }
 
         return $this->source->heartbeat(\base64_decode($payload['taskToken']), $out);
+    }
+
+    /**
+     * sdk-php hands the details over as wire bytes of a Payloads message — the one place its API
+     * forces the protobuf wire format on us. Decoding it here keeps the host's contract in the
+     * same plain shape as everything else.
+     */
+    private static function payloadsFromWireBytes(string $base64): Payloads
+    {
+        $details = new Payloads();
+        $details->mergeFromString(\base64_decode($base64));
+
+        return $details;
     }
 }
