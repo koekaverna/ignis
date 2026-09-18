@@ -52,6 +52,49 @@ flowchart LR
     submit --> tokio
 ```
 
+## The loop itself
+
+`Ignis\Loop::runUntil()` is the event loop, and it is thirty lines. One turn does four things and
+then blocks in exactly one place.
+
+```mermaid
+flowchart TD
+    boot["boot() — once per thread\nchaos, GC policy, budget, stats probe"] --> turn
+
+    turn{"stop() ?"} -- "yes" --> done["return"]
+    turn -- "no" --> start["startPending()\nstart the fibers spawn() created"]
+    start --> ready["resumeReady()\nresume every ready fiber, in batches —\na resume may make more fibers ready"]
+
+    ready --> more{"did that create\nmore pending fibers?"}
+    more -- "yes" --> turn
+
+    more -- "no" --> idle{"isIdle()?\nno waiting ops, nothing ready,\nno handler installed, inflight == 0"}
+    idle -- "yes" --> done
+
+    idle -- "no" --> gc["collectGarbage() — every 256th turn,\nand only past the root threshold\npublishStats()"]
+    gc --> poll["ignis_poll(-1)\nTHE wait point: the thread sleeps here"]
+
+    poll --> got{"any completions?"}
+    got -- "none, and idle" --> done
+    got -- "yes" --> dispatch["dispatchEvents()\nmatch each id to the fiber waiting on it"]
+
+    dispatch --> kinds["a new HTTP request → admit, take a pooled fiber\na timer, a readiness, an offload answer → mark its fiber ready\na deadline → throw into the request's fiber\nan id nobody awaits → the unawaited path"]
+    kinds --> turn
+```
+
+Three things in that picture are the whole design:
+
+- **The thread sleeps in one place.** `ignis_poll(-1)` blocks with no timeout, because there is no
+  timer wheel in PHP to wake up for: `Ignis\sleep()` is an op the reactor owns, so a timer arrives
+  as a completion like everything else. One wait point per thread is the invariant every feature
+  has to fit into — a second one would break it.
+- **Resuming is a batch, and the batch can grow.** `resumeReady()` drains the ready set until it is
+  empty, because resuming one fiber often makes another ready (an `all()` settling, a producer
+  unblocking a consumer). Only when nothing is left does the turn move on.
+- **Garbage collection happens here, at an idle point, never mid-request.** `gc_disable()` is on by
+  default and the loop collects itself once the root buffer crosses `IGNIS_LOOP_GC_ROOTS` — the
+  cost lands between requests instead of inside one.
+
 ## One request, end to end
 
 Nothing on the network path ever enters Zend, and nothing in PHP ever touches a tokio future. What
