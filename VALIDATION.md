@@ -3725,6 +3725,24 @@ earns it, never a ratchet. Proved it can fail three ways before it was wired in:
 one is the case that matters, because "the gate ran and found nothing" is exactly how the PHP suite
 stayed green in CI for months without ever executing.
 
+### V-79 addendum 3 — the "0 undocumented unsafe blocks" figure was 0 for the default features only
+
+Date: 2026-09-18T0x:xxZ. The Rust section above records 92 -> **0**, verified by
+`cargo clippy --workspace --all-targets -- -D warnings`. That command does not build
+`backend/temporal.rs`, which is behind the `temporal` feature — and the `--all-features` clippy run
+that was supposed to cover it had never executed: the `e9-temporal` job takes
+`rust-toolchain@stable`, which ships without the clippy component, so the step died on
+"cargo-clippy is not installed" before linting a line. A red job that was measuring nothing, which
+is the third one of those this cycle.
+
+With the toolchain pinned (1.98.0 + clippy) the real count came out: **9 undocumented `unsafe`
+blocks in `backend/temporal.rs`** — seven `zif_*` entry points with one shared obligation, one in
+`submit`, one more in the same family. So the honest figure is **101 -> 0**, not 92 -> 0, and the
+0 now holds under `--all-features`.
+
+Verified in the CI image with the host toolchain mounted (the image has protoc, not cargo):
+`--all-features` clippy silent, `--all-features` nextest **63/63**.
+
 ## V-80 — `ext/session` on files does NOT deadlock a thread; the rule it was cited for still stands (REFUTES part of R-SESS)
 
 Date: 2026-09-18T01:0xZ. Cycle item S1-SESS. The owner chose ADR-0038 option 2 — refuse to boot on
