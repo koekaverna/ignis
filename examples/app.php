@@ -18,7 +18,6 @@ declare(strict_types=1);
 require __DIR__ . '/../php/packages/runtime/src/ignis.php';
 require __DIR__ . '/../php/packages/offload/src/ignis-offload.php'; // E16: offload pool (route /offload needs --offload N)
 
-use Ignis\Future;
 use Ignis\Http\Request;   // → E4 (hyper transport)
 use Ignis\Http\Response;  // → E4
 
@@ -51,10 +50,12 @@ function fetchDashboard(int $userId): array
 }
 
 // ---------------------------------------------------------------------------
-// 2. Unmodified synchronous I/O becomes non-blocking: ✓ for tcp streams (E6, V-12):
-//    file_get_contents('http://…') suspends the fiber because the tcp:// transport
-//    factory is replaced by Ignis (ADR-0007). PDO sqlite does its own file I/O in-process
-//    and still blocks the thread (V-12) — use it for short queries only for now.
+// 2. Unmodified synchronous I/O becomes non-blocking: ✓ (E6, V-12; E18, V-45/V-46).
+//    file_get_contents('http://…') suspends the fiber because the blocking libc call
+//    inside it is interposed and parks (universal park, ADR-0020/0037) — the tcp://
+//    transport factory this used to go through was deleted in V-49. PDO sqlite is the
+//    exception: a regular file is not epoll-able, so it still blocks the thread
+//    (V-59 addendum) — short queries only, or route it to an offload worker.
 // ---------------------------------------------------------------------------
 /**
  * PDO's own stub promises no more than `array` for fetchAll(), so that is what this claims. Saying
@@ -113,7 +114,7 @@ function upstreamJson(string $url): array
 // ---------------------------------------------------------------------------
 // 3. Worker mode: the script stays resident; each request runs in its own
 //    fiber (✓ E4, V-5/V-6); $_SERVER/$_GET/$_POST/$_COOKIE and Ignis\Scope are
-//    fiber-scoped (✓ E13, V-11); Symfony via symfony/runtime (✓ E8, V-16, php/symfony);
+//    fiber-scoped (✓ E13, V-11); Symfony via symfony/runtime (✓ E8, V-16, php/packages/symfony-runtime);
 //    client disconnect cancels the fiber and its children, Ignis\deadline() (✓ E11, V-14).
 // ---------------------------------------------------------------------------
 // Worker mode: boots once, then serves; each request runs in its own pooled fiber.

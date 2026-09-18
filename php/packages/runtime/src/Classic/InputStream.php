@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Ignis\Classic;
 
-use Ignis\Http\Request;
-use Ignis\Http\Response;
-
 /** php://input backed by the current request body; every other php:// path is re-opened with PHP's own wrapper. */
 final class InputStream
 {

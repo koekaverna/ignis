@@ -3,8 +3,25 @@
     "description": "symfony/runtime adapter for Ignis (ADR-0011): boots the kernel once and serves each request in its own fiber, with a per-fiber RequestStack.",
     "type": "library",
     "license": "MIT",
-    "require": { "php": ">=8.4", "ignis/runtime": "@dev" },
-    "suggest": { "symfony/runtime": "Set APP_RUNTIME=Ignis\\Symfony\\IgnisRuntime and point ignis.toml's entry at public/index.php." },
-    "autoload": { "psr-4": { "Ignis\\Symfony\\": "src/" } },
-    "config": { "allow-plugins": false }
+    "require": {
+        "php": ">=8.4",
+        "ignis/runtime": "@dev",
+        "symfony/runtime": "^7.0 || ^8.0",
+        "symfony/http-foundation": "^7.0 || ^8.0",
+        "symfony/http-kernel": "^7.0 || ^8.0",
+        "symfony/dependency-injection": "^7.0 || ^8.0",
+        "symfony/security-core": "^7.0 || ^8.0",
+        "symfony/service-contracts": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Ignis\\Symfony\\": "src/"
+        }
+    },
+    "config": {
+        "allow-plugins": false
+    },
+    "suggest": {
+        "symfony/runtime": "Set APP_RUNTIME=Ignis\\Symfony\\IgnisRuntime and point ignis.toml's entry at public/index.php."
+    }
 }

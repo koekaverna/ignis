@@ -24,10 +24,14 @@
 //! context sets `0`. `IGNIS_NO_UNIVERSAL_PARK=1` is the hook-off control: the observer is not
 //! registered and every call forwards.
 //!
-//! Stage 1 scope: read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep.
-//! `getaddrinfo` (runtime resolver), `select`, `accept*`, the vectored calls and `__poll_chk`
-//! are stage 2. Cancellation of a parked call (ADR-0009) falls back to the blocking call for now.
-#![cfg(feature = "universal-park")]
+//! Interposed today: read/write/recv/send/recvfrom/sendto/poll/ppoll/`__poll_chk`/select/connect/
+//! accept/accept4/the vectored calls/nanosleep/usleep/sleep/flock — stage 1 (V-45) and stage 2
+//! (V-47, V-48) both shipped. `getaddrinfo` is not: this box's libcurl resolves on a helper thread
+//! the `poll` interposer already catches, and the runtime resolver is recorded as a risk rather than
+//! built (R-DNS, owner decision 2026-09-17). Cancellation of a parked call (ADR-0009) falls back to
+//! the blocking call.
+//!
+//! The module is gated by `php/mod.rs`; no inner attribute is needed here.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

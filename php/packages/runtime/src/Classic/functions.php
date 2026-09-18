@@ -7,9 +7,6 @@ declare(strict_types=1);
 
 namespace Ignis\Classic;
 
-use Ignis\Http\Request;
-use Ignis\Http\Response;
-
 /** Ends the current script now (the classic-mode replacement for exit()). */
 function finish(): never
 {

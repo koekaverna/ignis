@@ -11,7 +11,6 @@ use Ignis\Http\StreamedResponse;
 use Ignis\Loop;
 use Ignis\Scope;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/LoopTestCase.php';
 

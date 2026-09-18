@@ -1,4 +1,6 @@
-# Research 20 — ssl:// and tls:// through the stream hook (E6')
+# Research 41 — ssl:// and tls:// through the stream hook (E6')
+
+*Filed as "research 20" on 2026-09-16 and renumbered on 2026-09-18: two notes carried that number, and `VALIDATION.md` V-27 cites "research 20" meaning the other one (chaos scheduling). The content is unchanged, and the mechanism it studies has since been deleted — see V-49 and ADR-0037 §6 step 4.*
 
 Date: 2026-09-16T03:45Z (Cycle 19). Sources: ext/openssl/openssl.c (`php_openssl_ssl_socket_factory` registered for `ssl`, `sslv3`, `tls`, `tlsv1.0`–`tlsv1.3` **and `tcp`** — with openssl built, the stock tcp transport is openssl's, which our MINIT then replaces, keeping it as the fallback), main/streams/php_stream_transport.h (`PHP_STREAM_OPTION_CRYPTO_API` with `STREAM_CRYPTO_OP_SETUP`/`ENABLE`, `php_stream_xport_crypto_param`), ext/openssl/xp_ssl.c (context options `verify_peer`, `verify_peer_name`, `allow_self_signed`, `cafile`, `peer_name`, `SNI_enabled`), `tokio-rustls 0.26` (`TlsConnector`, `client::TlsStream`), `rustls 0.23` (`ClientConfig`, `RootCertStore`, `dangerous()` verifier), `webpki-roots`.
 

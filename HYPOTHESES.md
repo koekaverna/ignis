@@ -128,23 +128,25 @@ readable, and `op_read` returned 0, which PHP's `get_line` reads as "no line". A
 fiber got `HTTP/1.0 200 OK` immediately. Fixed by returning to the wait instead of giving up:
 0 failures in 6000 against 2–3 per 1000, five clean `e6-fetch` runs, smoke GREEN, phpt unchanged.
 
-## H32–H36 (E18 universal park, ADR-0020) — OPEN, one per owner acceptance
+## H32–H36 (E18 universal park, ADR-0020) — one per owner acceptance; four CONFIRMED, one answered "not as written"
 
-**H32 (acceptance 1).** With libcurl on policy `park` and no offload routing, 100 fibers each doing
+The header said OPEN until 2026-09-18, which was the only verdict a reader of this file could see for four of the five. Each carries its own now.
+
+**H32 (acceptance 1) — CONFIRMED (V-45, 2026-09-17).** 100 × 200 ms `curl_exec` on one thread in **279–337 ms** against a 20,337 ms unhooked control, with `CURLOPT_WRITEFUNCTION` in the calling fiber. Not the ≈200 ms floor the statement names: the slope is the library's own serialized CPU work (100 TCP connects and HTTP parses on one core), not the park mechanism. Original statement: with libcurl on policy `park` and no offload routing, 100 fibers each doing
 `curl_exec` against a local `/sleep?ms=200` on ONE PHP thread finish in ≈ 200 ms wall, and each
 `CURLOPT_WRITEFUNCTION` runs in the fiber that started the transfer. Test: `bench/php/e18_curl.php`
 (`IGNIS_NO_OFFLOAD_ROUTE=1`), control `IGNIS_NO_UNIVERSAL_PARK=1` (expected ≈ 20 s). Time box: one
 cycle after E18-I lands.
 
-**H33 (acceptance 2).** Same for `pdo_pgsql`: 100 × `SELECT pg_sleep(0.2)` on one thread ≈ 200 ms
+**H33 (acceptance 2) — CONFIRMED (V-45, V-46).** `pdo_pgsql` the same shape: **296–333 ms** against a 20,558 ms control, and **301–308 ms** through the project bench after the E18-I1 fix. Original statement: same for `pdo_pgsql`: 100 × `SELECT pg_sleep(0.2)` on one thread ≈ 200 ms
 with offload disabled. Test: `bench/php/e18_pgsql.php`; control ≈ 20 s.
 
-**H34 (acceptance 3).** `getaddrinfo` parks via the runtime resolver where the library calls it on
+**H34 (acceptance 3) — NOT CONFIRMED AS WRITTEN, and deliberately not built (research 28 addendum; R-DNS, owner decision 2026-09-17).** This box's libcurl resolves on a helper thread, which the `poll` interposer already catches, so the direct `getaddrinfo` hit the statement asks for never happens here. The runtime resolver is recorded as a risk rather than built. Original statement: `getaddrinfo` parks via the runtime resolver where the library calls it on
 the calling thread (libpq, libphp — research 26); libcurl's threaded resolver parks through `poll`
 instead. Test: `bench/php/e18_dns.php` — 50 concurrent libpq connects through a local stub
 resolver that answers after 200 ms ≈ 200 ms; control ≈ 10 s.
 
-**H35 (acceptance 4).** The non-fiber path costs < 20 ns per syscall. Test: `bench/e18-overhead.sh`
+**H35 (acceptance 4) — CONFIRMED (research 28; re-stated in V-46 and STATUS as "gate ≈ 8 ns/call").** **8.3 ns** against the 20 ns floor. Original statement: the non-fiber path costs < 20 ns per syscall. Test: `bench/e18-overhead.sh`
 — two builds (feature `universal-park` on/off), 10 M zero-length `read` on a non-PHP thread, 3 reps
 each, delta reported. Research 28 measured ≈ 8.3 ns in a scratch binary.
 
@@ -172,3 +174,16 @@ real number was measurable on this box all along. Previously recorded, and wrong
 cost is signal delivery, not copying. Two cheaper mechanisms were measured in the same harness: a whole-arena memcpy (34 µs at 2 MiB, 678 µs at 16 MiB) and
 soft-dirty bits (70 µs, but `clear_refs` is process-wide and cannot be used from several PHP threads). At a framework-sized boot heap none of the three meets the
 budget. The hypothesis is open again only once E19-R2 measures a real boot heap's size and a real request's dirty-page count — the two numbers the budget assumes.
+
+## After H37: the chain from hypothesis to validation stops here, on purpose
+
+H37 is the last numbered hypothesis. Everything from **V-52 to V-92** — the boot self-check, classic
+mode, streaming, output isolation, the coverage gates, `flock`, the RSS drift, the Doctrine pool,
+`Ignis\Pg` against parked `pdo_pgsql`, development reload, and this cycle's audit — was recorded
+against a `BACKLOG.md` item or an owner question rather than an H-n, because the mission became a
+product on 2026-09-16 (DECISIONS.md) and a product defect is not a falsifiable claim about the
+world: it has an acceptance command, not a time box and an expected number.
+
+Stating it here rather than leaving the gap unexplained, because `CLAUDE.md` still describes
+`HYPOTHESES.md` as a link in the chain. It is, for R&D questions; a new one gets an H-n. The rule
+that did not change is the one that matters: every claim still needs a V-n.

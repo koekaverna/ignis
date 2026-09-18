@@ -12,7 +12,10 @@
     "autoload": {
         "files": [
             "src/CoreSource.php"
-        ]
+        ],
+        "psr-4": {
+            "Ignis\\Temporal\\": "src/"
+        }
     },
     "config": {
         "allow-plugins": false

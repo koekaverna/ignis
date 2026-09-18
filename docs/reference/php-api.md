@@ -314,7 +314,6 @@ except for the two noted below.
 | `ignis_stats(): array` | — (`['threads', 'stalled', 'restarts']`, ADR-0012) |
 | `ignis_serve(string $addr): bool` | `Ignis\serve()` / `Ignis\Loop::serve()` |
 | `ignis_respond(int $id, int $status, array $headers, string $body): bool` | `Ignis\Loop`'s request dispatch |
-| `ignis_respond_start(int $id, int $status, array $headers): bool` | Nothing today. R-STREAM's original primitive (V-74) for sending the status line and headers before the body exists; still registered and callable, but `Ignis\Loop`'s streaming dispatch calls `ignis_stream_bind` (below) instead, which does the same job as part of binding the fiber's output. Not declared in the stub file for exactly that reason — nothing under `php/packages` or `examples/` calls it. |
 | `ignis_respond_chunk(int $id, string $bytes): int` | `Ignis\Loop`'s streaming dispatch (`endStream()`) — sends whatever `ignis_stream_unbind()` reports as the unflushed tail; returns `0` if taken immediately or an op id to `await()` if the channel is full |
 | `ignis_respond_end(int $id): bool` | Same — closes a streamed body once the producer is done |
 | `ignis_capture_start(): bool` / `ignis_capture_take(): string` / `ignis_capture_reset(): bool` | `Ignis\Output::capture()`/`reset()` — the native per-fiber output buffer (ADR-0006 applied to `sapi_module.ub_write`, V-72/V-67) |
@@ -345,8 +344,9 @@ and `ignis_park_on`/`ignis_op_result` unconditionally — i.e. it is a superset 
 function table, since those two groups only exist in the `feature = "temporal"` and
 `cfg(php_async_abi)` builds of `module.rs::FUNCTIONS` respectively. That is intentional (a stub
 file has to cover every build an IDE might target) and not a discrepancy. `StubsMatchTheBinaryTest`
-(`php/packages/runtime/tests/`) is the guard: it scans every `ignis_*` call site under
-`php/packages` and `examples/` and asserts each one has a declaration here — which is a narrower
-claim than "every `FUNCTIONS` entry is declared". `ignis_respond_start` is the one function in the
-default build's `FUNCTIONS` table with **no** stub: nothing under `php/packages` or `examples/`
-calls it (see the table above), so the guard has nothing to check it against.
+(`php/packages/runtime/tests/`) is the guard, and since 2026-09-18 it checks both directions: every
+`ignis_*` call site under `php/packages` and `examples/` has a declaration here, **and** every
+`fe(c"ignis_…")` in the three `FUNCTIONS` tables of `module.rs` has one too. It used to check only
+the first, which is how `ignis_respond_start` sat in the default build's table with no stub and no
+caller until the audit found it — the registration is deleted now, and a test that carries "matches
+the binary" in its name reads the binary.

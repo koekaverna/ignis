@@ -128,7 +128,7 @@ non-2xx, **0** socket errors, `restarts` in `/_ignis/health` increments by `thre
 **Constraints.** `main` (`main.rs`, `http.rs`). Agent writes `bench/m4-reload.sh` first.
 
 ### M4-6 Held-resource logging audit `agent` `open`
-**What.** After M4-1: an inventory `docs/research/26-observability.md` of every wait a fiber can
+**What.** After M4-1: an inventory `docs/research/42-observability.md` of every wait a fiber can
 be in (stream read/write/connect, sleep, pg lease, offload job, watch, gRPC call, Temporal
 activation) and, for each, whether its age is visible in `/_ignis/stats`, in a log line, in both,
 or in neither. Propose the minimal set to close the "neither" rows.
@@ -166,7 +166,7 @@ Bench: a handler that creates cycles; compare p99 and RSS with `IGNIS_LOOP_GC=1`
 ### M5-5 Static binary (B6) `research` `open`
 **What.** Research first: a PHP rebuild with `--enable-embed=static`, curl built with fewer
 backends (no ldap/rtmp/ssh2/gssapi), `-static-pie` if libphp allows, and what `ldd` shows after.
-Write `docs/research/27-static-binary.md` with the exact configure lines tried and the resulting
+Write `docs/research/43-static-binary.md` with the exact configure lines tried and the resulting
 `ldd`. Then, if feasible, `scripts/build-php-static.sh` and a second Dockerfile stage.
 **Acceptance.** `ldd target/release/ignis` prints "not a dynamic executable" **or** the note says
 exactly which library made it impossible and why.

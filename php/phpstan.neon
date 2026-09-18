@@ -55,7 +55,6 @@ parameters:
 
     excludePaths:
         - */vendor/*
-        - ../bench/e21/app
 
     # php/tests is not analysed on purpose: the fake reactor declares ignis_serve() and
     # ignis_cancel_parked_any() with bodies that return, and analysing them turns three calls in

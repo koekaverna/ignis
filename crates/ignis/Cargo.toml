@@ -25,8 +25,6 @@ futures = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 # M1: ignis.toml — the product config; env vars stay as overrides.
 toml = "0.8"
-base64 = "0.22"
-prost-wkt-types = { version = "0.7", optional = true }
 # ADR-0040: protojson, so the completion boundary carries core's own documents rather than a
 # third schema of ours. prost's serde derive is not protojson (backend/completion_json.rs).
 prost-reflect = { version = "0.16", features = ["serde"], optional = true }
@@ -40,14 +38,11 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "h
 # E10 (ADR-0014): gRPC framing + client channel; no codegen, no prost.
 tonic = { version = "0.14", default-features = false, features = ["server", "channel"] }
 futures-core = "0.3"
-notify = { version = "8.2.0", default-features = false, features = ["macos_fsevent"] }
-# E6' (ADR-0017): TLS for hooked ssl:// streams; ring provider (no cmake/aws-lc build).
-# E14 (ADR-0015): runtime-owned PostgreSQL pool; JSON boundary for params/rows.
+# Development reload (V-90). Linux-only build, so no backend features: inotify is always compiled in.
+notify = { version = "8.2.0", default-features = false }
 
 [build-dependencies]
 cc = "1"
-
-[dev-dependencies]
 
 [features]
 # E18 (ADR-0020): interpose the blocking libc calls behind a fiber gate. On by default since
@@ -55,7 +50,7 @@ cc = "1"
 # overhead bench (H35), `IGNIS_NO_UNIVERSAL_PARK=1` the runtime off switch.
 default = ["universal-park"]
 universal-park = []
-temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-wkt-types", "dep:prost-reflect", "dep:prost"]
+temporal = ["dep:temporalio-sdk-core", "dep:temporalio-client", "dep:temporalio-protos", "dep:temporalio-common", "dep:url", "dep:futures", "dep:prost-reflect", "dep:prost"]
 
 [lints]
 workspace = true

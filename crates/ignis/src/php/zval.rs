@@ -21,7 +21,6 @@ pub unsafe fn set_long(zv: *mut sys::zval, v: i64) {
     }
 }
 
-#[allow(dead_code)]
 /// `ZVAL_NULL(zv)`.
 ///
 /// # Safety

@@ -44,6 +44,19 @@ markdown_extensions:
   - pymdownx.highlight
   - pymdownx.inlinehilite
 
+# The site is the user-facing half of docs/. The rest of the tree is working material that would
+# otherwise be published unlisted: the research notes (dated records, several describing mechanisms
+# that no longer exist), the individual ADRs behind their index, the pain map, and the internal
+# agent-orchestration procedure. `not_in_nav` says "unlisted on purpose" so a strict build does not
+# warn, and `exclude_docs` keeps the two that should not be on a public site at all.
+exclude_docs: |
+  orchestration.md
+
+not_in_nav: |
+  research/*.md
+  adr/0*.md
+  pain-map.md
+
 nav:
   - Home: index.md
   - Concept:

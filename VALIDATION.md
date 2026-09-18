@@ -4721,3 +4721,24 @@ would each have been counted twice.
 the PHP half in the builder image — phpstan level 9 both configs, php-cs-fixer, **310 PHPUnit tests /
 728 assertions** — then `scripts/smoke.sh` and `bench/e15-phpt.sh` with `scripts/ci-gate.sh`: fibers
 108/77, sockets 91/85, streams 134/126, **no test lost a PASS** in any of the six sets.
+
+### V-92 addendum — the dead surface came out without moving a number
+
+`ignis_respond_start` (registered in all three `FUNCTIONS` tables, called by nothing), the `base64`
+and `prost-wkt-types` dependencies (no reference anywhere in the crate), `notify`'s `macos_fsevent`
+feature on a Linux-only build, and five unused PHP imports. Two of those could plausibly have broken
+something, so both were re-run rather than reasoned about:
+
+| what could have broken | check | result |
+|---|---|---|
+| the development watcher, after `notify` lost a feature | `bench/e25-reload.sh`, six arms | **E25 GREEN** — 345,788 requests, **0 non-2xx**, 43,214 req/s across reloads; two 400 ms requests still overlap in 415 ms; the request spanning a reload answers 200 in 0.403 s (V-90: 319,340 requests, 39,423 req/s) |
+| streaming, after the dead respond_start binding went | `scripts/gate.sh` (E23 leg in smoke) | green |
+
+`prost-wkt-types` sits inside the `temporal` feature, which cannot be built here — `protoc` is not
+installed — so that one leg is verified by CI's `e9-temporal` job and by nothing on this box. Said
+here rather than left implicit, because "it compiles" was exactly the claim `backend/async_core.rs`
+carried while it did not (V-91 §4).
+
+`StubsMatchTheBinaryTest` now reads `module.rs` as well as the call sites. Proved by deleting the
+`ignis_inflight` stub: `registered in module.rs but not declared in stubs/ignis.php: ignis_inflight`,
+two failures, both directions.

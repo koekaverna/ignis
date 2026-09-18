@@ -1,6 +1,6 @@
 # ADR-0018 — ext/sockets parking and the missing stream transports
 
-Status: accepted; kill criterion 2 replaced by owner decision 2026-09-16 (Cycle 22; V-29, V-33)  (originally proposed Cycle 22, 2026-09-16; research 22, verified against php-src php-8.5.10 by the main agent). Affects pain-map items: Swoole 5 (incomplete hooks — `SOCKETS` is the largest blocked group in research 15, 46 + 9 tests). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation), ADR-0016 (offload pool). Implements roadmap item A4.
+Status: **superseded by ADR-0037 (cycle 2, V-48, 2026-09-18)** — `sockets.rs` and `accept.rs` are deleted and the same coverage comes from the interposer, `SO_RCVTIMEO`/`SO_SNDTIMEO` included. Originally accepted; kill criterion 2 replaced by owner decision 2026-09-16 (Cycle 22; V-29, V-33)  (originally proposed Cycle 22, 2026-09-16; research 22, verified against php-src php-8.5.10 by the main agent). Affects pain-map items: Swoole 5 (incomplete hooks — `SOCKETS` is the largest blocked group in research 15, 46 + 9 tests). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation), ADR-0016 (offload pool). Implements roadmap item A4.
 
 ## Context
 

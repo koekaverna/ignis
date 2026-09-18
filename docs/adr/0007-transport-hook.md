@@ -1,6 +1,6 @@
 # ADR-0007 — `tcp://` transport replaced at MINIT; stream ops suspend the fiber from C; `ignis_poll` resumes them
 
-Status: accepted (Cycle 6, 2026-09-16; accepted by V-12 — 3 × 200 ms unmodified `file_get_contents` in 202.5–202.9 ms on one thread, 100/100 concurrent, hook-off control stalls — and extended to TLS by ADR-0017/V-25; V-22 corrected the server-socket case)
+Status: **superseded by ADR-0037 (cycle 3, V-49, 2026-09-18)** — the factory this ADR installs is deleted; a stream op inside a fiber now blocks in libc and the interposed call parks it (ADR-0020). Kept because V-12 is the measurement the whole stream story rests on and because the ADR states the ownership rules the park path inherited. Originally accepted (Cycle 6, 2026-09-16; accepted by V-12 — 3 × 200 ms unmodified `file_get_contents` in 202.5–202.9 ms on one thread, 100/100 concurrent, hook-off control stalls — and extended to TLS by ADR-0017/V-25; V-22 corrected the server-socket case)
 
 ## Context
 E6. Research 06. Swoole proves the transport-factory swap; Ignis adds fiber suspension from inside

@@ -1,6 +1,6 @@
 # ADR-0017 — ssl:// and tls:// on the stream hook via tokio-rustls
 
-Status: accepted (Cycle 19, 2026-09-16; V-25). Affects pain-map items: Swoole 5 (incomplete hooks: SSL was MISSING in research 15), RoadRunner 1 (workers blocking on I/O: TLS handshakes are the slowest client-side wait). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation).
+Status: **superseded by ADR-0037 (cycle 3, V-49, 2026-09-18)** — rustls and the `ssl://`/`tls://` factory are deleted; TLS is PHP's own `ext/openssl` on top of parked syscalls, which also closed A6/B7 by construction. Originally accepted (Cycle 19, 2026-09-16; V-25). Affects pain-map items: Swoole 5 (incomplete hooks: SSL was MISSING in research 15), RoadRunner 1 (workers blocking on I/O: TLS handshakes are the slowest client-side wait). Depends on ADR-0007 (stream hook), ADR-0009 (cancellation).
 
 ## Decision
 

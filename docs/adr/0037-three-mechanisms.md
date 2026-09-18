@@ -1,6 +1,6 @@
 # ADR-0037 — Consolidation to three mechanisms: park, offload, context, one policy table
 
-Status: **proposed** (owner note 2026-09-17; main agent). Becomes accepted only under §7. The owner
+Status: **accepted 2026-09-18** (main agent, under §7: all four conditions measured — V-46, V-48, V-49, V-51 — and cycles 1–3 shipped; the stream transport factory and the rustls path are deleted, which was the last step §6 named). It stood at *proposed* for a day after that, while STATUS, CLAUDE.md, `docs/concept/mechanisms.md` and `docs/packages/index.md` all described the three-mechanism budget as the shipped architecture; the audit of 2026-09-18 closed the gap in the direction the evidence pointed. (owner note 2026-09-17; main agent.) The owner
 named this file `0021-three-mechanisms`; 0021 was already taken by the coverage-layers ADR during
 the sweep and is not renumbered — it now points here. The mechanism budget is CLAUDE.md
 "Mechanism budget (owner, 2026-09-17)". Numbers: `docs/research/29-mechanism-inventory.md`

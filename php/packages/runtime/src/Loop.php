@@ -665,17 +665,17 @@ final class Loop
     /** @var array<string, true> files already handed to the watcher, so each turn sends a delta */
     private static array $watched = [];
 
-    /**
-     * Development reload: the files PHP has loaded are the dependency graph, so they are what the
-     * watcher watches (research 40). Off unless `IGNIS_WATCH` is set; a delta after every request,
-     * which is almost always empty.
-     */
     /** `Ignis\Classic` drives the loop itself, so it reports what its per-request include added. */
     public static function reportLoadedFiles(): void
     {
         self::watchLoadedFiles();
     }
 
+    /**
+     * Development reload: the files PHP has loaded are the dependency graph, so they are what the
+     * watcher watches (research 40). Off unless `IGNIS_WATCH` is set; a delta after every request,
+     * which is almost always empty.
+     */
     private static function watchLoadedFiles(): void
     {
         if (!self::$watching || !\function_exists('ignis_watch_files')) {
