@@ -2,9 +2,8 @@
 
 One process, two worlds that only ever exchange plain data over channels.
 
-- **The tokio side** (`http.rs`, `grpc.rs`, `pg.rs`, `reactor.rs`) — a hyper 1.x auto h1/h2 front
-  door, tonic gRPC on the same listener, a tokio-postgres connection pool, and every timer and
-  socket readiness wait in the process. The listener itself is plaintext; inbound TLS termination
+- **The tokio side** (`http.rs`, `grpc.rs`, `reactor.rs`) — a hyper 1.x auto h1/h2 front door,
+  tonic gRPC on the same listener, and every timer and socket readiness wait in the process. The listener itself is plaintext; inbound TLS termination
   is deferred ([ADR-0032](../adr/0032-inbound-tls-and-http3.md)), and outbound TLS (`ssl://`,
   `https://`) is PHP's own `ext/openssl`, parked like any other syscall (rustls and the Rust-side
   TLS actor it used are gone — [The three mechanisms](mechanisms.md), ADR-0037 §6 step 4, V-49).
@@ -24,8 +23,8 @@ flowchart LR
     subgraph tokio["tokio runtime — the network side"]
         hyper["hyper (h1/h2)\nauto builder"]
         tonic["tonic gRPC\n(same listener)"]
-        pg["tokio-postgres\npool"]
         timers["timers,\nsocket readiness"]
+        park["interposed libc calls\nread/write/poll/connect…"]
     end
 
     subgraph bridge["reactor.rs — the only bridge"]
@@ -42,8 +41,8 @@ flowchart LR
 
     hyper -- "plain-data request" --> completion
     tonic --> completion
-    pg --> completion
     timers --> completion
+    park --> completion
     completion --> poll
     poll --> loop_
     loop_ --> fiber1
@@ -52,6 +51,84 @@ flowchart LR
     fiber2 -- "Op::Custom" --> submit
     submit --> tokio
 ```
+
+## One request, end to end
+
+Nothing on the network path ever enters Zend, and nothing in PHP ever touches a tokio future. What
+travels between them is an id and some bytes.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as client
+    participant H as hyper (tokio)
+    participant R as reactor.rs
+    participant L as Ignis\Loop (PHP thread)
+    participant F as fiber (from the pool)
+    participant D as database / API
+
+    C->>H: GET /orders
+    H->>H: pick the least-inflight PHP thread
+    H->>R: request as plain data (id, method, uri, headers, body)
+    R-->>L: completion, delivered by ignis_poll()
+    L->>F: take a parked fiber from the pool, hand it the request
+    Note over F: superglobals are swapped to this fiber<br/>at the switch (the context mechanism)
+    F->>D: $pdo->query(...) — an ordinary blocking call
+    Note over F,R: the interposed read/poll suspends the fiber<br/>and submits Op::Watch instead of blocking the thread
+    F-->>L: Fiber::suspend()
+    L->>L: another fiber runs — the thread is never idle on one request
+    D-->>R: socket readable
+    R-->>L: completion for that op
+    L->>F: resume
+    F-->>L: return Ignis\Http\Response
+    L->>R: ignis_respond(id, status, headers, body)
+    R-->>H: answer for that id
+    H-->>C: 200
+    Note over L: finally → Scope::clear(): the fiber goes back to the pool<br/>with nothing of this request left on it (V-67)
+```
+
+A streamed response differs in one place: instead of one `ignis_respond`, the status line leaves
+with the first byte the producer writes and each chunk is pushed through a bounded channel, so the
+producing fiber waits when the client is slow and the thread keeps serving (V-74).
+
+## Two requests on one thread
+
+This is the whole point of the project, and it is the part that surprises people: **concurrency
+without a second thread**. Time runs downward.
+
+```mermaid
+gantt
+    dateFormat  X
+    axisFormat  %s ms
+    title   One PHP thread, two overlapping requests
+
+    section Request A
+    parse, route            :a1, 0, 2
+    query parks the fiber   :crit, a2, 2, 300
+    render and answer       :a3, 302, 6
+
+    section Request B
+    parse, route            :b1, 4, 2
+    query parks the fiber   :crit, b2, 6, 250
+    render and answer       :b3, 256, 5
+
+    section The thread
+    runs A                  :t1, 0, 2
+    runs B                  :t2, 4, 2
+    idle in ignis_poll      :done, t3, 6, 250
+    runs B                  :t4, 256, 5
+    runs A                  :t5, 302, 6
+```
+
+The red spans are waits, not work: while A waits for its database, the thread runs B, and when
+neither has anything to do it sits in `ignis_poll()` — one wait point for every source of
+completions. A php-fpm worker would have been unavailable for the whole of A's 300 ms.
+
+What makes it safe is that each fiber's request state is its own: `$_SERVER`/`$_GET`/`$_POST` are
+swapped at the fiber switch, `Ignis\Scope` is keyed by the fiber, and the integrations keep
+Symfony's request stack, its security token, Doctrine's entity manager and its database connection
+per fiber too — every one of those was a measured leak before it was a design ([Symfony](../packages/symfony.md),
+[Doctrine](../packages/doctrine.md)).
 
 ## Invariants
 
