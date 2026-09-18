@@ -57,6 +57,16 @@ nav:
       - Symfony: getting-started/symfony.md
       - Legacy apps: getting-started/legacy.md
       - Command-line scripts: getting-started/cli.md
+  - Packages:
+      - Overview: packages/index.md
+      - Runtime: packages/runtime.md
+      - Symfony: packages/symfony.md
+      - Doctrine: packages/doctrine.md
+      - Offload: packages/offload.md
+      - gRPC: packages/grpc.md
+      - Revolt: packages/revolt.md
+      - Swoole shim: packages/swoole.md
+      - Temporal: packages/temporal.md
   - Reference:
       - Configuration: reference/configuration.md
       - PHP API: reference/php-api.md
