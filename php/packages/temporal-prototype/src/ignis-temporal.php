@@ -25,13 +25,37 @@ final class Payloads
         return ['metadata' => ['encoding' => base64_encode(self::ENC)], 'data' => base64_encode(json_encode($value, JSON_THROW_ON_ERROR))];
     }
 
-    /** @param null|array<string, mixed> $payload */
+    /** @param array<mixed>|null $payload */
     public static function decode(?array $payload): mixed
     {
         if ($payload === null || !isset($payload['data'])) {
             return null;
         }
+        if (!is_string($payload['data'])) {
+            throw new \UnexpectedValueException('a payload "data" field must be a base64 string, got ' . get_debug_type($payload['data']));
+        }
         return json_decode(base64_decode($payload['data']), true);
+    }
+
+    /**
+     * Decodes a protojson payload list (`arguments`/`input`): each element is itself a payload
+     * object or absent, never a bare scalar off the wire.
+     *
+     * @return list<mixed>
+     */
+    public static function decodeList(mixed $payloads): array
+    {
+        if (!is_array($payloads)) {
+            throw new \UnexpectedValueException('a payload list must be an array, got ' . get_debug_type($payloads));
+        }
+        $decoded = [];
+        foreach ($payloads as $payload) {
+            if ($payload !== null && !is_array($payload)) {
+                throw new \UnexpectedValueException('a payload list element must be an object or null, got ' . get_debug_type($payload));
+            }
+            $decoded[] = self::decode($payload);
+        }
+        return $decoded;
     }
 }
 
@@ -86,6 +110,11 @@ final class Context
     }
 }
 
+/**
+ * @phpstan-type WorkflowActivation array{runId: string, jobs: list<mixed>, isReplaying?: mixed}
+ * @phpstan-type WorkflowActivationCompletion array{runId: string, successful: array{commands: list<array<string, mixed>>}}
+ * @phpstan-type ActivityTask array{taskToken: string, start?: mixed}
+ */
 final class Worker
 {
     /** `RemoveFromCache.EvictionReason.NONDETERMINISM` as prost numbers it. */
@@ -130,22 +159,42 @@ final class Worker
     /** The op's payload as JSON; a reactor error payload becomes a RuntimeException. */
     private static function call(int $opId): string
     {
-        $r = Loop::awaitOp($opId);
-        if (\is_array($r)) {
-            throw new \RuntimeException($r['message'] ?? 'temporal error');
+        return self::resultOf(Loop::awaitOp($opId));
+    }
+
+    /** A reactor completion is either the op's own result or `{kind: 'error', message: ...}`; nothing else is valid. */
+    private static function resultOf(mixed $completion): string
+    {
+        if (is_array($completion)) {
+            $message = $completion['message'] ?? 'temporal error';
+            throw new \RuntimeException(is_string($message) ? $message : 'temporal error');
         }
-        return (string) $r;
+        if (!is_string($completion)) {
+            throw new \RuntimeException('temporal op returned neither a string result nor an error: got ' . get_debug_type($completion));
+        }
+        return $completion;
+    }
+
+    /** The `{"worker": id}` connect/replay result, decoded and validated: a malformed document cannot start a worker. */
+    private static function workerId(string $resultJson): int
+    {
+        $document = json_decode($resultJson, true, 512, JSON_THROW_ON_ERROR);
+        $worker = is_array($document) ? ($document['worker'] ?? null) : null;
+        if (!is_int($worker)) {
+            throw new \RuntimeException('temporal connect did not return a "worker" id');
+        }
+        return $worker;
     }
 
     public static function connect(string $url, string $namespace, string $taskQueue): int
     {
-        return (int) json_decode(self::call(\ignis_temporal_connect($url, $namespace, $taskQueue)), true)['worker'];
+        return self::workerId(self::call(\ignis_temporal_connect($url, $namespace, $taskQueue)));
     }
 
     /** Replay worker over the run's history fetched from $url by Rust (protobuf, no JSON history). */
     public static function replayWorker(string $url, string $workflowId, string $taskQueue): int
     {
-        return (int) json_decode(self::call(\ignis_temporal_replay($url, $workflowId, $taskQueue)), true)['worker'];
+        return self::workerId(self::call(\ignis_temporal_replay($url, $workflowId, $taskQueue)));
     }
 
     /** Runs the workflow-task loop and (unless replaying) the activity loop until the worker shuts down. */
@@ -163,13 +212,13 @@ final class Worker
     {
         while (true) {
             try {
-                $act = json_decode(self::call(\ignis_temporal_poll($this->worker)), true, 512, JSON_THROW_ON_ERROR);
+                $act = self::decodeActivation(self::call(\ignis_temporal_poll($this->worker)));
             } catch (\RuntimeException $e) {
                 fwrite(STDERR, "workflow poll ended: {$e->getMessage()}\n");
                 return;
             }
             ++self::$activations;
-            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(static fn($j) => (string) array_key_first($j), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
+            fwrite(STDERR, sprintf("activation #%d run=%s jobs=%s replaying=%s\n", self::$activations, $act['runId'], implode(',', array_map(self::jobKind(...), $act['jobs'])), var_export($act['isReplaying'] ?? null, true)));
             try {
                 $completion = $this->handleActivation($act);
                 self::call(\ignis_temporal_complete($this->worker, json_encode($completion, JSON_THROW_ON_ERROR)));
@@ -182,8 +231,31 @@ final class Worker
     }
 
     /**
-     * @param  array<string, mixed> $act
-     * @return array<string, mixed>
+     * The JSON document sdk-core hands over is trusted only after this: `runId` and `jobs` are the
+     * two fields every consumer below indexes without a further check.
+     *
+     * @return WorkflowActivation
+     */
+    private static function decodeActivation(string $json): array
+    {
+        $document = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        $runId = is_array($document) ? ($document['runId'] ?? null) : null;
+        $jobs = is_array($document) ? ($document['jobs'] ?? null) : null;
+        if (!is_string($runId) || !is_array($jobs) || !array_is_list($jobs)) {
+            throw new \RuntimeException('malformed WorkflowActivation: "runId" or "jobs" missing');
+        }
+        return ['runId' => $runId, 'jobs' => $jobs, 'isReplaying' => $document['isReplaying'] ?? null];
+    }
+
+    /** A job's single key, for the activation log line; unlike `handleActivation()` this never throws on a malformed job. */
+    private static function jobKind(mixed $job): string
+    {
+        return is_array($job) ? (string) (array_key_first($job) ?? '?') : '?';
+    }
+
+    /**
+     * @param  WorkflowActivation $act
+     * @return WorkflowActivationCompletion
      */
     private function handleActivation(array $act): array
     {
@@ -191,15 +263,25 @@ final class Worker
         $run = $this->runs[$runId] ?? null;
         $evicted = false;
         foreach ($act['jobs'] as $job) {
+            if (!is_array($job)) {
+                throw new \RuntimeException('malformed WorkflowActivation job: not an object');
+            }
             // protojson flattens a oneof to its field name: the job IS its single key.
             $kind = (string) array_key_first($job);
             $data = $job[$kind] ?? [];
+            if (!is_array($data)) {
+                throw new \RuntimeException(sprintf('malformed WorkflowActivation job "%s": not an object', $kind));
+            }
             switch ($kind) {
                 case 'initializeWorkflow':
-                    $run = $this->runs[$runId] = new WorkflowRun($runId, $data['workflowType']);
-                    $fn = $this->workflows[$data['workflowType']] ?? throw new \RuntimeException("unknown workflow {$data['workflowType']}");
+                    $workflowType = $data['workflowType'] ?? null;
+                    if (!is_string($workflowType)) {
+                        throw new \RuntimeException('malformed initializeWorkflow: "workflowType" is not a string');
+                    }
+                    $run = $this->runs[$runId] = new WorkflowRun($runId, $workflowType);
+                    $fn = $this->workflows[$workflowType] ?? throw new \RuntimeException("unknown workflow {$workflowType}");
                     $ctx = new Context($run, $this->taskQueue);
-                    $args = array_map(Payloads::decode(...), $data['arguments'] ?? []);
+                    $args = Payloads::decodeList($data['arguments'] ?? []);
                     $run->fiber = new \Fiber(static function () use ($fn, $ctx, $args, $run): void {
                         try {
                             $run->result = $fn($ctx, ...$args);
@@ -211,19 +293,37 @@ final class Worker
                     $run->fiber->start();
                     break;
                 case 'fireTimer':
-                    $this->resume($run, (int) $data['seq'], null);
+                    $seq = $data['seq'] ?? null;
+                    if (!is_int($seq)) {
+                        throw new \RuntimeException('malformed fireTimer: "seq" is not an int');
+                    }
+                    $this->resume($run, $seq, null);
                     break;
                 case 'resolveActivity':
+                    $seq = $data['seq'] ?? null;
+                    if (!is_int($seq)) {
+                        throw new \RuntimeException('malformed resolveActivity: "seq" is not an int');
+                    }
                     $result = $data['result'] ?? [];
-                    $value = isset($result['completed']) ? Payloads::decode($result['completed']['result'] ?? null) : null;
-                    $this->resume($run, (int) $data['seq'], $value);
+                    if (!is_array($result)) {
+                        throw new \RuntimeException('malformed resolveActivity: "result" is not an object');
+                    }
+                    $completed = $result['completed'] ?? null;
+                    $resultPayload = is_array($completed) ? ($completed['result'] ?? null) : null;
+                    if ($resultPayload !== null && !is_array($resultPayload)) {
+                        throw new \RuntimeException('malformed resolveActivity: "result.completed.result" is not an object');
+                    }
+                    $value = Payloads::decode($resultPayload);
+                    $this->resume($run, $seq, $value);
                     break;
                 case 'removeFromCache':
                     unset($this->runs[$runId]);
                     $evicted = true;
-                    $reason = (string) ($data['reason'] ?? 'Unspecified');
-                    fwrite(STDERR, sprintf("  evicted: reason=%s %s\n", $reason, $data['message'] ?? ''));
-                    if (self::isEvictionAnError($data['reason'] ?? null)) {
+                    $reason = $data['reason'] ?? null;
+                    $reasonText = is_scalar($reason) ? (string) $reason : 'Unspecified';
+                    $message = $data['message'] ?? '';
+                    fwrite(STDERR, sprintf("  evicted: reason=%s %s\n", $reasonText, is_scalar($message) ? $message : ''));
+                    if (self::isEvictionAnError($reason)) {
                         self::$evictionErrors++;
                     }
                     break;
@@ -255,29 +355,59 @@ final class Worker
         $fiber->resume($value);
     }
 
+    /** @return ActivityTask */
+    private static function decodeActivityTask(string $json): array
+    {
+        $document = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        $taskToken = is_array($document) ? ($document['taskToken'] ?? null) : null;
+        if (!is_string($taskToken)) {
+            throw new \RuntimeException('malformed ActivityTask: "taskToken" missing');
+        }
+        return ['taskToken' => $taskToken, 'start' => $document['start'] ?? null];
+    }
+
+    /** The started activity's type, for the task log line; unlike `requireActivityType()` this never throws. */
+    private static function startedActivityType(mixed $start): string
+    {
+        return is_array($start) && is_string($start['activityType'] ?? null) ? $start['activityType'] : '?';
+    }
+
+    /** The started activity's type, or a fatal error: dispatch has no fallback to log and move on. */
+    private static function requireActivityType(mixed $start): string
+    {
+        if (!is_array($start) || !is_string($start['activityType'] ?? null)) {
+            throw new \RuntimeException('malformed ActivityTask: "start.activityType" is not a string');
+        }
+        return $start['activityType'];
+    }
+
     private function activityLoop(): void
     {
         while (true) {
             try {
-                $task = json_decode(self::call(\ignis_temporal_poll_activity($this->worker)), true, 512, JSON_THROW_ON_ERROR);
+                $task = self::decodeActivityTask(self::call(\ignis_temporal_poll_activity($this->worker)));
             } catch (\RuntimeException $e) {
                 fwrite(STDERR, "activity poll ended: {$e->getMessage()}\n");
                 return;
             }
             ++self::$activityTasks;
-            fwrite(STDERR, sprintf("activity task #%d type=%s\n", self::$activityTasks, $task['start']['activityType'] ?? '?'));
+            fwrite(STDERR, sprintf("activity task #%d type=%s\n", self::$activityTasks, self::startedActivityType($task['start'] ?? null)));
             $token = $task['taskToken'];
             \Ignis\async(function () use ($task, $token): void {
                 $start = $task['start'] ?? null;
                 if ($start === null) {
-                    return; // cancellations out of scope
+                    return;
                 }
-                $fn = $this->activities[$start['activityType']] ?? null;
+                if (!is_array($start)) {
+                    throw new \RuntimeException('malformed ActivityTask: "start" is not an object');
+                }
+                $activityType = self::requireActivityType($start);
+                $fn = $this->activities[$activityType] ?? null;
                 try {
                     if ($fn === null) {
-                        throw new \RuntimeException("unknown activity {$start['activityType']}");
+                        throw new \RuntimeException("unknown activity {$activityType}");
                     }
-                    $result = $fn(...array_map(Payloads::decode(...), $start['input'] ?? []));
+                    $result = $fn(...Payloads::decodeList($start['input'] ?? []));
                     $done = ['taskToken' => $token, 'result' => ['completed' => ['result' => Payloads::encode($result)]]];
                 } catch (\Throwable $e) {
                     $done = ['taskToken' => $token, 'result' => ['failed' => ['failure' => ['message' => $e->getMessage()]]]];

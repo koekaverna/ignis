@@ -43,9 +43,21 @@ final class CoreSource implements ActivationSource, HeartbeatSink
 
     public static function connect(string $url, string $namespace, string $taskQueue): self
     {
-        $json = self::await(\ignis_temporal_connect($url, $namespace, $taskQueue));
+        $worker = self::workerIdOf(self::await(\ignis_temporal_connect($url, $namespace, $taskQueue)));
 
-        return new self((int) \json_decode($json, true)['worker'], $taskQueue, $namespace);
+        return new self($worker, $taskQueue, $namespace);
+    }
+
+    /** The `{"worker": id}` connect result, decoded and validated: a malformed document cannot start a worker. */
+    private static function workerIdOf(string $resultJson): int
+    {
+        $document = \json_decode($resultJson, true, 512, \JSON_THROW_ON_ERROR);
+        $worker = \is_array($document) ? ($document['worker'] ?? null) : null;
+        if (!\is_int($worker)) {
+            throw new \RuntimeException('temporal connect did not return a "worker" id');
+        }
+
+        return $worker;
     }
 
     public function poll(string $kind): ?string
@@ -99,12 +111,21 @@ final class CoreSource implements ActivationSource, HeartbeatSink
     /** Parks the calling fiber on a reactor op; the thread keeps serving everything else. */
     private static function await(int $opId): string
     {
-        $r = Loop::awaitOp($opId);
-        if (\is_array($r)) {
-            throw new \RuntimeException($r['message'] ?? 'temporal op failed');
+        return self::resultOf(Loop::awaitOp($opId));
+    }
+
+    /** A reactor completion is either the op's own result or `{kind: 'error', message: ...}`; nothing else is valid. */
+    private static function resultOf(mixed $completion): string
+    {
+        if (\is_array($completion)) {
+            $message = $completion['message'] ?? 'temporal op failed';
+            throw new \RuntimeException(\is_string($message) ? $message : 'temporal op failed');
+        }
+        if (!\is_string($completion)) {
+            throw new \RuntimeException('temporal op returned neither a string result nor an error: got ' . \get_debug_type($completion));
         }
 
-        return (string) $r;
+        return $completion;
     }
 }
 

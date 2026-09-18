@@ -11,7 +11,11 @@ return [
             if (!getenv('DEMO_MUTATE')) {
                 $ctx->timer(500);
             }
-            return $ctx->activity('shout', [$greeting]);
+            $shouted = $ctx->activity('shout', [$greeting]);
+            if (!is_string($shouted)) {
+                throw new UnexpectedValueException('activity "shout" must return a string, got ' . get_debug_type($shouted));
+            }
+            return $shouted;
         },
     ],
     'activities' => [
