@@ -50,10 +50,11 @@ final class WorkerRuntimeTest extends TestCase
     {
         FakeOffload::$callbackAnswer = serialize(['ok' => 'from the caller']);
 
-        $bound = WorkerRuntime::bindCallbacks(['sql', ['on' => new CallbackRef(4)], 9]);
+        $bound = self::boundArray(['sql', ['on' => new CallbackRef(4)], 9]);
 
         self::assertSame('sql', $bound[0]);
         self::assertSame(9, $bound[2]);
+        self::assertIsArray($bound[1]);
         self::assertInstanceOf(\Closure::class, $bound[1]['on']);
         self::assertSame('from the caller', ($bound[1]['on'])('a row', 2));
         self::assertSame(
@@ -66,7 +67,7 @@ final class WorkerRuntimeTest extends TestCase
     public function testACallbackWhoseCallerIsGoneThrows(): void
     {
         FakeOffload::$callbackFails = true;
-        $stub = WorkerRuntime::bindCallbacks(new CallbackRef(1));
+        $stub = self::boundClosure(new CallbackRef(1));
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('offload callback failed (caller gone)');
@@ -76,7 +77,7 @@ final class WorkerRuntimeTest extends TestCase
     public function testACallbackThatThrewOnTheCallerComesBackAsARemoteException(): void
     {
         FakeOffload::$callbackAnswer = serialize(['err' => [\DomainException::class, 'bad row', 7]]);
-        $stub = WorkerRuntime::bindCallbacks(new CallbackRef(1));
+        $stub = self::boundClosure(new CallbackRef(1));
 
         try {
             $stub();
@@ -117,9 +118,10 @@ final class WorkerRuntimeTest extends TestCase
         $object = new \ArrayObject([1, 2, 3]);
         self::set('handles', [5 => $object]);
 
-        $resolved = self::call('resolveRefs', ['keep', ['deep' => ['__ref' => [3, 5, 'ArrayObject']]]]);
+        $resolved = self::callArray('resolveRefs', ['keep', ['deep' => ['__ref' => [3, 5, 'ArrayObject']]]]);
 
         self::assertSame('keep', $resolved[0]);
+        self::assertIsArray($resolved[1]);
         self::assertSame($object, $resolved[1]['deep'], 'the object never leaves this thread; only the ref does');
     }
 
@@ -128,7 +130,8 @@ final class WorkerRuntimeTest extends TestCase
         $curl = curl_init();
         $plain = new \ArrayObject();
 
-        $registered = self::call('registerObjects', ['rows' => [$curl, $plain, 'text']]);
+        $registered = self::callArray('registerObjects', ['rows' => [$curl, $plain, 'text']]);
+        self::assertIsArray($registered['rows']);
 
         self::assertSame(['__ref' => [3, 1, 'CurlHandle']], $registered['rows'][0], 'a CurlHandle is worker-pinned');
         self::assertSame([1 => $curl], self::get('handles'));
@@ -192,7 +195,7 @@ final class WorkerRuntimeTest extends TestCase
     public function testACallbackAnswerThatDoesNotUnserializeToAnArrayThrows(): void
     {
         FakeOffload::$callbackAnswer = serialize('not an envelope');
-        $stub = WorkerRuntime::bindCallbacks(new CallbackRef(1));
+        $stub = self::boundClosure(new CallbackRef(1));
         self::assertInstanceOf(\Closure::class, $stub);
 
         $this->expectException(\RuntimeException::class);
@@ -203,7 +206,7 @@ final class WorkerRuntimeTest extends TestCase
     public function testACallbackErrorThatIsNotShapedLikeOneThrows(): void
     {
         FakeOffload::$callbackAnswer = serialize(['err' => 'boom']);
-        $stub = WorkerRuntime::bindCallbacks(new CallbackRef(1));
+        $stub = self::boundClosure(new CallbackRef(1));
         self::assertInstanceOf(\Closure::class, $stub);
 
         $this->expectException(\RuntimeException::class);
@@ -230,6 +233,40 @@ final class WorkerRuntimeTest extends TestCase
     private static function call(string $method, mixed ...$arguments): mixed
     {
         return (new \ReflectionMethod(WorkerRuntime::class, $method))->invoke(null, ...$arguments);
+    }
+
+    /**
+     * The same reflection call, narrowed: these callers index the result.
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function callArray(string $method, mixed ...$arguments): array
+    {
+        $result = self::call($method, ...$arguments);
+        self::assertIsArray($result);
+
+        return $result;
+    }
+
+    /**
+     * `bindCallbacks()` returns `mixed`; every caller here binds an array or a single closure.
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function boundArray(mixed $value): array
+    {
+        $bound = WorkerRuntime::bindCallbacks($value);
+        self::assertIsArray($bound);
+
+        return $bound;
+    }
+
+    private static function boundClosure(mixed $value): callable
+    {
+        $bound = WorkerRuntime::bindCallbacks($value);
+        self::assertIsCallable($bound);
+
+        return $bound;
     }
 
     private static function set(string $property, mixed $value): void

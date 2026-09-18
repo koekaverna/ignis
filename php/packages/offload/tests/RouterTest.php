@@ -90,7 +90,8 @@ final class RouterTest extends TestCase
 
     public function testWrapRecursesAndLeavesAnythingThatIsNotARefAlone(): void
     {
-        $wrapped = self::call('wrap', ['rows' => [['__ref' => [0, 1, 'CurlHandle']], ['__ref' => [0, 1, 'CurlHandle'], 'extra' => 1]]]);
+        $wrapped = self::callArray('wrap', ['rows' => [['__ref' => [0, 1, 'CurlHandle']], ['__ref' => [0, 1, 'CurlHandle'], 'extra' => 1]]]);
+        self::assertIsArray($wrapped['rows']);
 
         self::assertInstanceOf(Handle::class, $wrapped['rows'][0]);
         self::assertSame(['__ref' => [0, 1, 'CurlHandle'], 'extra' => 1], $wrapped['rows'][1], 'a ref is a ref only when it is the single key');
@@ -132,7 +133,10 @@ final class RouterTest extends TestCase
             $type = (new \ReflectionMethod($subject, $method))->getReturnType();
             self::assertNotNull($type);
 
-            return self::call('typeString', $type, $subject);
+            $rendered = self::call('typeString', $type, $subject);
+            self::assertIsString($rendered);
+
+            return $rendered;
         };
 
         self::assertSame('string', $returns('plain'), 'a builtin stays bare');
@@ -221,5 +225,17 @@ final class RouterTest extends TestCase
     private static function call(string $method, mixed ...$arguments): mixed
     {
         return (new \ReflectionMethod(Router::class, $method))->invoke(null, ...$arguments);
+    }
+
+    /** The same reflection call, narrowed: these callers index the result.
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function callArray(string $method, mixed ...$arguments): array
+    {
+        $result = self::call($method, ...$arguments);
+        self::assertIsArray($result);
+
+        return $result;
     }
 }

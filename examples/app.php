@@ -26,7 +26,13 @@ use Ignis\Http\Response;  // → E4
 // ---------------------------------------------------------------------------
 // 1. Structured concurrency inside one request: ✓ (E1/E2, V-2/V-3)
 // ---------------------------------------------------------------------------
-/** @return array{profile: array<string, mixed>, orders: list<array<string, mixed>>, recommendations: list<string>} */
+/**
+ * The three upstreams, fetched concurrently. Keyed `mixed` because `Ignis\all()` over futures of
+ * different shapes can only say `mixed` per value -- a precise shape here would be a promise this
+ * function does not keep (V-83).
+ *
+ * @return array<string, mixed>
+ */
 function fetchDashboard(int $userId): array
 {
     // Three independent waits run concurrently on one OS thread; the fiber
@@ -65,6 +71,22 @@ function usersFromDb(\PDO $pdo): array
     }
 
     return $rows->fetchAll(\PDO::FETCH_ASSOC);
+}
+
+/**
+ * One integer column of a row. A column value is `mixed` because SQL says so, and an example that
+ * casts it teaches the wrong habit.
+ *
+ * @param array<string, mixed> $row
+ */
+function intColumn(array $row, string $column): int
+{
+    $value = $row[$column] ?? null;
+    if (!is_numeric($value)) {
+        throw new \RuntimeException("column {$column} is " . get_debug_type($value) . ', expected a number');
+    }
+
+    return (int) $value;
 }
 
 /**
@@ -143,10 +165,11 @@ function dbDemo(): array
         return ['pg' => 'set PG_DSN=host=127.0.0.1 user=ignis password=ignis dbname=ignis to enable'];
     }
     $pool ??= new Ignis\Pg\Pool($dsn, 10);
+
     return $pool->transaction(static fn(Ignis\Pg\Lease $l) => [
         'backend' => $l->backendPid(),
         'now' => $l->query('SELECT now()::text AS t')[0]['t'],
-        'sleep_ms' => (int) $l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0]['d'],
+        'sleep_ms' => intColumn($l->query('SELECT extract(milliseconds from clock_timestamp() - now())::int AS d FROM pg_sleep(0.05)')[0], 'd'),
         'pool' => $pool->stats(),
     ]);
 }

@@ -48,7 +48,7 @@ Ignis\serve(static function (Request $req) use ($listen): Response {
             });
             try {
                 Ignis\sleep(5000);
-                return Response::text($child->await() . "\n");
+                return Response::text(superglobalText($child->await()) . "\n");
             } finally {
                 Ignis\Scope::set('slow.finally', true);
                 $ran = $GLOBALS['slow_finally_ran'] ?? 0;

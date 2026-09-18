@@ -22,8 +22,10 @@ declare(strict_types=1);
  * indexing a `mixed`. There is no class and no runtime cost: these are type aliases the analyser
  * resolves and the engine never sees.
  *
- * @phpstan-type IgnisCompletion array{kind: 'error', message: string}|array{kind: 'cancel', age_us: int}|array{kind: 'offload_cb', job: int, seq: int, cb: int, args: string}
- * @phpstan-type IgnisRequest array{method: string, uri: string, headers: array<string, string>, body: string}
+ * They live in `php/phpstan.neon` under `parameters.typeAliases`, not in a docblock here: a
+ * `@phpstan-type` attached to no class-like resolves nowhere, which is why `ignis_poll()`'s return
+ * type read as invalid for as long as this file went unanalysed. Global aliases are also importable,
+ * so `Loop.php` no longer needs a local copy of the same shapes.
  */
 
 
@@ -70,7 +72,11 @@ if (!function_exists('ignis_inflight')) {
 }
 
 if (!function_exists('ignis_stats')) {
-    /** ignis_stats(): array — [threads, stalled, restarts] (ADR-0012, V-17). */
+    /**
+     * ignis_stats(): array — [threads, stalled, restarts] (ADR-0012, V-17).
+     *
+     * @return array{threads: int, stalled: int, restarts: int}
+     */
     function ignis_stats(): array
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -86,7 +92,14 @@ if (!function_exists('ignis_serve')) {
 }
 
 if (!function_exists('ignis_respond')) {
-    /** ignis_respond(int $id, int $status, array $headers, string $body): bool (ADR-0002/ADR-0003, V-5). */
+    /**
+     * ignis_respond(int $id, int $status, array $headers, string $body): bool (ADR-0002/ADR-0003, V-5).
+     *
+     * A value may be a list so one name can carry several headers -- Set-Cookie is the RFC 7230
+     * exception that cannot be comma-joined (S1-COOKIES).
+     *
+     * @param array<string, string|list<string>> $headers
+     */
     function ignis_respond(int $id, int $status, array $headers, string $body): bool
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -96,7 +109,11 @@ if (!function_exists('ignis_respond')) {
 // --- readiness watch / cancellation (ADR-0008, ADR-0009) ---
 
 if (!function_exists('ignis_watch')) {
-    /** ignis_watch(resource $stream, int $mode): int — one-shot readiness watch, mode 1=read 2=write (ADR-0008, V-23 addendum). */
+    /**
+     * ignis_watch(resource $stream, int $mode): int — one-shot readiness watch, mode 1=read 2=write (ADR-0008, V-23 addendum).
+     *
+     * @param resource $stream
+     */
     function ignis_watch($stream, int $mode): int
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -112,7 +129,11 @@ if (!function_exists('ignis_cancel')) {
 }
 
 if (!function_exists('ignis_cancel_parked_any')) {
-    /** ignis_cancel_parked_any(\Fiber $fiber, \Throwable $exception): bool — resume a C-parked fiber by throwing (ADR-0009, V-14/V-30). */
+    /**
+     * ignis_cancel_parked_any(\Fiber $fiber, \Throwable $exception): bool — resume a C-parked fiber by throwing (ADR-0009, V-14/V-30).
+     *
+     * @param \Fiber<mixed, mixed, mixed, mixed> $fiber
+     */
     function ignis_cancel_parked_any(\Fiber $fiber, \Throwable $exception): bool
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -122,7 +143,14 @@ if (!function_exists('ignis_cancel_parked_any')) {
 // --- fiber-scoped superglobals (ADR-0006) ---
 
 if (!function_exists('ignis_set_superglobals')) {
-    /** ignis_set_superglobals(array $server, array $get, array $post, array $cookie): void (ADR-0006, V-11). */
+    /**
+     * ignis_set_superglobals(array $server, array $get, array $post, array $cookie): void (ADR-0006, V-11).
+     *
+     * @param array<string, mixed> $server
+     * @param array<string, mixed> $get
+     * @param array<string, mixed> $post
+     * @param array<string, mixed> $cookie
+     */
     function ignis_set_superglobals(array $server, array $get, array $post, array $cookie): void
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -174,7 +202,11 @@ if (!function_exists('ignis_pg_open')) {
 }
 
 if (!function_exists('ignis_pg_acquire')) {
-    /** ignis_pg_acquire(int $pool): int|array — lease id, or op id if none idle (ADR-0015, V-21). */
+    /**
+     * ignis_pg_acquire(int $pool): int|array — lease id, or op id if none idle (ADR-0015, V-21).
+     *
+     * @return int|array{lease: int}
+     */
     function ignis_pg_acquire(int $pool): int|array
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -198,7 +230,11 @@ if (!function_exists('ignis_pg_release')) {
 }
 
 if (!function_exists('ignis_pg_stats')) {
-    /** ignis_pg_stats(int $pool): ?array — [idle, created, available] (ADR-0015, V-21). */
+    /**
+     * ignis_pg_stats(int $pool): ?array — [idle, created, available] (ADR-0015, V-21).
+     *
+     * @return array<string, int>|null
+     */
     function ignis_pg_stats(int $pool): ?array
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -216,7 +252,11 @@ if (!function_exists('ignis_offload_submit')) {
 }
 
 if (!function_exists('ignis_offload_next')) {
-    /** ignis_offload_next(): ?array — worker thread: blocks for the next job [id, fn, args] (ADR-0016, V-24). */
+    /**
+     * ignis_offload_next(): ?array — worker thread: blocks for the next job [id, fn, args] (ADR-0016, V-24).
+     *
+     * @return array{0: int, 1: string, 2: string}|null
+     */
     function ignis_offload_next(): ?array
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -248,7 +288,11 @@ if (!function_exists('ignis_offload_cb_result')) {
 }
 
 if (!function_exists('ignis_offload_stats')) {
-    /** ignis_offload_stats(): array — [workers, busy, done, queued] (ADR-0016, V-24). */
+    /**
+     * ignis_offload_stats(): array — [workers, busy, done, queued] (ADR-0016, V-24).
+     *
+     * @return array<string, int>
+     */
     function ignis_offload_stats(): array
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);

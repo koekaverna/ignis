@@ -233,7 +233,13 @@ final class WorkerRuntime
             self::$job = $id;
             try {
                 $arguments = self::bindCallbacks(unserialize($serializedArguments, ['allowed_classes' => true]));
+                if (!is_array($arguments)) {
+                    throw new \RuntimeException('offload: argument list is ' . get_debug_type($arguments) . ', expected an array');
+                }
                 $callable = str_contains($function, '::') ? explode('::', $function, 2) : $function;
+                if (!is_callable($callable)) {
+                    throw new \RuntimeException("offload: {$function} is not callable in this worker");
+                }
                 $result = $callable(...$arguments);
                 $out = serialize(['ok' => $result]);
             } catch (\Throwable $e) {

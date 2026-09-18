@@ -43,6 +43,8 @@ final class ClientTest extends TestCase
 
         self::assertSame('SELECT 1', $sent[0]);
         self::assertSame(7, $sent[2]);
+        self::assertIsArray($sent[1]);
+        self::assertIsArray($sent[1]['on']);
         self::assertInstanceOf(CallbackRef::class, $sent[1]['on']['row'], 'a closure cannot be serialized, so it travels as a handle');
         self::assertInstanceOf(CallbackRef::class, $sent[1]['on']['end']);
         self::assertSame([1, 2], [$sent[1]['on']['row']->id, $sent[1]['on']['end']->id], 'ids are handed out in traversal order');
@@ -70,7 +72,9 @@ final class ClientTest extends TestCase
         $job = new \Fiber(static fn(): mixed => Client::call('work', [static fn(): string => $payload]));
         $job->start();
 
-        self::assertCount(1, self::get('pending'), 'the worker may call back for as long as the job runs');
+        $pending = self::get('pending');
+        self::assertIsArray($pending);
+        self::assertCount(1, $pending, 'the worker may call back for as long as the job runs');
 
         $job->resume(serialize(['ok' => 'done']));
 
@@ -198,11 +202,19 @@ final class ClientTest extends TestCase
     }
 
     /** @param list<mixed> $arguments */
-    private static function extract(array $arguments, mixed &$callbacks): mixed
+    /**
+     * The job as it would be sent to a worker. Narrowed here because every caller indexes it.
+     *
+     * @param  array<array-key, mixed> $arguments
+     * @return array<array-key, mixed>
+     */
+    private static function extract(array $arguments, mixed &$callbacks): array
     {
         $callbacks = [];
+        $sent = (new \ReflectionMethod(Client::class, 'extractCallbacks'))->invokeArgs(null, [$arguments, &$callbacks]);
+        self::assertIsArray($sent);
 
-        return (new \ReflectionMethod(Client::class, 'extractCallbacks'))->invokeArgs(null, [$arguments, &$callbacks]);
+        return $sent;
     }
 
     private static function set(string $property, mixed $value): void

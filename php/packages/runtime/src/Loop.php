@@ -6,7 +6,6 @@ namespace Ignis;
 
 /**
  * @phpstan-type Job array{0: callable, 1: array<array-key, mixed>, 2: Future}
- * @phpstan-type RawRequest array{method: string, uri: string, headers: array<string, string>, body: string}
  */
 final class Loop
 {
@@ -51,7 +50,7 @@ final class Loop
     public static int $admittedAfterQueue = 0;
     /** @var list<string> path prefixes admitted regardless of the budget (IGNIS_BUDGET_EXEMPT). */
     private static array $budgetExempt = [];
-    /** @var list<array{int, RawRequest}> FIFO of requests waiting for a slot; read through $queueHead. */
+    /** @var list<array{int, IgnisRequest}> FIFO of requests waiting for a slot; read through $queueHead. */
     private static array $requestQueue = [];
     private static int $queueHead = 0;
     /** @var array<int, true> ids whose client went away while queued. */
@@ -410,7 +409,7 @@ final class Loop
     private static function dispatchUnawaited(int $id, array $payload): void
     {
         if (($payload['method'] ?? null) !== null) {
-            self::dispatchRequest($id, self::asRawRequest($payload));
+            self::dispatchRequest($id, self::asIgnisRequest($payload));
             return;
         }
         if (($payload['kind'] ?? null) === 'cancel') {
@@ -453,9 +452,9 @@ final class Loop
     /**
      * The request handed over by the loop is data off the reactor, not a fact about its shape.
      * @param array<array-key, mixed> $payload
-     * @return RawRequest
+     * @return IgnisRequest
      */
-    private static function asRawRequest(array $payload): array
+    private static function asIgnisRequest(array $payload): array
     {
         $method = $payload['method'] ?? null;
         $uri = $payload['uri'] ?? null;
@@ -608,14 +607,14 @@ final class Loop
     /**
      * Hands a request to the loop's caller instead of to a fiber. Set by `Ignis\Classic\listen()`
      * for the top-level worker loop; see docs/classic-mode.md for why that mode exists (V-53).
-     * @var null|callable(int,RawRequest):void
+     * @var null|callable(int,IgnisRequest):void
      */
     public static $rawRequestHandler = null;
 
     /**
      * B1 (ADR-0019): admit, queue, or shed. Queueing holds the request as data, so a queued
      * request costs a few hundred bytes instead of the fiber's ~14.7 kB of marginal RSS (V-37).
-     * @param RawRequest $raw
+     * @param IgnisRequest $raw
      */
     private static function dispatchRequest(int $id, array $raw): void
     {
@@ -631,7 +630,7 @@ final class Loop
         self::admitRequest($id, $raw);
     }
 
-    /** @param RawRequest $raw */
+    /** @param IgnisRequest $raw */
     private static function queueRequest(int $id, array $raw): void
     {
         $queued = \count(self::$requestQueue) - self::$queueHead;
@@ -682,7 +681,7 @@ final class Loop
         }
     }
 
-    /** @param RawRequest $raw */
+    /** @param IgnisRequest $raw */
     private static function admitRequest(int $id, array $raw): void
     {
         ++self::$inflightRequests;

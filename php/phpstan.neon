@@ -11,16 +11,25 @@
 # There is deliberately no phpstan-baseline.neon. The debt is being driven to zero; a baseline is
 # the file that would make that optional.
 parameters:
-    # Raised 6 -> 8 on 2026-09-18 (S3-STAN8). Measured with 6 clean: 7 = 36, 8 = 39, 9 = 349,
+    # Raised 8 -> 9 on 2026-09-18 (S4-MIXED). Measured with 6 clean: 7 = 36, 8 = 39, 9 = 349,
     # 10 = 399. The 39 were worth taking and four were bug-shaped -- a PDOStatement|false
     # dereferenced, a string invoked without a callable check on the offload job channel, protobuf
     # methods on a bare object. Level 9 is S4-MIXED, filed under its real name: it is 300-odd
     # unchecked accesses on `mixed` at the network boundary, not a number to raise.
-    level: 8
+    level: 9
 
     phpVersion:
         min: 80200
         max: 80504
+
+    # The shapes `ignis_poll()` can return, declared once for the whole tree. They were a
+    # `@phpstan-type` in a floating docblock in stubs/ignis.php, which resolves nowhere -- the stub
+    # file was never in `paths`, so nobody saw PHPStan call the return type invalid. Global aliases
+    # are also importable, which a file-local one is not: Loop.php had to keep its own copy.
+    # The Rust side of each arm is `Outcome` in crates/ignis/src/reactor.rs.
+    typeAliases:
+        IgnisCompletion: "array{kind: 'error', message: string}|array{kind: 'cancel', age_us: int}|array{kind: 'offload_cb', job: int, seq: int, cb: int, args: string}"
+        IgnisRequest: "array{method: string, uri: string, headers: array<string, string>, body: string}"
 
     paths:
         - packages/doctrine/src
@@ -35,6 +44,15 @@ parameters:
         - packages/temporal-core-transport/src
         - packages/temporal-core-transport/tests
         - packages/temporal-prototype/src
+        - packages/temporal-prototype/tests
+        - packages/doctrine/tests
+        - packages/grpc/tests
+        - packages/offload/tests
+        - packages/pg/tests
+        - packages/swoole/tests
+        - packages/symfony-runtime/tests
+        - packages/temporal/tests
+        - packages/runtime/stubs
         - ../examples
 
     excludePaths:
@@ -63,8 +81,19 @@ parameters:
     # be honoured. Doctrine's own EntityManagerDecorator::getMetadataFactory() reports the identical
     # error when analysed, which is what proves it is not ours. Named by identifier, path and count,
     # so it cannot quietly grow to cover anything else.
+    #
+    # Second entry, same standard of proof. `Pipeline::prepare()` declares `@return self<T, mixed>`
+    # -- the second template parameter is hardcoded and never inferred -- while
+    # `BaseClient::withInterceptorPipeline()` requires `Pipeline<GrpcClientInterceptor, object>`.
+    # `mixed` is not `object`, so NO caller can satisfy it, sdk-php's own WorkerFactory and
+    # WorkflowClient included. Four lines of vendor phpdoc contradict each other; nothing in this
+    # repository can resolve it.
     ignoreErrors:
         -
             identifier: method.childReturnType
             path: packages/doctrine/src/FiberEntityManager.php
+            count: 1
+        -
+            identifier: argument.type
+            path: packages/temporal-core-transport/src/CoreServiceClient.php
             count: 1
