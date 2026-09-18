@@ -3,7 +3,7 @@
 Every public function, class and method a script or framework integration is meant to call.
 Sources: `php/packages/runtime/src/ignis.php` (the userland scheduler — `Ignis\Loop`, `Future`, `async()`, `all()`,
 `sleep()`, `deadline()`, `Scope`, `serve()`, `Ignis\Http\Request`/`Response`), `php/packages/runtime/src/classic.php`
-(`Ignis\Classic`), `php/packages/runtime/src/Output.php` (`Ignis\Output`), `php/packages/pg/src/ignis-pg.php`
+(`Ignis\Classic`), `php/packages/runtime/src/Output.php` (`Ignis\Output`),
 `php/packages/offload/src/ignis-offload.php` (`Ignis\Offload`, `Ignis\offload()`),
 `php/packages/revolt/src/IgnisDriver.php` (`Ignis\Revolt\IgnisDriver`), `php/packages/symfony-runtime/src/*`
 (`Ignis\Symfony`), `php/packages/doctrine/src/*` (`Ignis\Doctrine`), `php/packages/temporal/src/*`
