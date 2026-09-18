@@ -71,43 +71,44 @@ reloads, so a reload costs a fraction of capacity rather than an outage. This is
 The gate writes itself: `wrk` against `/` across a reload, zero non-2xx, and the new code answering
 afterwards.
 
-### O3 — a file watcher, development only: watch signals, not directories
+### O3 — what RoadRunner and Node actually do, which is not what I first proposed
 
-The naive version of this — "watch `src/`, ignore `var/cache`, `var/log`, `vendor`" — is wrong, and
-it is wrong in the two places that matter most. `var/cache` is where Symfony keeps its **compiled
-container**: 173 PHP files in this repository's own fixture, including the class the whole
-application is wired from. `vendor/` is where a library's code lives, and `composer update` is
-exactly the moment a worker is serving stale code with no way to know.
+Before designing a watcher, two implementations that have lived with this longer.
 
-The reason to be careful with those two directories is not their content, it is their **volume and
-their feedback loop**: an install writes tens of thousands of files over minutes, and a cache warmup
-writes files *as a result of the reload you just did* — reload, warm, write, reload.
+**RoadRunner removed its watcher.** The `reload` plugin *"has been removed from the default plugins
+list. Use `*.pool.debug=true` instead"* (`intro/compatibility.md`). And `pool.debug: true` does not
+watch anything — it **restarts the worker after every request** (`php/developer.md`: *"Debug mode in
+RoadRunner automatically restarts workers after each request, eliminating the need for manual
+reloads during development"*). The explicit path is `rr reset [plugin]`, which *"waits for active
+requests to finish before reloading"* (`app-server/cli.md`).
 
-So the design is per signal:
+So their answer to "how do I see my change" is not "detect the change" but **"stop keeping code
+between requests while you develop"**. Nothing can be stale, because nothing survives.
 
-| what changed | watch this | not this, and why |
-|---|---|---|
-| application code | `src/`, `config/`, whatever the app calls source | — |
-| a library | **`composer.lock`** and **`vendor/composer/installed.php`** | `vendor/**` is tens of thousands of files written over minutes; the lock changes once, at the end, and says "dependencies are now different" |
-| the compiled container | `var/cache/<env>/*Container.php` — the artifact | the tree, because the application writes into it during the request that follows the reload |
+**Node watches the module graph, not directories.** `node --watch entry.js` *"will watch the entry
+point and any required or imported module"* (`doc/api/cli.md`) and restarts the **whole process**.
+Directory watching is the fallback: `--watch-path=./src` *"disabl[es] automatic watching of required
+or imported modules"*, and is *"supported only on macOS and Windows"*. The runtime already knows what
+it loaded, so it watches exactly that — and when it cannot, it watches paths and says so.
 
-Two guards make it usable, and both are needed:
+**What this means for us**, and it replaces the directory-and-lock-file design I wrote first:
 
-1. **A settle window.** Act only after the watched set has been quiet for a few hundred milliseconds.
-   One composer install becomes one reload, not ten thousand.
-2. **A grace period after a reload.** Ignore events for a moment once the workers are back, so the
-   kernel's own cache warmup cannot trigger the next reload. Without this, watching `var/cache` at
-   all is a loop.
+1. **Primary: restart the worker after each request in debug.** This is RoadRunner's converged
+   answer, it maps onto our architecture with no new machinery — the worker's script ends, the
+   supervisor respawns it with a fresh engine — and it has no staleness, no ignore list, no feedback
+   loop, and nothing to tune. Its cost is a kernel boot per request, which is what php-fpm charges
+   and what a development machine tolerates. Needs O1 and nothing else.
+2. **Secondary, if a watcher is ever built: watch what PHP actually loaded.** `get_included_files()`
+   is our module graph, Node's model exactly, and it is a better list than any glob: it contains the
+   vendor files the application really uses and excludes the 40,000 it does not. On Linux this also
+   matters practically — each watched file is an inotify watch, and the default limits are not
+   generous.
+3. **Directory watching is the fallback**, as it is for Node, and only then is the ignore list a
+   question — with the settle window and the post-reload grace period that a cache directory makes
+   necessary.
 
-**The simplest correct version watches no cache directory.** Its inputs — `config/`, `src/`, the lock
-— are what make the container stale, and the reload gives the new kernel the chance to rebuild it.
-Watching the container artifact is worth adding only for the person who runs `cache:clear` by hand
-and expects that to be noticed.
-
-**And whatever the watcher does, an explicit trigger stays the reliable path.** After
-`composer update` you want the reload once, when you decide it is finished — `ignis reload` or
-`SIGHUP` from the shell, which is O2 with a different caller. A watcher is a convenience layered on
-that, never the mechanism.
+Both references agree on the explicit trigger: `rr reset` and our `SIGHUP`/`ignis reload` are the
+same thing, and both wait for in-flight requests rather than dropping them.
 
 ### O4 — opcache is a separate decision, and the default is deliberately wrong for dev
 
@@ -122,7 +123,10 @@ nothing. So a reload must either call `opcache_reset()` as part of the cycle, or
 `revalidate_freq=0` for dev. Recommended: **reset on an explicit reload, leave a respawn-after-fatal
 untouched**, because the two events mean different things.
 
-### O5 — per-request kernel rebuild in worker mode (rejected for now)
+### O5 — per-request kernel *rebuild* in worker mode (rejected — and note it is not O3's restart)
+
+Not to be confused with restarting the worker per request (O3): that gets a **fresh engine** and is
+sound. This is rebuilding the kernel *inside* the same engine, which is not.
 
 `IgnisWorkerRunner` could check `Kernel::isDebug()` and rebuild the kernel per request. It gives
 instant feedback with no signal and no watcher, and it costs a kernel boot per request — turning the
@@ -149,10 +153,13 @@ PHP's inability to unload a class leaves available.
    possible without it, and it is independently useful for tests.
 2. **`SIGHUP` rolling restart**, one worker at a time, gated on "zero non-2xx across a reload under
    load" and on the new code actually answering.
-3. **`--watch`, development only**, watching signals rather than directories — the lock file for
-   dependencies, source directories for code — with a settle window and a post-reload grace period,
-   because the cache a reload warms is what would otherwise trigger the next one.
-4. **opcache reset on an explicit reload**, and a line in the documentation for anyone running
+3. **Debug mode that restarts the worker after each request** — RoadRunner's answer, which they
+   arrived at by deleting their watcher. No staleness by construction, nothing to configure, and it
+   needs only step 1.
+4. **A watcher only if the per-request restart proves too slow**, and then over
+   `get_included_files()` rather than directories, which is Node's model and a better list than any
+   glob.
+5. **opcache reset on an explicit reload**, and a line in the documentation for anyone running
    `validate_timestamps=0`.
 
 Steps 1 and 2 are worth doing whatever the development story becomes: a reload without a restart is
