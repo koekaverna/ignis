@@ -33,6 +33,8 @@ pub struct Config {
     pub budget: Budget,
     #[serde(default)]
     pub limits: Limits,
+    #[serde(default)]
+    pub watch: Watch,
     /// Path prefixes admitted regardless of the budget (ADR-0019 §5). Default `["/_ignis/"]`.
     pub exempt: Option<Vec<String>>,
 }
@@ -66,6 +68,22 @@ pub struct Limits {
     pub idle_timeout_ms: Option<u64>,
     /// How long in-flight requests get after SIGTERM before the process exits. Default 10 s.
     pub drain_timeout_ms: Option<u64>,
+}
+
+/// Development reload (research 40, V-90): a runtime setting, so it belongs here beside the others
+/// rather than only in the environment.
+#[derive(Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Watch {
+    /// Watch the files PHP loads and reload the workers when one changes. Default off, and it needs
+    /// `supervise` — nothing else would bring a reloading worker back.
+    pub enabled: Option<bool>,
+    /// Quiet time before a change counts, in milliseconds. Default 300: one `composer install`
+    /// writes for minutes and must still be one reload.
+    pub settle_ms: Option<u64>,
+    /// Workers that may be away reloading at once. Default 1, which is what keeps a reload invisible
+    /// to clients (0 non-2xx of 283,066 requests under load, V-90).
+    pub reload_parallel: Option<u64>,
 }
 
 impl Config {
@@ -160,6 +178,15 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
     if let Some(v) = cfg.limits.drain_timeout_ms {
         default_env("IGNIS_DRAIN_TIMEOUT_MS", &v.to_string());
     }
+    if cfg.watch.enabled == Some(true) {
+        default_env("IGNIS_WATCH", "1");
+    }
+    if let Some(v) = cfg.watch.settle_ms {
+        default_env("IGNIS_WATCH_SETTLE_MS", &v.to_string());
+    }
+    if let Some(v) = cfg.watch.reload_parallel {
+        default_env("IGNIS_WATCH_RELOAD_PARALLEL", &v.to_string());
+    }
 
     let mut out = Vec::new();
     if cfg.supervise.unwrap_or(true) {
@@ -223,6 +250,22 @@ mod tests {
         assert_eq!(std::env::var("IGNIS_FIBER_BUDGET").unwrap(), "1024");
         assert_eq!(std::env::var("IGNIS_QUEUE_DEPTH").unwrap(), "4096");
         assert_eq!(std::env::var("IGNIS_BUDGET_EXEMPT").unwrap(), "/_ignis/");
+    }
+
+    #[test]
+    fn the_watch_table_reaches_the_watcher() {
+        serve_with(&format!("entry = {EXISTING_FILE:?}\n[watch]\nenabled = true\nsettle_ms = 50\nreload_parallel = 2\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_WATCH").unwrap(), "1");
+        assert_eq!(std::env::var("IGNIS_WATCH_SETTLE_MS").unwrap(), "50");
+        assert_eq!(std::env::var("IGNIS_WATCH_RELOAD_PARALLEL").unwrap(), "2");
+    }
+
+    /// `enabled = false` must not set the variable at all: an empty `IGNIS_WATCH` is still "off",
+    /// but writing one would defeat an operator who exports it themselves.
+    #[test]
+    fn watching_off_writes_nothing() {
+        serve_with(&format!("entry = {EXISTING_FILE:?}\n[watch]\nenabled = false\n"), &[]);
+        assert!(std::env::var("IGNIS_WATCH").is_err());
     }
 
     #[test]

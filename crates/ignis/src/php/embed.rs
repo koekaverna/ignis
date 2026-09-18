@@ -219,12 +219,34 @@ impl Drop for WorkerThread {
     }
 }
 
+/// Development reload: a respawned worker must compile from disk, not from the cache the previous
+/// one filled, and it must be told so *before* its script is compiled.
+///
+/// Three ways were tried. `opcache_reset()` works and is not an option — called while sibling
+/// threads serve, it produced `zend_mm_heap corrupted` under load. An `ini_set()` from the loop is
+/// too late: the entry script and everything it requires are compiled before any PHP of ours runs.
+/// `php_embed_module.ini_entries` is overwritten by `php_embed_init` itself, so it never applied.
+/// Altering the entry here is the moment that works: after startup, before the first compile.
+unsafe fn revalidate_every_include() {
+    if !crate::watch::enabled() {
+        return;
+    }
+    // SAFETY: on the PHP thread with a live TSRM context. The key is interned and permanent, which
+    // is what an ini name is anyway, so nothing here owns a string to free; PHP copies the value.
+    unsafe {
+        let Some(intern) = sys::zend_string_init_interned else { return };
+        let name = intern(c"opcache.revalidate_freq".as_ptr(), 23, true);
+        sys::zend_alter_ini_entry_chars(name, c"0".as_ptr(), 1, sys::ZEND_INI_SYSTEM as i32, sys::ZEND_INI_STAGE_RUNTIME as i32);
+    }
+}
+
 fn run_file_on_current_thread(path: &Path) -> Result<i32> {
     let cpath = CString::new(path.to_str().context("non-utf8 path")?)?;
     // SAFETY: file handle is stack-owned and destroyed after execution;
     // php_execute_script wraps execution in zend_try and returns false on
     // bailout, so no longjmp crosses our frame.
     let status = unsafe {
+        revalidate_every_include();
         // Like php-cli: a `#!` first line on the primary script is skipped (E15b: vendor/bin/phpunit).
         let cg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::compiler_globals_offset) as *mut sys::zend_compiler_globals;
         (*cg).skip_shebang = true;

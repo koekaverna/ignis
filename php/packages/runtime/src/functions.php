@@ -98,6 +98,15 @@ function write(string $chunk): void
  *
  * @param callable(Http\Request):(Http\Response|null) $handler
  */
+/**
+ * Stops serving: no new requests, the ones in flight finish, and `serve()` returns. Under
+ * `--supervise` the thread comes back with a fresh engine — which is how a reload happens.
+ */
+function stop(): void
+{
+    Loop::stop();
+}
+
 function serve(callable $handler, string $address = '127.0.0.1:8080'): void
 {
     Loop::serve($handler, $address);

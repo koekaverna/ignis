@@ -118,6 +118,7 @@ final class Runner
         self::$current = null;
         self::$currentSessionId = null;
         \Ignis\Scope::set('ignis.request', null);
+        \Ignis\Loop::reportLoadedFiles();   // classic includes a script per request (research 40)
     }
 
     public static function finishRequest(): bool

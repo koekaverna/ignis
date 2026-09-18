@@ -766,6 +766,69 @@ unsafe extern "C" fn zif_ignis_route_pass(_ex: *mut sys::zend_execute_data, rv: 
     unsafe { zval::set_null(rv) }
 }
 
+/// `ignis_watch_files(array $files): int` — add loaded files to the development watcher (research 40);
+/// returns how many directories became watched. A list of strings; anything else in it is skipped.
+unsafe extern "C" fn zif_ignis_watch_files(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: the array is VM-owned for the call and every string is copied before returning.
+    unsafe {
+        let mut ht: *mut sys::HashTable = ptr::null_mut();
+        if sys::zend_parse_parameters(zval::num_args(ex), c"h".as_ptr(), &mut ht) != sys::SUCCESS {
+            return;
+        }
+        let mut paths = Vec::new();
+        let mut pos: sys::HashPosition = 0;
+        sys::zend_hash_internal_pointer_reset_ex(ht, &mut pos);
+        loop {
+            let v = sys::zend_hash_get_current_data_ex(ht, &pos);
+            if v.is_null() {
+                break;
+            }
+            if zval::type_of(v) == sys::IS_STRING {
+                paths.push(zval::zstr_to_string((*v).value.str_));
+            }
+            sys::zend_hash_move_forward_ex(ht, &mut pos);
+        }
+        zval::set_long(rv, crate::watch::watch(&paths) as i64);
+    }
+}
+
+/// `ignis_watch_generation(): int` — settled changes seen so far. A worker records it at boot and
+/// reloads when it grows; a boolean would be consumed by whichever thread read it first.
+unsafe extern "C" fn zif_ignis_watch_generation(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: rv is VM-owned writable storage.
+    unsafe { zval::set_long(rv, crate::watch::generation() as i64) }
+}
+
+/// `ignis_watch_claim_reset(): bool` — true for exactly one caller per settled change. The compiled
+/// code cache is process-wide, so one reset serves every thread and N of them would only disturb the
+/// siblings still finishing their requests.
+unsafe extern "C" fn zif_ignis_watch_claim_reset(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: rv is VM-owned writable storage.
+    unsafe { zval::set_bool(rv, crate::watch::claim_reset()) }
+}
+
+/// `ignis_watch_begin_reload(): bool` — claim the one reload slot, so workers go down one at a time.
+unsafe extern "C" fn zif_ignis_watch_begin_reload(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: rv is VM-owned writable storage.
+    unsafe { zval::set_bool(rv, crate::watch::begin_reload()) }
+}
+
+/// `ignis_watch_end_reload(): void` — this worker is up; whoever is waiting to reload may go.
+unsafe extern "C" fn zif_ignis_watch_end_reload(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    crate::watch::end_reload();
+    // SAFETY: rv is VM-owned writable storage.
+    unsafe { zval::set_null(rv) }
+}
+
+/// `ignis_stop_accepting(): void` — take this thread out of HTTP dispatch and keep what it holds.
+/// The front door stops sending it requests; the ones already in flight are still its own to finish,
+/// which is what separates a reload from a thread that died (`http::unregister`).
+unsafe extern "C" fn zif_ignis_stop_accepting(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    crate::http::leave_dispatch(&reactor());
+    // SAFETY: rv is VM-owned writable storage.
+    unsafe { zval::set_null(rv) }
+}
+
 const fn fe(
     name: &'static CStr,
     handler: unsafe extern "C" fn(*mut sys::zend_execute_data, *mut sys::zval),
@@ -796,7 +859,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 33]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 39]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
@@ -813,6 +876,12 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 33]> = SyncStatic([
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_watch_files", zif_ignis_watch_files, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_watch_generation", zif_ignis_watch_generation, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_claim_reset", zif_ignis_watch_claim_reset, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_begin_reload", zif_ignis_watch_begin_reload, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_end_reload", zif_ignis_watch_end_reload, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stop_accepting", zif_ignis_stop_accepting, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
     fe(c"ignis_respond_start", zif_ignis_respond_start, ARGINFO_RESPOND.0.as_ptr(), 3),
     fe(c"ignis_respond_chunk", zif_ignis_respond_chunk, ARGINFO_RESPOND.0.as_ptr(), 2),
@@ -834,7 +903,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 33]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 41]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 47]> = SyncStatic([
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_T3.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_ONE.0.as_ptr(), 1),
@@ -859,6 +928,12 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 41]> = SyncStatic([
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_watch_files", zif_ignis_watch_files, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_watch_generation", zif_ignis_watch_generation, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_claim_reset", zif_ignis_watch_claim_reset, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_begin_reload", zif_ignis_watch_begin_reload, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_end_reload", zif_ignis_watch_end_reload, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stop_accepting", zif_ignis_stop_accepting, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
     fe(c"ignis_respond_start", zif_ignis_respond_start, ARGINFO_RESPOND.0.as_ptr(), 3),
     fe(c"ignis_respond_chunk", zif_ignis_respond_chunk, ARGINFO_RESPOND.0.as_ptr(), 2),
@@ -878,7 +953,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 41]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 41]> = SyncStatic([
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
@@ -895,6 +970,12 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 35]> = SyncStatic([
     fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_ONE.0.as_ptr(), 1),
     fe(c"ignis_serve", zif_ignis_serve, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_watch_files", zif_ignis_watch_files, ARGINFO_ONE.0.as_ptr(), 1),
+    fe(c"ignis_watch_generation", zif_ignis_watch_generation, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_claim_reset", zif_ignis_watch_claim_reset, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_begin_reload", zif_ignis_watch_begin_reload, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_watch_end_reload", zif_ignis_watch_end_reload, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_stop_accepting", zif_ignis_stop_accepting, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
     fe(c"ignis_respond_start", zif_ignis_respond_start, ARGINFO_RESPOND.0.as_ptr(), 3),
     fe(c"ignis_respond_chunk", zif_ignis_respond_chunk, ARGINFO_RESPOND.0.as_ptr(), 2),

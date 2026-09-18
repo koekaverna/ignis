@@ -10,6 +10,7 @@ mod metrics;
 mod offload;
 mod php;
 mod reactor;
+mod watch;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -54,6 +55,10 @@ fn main() -> ExitCode {
     install_signal_drain(&rt);
     php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
 
+    // Before the engine: `Engine::start` adds an ini entry when development reload is on, and an
+    // ini entry has to exist before anything is compiled.
+    watch::set_supervised(flags.supervise);
+    install_reload_signal(&rt, flags.supervise);
     metrics::mark_start();
     let mut engine = match initialize_php_engine(&args) {
         Ok(e) => e,
@@ -170,6 +175,26 @@ fn take_inline_code(args: &mut Vec<String>) -> Result<Option<(String, String)>, 
 /// same, so Ctrl-C in a terminal behaves like a stop rather than a kill. The process then exits
 /// outright: the PHP threads own their engines and cannot be unwound from here (ADR-0012), so once
 /// no request is in flight, leaving is the honest end of the process.
+/// `SIGHUP` reloads instead of stopping: the workers go down one at a time and come back with a
+/// fresh engine, which is what `nginx -s reload` and `rr reset` mean by the word. The listener never
+/// closes, so nothing in flight is dropped (M4-5, research 40).
+fn install_reload_signal(rt: &tokio::runtime::Runtime, supervised: bool) {
+    rt.spawn(async move {
+        let Ok(mut hup) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) else {
+            tracing::warn!("SIGHUP handler not installed; reload on signal is off");
+            return;
+        };
+        while hup.recv().await.is_some() {
+            if !supervised {
+                tracing::warn!("SIGHUP ignored: reloading needs --supervise, or the workers would not come back");
+                continue;
+            }
+            tracing::info!("SIGHUP: reloading workers");
+            watch::request();
+        }
+    });
+}
+
 fn install_signal_drain(rt: &tokio::runtime::Runtime) {
     rt.spawn(async {
         let mut term = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
@@ -337,35 +362,92 @@ fn spawn_watchdog(rt: &tokio::runtime::Runtime) {
 /// workers 1..=N run the script and are respawned when their script ends, up to ten restarts a
 /// minute. Returns when every worker is gone for good.
 fn supervise_workers(threads: usize, script: &Path, rt: &tokio::runtime::Handle) -> i32 {
-    let mut handles: Vec<(usize, std::thread::JoinHandle<i32>)> = (1..=threads).map(|i| (i, spawn_worker(i, script, rt))).collect();
+    let mut workers: Vec<Worker> = (1..=threads).map(|slot| Worker::spawn(slot, script, rt)).collect();
     let mut restarts_this_minute = 0u32;
     let mut minute = std::time::Instant::now();
     loop {
         std::thread::sleep(std::time::Duration::from_millis(50));
-        let mut i = 0;
-        while i < handles.len() {
-            if handles[i].1.is_finished() {
-                let (slot, h) = handles.remove(i);
-                let status = h.join().unwrap_or(1);
-                if minute.elapsed() > std::time::Duration::from_secs(60) {
-                    minute = std::time::Instant::now();
-                    restarts_this_minute = 0;
+        for worker in &mut workers {
+            if let Some(retry_at) = worker.retry_at {
+                if std::time::Instant::now() < retry_at {
+                    continue;
                 }
+                worker.retry_at = None;
+                tracing::warn!(slot = worker.slot, "retrying the worker after its restart budget ran out");
+                worker.respawn(script, rt);
+                continue;
+            }
+            if !worker.finished() {
+                continue;
+            }
+            let status = worker.join();
+            if minute.elapsed() > std::time::Duration::from_secs(60) {
+                minute = std::time::Instant::now();
+                restarts_this_minute = 0;
+            }
+            // A reload is not a crash: the watcher bumped its generation and the worker returned on
+            // purpose, so it must not spend the budget that exists to stop a crash loop. Charging it
+            // meant one save cost N restarts, and `--threads 12` exhausted ten of them on the first
+            // edit (review, 2026-09-19).
+            if worker.ended_for_reload() {
+                tracing::info!(slot = worker.slot, "worker reloaded");
+            } else {
                 if restarts_this_minute >= 10 {
-                    tracing::error!(slot, status, "worker ended; restart budget exhausted (10/min), not respawning");
+                    // The slot is kept and retried after a pause, not dropped: it used to be removed
+                    // from the list and never put back, so an exhausted budget lost that worker for
+                    // the life of the process and losing every worker ended it. The pause is what
+                    // bounds a crash loop; waiting out the whole minute instead would leave a
+                    // development server unusable for a minute after the file that broke it is fixed.
+                    if worker.retry_at.is_none() {
+                        worker.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                        tracing::error!(
+                            slot = worker.slot,
+                            status,
+                            "worker keeps ending; restart budget exhausted (10/min), retrying in 5s"
+                        );
+                    }
                     continue;
                 }
                 restarts_this_minute += 1;
                 RESTARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                tracing::warn!(slot, status, "worker script ended; respawning (opcache SHM untouched)");
-                handles.push((slot, spawn_worker(slot, script, rt)));
-            } else {
-                i += 1;
+                tracing::warn!(slot = worker.slot, status, "worker script ended; respawning (opcache SHM untouched)");
             }
+            worker.respawn(script, rt);
         }
-        if handles.is_empty() {
-            return 1;
-        }
+    }
+}
+
+/// One supervised worker slot. It keeps the generation the thread was spawned with, which is what
+/// separates "returned because a file changed" from "died".
+struct Worker {
+    slot: usize,
+    handle: Option<std::thread::JoinHandle<i32>>,
+    generation: u64,
+    /// Set while a slot is waiting out a crash loop; the slot stays in the list either way.
+    retry_at: Option<std::time::Instant>,
+}
+
+impl Worker {
+    fn spawn(slot: usize, script: &Path, rt: &tokio::runtime::Handle) -> Self {
+        Self { slot, handle: Some(spawn_worker(slot, script, rt)), generation: watch::generation(), retry_at: None }
+    }
+
+    fn finished(&self) -> bool {
+        self.handle.as_ref().is_some_and(std::thread::JoinHandle::is_finished)
+    }
+
+    fn join(&mut self) -> i32 {
+        self.handle.take().map_or(1, |h| h.join().unwrap_or(1))
+    }
+
+    fn ended_for_reload(&self) -> bool {
+        watch::generation() > self.generation
+    }
+
+    fn respawn(&mut self, script: &Path, rt: &tokio::runtime::Handle) {
+        self.generation = watch::generation();
+        self.retry_at = None;
+        self.handle = Some(spawn_worker(self.slot, script, rt));
     }
 }
 

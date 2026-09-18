@@ -248,6 +248,13 @@ final class Loop
                 if (self::$pending !== []) {
                     continue;
                 }
+                if (self::$watching && !self::$stopping && \ignis_watch_generation() > self::$watchGeneration
+                    && \ignis_watch_begin_reload()) {
+                    self::$stopping = true;      // one worker goes down at a time; the rest keep serving
+                }
+                if (self::windingDown()) {
+                    break;
+                }
                 if (self::isIdle()) {
                     break;
                 }
@@ -276,6 +283,15 @@ final class Loop
         self::gcInit();
         self::budgetInit();
         self::$canPublishStats = \function_exists('ignis_publish_stats');
+        $watch = \getenv('IGNIS_WATCH');
+        // boot() runs on the first turn of every mode, including classic `listen()`, which never
+        // calls serve() and would otherwise watch nothing at all.
+        self::$watching = $watch !== false && $watch !== '' && $watch !== '0' && \function_exists('ignis_watch_generation');
+        self::$watchGeneration = self::$watching ? \ignis_watch_generation() : 0;
+        if (self::$watching) {
+            \ignis_watch_end_reload();   // this incarnation is up; whoever is waiting to reload may go
+        }
+        self::watchLoadedFiles();
     }
 
     /** Starts the fibers spawn() created since the last turn; starting one can create more. */
@@ -601,7 +617,82 @@ final class Loop
     {
         \ignis_serve($address);
         self::$requestHandler = $handler;
+        self::watchLoadedFiles();
         self::run();
+    }
+
+    /**
+     * Asks the loop to stop serving: no new requests are accepted, the ones in flight finish, and
+     * `serve()` returns. Under `--supervise` the supervisor then respawns this thread with a fresh
+     * engine, which is what makes it a reload rather than an exit (research 40).
+     */
+    public static function stop(): void
+    {
+        self::$stopping = true;
+    }
+
+    private static bool $watching = false;
+    /** The number of settled changes this thread booted with; it reloads when the runtime's is higher. */
+    private static int $watchGeneration = 0;
+    private static bool $stopping = false;
+    private static bool $leftDispatch = false;
+    /** @var array<string, true> files already handed to the watcher, so each turn sends a delta */
+    private static array $watched = [];
+
+    /**
+     * Development reload: the files PHP has loaded are the dependency graph, so they are what the
+     * watcher watches (research 40). Off unless `IGNIS_WATCH` is set; a delta after every request,
+     * which is almost always empty.
+     */
+    /** `Ignis\Classic` drives the loop itself, so it reports what its per-request include added. */
+    public static function reportLoadedFiles(): void
+    {
+        self::watchLoadedFiles();
+    }
+
+    private static function watchLoadedFiles(): void
+    {
+        if (!self::$watching || !\function_exists('ignis_watch_files')) {
+            return;
+        }
+        $new = [];
+        foreach (\get_included_files() as $file) {
+            if (!isset(self::$watched[$file])) {
+                self::$watched[$file] = true;
+                $new[] = $file;
+            }
+        }
+        if ($new !== []) {
+            \ignis_watch_files($new);
+        }
+    }
+
+    /**
+     * Begins a graceful stop the first time it is asked for, then waits for everything in flight.
+     *
+     * "In flight" is deliberately the same set `isIdle()` uses. Counting only `$inflightRequests`
+     * lost two kinds of work: a request the front door had already handed this reactor but that
+     * `ignis_poll()` had not delivered yet — measured at 1,472 of 383,181 requests answered 500
+     * across a reload under `wrk -t4 -c32` — and a fiber parked on an op, which is how a
+     * fire-and-forget `Ignis\async()` would have been dropped.
+     */
+    private static function windingDown(): bool
+    {
+        if (!self::$stopping) {
+            return false;
+        }
+        if (!self::$leftDispatch) {
+            self::$leftDispatch = true;
+            if (\function_exists('ignis_stop_accepting')) {
+                \ignis_stop_accepting();
+            }
+        }
+
+        return \ignis_inflight() === 0          // the runtime's count, which includes a request delivered
+            && self::$inflightRequests === 0    // to this thread but not yet drained by ignis_poll()
+            && self::$waiting === []            // and a fiber parked on an op is still work in flight
+            && self::$ready === []
+            && self::$pending === [];
     }
 
     /**
@@ -796,6 +887,7 @@ final class Loop
         unset(self::$requestFibers[$id], self::$children[$id]);
         Scope::clear();
         Output::reset();
+        self::watchLoadedFiles();
         --self::$inflightRequests;
         ++self::$handled;
         self::drainQueue();

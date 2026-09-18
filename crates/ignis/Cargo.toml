@@ -40,6 +40,7 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "h
 # E10 (ADR-0014): gRPC framing + client channel; no codegen, no prost.
 tonic = { version = "0.14", default-features = false, features = ["server", "channel"] }
 futures-core = "0.3"
+notify = { version = "8.2.0", default-features = false, features = ["macos_fsevent"] }
 # E6' (ADR-0017): TLS for hooked ssl:// streams; ring provider (no cmake/aws-lc build).
 # E14 (ADR-0015): runtime-owned PostgreSQL pool; JSON boundary for params/rows.
 

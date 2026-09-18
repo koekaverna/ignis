@@ -191,6 +191,61 @@ if (!function_exists('ignis_grpc_recv')) {
     }
 }
 
+// --- development reload (research 40) ---
+
+if (!function_exists('ignis_watch_files')) {
+    /**
+     * ignis_watch_files(array $files): int — add loaded files to the watcher; returns how many
+     * directories became watched (research 40).
+     *
+     * @param list<string> $files
+     */
+    function ignis_watch_files(array $files): int
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_watch_generation')) {
+    /** ignis_watch_generation(): int — settled changes so far; a worker reloads when it grows. */
+    function ignis_watch_generation(): int
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_watch_claim_reset')) {
+    /** ignis_watch_claim_reset(): bool — true for exactly one caller per settled change. */
+    function ignis_watch_claim_reset(): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_watch_begin_reload')) {
+    /** ignis_watch_begin_reload(): bool — claim the single reload slot; false means wait your turn. */
+    function ignis_watch_begin_reload(): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_watch_end_reload')) {
+    /** ignis_watch_end_reload(): void — this worker is up; the next one may reload. */
+    function ignis_watch_end_reload(): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_stop_accepting')) {
+    /** ignis_stop_accepting(): void — leave HTTP dispatch, keeping the requests already in flight. */
+    function ignis_stop_accepting(): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
 // --- offload pool (ADR-0016, V-24) ---
 
 if (!function_exists('ignis_offload_submit')) {

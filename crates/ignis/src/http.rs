@@ -164,6 +164,26 @@ pub fn totals() -> crate::metrics::Totals {
 
 /// Removes a PHP thread's reactor from dispatch (its script ended or died). E12': the requests it
 /// still had in flight fail fast with a 500 instead of hanging until the client gives up.
+/// Breaks every PHP thread out of `ignis_poll`, so a loop parked with no traffic notices something
+/// that did not arrive as a request — a file changed under the development watcher, say. The
+/// completion carries `Outcome::Ready` with an id nobody awaits, which the userland loop drops on
+/// the floor; waking is the whole point of it.
+pub fn wake_all() {
+    if let Some(registry) = REGISTRY.get() {
+        for reactor in registry.reactors.lock().unwrap().iter() {
+            reactor.inject(crate::reactor::Outcome::Ready);
+        }
+    }
+}
+
+/// Takes a thread out of dispatch without touching its in-flight work: a reload stops accepting
+/// first and finishes what it already has, where a dying thread has nothing left to finish.
+pub fn leave_dispatch(reactor: &Arc<Reactor>) {
+    if let Some(registry) = REGISTRY.get() {
+        registry.reactors.lock().unwrap().retain(|r| !Arc::ptr_eq(r, reactor));
+    }
+}
+
 pub fn unregister(reactor: &Arc<Reactor>) {
     if let Some(registry) = REGISTRY.get() {
         registry.reactors.lock().unwrap().retain(|r| !Arc::ptr_eq(r, reactor));
