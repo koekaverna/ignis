@@ -4116,3 +4116,51 @@ open, which is the shape the defect had.
 
 Also corrected in this entry: the price paragraph above said "open connections equal to requests in
 flight". That was the intent, not the measurement — it is true only with this addendum applied.
+
+### V-85 addendum 2 — two connection modes, and the pool measured against the same suite
+
+Date: 2026-09-18T16:4xZ. Owner asked for both modes: a connection per fiber, and a pool that comes up
+cold with a set limit. `IGNIS_DOCTRINE_POOL` is the switch — unset or below 1 keeps the per-fiber
+mode, `N` gives every **thread** a pool of at most N. Same `bench/e24`, same fixture, arms added
+rather than replaced.
+
+| arm | distinct backends | still open at the end |
+|---|---|---|
+| per fiber, 30 sequential requests | 30 | 0 |
+| per fiber, loop GC off | 30 | 0 |
+| **pool of 4 warmed at boot, 30 sequential requests** | **1** | **4** |
+
+One backend for thirty requests is the reuse the per-fiber mode cannot give, and the four that stay
+open are the pool itself — opened by `IgnisDoctrineBundle::boot()`, not by the first request that
+needed them.
+
+**Concurrency is still correct when the pool is smaller than the load.** Six overlapping requests
+through a pool of two, one thread:
+
+```
+r1 0.314 s  r2 0.507 s  r3 0.235 s  r4 0.650 s  r5 0.458 s  r6 0.614 s
+0 of 6 requests missed its own row; 6 DBAL connection objects, 2 distinct backends
+```
+
+Every request got its own rows; the extra wall time is the queue, and the fibers that waited did so
+parked — the thread kept serving. That is the whole difference from the defect this suite was written
+for: two fibers never share a socket, they take turns holding one.
+
+**A saturated pool refuses instead of hanging.** Pool of 1, `IGNIS_DOCTRINE_POOL_WAIT_MS=100`, six
+0.3 s requests: one succeeds and five come back in 0.102–0.104 s with
+`no database connection became free within 100 ms (pool limit 1, N waiting)`. The arm fails if they
+ever all succeed, because that would mean the bound stopped applying.
+
+**What the pool does on return:** the V-21 expansion of `DISCARD ALL` (`ROLLBACK; CLOSE ALL; SET
+SESSION AUTHORIZATION DEFAULT; RESET ALL; UNLISTEN *; pg_advisory_unlock_all(); DISCARD TEMP; DISCARD
+SEQUENCES`), one round trip, which doubles as the liveness check — a connection that cannot be reset
+is dropped rather than handed to the next request. PostgreSQL only: the middleware applies no reset
+to other drivers and the documentation says so instead of pretending.
+
+Unit coverage for the parts that need no reactor (warming, reuse, the limit, a refused connect not
+consuming capacity, a dead connection being dropped): 12 cases across `ConnectionPoolTest` and
+`PoolingMiddlewareTest`. The parking half is measured by the arms above, because the PHP suite runs
+under plain php-cli where there is no loop to park in.
+
+Gates: PHP suite **315 tests / 741 assertions**, `bench/e24` GREEN (nine arms), `bench/e21` GREEN,
+`scripts/smoke.sh` GREEN, phpstan and php-cs-fixer clean on everything this work touches.
