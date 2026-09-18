@@ -61,6 +61,17 @@ namespace Ignis\Tests {
             return $operationId;
         }
 
+        /**
+         * Calls off a pending timer, as `Op::CancelWatch` does, and returns the cancel's own id —
+         * the real one completes both, which is why the caller must forget the target first.
+         */
+        public static function cancelTimer(int $operationId): int
+        {
+            unset(self::$timers[$operationId], self::$injected[$operationId]);
+
+            return self::$nextOperationId++;
+        }
+
         /** Make ignis_poll() hand $payload back for $operationId on its next call. */
         public static function inject(int $operationId, mixed $payload): void
         {
@@ -130,6 +141,13 @@ namespace {
         function ignis_poll(int $timeout_ms): array
         {
             return Ignis\Tests\FakeReactor::poll();
+        }
+    }
+
+    if (!function_exists('ignis_cancel')) {
+        function ignis_cancel(int $target): int
+        {
+            return Ignis\Tests\FakeReactor::cancelTimer($target);
         }
     }
 

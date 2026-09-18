@@ -309,6 +309,57 @@ final class LoopTest extends LoopTestCase
         self::assertSame([], self::get('deadlines'), 'the timer is forgotten once it fires');
     }
 
+    public function testADeadlineIsCalledOffWhenTheRequestAnswersInTime(): void
+    {
+        self::set('requestHandler', static fn(Request $request): Response => (static function (): Response {
+            \Ignis\deadline(30_000);
+
+            return Response::text("in time\n");
+        })());
+        FakeReactor::inject(5, self::rawRequest());
+        self::drive();
+
+        self::assertSame([], self::get('deadlines'), 'the timer goes with the request it belonged to');
+        self::assertSame([], self::get('deadlineOf'));
+        self::assertSame(0, \ignis_inflight(), 'a 30 s timer still in flight holds a graceful drain for 30 s');
+        self::assertSame(0, Loop::$cancelled, 'an answered request is not a cancellation');
+    }
+
+    public function testASecondDeadlineReplacesTheFirstRatherThanArmingTwo(): void
+    {
+        Scope::set('ignis.request', 42);
+
+        try {
+            Loop::deadline(30);
+            Loop::deadline(40);
+        } finally {
+            Scope::set('ignis.request', null);
+        }
+
+        self::assertSame(1, \count((array) self::get('deadlines')), 'one wall-clock deadline per request is the contract');
+        self::assertSame(1, \ignis_inflight());
+    }
+
+    /**
+     * A pooled fiber goes back to `$idle` the moment its job settles and the next request may take
+     * it. While it also stayed in `$children`, a disconnect on the request that spawned it threw
+     * `CancelledException` into whatever the *next* request was doing on that fiber.
+     */
+    public function testAFinishedChildLeavesItsRequestWhileThatRequestIsStillInFlight(): void
+    {
+        self::set('requestHandler', static function (Request $request): Response {
+            \Ignis\async(static fn(): int => 1);
+            Loop::awaitOp(9100);
+
+            return Response::text("unreachable\n");
+        });
+        FakeReactor::inject(5, self::rawRequest());
+        self::drive();
+
+        self::assertSame([5 => []], self::get('children'), 'the settled child is out of its parent\'s list');
+        self::assertSame(1, Loop::idleFibers(), 'and it is back in the pool, which is what made this dangerous');
+    }
+
     // ---- cancellation (ADR-0009) -----------------------------------------------------------
 
     /**

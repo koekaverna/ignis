@@ -5,16 +5,23 @@ declare(strict_types=1);
 namespace Ignis;
 
 /**
- * @phpstan-type Job array{0: callable, 1: array<array-key, mixed>, 2: Future}
+ * @phpstan-type Job array{0: callable, 1: array<array-key, mixed>, 2: Future, 3: int|null}
  */
 final class Loop
 {
     /** @var array<int,\Fiber<mixed,mixed,mixed,mixed>> request id => fiber running the handler */
     private static array $requestFibers = [];
-    /** @var array<int,list<\Fiber<mixed,mixed,mixed,mixed>>> request id => child fibers spawned by it */
+    /**
+     * request id => the child fibers it spawned, keyed by object id so a finished one leaves in O(1).
+     * @var array<int,array<int,\Fiber<mixed,mixed,mixed,mixed>>>
+     */
     private static array $children = [];
     /** @var array<int,int> op id => request id for deadline timers */
     private static array $deadlines = [];
+    /** @var array<int,int> request id => the deadline op it armed, so the timer can be called off */
+    private static array $deadlineOf = [];
+    /** @var array<int,true> ids sitting in the request queue, so a cancel for anything else is not remembered */
+    private static array $queued = [];
     /** @var array<int,int> fiber object id => op id it is parked on (userland parks) */
     private static array $parkedOn = [];
     public static int $cancelled = 0;
@@ -133,15 +140,33 @@ final class Loop
     {
         $self = self::currentFiber();
         for (;;) {
-            [$function, $arguments, $future] = $job;
+            [$function, $arguments, $future, $requestId] = $job;
             try {
                 $future->resolve($function(...$arguments));
             } catch (\Throwable $e) {
                 $future->reject($e);
             }
+            self::forgetChild($requestId, $self);
             self::$idle[] = $self;
             $job = self::nextJob();
         }
+    }
+
+    /**
+     * Drops a finished child from the request that spawned it, before the pool hands the fiber out.
+     *
+     * Without this the fiber stays in `$children` for as long as its parent lives, while the pool has
+     * already re-issued it: a disconnect on request A then threw `CancelledException` into whatever
+     * request B was doing on the same fiber. The list is keyed by object id so this is O(1) and the
+     * spawn order `cancelRequest()` walks in reverse is the insertion order either way.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function forgetChild(?int $requestId, \Fiber $fiber): void
+    {
+        if ($requestId === null) {
+            return;
+        }
+        unset(self::$children[$requestId][\spl_object_id($fiber)]);
     }
 
     /**
@@ -154,11 +179,12 @@ final class Loop
     {
         $job = \Fiber::suspend();
         if (!\is_array($job) || !\array_key_exists(0, $job) || !\array_key_exists(1, $job) || !\array_key_exists(2, $job)
-            || !\is_callable($job[0]) || !\is_array($job[1]) || !$job[2] instanceof Future) {
+            || !\array_key_exists(3, $job) || !\is_callable($job[0]) || !\is_array($job[1]) || !$job[2] instanceof Future
+            || !(\is_int($job[3]) || $job[3] === null)) {
             throw new \LogicException('Ignis\\Loop: a pool fiber was resumed with something other than a Job');
         }
 
-        return [$job[0], $job[1], $job[2]];
+        return [$job[0], $job[1], $job[2], $job[3]];
     }
 
     /** Run $function concurrently; a parked pool fiber is reused when available. */
@@ -170,7 +196,7 @@ final class Loop
             $function = self::attributedToRequest($function, $arguments, $requestId);
             $arguments = [];
         }
-        $job = [$function, $arguments, $future];
+        $job = [$function, $arguments, $future, $requestId];
         $fiber = array_pop(self::$idle);
         if ($fiber !== null) {
             self::$ready[] = [$fiber, $job];
@@ -180,7 +206,7 @@ final class Loop
             self::$pending[] = [$fiber, $job];
         }
         if ($requestId !== null) {
-            self::$children[$requestId][] = $fiber;
+            self::$children[$requestId][\spl_object_id($fiber)] = $fiber;
         }
         return $future;
     }
@@ -401,7 +427,7 @@ final class Loop
             }
             if (isset(self::$deadlines[$id])) {
                 $requestId = self::$deadlines[$id];
-                unset(self::$deadlines[$id]);
+                unset(self::$deadlines[$id], self::$deadlineOf[$requestId]);
                 self::cancelRequest($requestId, new DeadlineExceededException('deadline exceeded'), 0);
                 continue;
             }
@@ -731,6 +757,7 @@ final class Loop
             return;
         }
         self::$requestQueue[] = [$id, $raw];
+        self::$queued[$id] = true;
         if ($queued + 1 > self::$queuedPeak) {
             self::$queuedPeak = $queued + 1;
         }
@@ -759,6 +786,7 @@ final class Loop
             [$id, $raw] = self::$requestQueue[self::$queueHead];
             self::$requestQueue[self::$queueHead] = [$id, ['method' => '', 'uri' => '', 'headers' => [], 'body' => '']];
             ++self::$queueHead;
+            unset(self::$queued[$id]);
             if (isset(self::$queueCancelled[$id])) {
                 unset(self::$queueCancelled[$id]);
                 continue;
@@ -884,6 +912,7 @@ final class Loop
      */
     private static function releaseRequest(int $id): void
     {
+        self::disarmDeadline($id);
         unset(self::$requestFibers[$id], self::$children[$id]);
         Scope::clear();
         Output::reset();
@@ -952,8 +981,8 @@ final class Loop
     private static function cancelRequest(int $requestId, CancelledException $exception, int $ageUs): void
     {
         $cancelStart = hrtime(true);
-        if (self::$queueHead < \count(self::$requestQueue) && !isset(self::$requestFibers[$requestId])) {
-            self::$queueCancelled[$requestId] = true;
+        if (isset(self::$queued[$requestId])) {
+            self::$queueCancelled[$requestId] = true;   // it has no fiber to throw into; drainQueue drops it
         }
         $parent = self::$requestFibers[$requestId] ?? null;
         foreach (array_reverse(self::$children[$requestId] ?? []) as $child) {
@@ -1040,6 +1069,29 @@ final class Loop
         if ($requestId === null) {
             throw new \LogicException('Ignis\\deadline() must be called inside a request');
         }
-        self::$deadlines[\ignis_submit_sleep($milliseconds)] = $requestId;
+        self::disarmDeadline($requestId);
+        $op = \ignis_submit_sleep($milliseconds);
+        self::$deadlines[$op] = $requestId;
+        self::$deadlineOf[$requestId] = $op;
+    }
+
+    /**
+     * Calls off a request's deadline timer: one wall-clock deadline per request is the contract, and
+     * a request that answered in time has no use for one.
+     *
+     * A timer nobody cancelled still fired, and then `cancelRequest()` ran for an id that was already
+     * answered — inflating `$cancelled` and `$cancelAgeUsMax`, the counters `/stats` reports. Worse,
+     * `ignis_inflight()` counted the pending op, and both `isIdle()` and `windingDown()` wait for that
+     * to reach zero: a graceful drain held for as long as the longest deadline anyone had armed.
+     * The map is cleared before the cancel, because the cancelled op completes under its own id.
+     */
+    private static function disarmDeadline(int $requestId): void
+    {
+        $op = self::$deadlineOf[$requestId] ?? null;
+        if ($op === null) {
+            return;
+        }
+        unset(self::$deadlineOf[$requestId], self::$deadlines[$op]);
+        \ignis_cancel($op);
     }
 }

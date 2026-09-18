@@ -4645,3 +4645,79 @@ check, `cargo deny`, **56 nextest tests** (54 before, +2 regression tests), and 
 `ghcr.io/koekaverna/ignis-php:8.5.10-zts` — phpstan level 9 on both configs, php-cs-fixer, **307
 PHPUnit tests / 720 assertions**. (`STATUS.md`'s "60 Rust tests / 209 PHP tests" is stale in both
 directions and belongs to the documentation stage of this cycle.)
+
+## V-92 — three defects in the userland scheduler, and a regression test that fails without each (CONFIRMED)
+
+Date: 2026-09-18T21:4xZ. The PHP half of the same audit. All three are bookkeeping in
+`php/packages/runtime/src/Loop.php`, all three are invisible to every existing suite, and each new
+test was run against the unfixed code first — a test that passes either way proves nothing.
+
+### 1. A finished child fiber could be cancelled on behalf of the request that spawned it
+
+`spawn()` appended the fiber to `$children[$requestId]`; nothing ever removed it. But `poolBody()`
+returns the fiber to `$idle` the moment its job settles, and the next `spawn()` — from any request —
+hands it out again. So: request A spawns child C; C finishes and is re-issued to request B; B parks;
+A's client disconnects; `cancelRequest(A)` walks `$children[A]`, finds C, and throws
+`CancelledException` into **B's** work. B's future rejects with a cancellation it never earned.
+
+Fixed by carrying the owner in the Job and dropping the fiber in `poolBody()` when it settles. The
+list is keyed by `spl_object_id` now, so both ends are O(1) and `cancelRequest()`'s reverse walk is
+still spawn order.
+
+Test `testAFinishedChildLeavesItsRequestWhileThatRequestIsStillInFlight`, against the unfixed code:
+
+```
+-    5 => Array &1 [],
++    5 => Array &1 [ 238 => Fiber Object #238 () ],
+```
+
+and `Loop::idleFibers()` is 1 at the same moment — the fiber is in the pool *and* in the list, which
+is the whole hazard in one assertion.
+
+### 2. `deadline()` armed a timer nobody called off
+
+`self::$deadlines[ignis_submit_sleep($ms)] = $requestId` and no cancel anywhere. Three consequences,
+in ascending order of how much they cost:
+
+- the timer fires for an already-answered request and `cancelRequest()` runs on a dead id, which
+  increments `$cancelled` and `$cancelAgeUsMax` — the counters `/stats` and `/_ignis/metrics` report;
+- `ignis_inflight()` counts the pending op, and **both** `isIdle()` and `windingDown()` wait for that
+  to reach zero, so a graceful drain or a development reload holds for as long as the longest
+  deadline any request armed. `Ignis\deadline(30_000)` means a 30-second drain;
+- calling `deadline()` twice in one request armed two timers, while `functions.php` promises "one
+  wall-clock deadline".
+
+`ignis_cancel()` already cancels an `Op::Sleep` (the reactor registers an abort handle for timers
+too), so the fix needed no Rust. The map entry is dropped *before* the cancel, because the cancelled
+op completes under its own id and would otherwise be read as the deadline firing.
+
+Against the unfixed code the two tests say it plainly: `an answered request is not a cancellation —
+failed asserting that 1 is identical to 0`, and `one wall-clock deadline per request is the contract
+— actual size 2 matches expected size 1`.
+
+### 3. `$queueCancelled` grew for the life of the thread
+
+Any cancel arriving while the request queue was non-empty was recorded, whether or not that id was
+ever queued; `drainQueue()` only removes what it dequeues. With `IGNIS_FIBER_BUDGET` set and clients
+that leave, the map grew monotonically. It now records only ids the queue actually holds.
+
+### Behaviour, re-measured
+
+`bench/e11-cancel.sh` after the batch — the bench these three could plausibly have broken:
+
+| arm | result |
+|---|---|
+| 20 clients disconnect 200 ms into `/slow` | **20 cancelled, 20 `finally` blocks ran**, worst cancel latency **436 µs** (V-14: 0.78 ms; V-30: 279 µs) |
+| `/deadline?ms=100` around a 1000 ms sleep | **504 at 103.7–105.7 ms**, three times |
+| E6 after the cancellations | 3 × 200 ms concurrent fetches in **104.1 ms** |
+| no phantom work 5.5 s later | fibers 40, idle 39, `cancelled` 23 — twenty disconnects plus the three deadlines, and nothing else |
+
+That last row is the counter fix showing itself: before, the three answered `/deadline` requests
+would each have been counted twice.
+
+### Gate
+
+`scripts/gate.sh` (full) green: fmt, clippy, `--no-default-features`, `cargo deny`, **56 nextest**,
+the PHP half in the builder image — phpstan level 9 both configs, php-cs-fixer, **310 PHPUnit tests /
+728 assertions** — then `scripts/smoke.sh` and `bench/e15-phpt.sh` with `scripts/ci-gate.sh`: fibers
+108/77, sockets 91/85, streams 134/126, **no test lost a PASS** in any of the six sets.
