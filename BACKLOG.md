@@ -435,7 +435,7 @@ reason; with the history intact it still prints `REPLAY_OK`. Assert on the evict
 (`strtoupper` plus separator strip, because protojson renders the enum SCREAMING_SNAKE while the
 PHP constant reads `Nondeterminism`) and accepting the bare prost tag `3`. `E9 temporal` is green.
 
-### S0-FIBER `gh9916-009.phpt` fails in fiber mode and the cause is not in this repository `main` `open — measured 2026-09-18`
+### S0-FIBER `gh9916-009.phpt` fails in fiber mode on two unrelated machines `main` `open — measured 2026-09-18`
 **What.** `bench/e15-phpt.sh` reports `phpt.fiber.Zend_tests_fibers=77` against a baseline of 78, and
 `scripts/ci-gate.sh` names the test: `Zend/tests/fibers/gh9916-009.phpt`. It covers entering the
 shutdown sequence with a fiber suspended inside a Generator; the run prints `Not executed` where the
@@ -445,19 +445,52 @@ engine should raise `Cannot use "yield from" in a force-closed generator`. So th
 suite gives **77 with the HEAD binary and 77 with the binary rebuilt at night-3's branch point** —
 identical. Restoring `php/packages/runtime` to its pre-night state does not change it either. Not a
 flake: 77 across four independent suite runs and 5/5 in isolation.
-**The part that is honestly unexplained.** The same crates and the same PHP library reported **78**
-earlier on 2026-09-18, and `/home/koe/php-src` is on the same commit with a clean tree and
-`/opt/php85-zts` has not been rebuilt since 2026-09-17. I cannot account for that observation and am
-recording it as unexplained rather than inventing a cause. The committed baseline `.tsv` dates from
-**2026-09-16**, which is before the engine was rebuilt with the toolchain extensions — so the most
-likely story is that this test broke with the engine rebuild and the earlier 78 was the anomaly, but
-that is a hypothesis with no measurement behind it yet.
+**Not this box either — CI agrees (added 2026-09-18, after the docs session's handover).** CI run
+35326670050 reports `phpt.fiber.Zend_tests_fibers=77` on a GitHub runner, the same 77 this box gives.
+So the earlier framing of "the box is a suspect" is wrong and is struck: two unrelated machines agree,
+and only the baseline `.tsv` committed on **2026-09-16** says 78.
+
+**Where that leaves it.** The test passes in `stock` mode and in `main` mode on both machines (0
+failures in each) and fails only in `fiber` mode, so it is specific to running the test body inside an
+Ignis fiber. The baseline predates the engine rebuild with the toolchain extensions (2026-09-17), and
+the engine is built by the same `scripts/build-php.sh` in CI and here — which is exactly why an
+engine-level change would show identically in both, as it does. That is now the leading hypothesis
+with two machines behind it, but still no direct measurement.
+
+**The one thing still unexplained** is the single reading of **78** I took on this box earlier on
+2026-09-18 with php-src on the same commit and the engine untouched. Recorded as unexplained rather
+than given an invented cause.
 **Deliberately left red.** The new `.tsv` was **not** committed. `check_set` compares against the one
 in HEAD, so committing a run where this test FAILED would make the gate stop reporting it forever —
 which is the exact defect this cycle has now found six times.
 **Acceptance.** Either a cause named with a measurement, or a conscious re-baseline that records why
-the test may fail here. Start with: run it against the stock `php` binary in fiber mode, and against
-an engine built without the toolchain extensions.
+the test fails. The decisive experiment is now narrow, because stock and main mode are clean on both
+machines: build an engine **without** the toolchain extensions and run `Zend/tests/fibers` in fiber
+mode. If it returns to 78, the cause is the engine rebuild and the baseline is simply stale; if it
+stays at 77, the cause is in our fiber harness (`scripts/phpt-harness.php`) and is ours to fix.
+
+### S0-DOCS-UNVERIFIED Two pages were promoted into the navigation without being checked `agent` `open — 2026-09-18`
+**What.** `docs/deploy.md` and `docs/migrate.md` were added to `mkdocs.yml`'s nav during the site
+refresh, on a recommendation, but nobody updated or verified them in that pass — the agents only read
+them for contradictions and neither had an owner. Until then they were reachable only by direct URL.
+**Why it matters more than an un-refreshed page.** Visibility was raised on text whose accuracy was
+not, which is the one change that makes stale documentation worse rather than merely old. Everything
+else in the refresh was checked against the code; these two were not, and they now sit in the menu
+looking as if they were.
+**Acceptance.** Both pages read line by line against the code, like the rest of the refresh, or taken
+back out of the nav until they are.
+
+### S0-RESPOND-START `ignis_respond_start` is registered twice and called by nobody `main` `open — 2026-09-18`
+**What.** Reported by the documentation session and confirmed here: `grep` across `php/`, `examples/`,
+`bench/` and `scripts/` finds no caller. The Rust side registers it in **both** `FUNCTIONS` tables
+(`module.rs:902` and `:953`) and implements `zif_ignis_respond_start`; userland reaches streaming
+through `ignis_stream_bind` instead.
+**Why it is not just dead code.** It is a public `ignis_*` function, so deleting it is an API change,
+and `R-NOT-DOING` settled that the duplicated `FUNCTIONS` tables stay as they are — which means the
+registration is deliberate in shape even where the entry is not.
+**Acceptance.** Either a caller (the streaming path that was meant to use it) or removal recorded as
+an intentional API change, with `php-api.md` matching whichever it is. `php-api.md` already calls it
+dead, which is currently true and undocumented as a decision.
 
 ### S0-FRANK One frankenphp test regressed and nobody knows which `main` `HALF DONE 2026-09-18 — gate green, test still unnamed`
 **What.** `passed=28` against baseline 29. The arithmetic pins it at exactly one test: 28+5+33 and
