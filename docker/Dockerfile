@@ -26,9 +26,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
-# Exactly what `ldd libphp.so` names beyond libc: openssl, sqlite, curl, oniguruma, libpq, zlib.
+# The direct `ldd libphp.so` set, minus what these packages already pull in transitively (libffi
+# and libgmp arrive through libcurl -> gnutls, checked rather than assumed). libxml2 is here because
+# the toolchain extensions (dom/xml/simplexml/xmlreader/xmlwriter, 2026-09-17) made libphp link it,
+# and this list did not move with them -- the image then shipped and died on
+# `libxml2.so.2: cannot open shared object file`. Re-check this line with `ldd` whenever
+# scripts/build-php.sh gains a --with-* flag.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libssl3t64 libsqlite3-0 libcurl4t64 libonig5 libpq5 zlib1g ca-certificates \
+      libssl3t64 libsqlite3-0 libcurl4t64 libonig5 libpq5 libxml2 zlib1g ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # Same path as the rpath compiled into the binary (crates/ignis-sys/build.rs).
 COPY --from=build /opt/php85-zts/lib/libphp.so /opt/php85-zts/lib/libphp.so
