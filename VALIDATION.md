@@ -4414,3 +4414,57 @@ failure mode this project keeps a validation file to catch.
 
 Gates: PHP suite **307 tests / 720 assertions**, PHPStan runs again (1 error, not ours),
 php-cs-fixer clean on everything this entry touches, `bench/e21` GREEN.
+
+## V-89 — S0-FIBER explained: the test asserts a shutdown that fiber mode does not have (CONFIRMED)
+
+Date: 2026-09-18T23:5xZ. `E15 phpt` has been red on `main` since 2026-09-18 with one row —
+`phpt.fiber.Zend_tests_fibers=77 < baseline 78` — and four runs could not explain it. The reason
+nobody could is now the most interesting part of the entry.
+
+**The test.** `Zend/tests/fibers/gh9916-009.phpt`, titled *"Entering shutdown sequence with a fiber
+suspended in a Generator emits an unavoidable fatal error or crashes"*. It suspends a fiber inside a
+generator, ends the script, and expects the **shutdown sequence** to destroy that fiber, force-close
+the generator, and raise `Cannot use "yield from" in a force-closed generator`.
+
+**What fiber mode does instead**, from the run's own diff:
+
+```
+     Before suspend
+     ==DONE==
+     Finally
+004- <blank>
+005- Fatal error: Uncaught Error: Cannot use "yield from" in a force-closed generator …
+004+ Not executed
+```
+
+The `finally` runs, and then `yield from` **proceeds** — the generator was resumed, not force-closed.
+In fiber mode the test body is itself inside an Ignis fiber, so the script's shutdown is not what
+disposes of the suspended fiber, and the error the test exists to observe never happens.
+
+**Controls, all run now:**
+
+| arm | result |
+|---|---|
+| fiber mode, six consecutive runs | FAIL, 6 of 6 — not a flake |
+| fiber mode, collector on (`IGNIS_LOOP_GC=0`) | FAIL — the collector-timing hypothesis is **refuted** |
+| main mode (script in `{main}` of the embed) | **PASS**, 1 of 1 |
+| the suite in fiber mode, re-run today | 77 passed / 31 failed / 2 skipped |
+
+**Why it stayed unexplained: the per-test gate was reading a wrong row.** The committed
+`fiber-Zend_tests_fibers.tsv` recorded `PASSED` for this test. The count said 77, the set said
+nothing was lost, and the two disagreed with each other for two days. Re-running the suite writes
+`FAILED`, and the only test that "loses a PASS" against the committed set is this one — the row was
+simply stale, and `check_set` is only as good as the file it compares against.
+
+**What is done about it.** The fiber baseline goes 78 → 77 with the reason written into
+`bench/results/e15-baseline.txt` next to the number, and the refreshed `.tsv`/`.txt`/`.log` are
+committed so the set gate compares against something true. This is the lowering the 2026-09-18
+decision refused while the result was unexplained — *"a baseline lowered to hide an unexplained
+result stops being a gate"* — and the same decision is why it is allowed now: the result has a
+mechanism, two controls and a diff behind it.
+
+**Not claimed:** why the row was recorded `PASSED` on 2026-09-16. The mechanism predicts failure, the
+measurement is deterministic today, and the baseline follows the measurement rather than the record.
+
+Gates after the change: `E15 phpt` counts at or above baseline in every row, `php -l + phpstan +
+cs-fixer` clean (`[OK] No errors`, 0 of 143 files), PHP suite 307 tests / 720 assertions.

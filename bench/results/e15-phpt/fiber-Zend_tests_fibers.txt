@@ -18,6 +18,7 @@
 /home/koe/php-src/Zend/tests/fibers/get-return-from-unstarted-fiber.phpt
 /home/koe/php-src/Zend/tests/fibers/get-return-in-unfinished-fiber.phpt
 /home/koe/php-src/Zend/tests/fibers/gh20483.phpt
+/home/koe/php-src/Zend/tests/fibers/gh9916-009.phpt
 /home/koe/php-src/Zend/tests/fibers/multiple-calls-to-ctor.phpt
 /home/koe/php-src/Zend/tests/fibers/resume-non-running-fiber.phpt
 /home/koe/php-src/Zend/tests/fibers/resume-previous-fiber.phpt

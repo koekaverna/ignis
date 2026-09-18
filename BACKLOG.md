@@ -435,7 +435,7 @@ reason; with the history intact it still prints `REPLAY_OK`. Assert on the evict
 (`strtoupper` plus separator strip, because protojson renders the enum SCREAMING_SNAKE while the
 PHP constant reads `Nondeterminism`) and accepting the bare prost tag `3`. `E9 temporal` is green.
 
-### S0-FIBER `gh9916-009.phpt` fails in fiber mode on two unrelated machines `main` `open — measured 2026-09-18`
+### S0-FIBER `gh9916-009.phpt` fails in fiber mode on two unrelated machines `CLOSED 2026-09-18 (V-89): the test asserts the script shutdown sequence, which fiber mode does not have — deterministic, refuted the collector hypothesis, passes in main mode; baseline 78 -> 77 with the reason attached, and the stale PASSED row in the committed .tsv is what kept it "unexplained"`
 **What.** `bench/e15-phpt.sh` reports `phpt.fiber.Zend_tests_fibers=77` against a baseline of 78, and
 `scripts/ci-gate.sh` names the test: `Zend/tests/fibers/gh9916-009.phpt`. It covers entering the
 shutdown sequence with a fiber suspended inside a Generator; the run prints `Not executed` where the

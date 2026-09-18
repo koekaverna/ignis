@@ -69,7 +69,7 @@ PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-005.phpt
 PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-006.phpt
 PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-007.phpt
 PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-008.phpt
-PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-009.phpt
+FAILED	/home/koe/php-src/Zend/tests/fibers/gh9916-009.phpt
 PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-010.phpt
 PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-011.phpt
 PASSED	/home/koe/php-src/Zend/tests/fibers/gh9916-012.phpt
