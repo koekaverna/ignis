@@ -91,24 +91,42 @@ Directory watching is the fallback: `--watch-path=./src` *"disabl[es] automatic 
 or imported modules"*, and is *"supported only on macOS and Windows"*. The runtime already knows what
 it loaded, so it watches exactly that — and when it cannot, it watches paths and says so.
 
-**What this means for us**, and it replaces the directory-and-lock-file design I wrote first:
+**What this means for us is not what it means for RoadRunner**, and the owner named the reason:
+*restarting the worker after each request destroys concurrency in development*. Our worker serves
+several requests at once on one thread — that is the product — and a debug mode that recycles after
+every request would make development behave unlike production in exactly the dimension this project
+exists for. Every bug of the last week (V-68's token, V-69's identity map, V-85's connection) needs
+two requests **overlapping** to appear. A per-request restart would hide all of them until staging.
 
-1. **Primary: restart the worker after each request in debug.** This is RoadRunner's converged
-   answer, it maps onto our architecture with no new machinery — the worker's script ends, the
-   supervisor respawns it with a fresh engine — and it has no staleness, no ignore list, no feedback
-   loop, and nothing to tune. Its cost is a kernel boot per request, which is what php-fpm charges
-   and what a development machine tolerates. Needs O1 and nothing else.
-2. **Secondary, if a watcher is ever built: watch what PHP actually loaded.** `get_included_files()`
-   is our module graph, Node's model exactly, and it is a better list than any glob: it contains the
-   vendor files the application really uses and excludes the 40,000 it does not. On Linux this also
-   matters practically — each watched file is an inotify watch, and the default limits are not
-   generous.
-3. **Directory watching is the fallback**, as it is for Node, and only then is the ignore list a
-   question — with the settle window and the post-reload grace period that a cache directory makes
-   necessary.
+RoadRunner can converge there because its worker handles one request at a time anyway; we cannot.
 
-Both references agree on the explicit trigger: `rr reset` and our `SIGHUP`/`ignis reload` are the
-same thing, and both wait for in-flight requests rather than dropping them.
+**So the primary is Node's model: watch what PHP actually loaded.** Measured on this repository's own
+fixture — boot the kernel, handle one request, count:
+
+```
+included=283   vendor=258   var/cache=23   own=2
+files on disk under vendor/: 4621
+```
+
+Three things fall out of those numbers:
+
+- **16× fewer watches** than watching `vendor/`, and a real application's set grows with what it
+  uses rather than with what it installed. inotify watches are a per-user resource; this is the
+  difference between "fine" and "tune your sysctl".
+- **The compiled container is in the set already** — 23 files from `var/cache`. The objection that
+  it cannot be ignored is answered by never having an ignore list: those files are watched because
+  the application loaded them, and the vendor files it does not use are absent for the same reason.
+- **The set is the dependency graph, not a guess.** No globs, no lock-file proxy, no patterns to
+  maintain as an application grows.
+
+**The gap, and Node has the same one:** a file that has never been loaded is not watched — a new
+class the autoloader has not needed yet, a new config file. Node answers it with `--watch-path`, and
+so should we: an explicit list, added to the loaded set rather than replacing it.
+
+**Shape in our architecture.** PHP reports `get_included_files()` after boot and after each request —
+the first call is 283 strings, every later one is a delta that is almost always empty — through a zif
+to the Rust side, which owns the notify watches and the debounce. A change marks the workers for
+reload; they stop one at a time (O2), so requests keep overlapping *through* the reload as well.
 
 ### O4 — opcache is a separate decision, and the default is deliberately wrong for dev
 
@@ -153,12 +171,12 @@ PHP's inability to unload a class leaves available.
    possible without it, and it is independently useful for tests.
 2. **`SIGHUP` rolling restart**, one worker at a time, gated on "zero non-2xx across a reload under
    load" and on the new code actually answering.
-3. **Debug mode that restarts the worker after each request** — RoadRunner's answer, which they
-   arrived at by deleting their watcher. No staleness by construction, nothing to configure, and it
-   needs only step 1.
-4. **A watcher only if the per-request restart proves too slow**, and then over
-   `get_included_files()` rather than directories, which is Node's model and a better list than any
-   glob.
+3. **A watcher over `get_included_files()`** — Node's model, measured at 283 files against 4,621 in
+   `vendor/` on our own fixture, with the compiled container included for free. This is the primary
+   for us, not the fallback, because it is the only option that **keeps requests overlapping in
+   development**, which is where our concurrency bugs are visible at all.
+4. **Per-request restart as an opt-in**, RoadRunner's `pool.debug` for people who want it — and
+   documented with its cost: it serialises development, so a fiber-scope bug will not appear there.
 5. **opcache reset on an explicit reload**, and a line in the documentation for anyone running
    `validate_timestamps=0`.
 
