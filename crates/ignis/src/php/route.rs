@@ -1,7 +1,8 @@
-//! E16 (ADR-0016) auto-routing: inside a fiber, configured internal functions (`curl_*`) and
-//! classes (`PDO`, `SQLite3`) are redirected to `Ignis\Offload\Router` in PHP, which runs them on
-//! an offload worker and hands the fiber a proxy. Outside fibers, or on the worker threads
-//! themselves, the original handlers run, so the workers can execute the real calls.
+//! E16 (ADR-0016) auto-routing: inside a fiber, configured internal functions and classes are
+//! redirected to `Ignis\Offload\Router` in PHP, which runs them on an offload worker and hands the
+//! fiber a proxy. Outside fibers, or on the worker threads themselves, the original handlers run,
+//! so the workers can execute the real calls. Universal park has since taken over everything that
+//! reaches a socket, so the defaults below are empty for functions and `SQLite3` for classes.
 //!
 //! Functions: the internal handler is swapped at MINIT (like sleep.rs); the trampoline reads the
 //! function name from the frame and calls `Router::dispatch(name, args)`. Classes: the class
