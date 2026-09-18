@@ -4284,3 +4284,40 @@ thread restarts. There is no lease age, no reaper and no watchdog: `stats()` rep
 
 Gates: `bench/e24` GREEN (eleven arms), `bench/e21` GREEN, PHP suite 323 tests / 757 assertions
 (package code unchanged by this entry — the fixture and the suite are).
+
+## V-86 — `Ignis\Pg` against parked `pdo_pgsql`, the number V-21 deferred (REFUTES the speed case)
+
+Date: 2026-09-18T19:1xZ. V-21 closed with "Not measured yet: `pdo_pgsql` on the same box for the
+per-query comparison", and every argument about `crates/ignis/src/pg.rs` since has leaned on that
+gap. `bench/php/e25_pg_vs_pdo.php` closes it: same process, same thread, same database, same
+`SELECT 1`, three runs.
+
+| arm | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| `Ignis\Pg`, one held lease | 351.8 µs | 346.3 µs | 348.5 µs |
+| `Ignis\Pg`, `Pool::query` (acquire+query+reset+release) | 900.3 µs | 878.7 µs | 893.8 µs |
+| `pdo_pgsql`, one connection, `query()` (parsed every time) | 801.4 µs | 828.1 µs | 811.9 µs |
+| **`pdo_pgsql`, prepared once** | **265.4 µs** | **262.4 µs** | **263.9 µs** |
+| `Ignis\Pg`, 20 fibers | 99.5 µs | 96.7 µs | 98.0 µs |
+| **`pdo_pgsql`, 20 fibers, prepared, own connection each** | **74.6 µs** | **85.6 µs** | **74.3 µs** |
+
+**Parked `pdo_pgsql` is faster on both axes:** 1.3× per query on one connection (264 against 349 µs)
+and 1.2–1.3× at twenty concurrent fibers (74–86 against 97–100 µs). The native client is not paying
+for the database — it is paying for the crossing: every query is a zif call, an op submitted to the
+reactor, a hop to tokio and back through the completion channel, where the parked driver suspends
+directly on the readiness of its own socket.
+
+**The comparison had to be made fair first.** The initial run had `Ignis\Pg` using its per-connection
+prepared-statement cache against `PDO::query()` re-parsing every time, and on those terms the native
+client "won" the concurrency arm 11.6k against 5.1k q/s. Preparing the PDO side once reverses it.
+A benchmark that lets one side cache and not the other measures the parser.
+
+**Limits, stated:** container-to-container networking, so the absolute numbers are well above V-21's
+112 µs on loopback — both paths pay the same, which is why the ratio is the result and the absolute
+value is not. One thread, `SELECT 1`, no large result sets: the binary protocol could still win on
+wide rows, and that is unmeasured.
+
+What this does **not** refute: the runtime's pool is process-wide, where `ignis/doctrine`'s is per
+thread (`threads × size` connections), and it has lease age, an acquire timeout and a breaker that
+the userland pool does not (`S-POOL-LEASE-AGE`). Those are the arguments that survive; speed is not
+one of them.
