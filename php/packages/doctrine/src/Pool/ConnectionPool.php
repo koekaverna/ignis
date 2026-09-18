@@ -105,6 +105,7 @@ final class ConnectionPool
             return $this->driver->connect($this->params);
         } catch (\Throwable $failure) {
             $this->open--;
+            $this->wakeOneWaiter();   // the slot this attempt held is free again, and someone is queued for it
             throw $failure;
         }
     }
@@ -123,15 +124,28 @@ final class ConnectionPool
 
         $future = new Future();
         $this->waiting[] = $future;
-        $this->rejectWhenTheWaitIsOver($future, (int) \ceil($remaining * 1000));
-        $future->await();
+        $timer = \ignis_submit_sleep((int) \ceil($remaining * 1000));
+        $this->rejectWhenTheWaitIsOver($future, $timer);
+
+        try {
+            $future->await();
+        } finally {
+            \ignis_cancel($timer);   // woken early: end the timer's fiber now, do not leave it asleep
+        }
     }
 
-    /** A fiber of its own, because the runtime's timers are fibers: nothing here blocks the thread. */
-    private function rejectWhenTheWaitIsOver(Future $future, int $milliseconds): void
+    /**
+     * A fiber of its own, because the runtime's timers are fibers: nothing here blocks the thread.
+     *
+     * It parks on the op rather than on `Ignis\sleep()` so the waiter can call it off. Sleeping the
+     * full budget and *then* checking `isDone()` meant a waiter woken after 2 ms still held a parked
+     * fiber for the remaining five seconds — one per contended acquire, at ~14.7 kB of marginal RSS
+     * each (V-37), on exactly the workload that made the pool contend in the first place.
+     */
+    private function rejectWhenTheWaitIsOver(Future $future, int $timer): void
     {
-        \Ignis\async(function () use ($future, $milliseconds): void {
-            \Ignis\sleep($milliseconds);
+        \Ignis\async(function () use ($future, $timer): void {
+            \Ignis\Loop::awaitOp($timer);
             if ($future->isDone()) {
                 return;
             }

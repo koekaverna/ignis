@@ -14,10 +14,11 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The pool's bookkeeping, which is all of it that runs without a reactor: warming, reuse, the limit
- * and what happens to a connection that cannot be cleaned. The parking half — a fiber waiting for
- * capacity and being woken by a release — needs the loop and is measured by `bench/e24` against a
- * real PostgreSQL.
+ * The pool's bookkeeping: warming, reuse, the limit and what happens to a connection that cannot be
+ * cleaned — and, since 2026-09-18, the parking half as well. That half said here that it "needs the
+ * loop and is measured by `bench/e24` against a real PostgreSQL", which left the one path with a
+ * resource leak in it untested on a box with no database: `php/tests/fake-reactor.php` is loaded for
+ * the whole suite and gives the loop everything a wait needs.
  */
 #[CoversClass(ConnectionPool::class)]
 #[AllowMockObjectsWithoutExpectations]
@@ -108,6 +109,60 @@ final class ConnectionPoolTest extends TestCase
         }
 
         self::assertSame(0, $pool->stats()['open'], 'a refused connection must not count against the limit forever');
+    }
+
+    /**
+     * A waiter woken by a release must let its timeout go with it.
+     *
+     * The timeout used to be `Ignis\sleep($remaining)` followed by a check: a waiter woken after two
+     * milliseconds still held a parked fiber for the rest of the five-second budget, one per
+     * contended acquire, on exactly the load that makes a pool contend. The assertion is `ignis_inflight()` read **at the moment the waiter wakes**, not at the end:
+     * the fake reactor's clock is free, so a timer left running still settles by the time the loop
+     * stops and an end-of-test count sees nothing wrong.
+     */
+    public function testAWaiterWokenByAReleaseDoesNotLeaveItsTimeoutRunning(): void
+    {
+        // As LoopTestCase does: skip boot() (it would gc_disable() the process) and tell the loop
+        // that ignis_publish_stats() is absent, which only boot() would otherwise ask.
+        $booted = new \ReflectionProperty(\Ignis\Loop::class, 'booted');
+        $publishes = new \ReflectionProperty(\Ignis\Loop::class, 'canPublishStats');
+        $wasBooted = $booted->getValue();
+        $couldPublish = $publishes->getValue();
+        $booted->setValue(null, true);
+        $publishes->setValue(null, false);
+
+        try {
+            $pool = $this->pool(limit: 1, warmCount: 1, waitMilliseconds: 5000);
+            $order = [];
+
+            \Ignis\async(static function () use ($pool, &$order): void {
+                $connection = $pool->acquire();
+                $order[] = 'holder took it';
+                \Ignis\sleep(1);
+                $pool->release($connection);
+                $order[] = 'holder gave it back';
+            });
+            $inflightWhenWoken = null;
+            \Ignis\async(static function () use ($pool, &$order, &$inflightWhenWoken): void {
+                \Ignis\sleep(0);
+                $order[] = 'waiter parks';
+                $pool->acquire();
+                $inflightWhenWoken = \ignis_inflight();
+                $order[] = 'waiter woken';
+            });
+
+            try {
+                \Ignis\Loop::run();
+            } catch (\Ignis\Tests\StopLoop) {
+            }
+
+            self::assertSame(['holder took it', 'waiter parks', 'holder gave it back', 'waiter woken'], $order);
+            self::assertSame(0, $inflightWhenWoken, 'the five-second timeout is called off the moment the wait ends, not when it lapses');
+            self::assertSame(0, $pool->stats()['waiting']);
+        } finally {
+            $booted->setValue(null, $wasBooted);
+            $publishes->setValue(null, $couldPublish);
+        }
     }
 
     private function pool(int $limit, int $warmCount, int $waitMilliseconds = 1000, string $reset = ''): ConnectionPool

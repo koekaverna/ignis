@@ -4802,3 +4802,29 @@ Both numbers are right. `ci.yml` defines seven jobs and `e15` is a four-leg matr
 ten — `gh run view --json jobs` lists exactly ten. The audit read two counts as one claim; STATUS and
 `docs/adr/README.md` now say which is which. Recorded because an audit that invents a defect costs the
 same trust as a document that hides one.
+
+### V-93 addendum — the pool's wait held a fiber for the whole budget after it was woken
+
+`ConnectionPool::waitForCapacity()` armed its timeout as `Ignis\sleep($remaining)` in a fiber of its
+own and checked `$future->isDone()` only when that sleep returned. A waiter woken by a release after
+two milliseconds therefore left a parked fiber asleep for the remaining five seconds — one per
+contended acquire, ~14.7 kB of marginal RSS each (V-37), on exactly the load that makes a pool
+contend. The timeout now parks on a reactor op the waiter cancels in a `finally`. Separately,
+`connect()`'s failure path decremented `open` without waking anyone, so capacity freed by a failed
+attempt stayed invisible to whoever was already queued.
+
+Both were untested: `ConnectionPoolTest` said in its own doc block that the parking half "needs the
+loop and is measured by `bench/e24` against a real PostgreSQL", and this box has no PostgreSQL. It
+does have `php/tests/fake-reactor.php`, loaded for the whole suite, which is all a wait needs.
+
+The first version of the new test passed with the fix **and without it**, and that is the part worth
+recording: the fake reactor's clock is free, so a timer left running still settles before the loop
+stops and an end-of-test `ignis_inflight()` sees nothing wrong. The assertion had to move to the
+moment the waiter wakes. Against the unfixed code it now reads:
+
+```
+the five-second timeout is called off the moment the wait ends, not when it lapses
+Failed asserting that 1 is identical to 0.
+```
+
+PHP suite after: **315 tests / 740 assertions**, phpstan level 9 and php-cs-fixer clean.
