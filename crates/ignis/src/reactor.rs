@@ -154,6 +154,12 @@ pub struct Reactor {
     pub published: crate::metrics::Published,
 }
 
+/// A regular file cannot be registered with epoll, which refuses it with EPERM. That is not a
+/// failure: a regular file is always ready, which is exactly what `select()` reports for one.
+fn epoll_refused_a_regular_file(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EPERM)
+}
+
 async fn watch_fd(fd: i32, write: bool) -> Outcome {
     use std::os::fd::FromRawFd;
     use tokio::io::Interest;
@@ -168,9 +174,7 @@ async fn watch_fd(fd: i32, write: bool) -> Outcome {
     let interest = if write { Interest::WRITABLE } else { Interest::READABLE };
     let afd = match tokio::io::unix::AsyncFd::with_interest(owned, interest) {
         Ok(a) => a,
-        // epoll refuses regular files (EPERM): they are always ready, which is
-        // exactly what select() reports for them.
-        Err(e) if e.raw_os_error() == Some(libc::EPERM) => return Outcome::Ready,
+        Err(e) if epoll_refused_a_regular_file(&e) => return Outcome::Ready,
         Err(e) => return Outcome::Error(format!("AsyncFd({fd}): {e}")),
     };
     let r = if write { afd.writable().await.map(|mut g| g.retain_ready()) } else { afd.readable().await.map(|mut g| g.retain_ready()) };
@@ -187,13 +191,12 @@ impl Reactor {
         let (done_tx, from_tokio) = crossbeam_channel::unbounded::<Completion>();
         let done_for_task = done_tx.clone();
         rt.spawn(async move {
-            // Pending fd watches and sleeps by op id, so a cancel can abort the task (closing the dup'd fd).
-            let watches: Arc<Mutex<HashMap<u64, tokio::task::AbortHandle>>> = Arc::new(Mutex::new(HashMap::new()));
+            let cancellable_tasks_by_op: Arc<Mutex<HashMap<u64, tokio::task::AbortHandle>>> = Arc::new(Mutex::new(HashMap::new()));
             while let Some((id, op)) = rx.recv().await {
                 let done_tx: Sender<Completion> = done_for_task.clone();
                 match op {
-                    // `Ignis\sleep(0)` is a yield to the loop: complete it here, no timer task, no
-                    // cancel bookkeeping (E2': the pooled-fiber round trip is measured with it).
+                    // `Ignis\sleep(0)` is a yield to the loop: completed here, with no timer task and
+                    // no cancel bookkeeping, because E2' measures the pooled-fiber round trip with it.
                     Op::Sleep { us: 0 } => {
                         let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us: 0 } });
                     }
@@ -201,15 +204,15 @@ impl Reactor {
                         let deadline = tokio::time::Instant::now() + Duration::from_micros(us);
                         // Cancellable like a watch (E6'': a stream_select timeout that lost the race
                         // must not keep the loop alive until it lapses).
-                        let watches2 = watches.clone();
+                        let cancellable_tasks_by_op2 = cancellable_tasks_by_op.clone();
                         let handle = tokio::spawn(async move {
                             tokio::time::sleep_until(deadline).await;
                             let late_us = deadline.elapsed().as_micros() as u64;
-                            watches2.lock().unwrap().remove(&id);
-                            // Receiver dropped => PHP thread is gone; nothing to do.
+                            cancellable_tasks_by_op2.lock().unwrap().remove(&id);
+
                             let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us } });
                         });
-                        watches.lock().unwrap().insert(id, handle.abort_handle());
+                        cancellable_tasks_by_op.lock().unwrap().insert(id, handle.abort_handle());
                     }
                     Op::Custom(fut) => {
                         tokio::spawn(async move {
@@ -218,16 +221,16 @@ impl Reactor {
                         });
                     }
                     Op::Watch { fd, write } => {
-                        let watches2 = watches.clone();
+                        let cancellable_tasks_by_op2 = cancellable_tasks_by_op.clone();
                         let handle = tokio::spawn(async move {
                             let outcome = watch_fd(fd, write).await;
-                            watches2.lock().unwrap().remove(&id);
+                            cancellable_tasks_by_op2.lock().unwrap().remove(&id);
                             let _ = done_tx.send(Completion { id, outcome });
                         });
-                        watches.lock().unwrap().insert(id, handle.abort_handle());
+                        cancellable_tasks_by_op.lock().unwrap().insert(id, handle.abort_handle());
                     }
                     Op::CancelWatch { target } => {
-                        if let Some(h) = watches.lock().unwrap().remove(&target) {
+                        if let Some(h) = cancellable_tasks_by_op.lock().unwrap().remove(&target) {
                             h.abort(); // drops the AsyncFd → closes the dup'd fd
                             let _ = done_tx.send(Completion { id: target, outcome: Outcome::Error("cancelled".into()) });
                         }
@@ -252,11 +255,12 @@ impl Reactor {
     }
 
     /// Submit an op; returns its id. Never blocks. PHP-thread side.
+    /// A send error means the runtime is shutting down: the op is dropped and `poll` simply never
+    /// sees it. Logged rather than returned, because there is no caller left to tell.
     pub fn submit(&self, op: Op) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.inflight.fetch_add(1, Ordering::Relaxed);
-        // A send error means the runtime is shutting down; the op is dropped
-        // and poll will simply never see it. Logged for visibility.
+
         if self.to_tokio.send((id, op)).is_err() {
             tracing::error!(id, "reactor dispatcher is gone; op dropped");
             self.inflight.fetch_sub(1, Ordering::Relaxed);
@@ -290,13 +294,14 @@ impl Reactor {
     }
 
     /// Deliver an HTTP request, returning the request id (needed for cancel-on-drop, ADR-0009).
+    /// A send error here means the PHP thread is gone; the responder is dropped, which is what
+    /// turns the connection into a 500.
     pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.answers.lock().unwrap().insert(id, Answer::Whole(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
-            // PHP thread gone: drop the responder so the connection gets a 500.
             self.answers.lock().unwrap().remove(&id);
         }
         (id, rx)
@@ -346,9 +351,13 @@ impl Reactor {
     }
 
     /// Tokio side: the response future for `id` was dropped before PHP answered.
+    ///
+    /// One remove covers every state, which is the point of the single map: a new kind of answer
+    /// cannot be forgotten here the way `stream_out` was forgotten in `pending_requests` (V-75).
+    ///
+    /// The loop takes delivery first, exactly as a PHP thread would: the cancellation is a second
+    /// completion on the same id, not a replacement for the first.
     pub fn cancel_request(&self, id: u64) {
-        // One remove for every state, which is the point of the single map: a new kind of answer
-        // cannot be forgotten here the way stream_out was forgotten in pending_requests (V-75).
         let known = self.answers.lock().unwrap().remove(&id).is_some();
         if known {
             self.inflight.fetch_add(1, Ordering::Relaxed);
@@ -357,6 +366,9 @@ impl Reactor {
     }
 
     /// PHP-thread side: answer request `id`. Returns false if unknown/already answered.
+    ///
+    /// A whole-body answer on an id that has already started streaming is refused: that id's old
+    /// state is gone, and the two shapes cannot both be the answer.
     pub fn respond(&self, id: u64, resp: HttpResponse) -> bool {
         match self.take_answer(id, |answer| matches!(answer, Answer::Whole(_))) {
             Some(Answer::Whole(tx)) => tx.send(resp).is_ok(),
@@ -441,19 +453,31 @@ impl Reactor {
     /// drain everything that is ready. Returns immediately if nothing is in
     /// flight and no server is listening, so a userland loop can never
     /// deadlock on an empty reactor.
+    /// The cost of a round trip is a futex wakeup pair, not the work (H30). On this box a bare
+    /// two-thread ping-pong is 57 us; the reactor round trip is 93 us at one fiber in flight and
+    /// 0.58 us at 128 — the same fixed cost divided by the batch one `poll` drains. Spinning briefly
+    /// catches a completion already on its way without sleeping the thread. Off by default, because
+    /// an idle thread would burn the spin on every wakeup for nothing.
+    fn should_spin_before_sleeping(&self) -> bool {
+        self.spin_us > 0 && self.inflight() > 0
+    }
+
+    /// The "time in PHP" clock starts when the thread *leaves* the reactor with work, not when it
+    /// entered. Touching only at entry made a thread that had slept 3 s in `recv_timeout` count as
+    /// stalled for its whole first request: `/stats` read `stalled=1` on an idle server while
+    /// `/_ignis/health`, with nothing pending, read 0 (M1, V-38).
+    fn start_the_time_in_php_clock(&self) {
+        self.touch();
+    }
+
     pub fn poll(&self, timeout: Option<Duration>) -> Vec<Completion> {
         self.touch();
         let mut out = Vec::new();
         if self.inflight() == 0 && self.servers.load(Ordering::Relaxed) == 0 {
             return out;
         }
-        // H30: the cost of a round trip is a futex wakeup pair, not the work. On this box a bare
-        // two-thread ping-pong is 57 us, and the reactor round trip is 93 us at one fiber in flight
-        // but 0.58 us at 128 — the same fixed cost divided by the batch one `poll` drains. When a
-        // completion is already on its way, spinning briefly catches it without sleeping the thread.
-        // Off by default because an idle thread would burn the spin every wakeup for nothing.
         let mut first = None;
-        if self.spin_us > 0 && self.inflight() > 0 {
+        if self.should_spin_before_sleeping() {
             let deadline = std::time::Instant::now() + Duration::from_micros(self.spin_us);
             loop {
                 match self.from_tokio.try_recv() {
@@ -482,11 +506,7 @@ impl Reactor {
                 out.push(c);
             }
             self.inflight.fetch_sub(out.len() as u64, Ordering::Relaxed);
-            // The "time in PHP" clock starts when the thread LEAVES the reactor with work, not when
-            // it entered. Touching only at entry made a thread that had slept 3 s in recv_timeout
-            // count as stalled for its whole first request — /stats read stalled=1 on an idle
-            // server while /_ignis/health, with no request pending, read 0 (M1, V-38).
-            self.touch();
+            self.start_the_time_in_php_clock();
         }
         out
     }
@@ -571,8 +591,7 @@ mod tests {
         let rt = rt();
         let r = Reactor::new(rt.handle());
         let (id, _rx) = r.deliver_request_with_id(a_request());
-        // The loop takes delivery first, exactly as a PHP thread would; the cancellation is a
-        // second completion on the same id, not a replacement for the first.
+
         let delivered = r.poll(Some(Duration::from_secs(1)));
         assert_eq!(delivered.len(), 1);
         assert!(matches!(delivered[0].outcome, Outcome::Request(_)));
@@ -601,7 +620,6 @@ mod tests {
         assert_eq!(r.pending_requests(), 1, "moved, not duplicated");
         assert!(r.stream_sender(id).is_some());
 
-        // The old state is gone: a whole-body answer on a streaming id must be refused.
         assert!(!r.respond(id, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
         assert!(!r.stream_send(id, Bytes::from_static(b"x")), "nor is it a gRPC stream");
 
