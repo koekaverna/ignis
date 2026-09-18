@@ -8,7 +8,10 @@ use Ignis\Scope;
 use Ignis\Symfony\FiberRequestStack;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpFoundation\Exception\SessionNotFoundException;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Session\Session;
+use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 
 /**
  * ADR-0011: Symfony's `RequestStack` is a container singleton holding one array, and under Ignis
@@ -116,5 +119,63 @@ final class FiberRequestStackTest extends TestCase
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('holds something other than a Request');
         (new FiberRequestStack())->getCurrentRequest();
+    }
+
+    /**
+     * The hole this class had until 2026-09-18: `getSession()` was inherited, so it read
+     * `RequestStack`'s own private array — always empty here — and threw even with a session on the
+     * current request. `AbstractController::addFlash()` is the caller that made it visible.
+     */
+    public function testTheSessionComesFromThisFibersCurrentRequest(): void
+    {
+        $session = new Session(new MockArraySessionStorage());
+        $request = new Request();
+        $request->setSession($session);
+
+        $stack = new FiberRequestStack();
+        $stack->push($request);
+
+        self::assertSame($session, $stack->getSession());
+    }
+
+    public function testWithoutARequestTheSessionIsReportedAsMissing(): void
+    {
+        $this->expectException(SessionNotFoundException::class);
+
+        (new FiberRequestStack())->getSession();
+    }
+
+    public function testARequestWithoutASessionIsReportedAsMissing(): void
+    {
+        $stack = new FiberRequestStack();
+        $stack->push(new Request());
+
+        $this->expectException(SessionNotFoundException::class);
+        $stack->getSession();
+    }
+
+    /** Seeded requests must land in this fiber's stack, not in the parent's array where nothing reads them. */
+    public function testRequestsGivenToTheConstructorAreVisible(): void
+    {
+        $first = new Request();
+        $second = new Request();
+
+        $stack = new FiberRequestStack([$first, $second]);
+
+        self::assertSame($first, $stack->getMainRequest());
+        self::assertSame($second, $stack->getCurrentRequest());
+    }
+
+    /** What the owner asked: a pooled fiber must not inherit the last request's stack (V-67). */
+    public function testClearingTheScopeEmptiesTheStackForTheNextRequest(): void
+    {
+        $stack = new FiberRequestStack();
+        $stack->push(new Request());          // a request that never popped — an exception mid-handler
+        self::assertNotNull($stack->getCurrentRequest());
+
+        Scope::clear();                        // what Loop::releaseRequest does in its finally
+
+        self::assertNull($stack->getCurrentRequest());
+        self::assertNull($stack->getMainRequest());
     }
 }

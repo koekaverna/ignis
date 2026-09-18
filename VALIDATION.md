@@ -4364,3 +4364,44 @@ saved it. Restored and redone by exact heading.
 
 Gates: `cargo nextest` 51/51, clippy and `cargo fmt` clean, PHP suite 302 tests / 712 assertions,
 `mkdocs build --strict` clean (no warnings, no broken anchors), `scripts/smoke.sh` GREEN.
+
+## V-88 — `FiberRequestStack::getSession()` was inherited, and inherited means empty (CONFIRMED, fixed)
+
+Date: 2026-09-18T23:0xZ. Owner, reading the class: the stack is not reset between fibers — what if
+requests from the previous one are still in it?
+
+**The literal worry is covered, and by something outside this class.** The stack lives in
+`Ignis\Scope`, and `Loop::releaseRequest()` clears the whole bag in its `finally`, so a pooled fiber
+starts its next request with an empty stack even when the last one died between `push()` and `pop()`
+(V-67). There is now a test that pins exactly that: push, `Scope::clear()`, and both
+`getCurrentRequest()` and `getMainRequest()` answer null.
+
+**Reading for it found a real defect next door.** `RequestStack` keeps its own
+`private array $requests`, and `FiberRequestStack` overrode five methods but not `getSession()` —
+which reads `end($this->requests)`, a list this class never fills. So `getSession()` threw
+`SessionNotFoundException` **always**, session or no session. Its caller is
+`AbstractController::addFlash()` (`framework-bundle/Controller/AbstractController.php:188`), which
+catches that exception and rethrows it as *"You cannot use the addFlash method if sessions are
+disabled"* — a message about the wrong thing, on an application where sessions are enabled and
+present.
+
+The control that decides this is a defect and not a theory: with the fix stashed, the new test
+errors (`SessionNotFoundException`); with it, 11 tests / 31 assertions pass.
+
+**What was not broken, checked rather than assumed:** `resetRequestFormats()` touches a static on
+`Request` and never the array, and the parent constructor seeds through `$this->push()` — which is
+overridden here, so seeded requests were already reaching the scope. An override I had written for
+it was deleted as redundant before this entry.
+
+### The gate was not running, and two commits said it was
+
+`php/phpstan.neon` still listed `packages/pg/src` and `packages/pg/tests` after V-87 deleted them,
+so PHPStan exited with *"Path … does not exist"* instead of analysing anything. Two commit messages
+(the deletion and the one after it) claimed "phpstan clean"; what was true is that it **did not
+run**. Paths removed, and the real result is one pre-existing error in
+`packages/runtime/src/Classic/polyfills.php` from another session's `b16c12b`, unrelated to either
+change. Recorded here rather than quietly fixed, because a green gate that was not running is the
+failure mode this project keeps a validation file to catch.
+
+Gates: PHP suite **307 tests / 720 assertions**, PHPStan runs again (1 error, not ours),
+php-cs-fixer clean on everything this entry touches, `bench/e21` GREEN.

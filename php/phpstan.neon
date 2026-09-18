@@ -35,7 +35,6 @@ parameters:
         - packages/doctrine/src
         - packages/grpc/src
         - packages/offload/src
-        - packages/pg/src
         - packages/runtime/src
         - packages/runtime/tests
         - packages/swoole/src
@@ -48,7 +47,6 @@ parameters:
         - packages/doctrine/tests
         - packages/grpc/tests
         - packages/offload/tests
-        - packages/pg/tests
         - packages/swoole/tests
         - packages/symfony-runtime/tests
         - packages/temporal/tests

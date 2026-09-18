@@ -5,10 +5,17 @@ declare(strict_types=1);
 namespace Ignis\Symfony;
 
 use Ignis\Scope;
+use Symfony\Component\HttpFoundation\Exception\SessionNotFoundException;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
+use Symfony\Component\HttpFoundation\Session\SessionInterface;
 
-/** One request stack per fiber (ADR-0011): interleaved requests never see each other's Request. */
+/**
+ * One request stack per fiber (ADR-0011): interleaved requests never see each other's Request.
+ *
+ * Every method that reads the stack must be overridden — `RequestStack` keeps its own private array,
+ * and an inherited method reads that one, which is always empty here (V-88).
+ */
 final class FiberRequestStack extends RequestStack
 {
     private const KEY = 'symfony.request_stack';
@@ -65,5 +72,16 @@ final class FiberRequestStack extends RequestStack
     {
         $s = $this->stack();
         return count($s) < 2 ? null : $s[count($s) - 2];
+    }
+
+    /** The session of this fiber's current request; `AbstractController::addFlash()` calls it. */
+    public function getSession(): SessionInterface
+    {
+        $request = $this->getCurrentRequest();
+        if ($request !== null && $request->hasSession()) {
+            return $request->getSession();
+        }
+
+        throw new SessionNotFoundException();
     }
 }
