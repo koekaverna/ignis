@@ -72,9 +72,12 @@ final class IgnisWorkerRunner implements RunnerInterface
      * one line per cookie -- and until 2026-09-18 this method assigned `$headers['set-cookie']`
      * inside a foreach, so a response with a session cookie and a CSRF cookie sent only the last.
      *
+     * @internal Public only so the test that pins this contract can call it: reaching it by
+     *           reflection erased the return type, which is what hid the multi-cookie bug.
+     *
      * @return array<string, list<string>>
      */
-    private static function headers(Response $response): array
+    public static function headers(Response $response): array
     {
         $headers = [];
         foreach ($response->headers->allPreserveCase() as $name => $values) {
