@@ -1,5 +1,9 @@
 <?php
 
+// Control arm renamed 2026-09-18: this bench switched `IGNIS_NO_SOCKETS_HOOK`, and the nine ext/sockets hooks are deleted; park covers them (V-48),
+// so the variable had stopped doing anything — both arms measured the same build and the
+// control could not fail. `IGNIS_NO_UNIVERSAL_PARK` is the one hook-off control today.
+
 // A4 kill-criterion #2 (ADR-0018): cost of the hook on the NON-parking path.
 //
 // A UDP socket is always writable, so every socket_sendto takes the ready_now() fast path and
@@ -8,7 +12,7 @@
 // The destination is a BOUND socket in this process: sending to a closed port instead makes the
 // kernel answer every packet with ICMP port-unreachable, which slowed the whole box by ~10x after
 // a few hundred thousand sends and made the first version of this bench useless.
-// Compare `hook=on` against `IGNIS_NO_SOCKETS_HOOK=1` (`hook=off`); the difference is the hook.
+// Compare `hook=on` against `IGNIS_NO_UNIVERSAL_PARK=1` (`hook=off`); the difference is the hook.
 declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
@@ -27,4 +31,4 @@ $f = Ignis\async(static function () use ($s, $n, $sinkPort) {
     }
     return (hrtime(true) - $t0) / 1e3 / $n;
 });
-printf("n=%d us_per_call=%.4f hook=%s\n", $n, $f->await(), getenv('IGNIS_NO_SOCKETS_HOOK') ? 'off' : 'on');
+printf("n=%d us_per_call=%.4f hook=%s\n", $n, $f->await(), getenv('IGNIS_NO_UNIVERSAL_PARK') ? 'off' : 'on');

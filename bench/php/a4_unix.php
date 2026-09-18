@@ -1,8 +1,12 @@
 <?php
 
+// Control arm renamed 2026-09-18: this bench switched `IGNIS_NO_UNIX_HOOK`, and the unix:// transport went with the stream factory (V-49),
+// so the variable had stopped doing anything — both arms measured the same build and the
+// control could not fail. `IGNIS_NO_UNIVERSAL_PARK` is the one hook-off control today.
+
 // A4 (ADR-0018): unix:// client streams park the fiber like tcp:// ones.
 // Server half uses the stock unix transport (server sockets are not hooked); N client fibers each
-// wait DELAY ms for their answer. Hooked: ~DELAY. Control (IGNIS_NO_UNIX_HOOK=1): serialised.
+// wait DELAY ms for their answer. Hooked: ~DELAY. Control (IGNIS_NO_UNIVERSAL_PARK=1): serialised.
 declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $n = (int) (getenv('N') ?: 10);
@@ -47,5 +51,5 @@ $got = array_map(static fn($f) => $f->await(), $fs);
 $wall = (hrtime(true) - $t0) / 1e6;
 @unlink($path);
 $ok = count(array_filter($got, static fn($v) => $v === 'ok'));
-printf("n=%d delay_ms=%d wall_ms=%.1f ok=%d hook=%s\n", $n, $delay, $wall, $ok, getenv('IGNIS_NO_UNIX_HOOK') ? 'off' : 'on');
+printf("n=%d delay_ms=%d wall_ms=%.1f ok=%d hook=%s\n", $n, $delay, $wall, $ok, getenv('IGNIS_NO_UNIVERSAL_PARK') ? 'off' : 'on');
 exit(($ok === $n && $wall < $delay * 3) ? 0 : 1);

@@ -1,11 +1,18 @@
 <?php
 
+// Control arm renamed 2026-09-18: this bench switched `IGNIS_NO_STREAM_HOOK`, and the TLS records are ext/openssl's, parked by the interposer (V-49),
+// so the variable had stopped doing anything — both arms measured the same build and the
+// control could not fail. `IGNIS_NO_UNIVERSAL_PARK` is the one hook-off control today.
+
 // E6' / H25: ssl:// through the hook. Env: PORTS="8441 8442 8443", CAFILE (the servers' self-signed cert).
 declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 $ports = array_map('intval', explode(' ', getenv('PORTS') ?: '8441 8442 8443'));
 $cafile = getenv('CAFILE') ?: '/tmp/e6-ssl/cert.pem';
-$hook = getenv('IGNIS_NO_STREAM_HOOK') ? 'off' : 'on';
+$park = getenv('IGNIS_PARK');
+// Two shapes of control: the whole interposer off, or the policy table emptied. e6-ssl.sh uses the
+// second; printing "on" through it is how this label came to describe a control arm as hooked.
+$hook = (getenv('IGNIS_NO_UNIVERSAL_PARK') || ($park !== false && trim($park) === '')) ? 'off' : 'on';
 
 Ignis\async(static function () use ($ports, $cafile, $hook): void {
     // 1. Three concurrent https fetches, each server sleeps 200 ms: ≈ 200 ms with the hook, ≈ 600 ms without.

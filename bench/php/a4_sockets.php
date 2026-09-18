@@ -1,5 +1,9 @@
 <?php
 
+// Control arm renamed 2026-09-18: this bench switched `IGNIS_NO_SOCKETS_HOOK`, and the nine ext/sockets hooks are deleted; park covers them (V-48),
+// so the variable had stopped doing anything — both arms measured the same build and the
+// control could not fail. `IGNIS_NO_UNIVERSAL_PARK` is the one hook-off control today.
+
 // A4 / H29 (ADR-0018): N concurrent ext/sockets reads, each waiting DELAY ms, on ONE PHP thread.
 //
 // The server half uses stream_socket_server/accept, which the ADR-0007 transport hook already
@@ -7,7 +11,7 @@
 // socket_read from ext/sockets, which goes nowhere near php_stream.
 //
 // Hooked   : every socket_read parks its fiber -> wall ~ DELAY, independent of N.
-// Unhooked (IGNIS_NO_SOCKETS_HOOK=1): the first socket_read blocks the OS thread, so the server
+// Unhooked (IGNIS_NO_UNIVERSAL_PARK=1): the first socket_read blocks the OS thread, so the server
 // fibers never get to run and nothing completes -- the control is expected to STALL, which is the
 // point: it is what "blocks the thread" looks like from outside.
 declare(strict_types=1);
@@ -60,6 +64,6 @@ $got = array_map(static fn($f) => $f->await(), $clients);
 $wallMs = (hrtime(true) - $t0) / 1e6;
 
 $ok = count(array_filter($got, static fn($v) => $v === 'ok'));
-printf("n=%d delay_ms=%d wall_ms=%.1f ok=%d hook=%s\n", $n, $delayMs, $wallMs, $ok, getenv('IGNIS_NO_SOCKETS_HOOK') ? 'off' : 'on');
+printf("n=%d delay_ms=%d wall_ms=%.1f ok=%d hook=%s\n", $n, $delayMs, $wallMs, $ok, getenv('IGNIS_NO_UNIVERSAL_PARK') ? 'off' : 'on');
 // Concurrency holds when the wall stays near one delay instead of growing with N.
 exit(($ok === $n && $wallMs < $delayMs * 3) ? 0 : 1);

@@ -1,5 +1,9 @@
 <?php
 
+// Control arm renamed 2026-09-18: this bench switched `IGNIS_NO_STREAM_HOOK`, and TLS is ext/openssl over parked syscalls since V-49,
+// so the variable had stopped doing anything — both arms measured the same build and the
+// control could not fail. `IGNIS_NO_UNIVERSAL_PARK` is the one hook-off control today.
+
 // A6: read-ahead on a hooked TLS stream must be visible to stream_select().
 //
 // rustls decrypts a whole TLS record at a time. Once a record is consumed from the socket the raw
@@ -12,7 +16,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
 $port = (int) (getenv('PORT') ?: 8441);
-$hook = getenv('IGNIS_NO_STREAM_HOOK') ? 'off' : 'on';
+$hook = getenv('IGNIS_NO_UNIVERSAL_PARK') ? 'off' : 'on';
 
 Ignis\async(static function () use ($port, $hook): void {
     $ctx = stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]);

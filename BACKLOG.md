@@ -377,6 +377,25 @@ one CI run must agree on the number.
 **Constraints.** Do not raise or lower the baseline to make a run pass; the timing race is upstream's
 (AMPHP's own `StreamSelectDriverTest` fails it too — the summary line records 4 errors / 1 failure there).
 
+### R-E6SSL-VERIFY All five certificate-verification arms of `bench/e6-ssl.sh` report FAIL, and nothing says whether that is correct `main` `open — found 2026-09-18`
+**What.** Run today: the parking claim is intact — 3 concurrent 200 ms https fetches in **211 ms**
+against **616 ms** with the policy table emptied, which is V-25's band (210–231 vs 613–623) — and
+STARTTLS still works. But every one of the five `verify [...]` arms prints
+`FAIL — file_get_contents(https://127.0.0.1:8441/): Failed to open stream`, including
+`allow_self_signed` and `cafile + verify_peer_name=false`, which are the two that should succeed
+against the bench's own self-signed certificate.
+**Why it is a question and not a bug report.** V-25 recorded "5/5 verification cases behave like
+ext/openssl" when TLS was rustls in the reactor. V-49 deleted that and TLS is now `ext/openssl`'s own,
+so "behaves like ext/openssl" is true by construction and tells us nothing — the bench has **no stock
+control**, so a FAIL here cannot be distinguished from stock PHP failing the same way on the same
+certificate. Nobody has run this bench since V-49: it is in no gate and no CI job.
+**Acceptance.** `bench/e6-ssl.sh` grows a stock-PHP arm that fetches the same URLs with the same
+contexts through `/opt/php85-zts/bin/php` and no ignis binary, and prints both columns. Then either
+the five arms agree with stock — and the bench says PASS/FAIL against *that*, not against a wish — or
+they do not, and the difference is a defect with a name.
+**Constraints.** Do not change the certificate or the context options to make an arm pass; the
+comparison is the point.
+
 ---
 
 ## Closed — index
