@@ -13,8 +13,13 @@ Ignis\Classic\serve('/var/www/html/public', '0.0.0.0:8080');
 ```
 
 Each request runs in its own fiber, so requests overlap exactly as they do for a native
-`Ignis\serve()` handler. This is the mode for a framework front controller — Symfony today (V-16,
-V-40) — and for any application that keeps its state in objects rather than in globals. Laravel is
+`Ignis\serve()` handler. It suits an application that keeps its state in objects rather than in
+globals and has no runtime adapter of its own.
+
+**Symfony does not belong here.** It has its own path — `ignis/symfony-runtime`, which boots the
+kernel once per thread and serves each request in a fiber ([Symfony](packages/symfony.md), V-16,
+V-40). Running `public/index.php` through classic mode would work, and would boot the kernel on
+every request: php-fpm's shape, with none of what worker mode exists for. Laravel is
 not supported yet: `Container::$instance` is a process-global static that two interleaved fibers
 clobber, and the fix is open work (research 25, M3-5a/M3-5b). Serialising it with
 `budget.fibers = 1` is the route being tried, not a shipped one.
