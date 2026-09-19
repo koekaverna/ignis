@@ -204,6 +204,9 @@ pub unsafe extern "C" fn zif_replay(ex: *mut sys::zend_execute_data, rv: *mut sy
 /// The contract used to be asserted in a comment while the signature was safe, which let any
 /// caller hand this a null or stale pointer without writing `unsafe` (BACKLOG A-UNSAFE-CONTRACTS).
 unsafe fn worker_arg(ex: *mut sys::zend_execute_data) -> Option<(u64, Option<String>)> {
+    // SAFETY: the caller guarantees `ex` is the live VM frame (see this function's `# Safety`), so
+    // zend_parse_parameters reads the arguments the VM placed in it, and `id`/`s`/`sl` are live
+    // locals of exactly the types the "l" and "ls" specs write.
     unsafe {
         let mut id: sys::zend_long = 0;
         let (mut s, mut sl): (*mut c_char, usize) = (std::ptr::null_mut(), 0);
@@ -228,7 +231,7 @@ pub unsafe extern "C" fn zif_poll_activation(ex: *mut sys::zend_execute_data, rv
     // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
     // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
-        let Some((id, _)) = (unsafe { worker_arg(ex) }) else { return };
+        let Some((id, _)) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             match w.poll_workflow_activation().await {
@@ -249,7 +252,7 @@ pub unsafe extern "C" fn zif_complete_activation(ex: *mut sys::zend_execute_data
     // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
     // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
-        let Some((id, Some(json))) = (unsafe { worker_arg(ex) }) else { return };
+        let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             let comp: WorkflowActivationCompletion = match from_protojson("coresdk.workflow_completion.WorkflowActivationCompletion", &json)
@@ -272,7 +275,7 @@ pub unsafe extern "C" fn zif_poll_activity(ex: *mut sys::zend_execute_data, rv: 
     // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
     // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
-        let Some((id, _)) = (unsafe { worker_arg(ex) }) else { return };
+        let Some((id, _)) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             match w.poll_activity_task().await {
@@ -293,7 +296,7 @@ pub unsafe extern "C" fn zif_complete_activity(ex: *mut sys::zend_execute_data, 
     // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
     // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
-        let Some((id, Some(json))) = (unsafe { worker_arg(ex) }) else { return };
+        let Some((id, Some(json))) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             let comp: ActivityTaskCompletion = match from_protojson("coresdk.ActivityTaskCompletion", &json) {
@@ -319,7 +322,7 @@ pub unsafe extern "C" fn zif_heartbeat(ex: *mut sys::zend_execute_data, rv: *mut
     // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
     // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
-        let Some((id, Some(json))) = (unsafe { worker_arg(ex) }) else { return };
+        let Some((id, Some(json))) = worker_arg(ex) else { return };
         let Some(w) = worker(id) else {
             zval::set_bool(rv, false);
             return;
@@ -342,7 +345,7 @@ pub unsafe extern "C" fn zif_shutdown(ex: *mut sys::zend_execute_data, rv: *mut 
     // zend_parse_parameters and writes `rv` through zval::set_*, on the calling thread with the engine
     // active — no Zend pointer escapes into the future handed to the reactor.
     unsafe {
-        let Some((id, _)) = (unsafe { worker_arg(ex) }) else { return };
+        let Some((id, _)) = worker_arg(ex) else { return };
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             w.initiate_shutdown();
