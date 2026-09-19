@@ -1169,6 +1169,31 @@ mod tests {
         assert_eq!(unslept_seconds(-1, &timespec(0, 0)), 0);
     }
 
+    /// The wiring, not the arithmetic: outside a fiber `may_park` declines, so the shim must hand
+    /// the call to the kernel unchanged and return exactly what libc would. Without this the two
+    /// fixes above were covered only as pure functions — the gate would not have noticed an
+    /// interposer that computed the right number and then delegated wrongly.
+    #[test]
+    fn outside_a_fiber_the_shims_delegate_and_answer_as_libc_does() {
+        let here = core::ptr::null::<c_void>();
+        let valid = timespec(0, 1_000_000);
+        // SAFETY: not in a fiber and no reactor on this thread, so `may_park` declines and the only
+        // call made is the real nanosleep with a live, well-formed interval of our own.
+        let slept = unsafe { ignis_park_nanosleep(here, &valid, core::ptr::null_mut()) };
+        assert_eq!(slept, 0, "a 1 ms sleep outside a fiber succeeds through the kernel");
+
+        let invalid = timespec(0, 2_000_000_000);
+        // SAFETY: same, with an interval POSIX defines as EINVAL; the kernel rejects it rather
+        // than us, which is the whole point of `microseconds_of` returning None.
+        let refused = unsafe { ignis_park_nanosleep(here, &invalid, core::ptr::null_mut()) };
+        assert_eq!(refused, -1, "an out-of-range tv_nsec is the kernel's error, not a long sleep");
+        // SAFETY: reading errno on the thread that just made the failing call.
+        assert_eq!(unsafe { *libc::__errno_location() }, libc::EINVAL);
+
+        // SAFETY: as above; a zero-second sleep returns immediately with nothing left unslept.
+        assert_eq!(unsafe { ignis_park_sleep(here, 0) }, 0, "nothing was interrupted, so nothing is owed");
+    }
+
     #[test]
     fn a_valid_nanosleep_interval_is_microseconds_and_saturates() {
         assert_eq!(microseconds_of(&timespec(0, 0)), Some(0));
