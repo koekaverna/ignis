@@ -394,6 +394,15 @@ final class Loop
     /**
      * M4-4: hand this loop's counters to the runtime so /_ignis/metrics can answer them while PHP
      * is busy. A wedged loop stops publishing, which the endpoint reports as an ageing sample.
+     *
+     * A-DUPES(c): this key set is not `budgetStats()`'s by another name — it is
+     * `crate::metrics::Published::set()`'s fixed field list, sent whole every loop turn because
+     * `ignis_publish_stats()` takes one array, not incremental fields. `inflight` is missing on
+     * purpose: the Rust side already tracks in-flight requests itself (see the module doc at the
+     * top of `metrics.rs`), and `fibers_idle`/`fibers_created`/`resumes`/`handled` are missing from
+     * `budgetStats()` because callers building a `/stats` endpoint already have them as
+     * `Loop::$resumes`, `Loop::$fibersCreated` and `Loop::idleFibers()` (`examples/app.php`,
+     * `examples/hello_server.php`) and would otherwise get them twice.
      */
     private static function publishStats(): void
     {
@@ -459,6 +468,12 @@ final class Loop
      * A completion no fiber is waiting for, as the reactor's tagged union: a cancelled request, an
      * offload callback (E16), or a new request — which carries no tag, only a method. It arrives
      * off the reactor as `array<array-key, mixed>`, so every field is checked before use.
+     *
+     * A payload matching none of the three tags is dropped with no log, on purpose:
+     * `Ignis\Offload\Router::release()` (`offload/src/ignis-offload.php`) submits its handle-free
+     * job fire-and-forget, awaiting nothing, so a `kind => 'error'` reactor-level failure for that
+     * op arrives here unmatched — and release is cleanup for an object the caller already let go
+     * of, so there is nobody left to tell and nothing left to do about it.
      * @param array<array-key, mixed> $payload
      */
     private static function dispatchUnawaited(int $id, array $payload): void
@@ -511,32 +526,11 @@ final class Loop
      */
     private static function asIgnisRequest(array $payload): array
     {
-        $method = $payload['method'] ?? null;
-        $uri = $payload['uri'] ?? null;
-        $headers = $payload['headers'] ?? null;
-        $body = $payload['body'] ?? null;
-        if (!\is_string($method) || !\is_string($uri) || !\is_array($headers) || !\is_string($body)) {
-            throw new \UnexpectedValueException('Ignis\\Loop: a malformed request completion');
-        }
-
-        return ['method' => $method, 'uri' => $uri, 'headers' => self::asStringHeaders($headers), 'body' => $body];
-    }
-
-    /**
-     * @param array<array-key, mixed> $headers
-     * @return array<string, string>
-     */
-    private static function asStringHeaders(array $headers): array
-    {
-        $out = [];
-        foreach ($headers as $name => $value) {
-            if (!\is_string($name) || !\is_string($value)) {
-                throw new \UnexpectedValueException('Ignis\\Loop: a malformed request completion header');
-            }
-            $out[$name] = $value;
-        }
-
-        return $out;
+        return Http\Request::validateRaw(
+            $payload,
+            'Ignis\\Loop: a malformed request completion',
+            'Ignis\\Loop: a malformed request completion header',
+        );
     }
 
     /**
@@ -608,6 +602,10 @@ final class Loop
 
     /**
      * Counters for /stats and for VALIDATION: see ADR-0019.
+     *
+     * A-DUPES(c): overlaps `publishStats()` on six keys and is not the same shape as it — see the
+     * note there for why both exist. This one is the public admission-control subset a caller
+     * composes its own `/stats` response from, `inflight` included because nothing else exposes it.
      * @return array<string, int>
      */
     public static function budgetStats(): array

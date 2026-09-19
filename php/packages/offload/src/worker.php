@@ -15,6 +15,12 @@ namespace Ignis\Offload;
  * Guarded like the identical pair in `ignis-offload.php`, and for the same reason: a worker thread
  * evaluates this file with nothing else loaded, but anything that has already required the caller
  * side (a prelude, a test) would otherwise hit "cannot redeclare".
+ *
+ * The two declarations cannot be merged into a file both sides `require`: this file is
+ * `include_str!`ed into the binary and run under a synthetic filename, where `__DIR__` resolves to
+ * the process's working directory, not to this one, so a `require __DIR__ . '/...'` here would not
+ * find anything real. `offload/tests/EnvelopeTest.php` pins the two declarations to each other so
+ * they cannot drift apart the way their error envelopes already had.
  */
 if (!class_exists(CallbackRef::class, false)) {
     final class CallbackRef
@@ -76,7 +82,8 @@ final class WorkerRuntime
                 throw new \RuntimeException('offload: malformed callback error');
             }
             $code = $error[2] ?? 0;
-            throw new RemoteException($remoteClass, 'callback threw: ' . $message, \is_scalar($code) ? (int) $code : 0);
+            $trace = $error[3] ?? null;
+            throw new RemoteException($remoteClass, 'callback threw: ' . $message, \is_scalar($code) ? (int) $code : 0, \is_string($trace) ? $trace : '');
         }
         return $unpacked['ok'] ?? null;
     }

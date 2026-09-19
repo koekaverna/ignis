@@ -11,6 +11,14 @@ declare(strict_types=1);
 namespace Ignis\Offload {
     use Ignis\Loop;
 
+    /**
+     * `CallbackRef` and `RemoteException` are declared identically in `worker.php`, guarded the
+     * same way. They cannot be factored into a file both sides `require`: `worker.php` is
+     * `include_str!`ed into the binary and `zend_eval_string`d under a synthetic name, where
+     * `__DIR__` does not resolve to this directory (`offload/tests/WorkerRuntimeTest.php` states
+     * the same bound). `offload/tests/EnvelopeTest.php` pins the two declarations to each other so
+     * they cannot drift apart the way their error envelopes already had.
+     */
     if (!class_exists(CallbackRef::class, false)) {
         final class CallbackRef
         {
@@ -406,7 +414,7 @@ namespace Ignis\Offload {
                 }
                 $out = serialize(['ok' => $callback(...$arguments)]);
             } catch (\Throwable $e) {
-                $out = serialize(['err' => [$e::class, $e->getMessage(), $e->getCode()]]);
+                $out = serialize(['err' => [$e::class, $e->getMessage(), $e->getCode(), $e->getTraceAsString()]]);
             }
             self::$callbacksRun++;
             \ignis_offload_cb_result($jobId, $sequence, $out);

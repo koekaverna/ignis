@@ -489,7 +489,7 @@ stops spelling `code=N` silently becomes `Status::UNKNOWN`.
 table) or a shape (and must be justified where it is). The gRPC one is probably just a defect: the
 status belongs in the completion, not in its message.
 
-### A-DUPES Two copies of the same thing, in three places `agent` `open — 2026-09-18`
+### A-DUPES Two copies of the same thing, in three places `agent` `DONE 2026-09-19 — (a) and (b) fixed, (c) kept as two shapes with the reason; re-run by main, including a falsification of the new gate`
 **What.** (a) `CallbackRef` and `RemoteException` are declared twice, `class_exists`-guarded, in
 `offload/src/ignis-offload.php:14` and `offload/src/worker.php:19` — and the two sides disagree on the
 error envelope, so `RemoteException::$remoteTrace` is always empty for a callback failure while the
@@ -500,6 +500,35 @@ arrays with different key sets for the same seven counters.
 **Acceptance.** One declaration each, the callback envelope carrying the trace, and a test that a
 failed callback reaches the caller with a stack. (c) may be left with a note saying why two shapes
 exist, if they do.
+**Done 2026-09-19. (a) the defect was real and is fixed:** `Client::runCallback()` serialised a
+three-element envelope `[class, message, code]` where the job path sends four, and
+`WorkerRuntime::unpackCallbackAnswer()` never read a fourth element anyway — so `remoteTrace` was
+empty by construction on both sides at once. Both halves fixed; `EnvelopeTest` drives a real
+throwing callback through `runCallback()` and asserts the trace arrives with the throwing frame in
+it.
+**"One declaration each" is not reachable from PHP, and that is a finding, not an excuse.**
+`worker.php` is `include_str!`ed into the binary (`main.rs`) and evaluated under a synthetic
+filename, so `__DIR__` inside it resolves to the process's working directory, not to the package —
+a `require` of a shared file would find nothing in a real deployment. Merging the declarations
+needs a second `include_str!`, i.e. a Rust change, which is outside an `agent`'s reach. The
+contract was made real the other way instead: `EnvelopeTest` tokenises both files and asserts the
+two declarations are identical token for token.
+**Main falsified that gate rather than trusting it:** renaming `$remoteTrace` to
+`$remoteTraceDrifted` in `worker.php` alone makes the test fail and print the differing token
+(`23 => '$remoteTrace'` against `23 => '$remoteTraceDrifted'`); restored, 12/12 green again. It can
+fail, which is the whole point of adding it.
+**(b)** the eight checks now live once, in `Ignis\Http\Request::validateRaw()`, with each caller
+passing its own two exception strings — `Loop`'s wording is asserted verbatim by an existing test
+and `Runner`'s by nothing, so both were preserved rather than unified on a guess. Dead
+`asStringHeaders()`/`stringHeaders()` removed. Checked against the removed code: neither copy
+lower-cased header names before, and neither does now.
+**(c) left as two shapes, with the reason on each.** `publishStats()`'s ten keys are a fixed wire
+contract matched 1:1 by `metrics.rs`'s `Published::set()`; `budgetStats()` is the public surface the
+examples compose their own `/stats` from, deliberately narrower and carrying `inflight`, which the
+Rust side tracks itself. Merging would either widen the hot-path array or strip callers. This is
+the case the acceptance explicitly permitted.
+**Gate, re-run by main:** PHPStan level 9 both configs `[OK] No errors` (still exactly two
+`ignoreErrors`), php-cs-fixer `0 of 150`, PHPUnit `320 tests, 757 assertions` green.
 
 ### A-PHP-FLOOR The minimum PHP version is declared in three places and they disagree `agent` `open — 2026-09-18`
 **What.** Root `>=8.4`, every package `>=8.4` except `ignis/revolt` `>=8.1` and
@@ -607,7 +636,7 @@ executable evidence is the unit test against the map. **The production wiring �
 calling `worker_gone` — is therefore untested**, which is this project's own recurring defect shape
 (a gate that cannot fail) and must be named, not glossed. Closing this item needs that arm.
 
-### A-SWALLOWED-RUST Errors dropped where the drop changes behaviour `agent` `PARTLY DONE 2026-09-19 — the three Rust sites landed and were re-run by main; the PHP site (dispatchUnawaited) is still in flight`
+### A-SWALLOWED-RUST Errors dropped where the drop changes behaviour `agent` `DONE 2026-09-19 — three Rust sites log what was lost; the PHP site documents why its silence is correct and a test pins it; all re-run by main`
 **What.** `offload.rs:57` `let _ = POOL.set(…)` — a second `initialize(n)` is silently ignored, so
 `--offload N` after a pool exists keeps the old width and says nothing. `main.rs:319`
 `let _ = h.join()` — an offload thread that panicked is indistinguishable from one that exited
@@ -616,6 +645,13 @@ cleanly. `http.rs:248` `let _ = stream.set_nodelay(true)`. And on the PHP side, 
 `Router::release()` relies on exactly that, which makes the silence load-bearing and undocumented.
 **Acceptance.** Each either logs at `warn` with what was lost, or carries one line saying why losing
 it is correct. The `dispatchUnawaited` case needs the second, and then a test pinning it.
+**Done 2026-09-19.** The three Rust sites name what was lost (`offload.rs` second `initialize`,
+`main.rs` panicked worker, `http.rs` `set_nodelay`). `dispatchUnawaited` took the second option as
+the acceptance directed — no log — and now names who depends on the silence:
+`Ignis\Offload\Router::release()`'s fire-and-forget free job, whose failure arrives tagged
+`kind => 'error'`, matching none of the three dispatched tags, with nobody left to tell because the
+caller already dropped the handle. Pinned by
+`LoopTest::testAnUnawaitedCompletionMatchingNoneOfTheThreeTagsIsSilentlyDropped`.
 
 ### A-RUST-TESTS The two files with the most `unsafe` have no tests at all `agent` `open — 2026-09-18`
 **What.** Eleven of twenty modules have no test module — 3,092 lines, 47 % of the crate — and they

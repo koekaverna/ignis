@@ -154,32 +154,13 @@ final class Runner
      */
     private static function requestFrom(int $id, array $raw): Request
     {
-        $method = $raw['method'] ?? null;
-        $uri = $raw['uri'] ?? null;
-        $headers = $raw['headers'] ?? null;
-        $body = $raw['body'] ?? null;
-        if (!\is_string($method) || !\is_string($uri) || !\is_array($headers) || !\is_string($body)) {
-            throw new \UnexpectedValueException('Ignis\\Classic\\Runner: malformed raw request');
-        }
+        $validated = Request::validateRaw(
+            $raw,
+            'Ignis\\Classic\\Runner: malformed raw request',
+            'Ignis\\Classic\\Runner: malformed raw request headers',
+        );
 
-        return new Request($method, $uri, self::stringHeaders($headers), $body, $id);
-    }
-
-    /**
-     * @param array<array-key, mixed> $headers
-     * @return array<string, string>
-     */
-    private static function stringHeaders(array $headers): array
-    {
-        $out = [];
-        foreach ($headers as $name => $value) {
-            if (!\is_string($name) || !\is_string($value)) {
-                throw new \UnexpectedValueException('Ignis\\Classic\\Runner: malformed raw request headers');
-            }
-            $out[$name] = $value;
-        }
-
-        return $out;
+        return new Request($validated['method'], $validated['uri'], $validated['headers'], $validated['body'], $id);
     }
 
     /** @return array{0:?string,1:string,2:string} [file, SCRIPT_NAME, PATH_INFO]: the longest prefix that is a file wins. */

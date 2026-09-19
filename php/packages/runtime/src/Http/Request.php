@@ -53,6 +53,44 @@ final class Request
     }
 
     /**
+     * The eight checks shared by `Ignis\Loop::asIgnisRequest()` and `Ignis\Classic\Runner::requestFrom()`:
+     * a completion off the reactor is data, not a fact about its shape, on both delivery paths alike.
+     * Each caller keeps its own exception text, since it is what tells the two paths apart in a log.
+     *
+     * @param  array<array-key, mixed> $raw
+     * @return IgnisRequest
+     */
+    public static function validateRaw(array $raw, string $message, string $headerMessage): array
+    {
+        $method = $raw['method'] ?? null;
+        $uri = $raw['uri'] ?? null;
+        $headers = $raw['headers'] ?? null;
+        $body = $raw['body'] ?? null;
+        if (!\is_string($method) || !\is_string($uri) || !\is_array($headers) || !\is_string($body)) {
+            throw new \UnexpectedValueException($message);
+        }
+
+        return ['method' => $method, 'uri' => $uri, 'headers' => self::validatedHeaders($headers, $headerMessage), 'body' => $body];
+    }
+
+    /**
+     * @param  array<array-key, mixed> $headers
+     * @return array<string, string>
+     */
+    private static function validatedHeaders(array $headers, string $message): array
+    {
+        $out = [];
+        foreach ($headers as $name => $value) {
+            if (!\is_string($name) || !\is_string($value)) {
+                throw new \UnexpectedValueException($message);
+            }
+            $out[$name] = $value;
+        }
+
+        return $out;
+    }
+
+    /**
      * CGI-style superglobals for this request: [$_SERVER, $_GET, $_POST, $_COOKIE].
      * @return array{0:array<string,mixed>,1:array<array-key,mixed>,2:array<array-key,mixed>,3:array<string,string>}
      */
