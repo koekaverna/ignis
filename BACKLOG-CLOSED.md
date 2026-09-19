@@ -667,3 +667,18 @@ fiber identity), `bench/php/e18_pgsql.php` (offload off), `bench/php/e18_dns.php
 (the R2 shim under `park` deadlocks with a timeout, under `block` passes).
 
 ### H-12 E4 hello throughput is 58k req/s on this box today, V-6 measured 128k `main` `CLOSED 2026-09-18 — V-82 (the trailing "open" this status also carried is struck: the residual 4-5% is recorded, not open work): the bisect is refused with a number, the effect is under the instrument's noise`. `open — measured (V-46 addendum 3): V-6's own commit gives 61.5–63.1k on this box, so 128k → 62k is the box; the code-side drop 2026-09-15 → HEAD is ≈ 4–5 % (58.3–60.0k) and still worth one bisect in a quiet slot` — V-46 addendum 2: park on and off both ~58k, p99 1.8 ms, quiet box, same wrk shape as V-6 (`-t2 -c64 -d10s`, 1 PHP thread). Either the box changed (WSL2 kernel 6.18 now; V-6's kernel not recorded) or something landed between 2026-09-15 and cycle 1 (budget admission, health route, superglobals lazy swap, log floor). Bisect with `git bisect run` over `bench/wrk-hello.sh` before any perf claim cites V-6 again.
+
+### S0-RESPOND-START `ignis_respond_start` is registered twice and called by nobody `main` `DONE 2026-09-18 — removed as an intentional API change (V-92 addendum); php-api.md records it`
+**What.** Reported by the documentation session and confirmed here: `grep` across `php/`, `examples/`,
+`bench/` and `scripts/` finds no caller. The Rust side registers it in **both** `FUNCTIONS` tables
+(`module.rs:902` and `:953`) and implements `zif_ignis_respond_start`; userland reaches streaming
+through `ignis_stream_bind` instead.
+**Why it is not just dead code.** It is a public `ignis_*` function, so deleting it is an API change,
+and `R-NOT-DOING` settled that the duplicated `FUNCTIONS` tables stay as they are — which means the
+registration is deliberate in shape even where the entry is not.
+**Done 2026-09-18.** Removal, taken as the intentional API change this asks for: no caller exists in
+`php/`, `examples/`, `bench/` or `scripts/`, the streaming path settled on `ignis_stream_bind`, and a
+public function nobody can reach is surface without a contract. `php-api.md` no longer lists it, and
+`StubsMatchTheBinaryTest` reads `module.rs` now, so the next registration without a stub is a failing
+test rather than a paragraph explaining itself. The three tables keep their shape — `R-NOT-DOING`
+stands and the explicit array length is what made the three-way edit safe.

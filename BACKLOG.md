@@ -210,18 +210,6 @@ looking as if they were.
 **Acceptance.** Both pages read line by line against the code, like the rest of the refresh, or taken
 back out of the nav until they are.
 
-### S0-RESPOND-START `ignis_respond_start` is registered twice and called by nobody `main` `open — 2026-09-18`
-**What.** Reported by the documentation session and confirmed here: `grep` across `php/`, `examples/`,
-`bench/` and `scripts/` finds no caller. The Rust side registers it in **both** `FUNCTIONS` tables
-(`module.rs:902` and `:953`) and implements `zif_ignis_respond_start`; userland reaches streaming
-through `ignis_stream_bind` instead.
-**Why it is not just dead code.** It is a public `ignis_*` function, so deleting it is an API change,
-and `R-NOT-DOING` settled that the duplicated `FUNCTIONS` tables stay as they are — which means the
-registration is deliberate in shape even where the entry is not.
-**Acceptance.** Either a caller (the streaming path that was meant to use it) or removal recorded as
-an intentional API change, with `php-api.md` matching whichever it is. `php-api.md` already calls it
-dead, which is currently true and undocumented as a decision.
-
 ### S0-FRANK One frankenphp test regressed and nobody knows which `main` `HALF DONE 2026-09-18 — gate green, test still unnamed`
 **What.** `passed=28` against baseline 29. The arithmetic pins it at exactly one test: 28+5+33 and
 29+4+33 are both 66. Five fail now — `server-variable.php`, `cookies.php`, `autoloader.php`,
@@ -396,6 +384,130 @@ they do not, and the difference is a defect with a name.
 **Constraints.** Do not change the certificate or the context options to make an arm pass; the
 comparison is the point.
 
+## Found by the 2026-09-18 audit, not fixed in it
+
+Each was read and confirmed; none was changed, because the change is larger than the finding or the
+right answer needs a decision. Filed so the reading is not lost.
+
+### A-OUTPUT-FIBERKEY `output.rs` keys per-fiber state by address with no destroy hook `main` `open — 2026-09-18`
+**What.** `SINKS` and `BOUND` (`crates/ignis/src/php/output.rs:31,40`) are keyed by
+`active_fiber as usize`. The `// SAFETY:` note argues a stale key "cannot collide, because a context
+is only reused once its entries are gone (`zif_capture_reset` at request end)" — which is a guarantee
+made by PHP code, not an invariant of the map. `superglobals.rs` has the same problem and solves it
+properly, with `zend_observer_fiber_destroy_register` (`:245`, `on_destroy` at `:203`).
+**Why it matters.** A fiber destroyed on a path that skips the reset (a fatal, an unwind) leaves its
+entry behind, and the next fiber allocated at the same address inherits a live response binding. That
+is the class V-72 and V-76 are about: one request's output in another's body.
+**Acceptance.** `output.rs` registers a destroy hook that drops the fiber's entries, as
+`superglobals.rs` does, and a test kills a fiber mid-capture and shows the next one at that address
+starting clean. Not a rename of the key: the address is fine once something removes it.
+**Constraints.** `main` (FFI, an observer registration).
+
+### A-CLASSIC-FINISH `Ignis\Classic\finish()` stops the `listen()` worker loop `agent` `open — 2026-09-18`
+**What.** `finish()` throws `Finished`. `Runner::handle()` catches it, so `Classic\serve()` is fine —
+but the documented `listen()` shape, `while ($file = accept()) { include $file; respond(); }`
+(`examples/classic_worker.php:116`), has no catch, so the throw unwinds the whole loop and the thread
+stops serving. In the mode legacy code most needs it, the documented replacement for `exit()` is an
+exit.
+**Acceptance.** `finish()` inside a script served by `listen()` ends that request and the loop takes
+the next one; a test in `runtime/tests/Classic/` pins it, and `docs/classic-mode.md` shows whichever
+shape is correct.
+
+### A-DESTRUCTOR-IO `PooledConnection::__destruct` makes a database round trip `main` `open — 2026-09-18`
+**What.** `doctrine/src/Pool/PooledConnection.php:200` → `ConnectionPool::release()` → `reset()` →
+`$connection->exec('ROLLBACK; CLOSE ALL; …')`. A destructor firing during cycle collection — which
+`Loop::collectGarbage()` schedules at the loop's idle point — therefore executes a query, and under
+universal park that suspends whichever fiber happened to trigger the collection.
+**Why it matters.** ADR-0034 and pain-map "Engine 1" are about exactly this: the scheduler must never
+resume a fiber from inside a destructor. This is the reverse — a destructor that parks — and it is
+ours, not an application's.
+**Acceptance.** Release is explicit (the middleware returns the connection at request end, as it
+already does) and the destructor is a safety net that closes without talking to the server, or the
+reset is deferred to the next acquire. A test that destroys a leased connection inside
+`gc_collect_cycles()` must not park.
+
+### A-SWOOLE-TICKERS The Swoole shim polls instead of waiting `agent` `open — 2026-09-18`
+**What.** `swoole/src/shim.php:225` and `:235` are `while (!$stop()) { \Ignis\sleep(5); }` and
+`… sleep(1)`. A ticker fiber standing in for a wait point: up to 5 ms of latency on every `Co\run`
+completion, and a mechanism the mechanism budget (CLAUDE.md) does not list. `Coroutine::$parked`
+(`:97`) also keeps an entry for a coroutine that yields and is never resumed.
+**Acceptance.** The last coroutine resolves a `Future` the caller awaits once; `Co\run` returns
+without a poll loop, `bench/e15-swoole.sh` does not drop below its baseline, and `$parked` is empty
+after a run that abandons a coroutine.
+
+### A-ADAPTER-MECHANISMS Three adapters carry a mechanism of their own `research` `open — 2026-09-18`
+**What.** CLAUDE.md's budget says adapters carry none. Three do: `offload/src/ignis-offload.php:260`
+generates proxy classes with `eval()` from `var_export`ed reflection output; `Temporal\CoreSource::poll()`
+(`:66`) turns every `RuntimeException` — a malformed completion and a transport failure alike — into
+`null`, which sdk-php reads as a clean shutdown; and `grpc/src/ignis-grpc.php:185` recovers the gRPC
+status code with `preg_match('/code=(\d+)/')` against a free-text error message, so a reactor that
+stops spelling `code=N` silently becomes `Status::UNKNOWN`.
+**Deliverable.** A note saying, for each, whether it is a mechanism (and must go in the budget or the
+table) or a shape (and must be justified where it is). The gRPC one is probably just a defect: the
+status belongs in the completion, not in its message.
+
+### A-DUPES Two copies of the same thing, in three places `agent` `open — 2026-09-18`
+**What.** (a) `CallbackRef` and `RemoteException` are declared twice, `class_exists`-guarded, in
+`offload/src/ignis-offload.php:14` and `offload/src/worker.php:19` — and the two sides disagree on the
+error envelope, so `RemoteException::$remoteTrace` is always empty for a callback failure while the
+job path carries it. (b) The raw-request validator is written twice, `Loop::asIgnisRequest()`
+(`Loop.php:473`) and `Runner::requestFrom()` (`Classic/Runner.php:139`), the same eight checks with a
+different exception prefix. (c) `Loop::publishStats()` and `Loop::budgetStats()` build overlapping
+arrays with different key sets for the same seven counters.
+**Acceptance.** One declaration each, the callback envelope carrying the trace, and a test that a
+failed callback reaches the caller with a stack. (c) may be left with a note saying why two shapes
+exist, if they do.
+
+### A-PHP-FLOOR The minimum PHP version is declared in three places and they disagree `agent` `open — 2026-09-18`
+**What.** Root `>=8.4`, every package `>=8.4` except `ignis/revolt` `>=8.1` and
+`ignis/temporal-core-transport` `>=8.2`; `php/phpstan.neon` encodes `min: 80200` and re-runs revolt at
+`80100`. The two exceptions are deliberate (revolt promises AMPHP users 8.1) — the third copy, in the
+analyser config, is what drifts silently.
+**Acceptance.** The phpstan floors are derived from the manifests, or a test asserts they match.
+
+### A-REVOLT-UNTESTED `ignis/revolt` is excluded from the PHPUnit suite `agent` `open — 2026-09-18`
+**What.** `php/phpunit.xml:191` leaves it out deliberately — its suite only runs inside the ignis
+binary, through `bench/e15-revolt.sh`. The cost is concrete: the incompatibility between `IgnisDriver`
+and `Ignis\Loop` (V-93) could not have been caught by a unit test because there is nowhere to put one.
+**Acceptance.** Either the parts that need no binary (the callback bookkeeping, `$pendingWatch`/
+`$watchOf`) get a suite that runs with the fake reactor, or the exclusion is documented in
+`phpunit.xml` with what it costs — and `R-REVOLT-FLAKE` is the reason to prefer the first.
+
+### A-BACKEND-B-CI Nothing anywhere builds backend (b) `main` `open — 2026-09-18`
+**What.** `crates/ignis/src/backend/async_core.rs` is behind `cfg(php_async_abi)`, which needs the
+true-async engine (`scripts/build-php-async.sh`). No CI job builds it and this box has no such engine,
+which is why it sat with a two-arm `match` against a nine-variant enum until V-91. The tripwire now in
+`reactor.rs` catches the *enum* growing; it cannot catch anything else in that file.
+**Acceptance.** A CI job that runs `scripts/build-php-async.sh` and
+`PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo check -p ignis`,
+on a schedule rather than per push if the engine build is too slow for the main gate. Or ADR-0003 is
+amended to say backend (b) is a recorded experiment that is not kept compiling, and the file says so
+at the top.
+
+### A-RUST-STYLE The Rust half does not follow the project's own naming and comment rules `agent` `open — 2026-09-18`
+**What.** CLAUDE.md forbids abbreviations and comments inside function bodies. Measured across the
+crate: `module.rs` has ~20 abbreviated names (`ex`, `rv`, `ht`, `zv`, and a six-way tuple of
+one-letter names at `:552`), `route.rs` ~11, `embed.rs` ~10, `park.rs` ~9, `temporal.rs` ~8; non-SAFETY
+comments inside function bodies number 26 in `park.rs`, 21 in `module.rs`, 20 in `embed.rs`, 11 in
+`main.rs`, 10 in `output.rs`, 8 in `superglobals.rs`. Clean by both rules: `main.rs` naming,
+`offload.rs`, `metrics.rs`, `watch.rs`, `php/wait.rs`.
+**Why it is a separate item.** It is a mechanical diff across the files most likely to be edited for
+substance, and it buys no behaviour. Doing it *with* a correctness change hides the correctness change.
+**Acceptance.** One commit per file, no behaviour change, `cargo nextest` and the gate green at each
+step. Signature-level names (`zif_*(ex, rv)`) come last and may be argued for as the Zend vocabulary,
+the way Swoole's `cid` is — but then that argument goes in DECISIONS.md.
+
+### A-RUST-DEAD Three pieces of machinery kept alive by an empty default `main` `open — 2026-09-18`
+**What.** (a) `route.rs:45` `const DEFAULT_FUNCTIONS: &str = ""` means the loop at `:82-92` never
+runs, so `trampoline`, `call_original`, `frame_name` and `ORIG_FN` — about 80 lines — are unreachable
+unless `IGNIS_OFFLOAD_FUNCTIONS` is set by hand. (b) `locklib.rs` is 202 lines of the H36 test harness
+compiled into the production binary, reachable only via `IGNIS_LOCKLIB`; its own doc says "a normal
+build has no trace of them", which is true of the function table and not of the binary. (c)
+`temporal.rs:348` is `#[allow(dead_code)] fn _unused(_: c_int) {}`, a placeholder keeping an import
+alive.
+**Acceptance.** For each: a caller, a feature gate, or deletion. (b) behind a `cfg(feature)` would
+also make the claim in its doc block true.
+
 ---
 
 ## Closed — index
@@ -405,6 +517,7 @@ an investigation — is in [`BACKLOG-CLOSED.md`](BACKLOG-CLOSED.md).
 
 | item | outcome |
 |---|---|
+| **S0-RESPOND-START** | `ignis_respond_start` is registered twice and called by nobody `main` `DONE 2026-09-18 — removed as an intentional API change (V-92 addendum); php-api.md records it` |
 | **M3-1** | Symfony recipe in README `agent` `done (README, validated by main)` |
 | **M3-2** | Retire the Symfony worker wrapper `agent` `done (shim first, then deleted outright on 2026-09-17 — owner: no back-compat before the first stable release)` |
 | **M3-3** | `bench/e8-symfony.sh` on the package route `agent` `done (V-41: main re-run 4,680.64 / 13,629.61 req/s vs agent's 4,663 / 13,360; dev-mode 404, prod leg is M3-8)` |

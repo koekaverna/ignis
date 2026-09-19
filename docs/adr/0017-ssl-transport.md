@@ -14,3 +14,11 @@ Status: **superseded by ADR-0037 (cycle 3, V-49, 2026-09-18)** — rustls and th
 - `https://` fetches and PostgreSQL/SMTP STARTTLS from PHP code park the fiber instead of the thread; the E6 numbers extend to TLS.
 - Two TLS stacks in the process (OpenSSL in libphp for everything unhooked, rustls in the runtime for hooked client streams); certificate-store configuration must be set for both if a deployment customises it.
 - +≈ 20 crates (`rustls` with the `ring` provider, `tokio-rustls`, `webpki-roots`).
+
+## Kill criterion — moot, and why it is recorded rather than written
+
+This ADR never carried one, which CLAUDE.md requires. It is superseded (V-49, ADR-0037 cycle 3): the
+rustls factory it decides on is deleted, so a criterion for reversing it would be a criterion for
+reversing something that no longer runs. What replaced it carries its own, in ADR-0020 — the owner's
+verbatim kill criterion for universal park: *any OpenSSL or libcurl test failing under `park` with a
+lock in the trace*. That is the live version of this question and it is measured (V-51, H36).

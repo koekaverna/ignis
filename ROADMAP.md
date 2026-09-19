@@ -82,7 +82,7 @@ product roadmap the day a user needs it, with that user's case as the acceptance
 - **E10'** gRPC client-streaming and bidi, TLS on the listener, deadline propagation to `Ignis\deadline()` (extends V-20).
 - **E8'** multi-value `Set-Cookie`, streamed responses, Laravel through `symfony/runtime` (extends V-16).
 - **E7'** AMPHP HTTP client/server on the hooked transports (not only timers), signals (extends V-13).
-- **E11'** cancellation of offload jobs (E16) and pgsql queries (E14) on client disconnect (extends V-14/V-21/V-24).
+- **E11'** cancellation of offload jobs (E16) on client disconnect (extends V-14/V-24). The pgsql half went with the runtime-owned pool (V-87): a parked `pdo_pgsql` query is cancelled by the same mechanism as any other parked syscall, or it is not cancellable at all — which is the question, and it has no measurement.
 
 ## Phase D — productization (parallel to B/C, scribe + bencher)
 

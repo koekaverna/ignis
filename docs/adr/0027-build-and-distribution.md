@@ -52,3 +52,18 @@ provide (release README). Affects M2, M5-1, M5-5, E18.
 
 Static artifact: M5-5's note says it is feasible. arm64: the first user. `--wrap`: the day the
 static artifact exists.
+
+## Kill criterion
+
+Distinct from the triggers above, which say when to *add* something (arm64, a static build). This
+says when the decision itself is wrong.
+
+Reverse "we build our own PHP and ship an image" if a distribution's packaged PHP gains ZTS + embed
+with a supported extension set and `scripts/build-php.sh` stops being the only way to get one. The
+whole of this ADR rests on that not existing: the seven-minute build, the builder image, the 84 MB
+runtime image (V-83) and the `ldd` list are all consequences of having to produce the engine
+ourselves. The day `apt install php8.6-zts-embed` works, the artifact is a package and this is
+over-engineering.
+
+Sign that it is approaching: an upstream PHP release note naming ZTS as supported for embedding
+rather than as a build-time curiosity, or a second project shipping a packaged embed SAPI.
