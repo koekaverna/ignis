@@ -508,6 +508,101 @@ alive.
 **Acceptance.** For each: a caller, a feature gate, or deletion. (b) behind a `cfg(feature)` would
 also make the claim in its doc block true.
 
+### A-REACTOR-POISON A panic in the dispatcher poisons a mutex and every later op panics with it `main` `open — 2026-09-18`
+**What.** `reactor.rs:211,215,227,230,233` take `cancellable_tasks_by_op` with `.lock().unwrap()`
+inside spawned tasks. A panic anywhere in one of those critical sections poisons the mutex, and from
+then on every `Op::Sleep`, `Op::Watch` and `Op::CancelWatch` on that reactor panics on the lock —
+inside a tokio task, so the failure is a dead dispatcher rather than an error anyone sees.
+`watch.rs:90` and `:111` already do the right thing: `unwrap_or_else(|e| e.into_inner())`.
+**Why it matters.** The map holds abort handles, nothing whose invariants a panic could break, so
+poisoning protects nothing here and costs the whole reactor. Same shape at `http.rs:283,297` (per
+connection), `offload.rs:73-131`, `grpc.rs:155-222` and `route.rs:150,208` (per routed call).
+**Acceptance.** Every `.lock().unwrap()` on a map of handles becomes `into_inner()` on a poisoned
+lock, with one line saying why that is safe for this data; a test that panics inside a spawned task
+and then submits an op successfully.
+
+### A-ARGINFO Four PHP functions reflect somebody else's parameter names `main` `open — 2026-09-18`
+**What.** The arg-info tables in `module.rs:79-97` are keyed by **arity**, not by function
+(`ARGINFO_ONE`, `ARGINFO_GRPC2/3/4`, `ARGINFO_T2/T3`), so any function borrowing a table of the right
+size inherits another's parameter names and `required_num_args`. Concretely: `ignis_respond_chunk`
+reflects as `$id, $status` (should be `$id, $bytes`) with `required_num_args = 4` against
+`num_args = 2`; `ignis_offload_submit` as `$id, $code, $message` instead of `$fn, $args, $affinity`,
+required 3 although the third is optional (`ss|l`); `ignis_stream_bind` declares 3 args and requires
+4; `ignis_submit_sleep`, `ignis_cancel`, `ignis_grpc_recv`, `ignis_watch_files` and
+`ignis_publish_stats` all reflect their one parameter as `$value`.
+**Why it matters.** Named arguments do not work on those functions and `ReflectionFunction` lies
+about them — and a `required_num_args` above `num_args` is a contradiction the engine is being told.
+Nothing calls them by name today, which is why nobody noticed; the stubs are what every analyser
+reads and they disagree with the binary.
+**Acceptance.** One arg-info per function with its real names and required count, or a comment on
+each shared table naming every function allowed to use it and why the names fit. A test that
+reflects each `ignis_*` function and compares against `stubs/ignis.php` — `StubsMatchTheBinaryTest`
+is the place.
+
+### A-PARK-ARITHMETIC Overflow before the clamp, and two syscall shims that answer wrongly `main` `open — 2026-09-18`
+**What.** (a) `module.rs:110` does `(ms.max(0) as u64) * 1000` with no clamp, so
+`ignis_submit_sleep(PHP_INT_MAX)` wraps into a short sleep. (b) `park.rs:531` computes
+`ts.tv_sec * 1000 + …` and clamps *after* the multiply; same shape at `:320` (`SO_RCVTIMEO`) and
+`:725` (a caller-supplied `timespec`). (c) `ignis_park_sleep` (`park.rs:769`) always returns 0, while
+POSIX `sleep()` returns the unslept remainder when interrupted. (d) `ignis_park_flock`
+(`park.rs:863-879`) retries in a 20 ms loop with no overall deadline: a lock held by a crashed holder
+parks the fiber for the life of the process, and that ceiling carries no `ponytail:` marker.
+**Acceptance.** Saturating arithmetic before every clamp with a unit test per site (these are pure
+functions and `park.rs` has no tests at all today — see A-RUST-TESTS); `sleep` returns the remainder;
+`flock` either takes a deadline or says in a `ponytail:` line that it does not and why.
+
+### A-UNSAFE-CONTRACTS Four `// SAFETY:` notes that do not justify their code `main` `open — 2026-09-18`
+**What.** The four-line paragraph "Nothing here dereferences the caller's buffer — it is handed
+straight back to the kernel" appears verbatim 14× in `park.rs` and is **false** at two of them:
+`ignis_park_select` (`:604`) does `std::ptr::read`, `FD_ISSET` and `ptr::write` on the caller's fd
+sets, and `ignis_park_ppoll` (`:578`) dereferences `ts`. `locklib::install` (`:190`) says "the
+entries live for the process lifetime" while the code copies the array to the **stack** — it happens
+to be sound because `zend_register_functions` copies each entry, but that is not the stated reason.
+`worker_arg` (`temporal.rs:199`) is a **safe** fn whose body dereferences a raw pointer behind a
+`// SAFETY:` comment asserting a caller contract its signature does not require.
+**Why it matters.** ADR-0041 gates on every `unsafe` block having a note, and the gate counts notes,
+not whether they are true. A duplicated contract is one nobody re-reads, which is exactly how two of
+them came to sit over code they do not describe.
+**Acceptance.** The two `park.rs` sites get notes about what they actually touch; `locklib`'s states
+the real reason; `worker_arg` becomes an `unsafe fn`. The 14 copies are not a style problem to sweep —
+whatever is genuinely common goes in the module doc once, and each site keeps what is its own.
+
+### A-LEAKS-RUST Three thread-local and process-wide maps that only grow `main` `open — 2026-09-18`
+**What.** (a) `temporal.rs:41,81` — `WORKERS` never removes an entry; `zif_shutdown` (`:333`) calls
+`initiate_shutdown()` and leaves it, while the module doc says "for the process lifetime (or until
+shutdown)". (b) `offload.rs:44` — `JOBS` entries are removed only in `done()`, so a worker that dies
+mid-job (a PHP fatal) leaks the entry *and* leaves `Reactor::inflight` permanently raised on the
+caller — which is the same failure `submit`'s own doc says was already fixed once for the rejection
+path. `CALLBACKS` (`:39`) leaks the same way when the calling thread dies, and `callback()` (`:126`)
+then blocks a worker on `rx.recv()` with no timeout. (c) The offload job queues are `unbounded()`
+(`:55-56`).
+**Acceptance.** A dead worker's job fails its caller and releases the op; `WORKERS` drops what it
+shuts down; the reply wait has a timeout. Bench: kill an offload worker mid-job under
+`bench/e16-offload.sh` and show `ignis_inflight()` returning to zero.
+
+### A-SWALLOWED-RUST Errors dropped where the drop changes behaviour `agent` `open — 2026-09-18`
+**What.** `offload.rs:57` `let _ = POOL.set(…)` — a second `initialize(n)` is silently ignored, so
+`--offload N` after a pool exists keeps the old width and says nothing. `main.rs:319`
+`let _ = h.join()` — an offload thread that panicked is indistinguishable from one that exited
+cleanly. `http.rs:248` `let _ = stream.set_nodelay(true)`. And on the PHP side, `Loop::dispatchUnawaited()`
+(`Loop.php:425`) drops an unawaited array payload matching none of its three tags with no log at all —
+`Router::release()` relies on exactly that, which makes the silence load-bearing and undocumented.
+**Acceptance.** Each either logs at `warn` with what was lost, or carries one line saying why losing
+it is correct. The `dispatchUnawaited` case needs the second, and then a test pinning it.
+
+### A-RUST-TESTS The two files with the most `unsafe` have no tests at all `agent` `open — 2026-09-18`
+**What.** Eleven of twenty modules have no test module — 3,092 lines, 47 % of the crate — and they
+are the wrong eleven: `park.rs` (1,051 lines, the largest file in the crate), `wait.rs` (where V-91's
+`RESULTS` leak lived), `output.rs`, `superglobals.rs`, `route.rs`, `watch.rs`, `locklib.rs`,
+`embed.rs`, `temporal.rs`, `async_core.rs`, `tsrm.rs`. The two best-covered files, `reactor.rs` and
+`config.rs`, are the two with the fewest `unsafe` blocks.
+**Why it is tractable.** Much of it needs no engine: `would_block`'s socket-state matrix
+(`park.rs:201-244`), `ms_ceil` (`:530`), `park_pollfds`' cancel bookkeeping (`:496-527`), the
+`select` fd-set copy and refill (`:608-667`), `watch.rs`'s settle/CAS logic (`:142-183`),
+`output.rs`'s framing threshold, `embed.rs`'s `exit_status`/`SENTINEL` (`:111-124`).
+**Acceptance.** A test module in each of those, testing the pure logic named above. Not a coverage
+number: ADR-0041 already says the percentage cannot mean much here (V-78).
+
 ---
 
 ## Closed — index

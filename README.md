@@ -191,7 +191,7 @@ LD_LIBRARY_PATH=/opt/php85-zts/lib ./target/release/ignis serve examples/hello_s
 Every hook has an off switch (`IGNIS_NO_SUPERGLOBALS`, `IGNIS_NO_UNIVERSAL_PARK` + the `IGNIS_PARK` table) — a
 claim about a hook is only ever made against its control. `IGNIS_PARK` is the policy table
 (ADR-0037): comma-separated `lib` or `lib:symbol` rows naming what may park; unset = the built-in
-seed (`libphp:sleep,libphp:usleep,libphp:nanosleep,libcurl,libpq,libssl,libcrypto`), empty = nothing.
+seed, empty = nothing. The seed is `SEED` in `crates/ignis/src/php/park.rs` and it grows with each cycle — sixteen `libphp:` symbols today (`sleep`, `usleep`, `nanosleep`, `select`, `accept`, `poll`, `recv`, `send`, `recvfrom`, `sendto`, `recvmsg`, `sendmsg`, `connect`, `read`, `write`, `flock`) plus `libcurl`, `libpq`, `libssl`, `libcrypto` whole. Three documents listed three different seeds until 2026-09-18; read the constant, not a copy of it.
 
 ## Where it is
 
