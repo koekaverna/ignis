@@ -17,6 +17,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 
+use crate::lock::LockUnpoisoned;
 use crate::reactor::{HttpRequest, Reactor};
 
 /// Unset and unparsable both mean "keep the default": a typo in an env var must not move a limit.
@@ -64,7 +65,7 @@ static BOUND: Mutex<Option<SocketAddr>> = Mutex::new(None);
 
 impl Registry {
     fn pick(&self) -> Option<Arc<Reactor>> {
-        let rs = self.reactors.lock().unwrap();
+        let rs = self.reactors.lock_unpoisoned();
         if rs.is_empty() {
             return None;
         }
@@ -92,7 +93,7 @@ impl Registry {
 pub fn stalled_threads(limit: Duration) -> (usize, usize) {
     match REGISTRY.get() {
         Some(r) => {
-            let rs = r.reactors.lock().unwrap();
+            let rs = r.reactors.lock_unpoisoned();
             (rs.iter().filter(|x| x.pending_requests() > 0 && x.idle_in_php() > limit).count(), rs.len())
         }
         None => (0, 0),
@@ -155,7 +156,7 @@ pub async fn drain() -> (Duration, usize) {
 pub fn totals() -> crate::metrics::Totals {
     let mut t = crate::metrics::Totals::default();
     if let Some(r) = REGISTRY.get() {
-        for reactor in r.reactors.lock().unwrap().iter() {
+        for reactor in r.reactors.lock_unpoisoned().iter() {
             t.add(reactor);
         }
     }
@@ -170,7 +171,7 @@ pub fn totals() -> crate::metrics::Totals {
 /// the floor; waking is the whole point of it.
 pub fn wake_all() {
     if let Some(registry) = REGISTRY.get() {
-        for reactor in registry.reactors.lock().unwrap().iter() {
+        for reactor in registry.reactors.lock_unpoisoned().iter() {
             reactor.inject(crate::reactor::Outcome::Ready);
         }
     }
@@ -180,13 +181,13 @@ pub fn wake_all() {
 /// first and finishes what it already has, where a dying thread has nothing left to finish.
 pub fn leave_dispatch(reactor: &Arc<Reactor>) {
     if let Some(registry) = REGISTRY.get() {
-        registry.reactors.lock().unwrap().retain(|r| !Arc::ptr_eq(r, reactor));
+        registry.reactors.lock_unpoisoned().retain(|r| !Arc::ptr_eq(r, reactor));
     }
 }
 
 pub fn unregister(reactor: &Arc<Reactor>) {
     if let Some(registry) = REGISTRY.get() {
-        registry.reactors.lock().unwrap().retain(|r| !Arc::ptr_eq(r, reactor));
+        registry.reactors.lock_unpoisoned().retain(|r| !Arc::ptr_eq(r, reactor));
     }
     let n = reactor.fail_pending();
     if n > 0 {
@@ -199,10 +200,10 @@ pub fn unregister(reactor: &Arc<Reactor>) {
 /// bound address. Later calls (other PHP threads) only register.
 pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, address: &str) -> Result<SocketAddr> {
     let registry = REGISTRY.get_or_init(|| Arc::new(Registry { reactors: Mutex::new(Vec::new()), next: AtomicUsize::new(0) }));
-    let mut bound = BOUND.lock().unwrap();
+    let mut bound = BOUND.lock_unpoisoned();
     if let Some(b) = *bound {
         reactor.server_started();
-        registry.reactors.lock().unwrap().push(reactor);
+        registry.reactors.lock_unpoisoned().push(reactor);
         return Ok(b);
     }
     let address: SocketAddr = address.parse().with_context(|| format!("bad listen address {address:?}"))?;
@@ -211,7 +212,7 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, address: &str) 
     *bound = Some(local);
     drop(bound);
     reactor.server_started();
-    registry.reactors.lock().unwrap().push(reactor);
+    registry.reactors.lock_unpoisoned().push(reactor);
     rt.spawn(accept_loop(listener, registry.clone()));
     Ok(local)
 }
@@ -280,7 +281,7 @@ async fn serve_connection(
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let activity = last_activity.clone();
     let service = service_fn(move |request| {
-        *activity.lock().unwrap() = Instant::now();
+        *activity.lock_unpoisoned() = Instant::now();
         let r = registry.pick();
         async move {
             match r {
@@ -294,7 +295,7 @@ async fn serve_connection(
     let connection = builder.serve_connection(TokioIo::new(stream), service);
     tokio::pin!(connection);
     loop {
-        let idle_for = last_activity.lock().unwrap().elapsed();
+        let idle_for = last_activity.lock_unpoisoned().elapsed();
         if idle_for >= idle_timeout {
             connection.as_mut().graceful_shutdown();
             if let Err(e) = connection.as_mut().await {

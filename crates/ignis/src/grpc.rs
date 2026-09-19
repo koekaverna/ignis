@@ -20,6 +20,7 @@ use tonic::server::ServerStreamingService;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Code, Status, Streaming};
 
+use crate::lock::LockUnpoisoned;
 use crate::reactor::{GrpcMsg, HttpRequest, Outcome, Reactor};
 
 /// Messages cross tonic as raw `Bytes`; PHP encodes/decodes protobuf.
@@ -152,7 +153,7 @@ static NEXT_STREAM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 
 fn channel(url: &str) -> Result<Channel, Status> {
     let map = CHANNELS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut m = map.lock().unwrap();
+    let mut m = map.lock_unpoisoned();
     if let Some(c) = m.get(url) {
         return Ok(c.clone());
     }
@@ -208,18 +209,18 @@ pub fn call(url: String, path: String, message: Bytes, streaming: bool) -> Pin<B
 pub fn recv(handle: u64) -> Pin<Box<dyn Future<Output = Outcome> + Send>> {
     Box::pin(async move {
         let map = STREAMS.get_or_init(|| Mutex::new(HashMap::new()));
-        let Some(s) = map.lock().unwrap().get(&handle).cloned() else {
+        let Some(s) = map.lock_unpoisoned().get(&handle).cloned() else {
             return Outcome::Failed("grpc recv: unknown stream".into());
         };
         let r = s.lock().await.message().await;
         match r {
             Ok(Some(b)) => Outcome::Blob(Some(b)),
             Ok(None) => {
-                map.lock().unwrap().remove(&handle);
+                map.lock_unpoisoned().remove(&handle);
                 Outcome::Blob(None)
             }
             Err(st) => {
-                map.lock().unwrap().remove(&handle);
+                map.lock_unpoisoned().remove(&handle);
                 failed("recv", st)
             }
         }

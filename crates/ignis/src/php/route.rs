@@ -18,6 +18,7 @@ use std::sync::{Mutex, OnceLock};
 use ignis_sys as sys;
 
 use super::zval;
+use crate::lock::LockUnpoisoned;
 
 type Handler = unsafe extern "C" fn(*mut sys::zend_execute_data, *mut sys::zval);
 type CreateObject = unsafe extern "C" fn(*mut sys::zend_class_entry) -> *mut sys::zend_object;
@@ -86,7 +87,7 @@ pub unsafe fn install() {
             }
             let func = (*zv).value.func;
             if let Some(orig) = (*func).internal_function.handler {
-                fns.lock().unwrap().insert(name.to_string(), orig);
+                fns.lock_unpoisoned().insert(name.to_string(), orig);
                 (*func).internal_function.handler = Some(trampoline);
             }
         }
@@ -97,7 +98,7 @@ pub unsafe fn install() {
                 continue;
             }
             let ce = (*zv).value.ce;
-            creates.lock().unwrap().insert(ce as usize, ((*ce).__bindgen_anon_2.create_object, name.to_string()));
+            creates.lock_unpoisoned().insert(ce as usize, ((*ce).__bindgen_anon_2.create_object, name.to_string()));
             (*ce).__bindgen_anon_2.create_object = Some(create_proxy);
         }
     }
@@ -147,7 +148,7 @@ unsafe fn frame_name(ex: *mut sys::zend_execute_data) -> String {
 }
 
 unsafe fn call_original(name: &str, ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    let orig = ORIG_FN.get().and_then(|m| m.lock().unwrap().get(name).copied());
+    let orig = ORIG_FN.get().and_then(|m| m.lock_unpoisoned().get(name).copied());
     match orig {
         // SAFETY: `h` came out of ORIG_FN, which only MINIT writes and only with the handler the
         // engine itself had in the function table, so calling it with this frame is exactly what the
@@ -205,7 +206,7 @@ unsafe extern "C" fn trampoline(ex: *mut sys::zend_execute_data, rv: *mut sys::z
 unsafe extern "C" fn create_proxy(class_type: *mut sys::zend_class_entry) -> *mut sys::zend_object {
     // SAFETY: called by the VM's NEW; falls back to the saved original outside fibers.
     unsafe {
-        let saved = ORIG_CREATE.get().and_then(|m| m.lock().unwrap().get(&(class_type as usize)).cloned());
+        let saved = ORIG_CREATE.get().and_then(|m| m.lock_unpoisoned().get(&(class_type as usize)).cloned());
         let Some((orig, name)) = saved else {
             // A userland subclass inherited this hook from the routed parent (the proxy itself, or
             // any user subclass): plain object creation, no internal payload.

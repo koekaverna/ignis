@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::lock::LockUnpoisoned;
 use bytes::Bytes;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use tokio::sync::{mpsc, oneshot};
@@ -224,12 +225,12 @@ impl Reactor {
                         let handle = tokio::spawn(async move {
                             tokio::time::sleep_until(deadline).await;
                             let late_us = deadline.elapsed().as_micros() as u64;
-                            cancellable_tasks_by_op2.lock().unwrap().remove(&id);
+                            cancellable_tasks_by_op2.lock_unpoisoned().remove(&id);
                             if !completed_in_task.swap(true, Ordering::AcqRel) {
                                 let _ = done_tx.send(Completion { id, outcome: Outcome::Slept { late_us } });
                             }
                         });
-                        cancellable_tasks_by_op.lock().unwrap().insert(id, CancellableTask { abort: handle.abort_handle(), completed });
+                        cancellable_tasks_by_op.lock_unpoisoned().insert(id, CancellableTask { abort: handle.abort_handle(), completed });
                     }
                     Op::Custom(fut) => {
                         tokio::spawn(async move {
@@ -243,15 +244,15 @@ impl Reactor {
                         let completed_in_task = completed.clone();
                         let handle = tokio::spawn(async move {
                             let outcome = watch_fd(fd, write).await;
-                            cancellable_tasks_by_op2.lock().unwrap().remove(&id);
+                            cancellable_tasks_by_op2.lock_unpoisoned().remove(&id);
                             if !completed_in_task.swap(true, Ordering::AcqRel) {
                                 let _ = done_tx.send(Completion { id, outcome });
                             }
                         });
-                        cancellable_tasks_by_op.lock().unwrap().insert(id, CancellableTask { abort: handle.abort_handle(), completed });
+                        cancellable_tasks_by_op.lock_unpoisoned().insert(id, CancellableTask { abort: handle.abort_handle(), completed });
                     }
                     Op::CancelWatch { target } => {
-                        if let Some(task) = cancellable_tasks_by_op.lock().unwrap().remove(&target) {
+                        if let Some(task) = cancellable_tasks_by_op.lock_unpoisoned().remove(&target) {
                             task.abort.abort(); // drops the AsyncFd → closes the dup'd fd
                             if !task.completed.swap(true, Ordering::AcqRel) {
                                 let _ = done_tx.send(Completion { id: target, outcome: Outcome::Error("cancelled".into()) });
@@ -322,10 +323,10 @@ impl Reactor {
     pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.answers.lock().unwrap().insert(id, Answer::Whole(tx));
+        self.answers.lock_unpoisoned().insert(id, Answer::Whole(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
-            self.answers.lock().unwrap().remove(&id);
+            self.answers.lock_unpoisoned().remove(&id);
         }
         (id, rx)
     }
@@ -334,17 +335,17 @@ impl Reactor {
     pub fn deliver_stream_request(&self, req: HttpRequest) -> (u64, mpsc::UnboundedReceiver<GrpcMsg>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
-        self.answers.lock().unwrap().insert(id, Answer::Grpc(tx));
+        self.answers.lock_unpoisoned().insert(id, Answer::Grpc(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
-            self.answers.lock().unwrap().remove(&id);
+            self.answers.lock_unpoisoned().remove(&id);
         }
         (id, rx)
     }
 
     /// PHP-thread side (E10): one response message. False if the stream is unknown or the client is gone.
     pub fn stream_send(&self, id: u64, msg: Bytes) -> bool {
-        match self.answers.lock().unwrap().get(&id) {
+        match self.answers.lock_unpoisoned().get(&id) {
             Some(Answer::Grpc(tx)) => tx.send(Ok(msg)).is_ok(),
             _ => false,
         }
@@ -356,7 +357,7 @@ impl Reactor {
     /// `stream_end()` on a whole-body one, must be refused -- not silently destroy an answer the
     /// caller was not entitled to. The first version of this map did remove first and cost a test.
     fn take_answer(&self, id: u64, expected: fn(&Answer) -> bool) -> Option<Answer> {
-        let mut answers = self.answers.lock().unwrap();
+        let mut answers = self.answers.lock_unpoisoned();
         if answers.get(&id).is_some_and(expected) { answers.remove(&id) } else { None }
     }
 
@@ -381,7 +382,7 @@ impl Reactor {
     /// The loop takes delivery first, exactly as a PHP thread would: the cancellation is a second
     /// completion on the same id, not a replacement for the first.
     pub fn cancel_request(&self, id: u64) {
-        let known = self.answers.lock().unwrap().remove(&id).is_some();
+        let known = self.answers.lock_unpoisoned().remove(&id).is_some();
         if known {
             self.inflight.fetch_add(1, Ordering::Relaxed);
             let _ = self.done_tx.send(Completion { id, outcome: Outcome::Cancelled { dropped_at: std::time::Instant::now() } });
@@ -404,7 +405,7 @@ impl Reactor {
     /// socket — small, because that queue is the back-pressure.
     pub fn respond_start(&self, id: u64, status: u16, headers: Vec<(String, String)>, cap: usize) -> bool {
         let (tx, rx) = mpsc::channel::<Bytes>(cap.max(1));
-        let mut answers = self.answers.lock().unwrap();
+        let mut answers = self.answers.lock_unpoisoned();
         match answers.remove(&id) {
             Some(Answer::Whole(responder)) => {
                 if responder.send(HttpResponse { status, headers, body: ResponseBody::Stream(rx) }).is_err() {
@@ -423,7 +424,7 @@ impl Reactor {
 
     /// The sending end of a streamed answer, if one is open.
     pub fn stream_sender(&self, id: u64) -> Option<mpsc::Sender<Bytes>> {
-        match self.answers.lock().unwrap().get(&id) {
+        match self.answers.lock_unpoisoned().get(&id) {
             Some(Answer::Streaming(tx)) => Some(tx.clone()),
             _ => None,
         }
@@ -440,7 +441,7 @@ impl Reactor {
     /// A half-written stream is dropped with the rest: the client sees a truncated body rather than
     /// a connection that never finishes.
     pub fn fail_pending(&self) -> usize {
-        self.answers.lock().unwrap().drain().count()
+        self.answers.lock_unpoisoned().drain().count()
     }
 
     /// Marks the owning PHP thread as alive (watchdog, ADR-0012).
@@ -461,7 +462,7 @@ impl Reactor {
     /// which ended a graceful shutdown while a client was still receiving, at 2 of 5 chunks (V-75).
     /// The type is what prevents that now, not the reader remembering a third map.
     pub fn pending_requests(&self) -> usize {
-        self.answers.lock().unwrap().len()
+        self.answers.lock_unpoisoned().len()
     }
 
     pub fn server_started(&self) {

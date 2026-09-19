@@ -84,15 +84,48 @@ fn frame_bytes() -> usize {
     *V.get_or_init(|| std::env::var("IGNIS_STREAM_FRAME_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(8192usize))
 }
 
-/// Which fiber is running, as an opaque key. `{main}` is 0.
+/// Which fiber is running, as an opaque key: its `zend_fiber_context` address, or 0 for `{main}`.
+///
+/// The context rather than the `zend_fiber` object, because that is what
+/// `zend_observer_fiber_destroy_register` hands `on_fiber_destroy` — the two are different addresses
+/// (the context is a field inside the object), and keying by the object meant the destroy hook could
+/// not find what to drop.
 ///
 /// # Safety
 /// Must be called on a PHP thread with an initialised TSRM cache.
 unsafe fn current() -> usize {
-    // SAFETY: the caller upholds `# Safety` above. The fiber pointer is used only as an opaque key,
-    // never dereferenced, so a stale value can at worst collide -- and it cannot, because a context
-    // is only reused once its entries are gone (zif_capture_reset at request end, V-67).
-    unsafe { (*tsrm::executor_globals()).active_fiber as usize }
+    // SAFETY: the caller upholds `# Safety` above. `active_fiber` is a plain pointer field the engine
+    // keeps current; `&raw mut` takes the address of its `context` field without forming a reference,
+    // and the result is used only as a key.
+    unsafe {
+        let fiber = (*tsrm::executor_globals()).active_fiber;
+        if fiber.is_null() {
+            return 0;
+        }
+        (&raw mut (*fiber).context) as usize
+    }
+}
+
+/// Registers the fiber-destroy observer. Called from the module's MINIT.
+pub fn install() {
+    // SAFETY: zend_observer_startup() ran in php_module_startup before MINIT, and registering a
+    // second destroy observer is supported -- observers are a list (superglobals.rs registers one
+    // too, and only when its own feature is on, which is why this cannot lean on it).
+    unsafe { sys::zend_observer_fiber_destroy_register(Some(on_fiber_destroy)) };
+}
+
+/// Drops a dying fiber's buffers and response binding.
+///
+/// Without this the entries outlived the fiber whenever the request did not reach its own cleanup —
+/// a fatal, an unwound cancellation — and the next fiber allocated at the same address inherited a
+/// live binding: one request's `echo` framed into another's body, which is the class V-72 and V-76
+/// are about. The old `// SAFETY:` note on `current()` argued the collision could not happen because
+/// `zif_capture_reset` runs at request end; that is a promise made by PHP code, not an invariant of
+/// the map, and the paths that skip it are exactly the interesting ones.
+unsafe extern "C" fn on_fiber_destroy(ctx: *mut sys::zend_fiber_context) {
+    let key = ctx as usize;
+    SINKS.with(|sinks| sinks.borrow_mut().remove(&key));
+    BOUND.with(|bound| bound.borrow_mut().remove(&key));
 }
 
 /// `sapi_module.ub_write`: append to the running fiber's buffer, or write through to stdout.

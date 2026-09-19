@@ -43,6 +43,7 @@ use super::tsrm;
 use ignis_sys as sys;
 
 use super::wait::{await_any, await_op};
+use crate::lock::LockUnpoisoned;
 use crate::reactor::{Op, Outcome};
 
 thread_local! {
@@ -180,7 +181,7 @@ unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
             let base = name.rsplit('/').next().unwrap_or(&name).to_string();
             let parks = libs().iter().any(|(l, s)| base.starts_with(l.as_str()) && s.as_deref().is_none_or(|s| s == sym));
             if PROBING.load(Ordering::Relaxed) && parks {
-                PROBE_HITS.lock().unwrap().push(base.clone());
+                PROBE_HITS.lock_unpoisoned().push(base.clone());
             }
             trace(&format!("site {key:#x} {sym} from {base}: parks={parks}"));
             parks
@@ -954,7 +955,7 @@ pub fn selfcheck() -> Result<(), String> {
         return Ok(());
     }
 
-    PROBE_HITS.lock().unwrap().clear();
+    PROBE_HITS.lock_unpoisoned().clear();
     PROBING.store(true, Ordering::Relaxed);
     // The gate is a thread-local: pretend a fiber is active so the handlers do their policy
     // resolution. There is no reactor on this thread, so nothing can actually park — a probe that
@@ -981,7 +982,7 @@ pub fn selfcheck() -> Result<(), String> {
     }
     PARK.with(|p| p.set(0));
     PROBING.store(false, Ordering::Relaxed);
-    let hits = PROBE_HITS.lock().unwrap().clone();
+    let hits = PROBE_HITS.lock_unpoisoned().clone();
 
     let missed: Vec<&str> = probed.iter().copied().filter(|name| !hits.iter().any(|h| h.starts_with(name))).collect();
     if missed.is_empty() {

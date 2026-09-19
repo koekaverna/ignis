@@ -33,6 +33,7 @@ use temporalio_protos::temporal::api::workflowservice::v1::GetWorkflowExecutionH
 use temporalio_sdk_core::replay::{HistoryForReplay, ReplayWorkerInput};
 use temporalio_sdk_core::{CoreRuntime, Worker, WorkerConfig, WorkerVersioningStrategy, init_replay_worker, init_worker};
 
+use crate::lock::LockUnpoisoned;
 use crate::php::module::reactor;
 use crate::php::zval;
 use crate::reactor::{Op, Outcome};
@@ -75,15 +76,15 @@ fn core() -> &'static CoreRuntime {
 }
 
 fn register(w: Worker) -> u64 {
-    let mut n = NEXT.lock().unwrap();
+    let mut n = NEXT.lock_unpoisoned();
     let id = *n;
     *n += 1;
-    WORKERS.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, Arc::new(w));
+    WORKERS.lock_unpoisoned().get_or_insert_with(HashMap::new).insert(id, Arc::new(w));
     id
 }
 
 fn worker(id: u64) -> Option<Arc<Worker>> {
-    WORKERS.lock().unwrap().as_ref().and_then(|m| m.get(&id).cloned())
+    WORKERS.lock_unpoisoned().as_ref().and_then(|m| m.get(&id).cloned())
 }
 
 fn config(namespace: &str, task_queue: &str) -> anyhow::Result<WorkerConfig> {

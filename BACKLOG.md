@@ -389,20 +389,6 @@ comparison is the point.
 Each was read and confirmed; none was changed, because the change is larger than the finding or the
 right answer needs a decision. Filed so the reading is not lost.
 
-### A-OUTPUT-FIBERKEY `output.rs` keys per-fiber state by address with no destroy hook `main` `open — 2026-09-18`
-**What.** `SINKS` and `BOUND` (`crates/ignis/src/php/output.rs:31,40`) are keyed by
-`active_fiber as usize`. The `// SAFETY:` note argues a stale key "cannot collide, because a context
-is only reused once its entries are gone (`zif_capture_reset` at request end)" — which is a guarantee
-made by PHP code, not an invariant of the map. `superglobals.rs` has the same problem and solves it
-properly, with `zend_observer_fiber_destroy_register` (`:245`, `on_destroy` at `:203`).
-**Why it matters.** A fiber destroyed on a path that skips the reset (a fatal, an unwind) leaves its
-entry behind, and the next fiber allocated at the same address inherits a live response binding. That
-is the class V-72 and V-76 are about: one request's output in another's body.
-**Acceptance.** `output.rs` registers a destroy hook that drops the fiber's entries, as
-`superglobals.rs` does, and a test kills a fiber mid-capture and shows the next one at that address
-starting clean. Not a rename of the key: the address is fine once something removes it.
-**Constraints.** `main` (FFI, an observer registration).
-
 ### A-CLASSIC-FINISH `Ignis\Classic\finish()` stops the `listen()` worker loop `agent` `open — 2026-09-18`
 **What.** `finish()` throws `Finished`. `Runner::handle()` catches it, so `Classic\serve()` is fine —
 but the documented `listen()` shape, `while ($file = accept()) { include $file; respond(); }`
@@ -508,37 +494,6 @@ alive.
 **Acceptance.** For each: a caller, a feature gate, or deletion. (b) behind a `cfg(feature)` would
 also make the claim in its doc block true.
 
-### A-REACTOR-POISON A panic in the dispatcher poisons a mutex and every later op panics with it `main` `open — 2026-09-18`
-**What.** `reactor.rs:211,215,227,230,233` take `cancellable_tasks_by_op` with `.lock().unwrap()`
-inside spawned tasks. A panic anywhere in one of those critical sections poisons the mutex, and from
-then on every `Op::Sleep`, `Op::Watch` and `Op::CancelWatch` on that reactor panics on the lock —
-inside a tokio task, so the failure is a dead dispatcher rather than an error anyone sees.
-`watch.rs:90` and `:111` already do the right thing: `unwrap_or_else(|e| e.into_inner())`.
-**Why it matters.** The map holds abort handles, nothing whose invariants a panic could break, so
-poisoning protects nothing here and costs the whole reactor. Same shape at `http.rs:283,297` (per
-connection), `offload.rs:73-131`, `grpc.rs:155-222` and `route.rs:150,208` (per routed call).
-**Acceptance.** Every `.lock().unwrap()` on a map of handles becomes `into_inner()` on a poisoned
-lock, with one line saying why that is safe for this data; a test that panics inside a spawned task
-and then submits an op successfully.
-
-### A-ARGINFO Four PHP functions reflect somebody else's parameter names `main` `open — 2026-09-18`
-**What.** The arg-info tables in `module.rs:79-97` are keyed by **arity**, not by function
-(`ARGINFO_ONE`, `ARGINFO_GRPC2/3/4`, `ARGINFO_T2/T3`), so any function borrowing a table of the right
-size inherits another's parameter names and `required_num_args`. Concretely: `ignis_respond_chunk`
-reflects as `$id, $status` (should be `$id, $bytes`) with `required_num_args = 4` against
-`num_args = 2`; `ignis_offload_submit` as `$id, $code, $message` instead of `$fn, $args, $affinity`,
-required 3 although the third is optional (`ss|l`); `ignis_stream_bind` declares 3 args and requires
-4; `ignis_submit_sleep`, `ignis_cancel`, `ignis_grpc_recv`, `ignis_watch_files` and
-`ignis_publish_stats` all reflect their one parameter as `$value`.
-**Why it matters.** Named arguments do not work on those functions and `ReflectionFunction` lies
-about them — and a `required_num_args` above `num_args` is a contradiction the engine is being told.
-Nothing calls them by name today, which is why nobody noticed; the stubs are what every analyser
-reads and they disagree with the binary.
-**Acceptance.** One arg-info per function with its real names and required count, or a comment on
-each shared table naming every function allowed to use it and why the names fit. A test that
-reflects each `ignis_*` function and compares against `stubs/ignis.php` — `StubsMatchTheBinaryTest`
-is the place.
-
 ### A-PARK-ARITHMETIC Overflow before the clamp, and two syscall shims that answer wrongly `main` `open — 2026-09-18`
 **What.** (a) `module.rs:110` does `(ms.max(0) as u64) * 1000` with no clamp, so
 `ignis_submit_sleep(PHP_INT_MAX)` wraps into a short sleep. (b) `park.rs:531` computes
@@ -612,6 +567,9 @@ an investigation — is in [`BACKLOG-CLOSED.md`](BACKLOG-CLOSED.md).
 
 | item | outcome |
 |---|---|
+| **A-ARGINFO** | Four PHP functions reflect somebody else's parameter names `main` `DONE 2026-09-19 (V-94 addendum)` — one table per function, declared by an `arginfo!` macro; `bench/php/arginfo_names.php` reflects all 37 against the stubs and is in smoke |
+| **A-REACTOR-POISON** | A panic in the dispatcher poisons a mutex and every later op panics with it `main` `DONE 2026-09-19 (V-94)` — one `lock_unpoisoned()` in `crates/ignis/src/lock.rs`, 42 sites across eight files, with a test that poisons a real mutex and takes the data anyway |
+| **A-OUTPUT-FIBERKEY** | `output.rs` keys per-fiber state by address with no destroy hook `main` `DONE 2026-09-19 (V-94)` — keyed by `zend_fiber_context` now and dropped by a destroy observer registered at MINIT; probe `bench/php/output_abandoned_fiber.php` in smoke, 2000/2000 leaked before the fix and 0/2000 after |
 | **S0-RESPOND-START** | `ignis_respond_start` is registered twice and called by nobody `main` `DONE 2026-09-18 — removed as an intentional API change (V-92 addendum); php-api.md records it` |
 | **M3-1** | Symfony recipe in README `agent` `done (README, validated by main)` |
 | **M3-2** | Retire the Symfony worker wrapper `agent` `done (shim first, then deleted outright on 2026-09-17 — owner: no back-compat before the first stable release)` |

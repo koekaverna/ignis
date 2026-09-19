@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::lock::LockUnpoisoned;
 use notify::{Event, RecursiveMode, Watcher};
 
 /// Milliseconds of quiet before a change counts. One `composer install` writes for minutes; without
@@ -87,7 +88,7 @@ fn state() -> Option<&'static Mutex<State>> {
             }
             let Some(state) = STATE.get() else { return };
             let known = {
-                let state = state.lock().unwrap_or_else(|e| e.into_inner());
+                let state = state.lock_unpoisoned();
                 event.paths.iter().any(|p| state.files.contains(p))
             };
             if known {
@@ -108,7 +109,7 @@ fn state() -> Option<&'static Mutex<State>> {
 /// the number worth logging: the file count is the application's, the directory count is ours.
 pub fn watch(paths: &[String]) -> usize {
     let Some(state) = state() else { return 0 };
-    let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = state.lock_unpoisoned();
     let mut added = 0;
     for path in paths {
         let path = PathBuf::from(path);

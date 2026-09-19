@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use bytes::Bytes;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
+use crate::lock::LockUnpoisoned;
 use crate::reactor::{Outcome, Reactor};
 
 pub struct Job {
@@ -70,9 +71,9 @@ pub fn submit(caller: Arc<Reactor>, func: String, args: Bytes, affinity: Option<
     };
     let op = caller.reserve_op();
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    jobs().lock().unwrap().insert(id, (caller.clone(), op));
+    jobs().lock_unpoisoned().insert(id, (caller.clone(), op));
     if sender.send(Job { id, func, args }).is_err() {
-        jobs().lock().unwrap().remove(&id);
+        jobs().lock_unpoisoned().remove(&id);
         caller.complete(op, Outcome::Failed("offload worker gone".into()));
         return Err("worker gone");
     }
@@ -107,7 +108,7 @@ pub fn shutdown() {
 
 /// Worker thread: deliver the serialized result to the calling fiber.
 pub fn done(job_id: u64, result: Bytes) -> bool {
-    let Some((caller, op)) = jobs().lock().unwrap().remove(&job_id) else { return false };
+    let Some((caller, op)) = jobs().lock_unpoisoned().remove(&job_id) else { return false };
     if let Some(pool) = POOL.get() {
         pool.busy.fetch_sub(1, Ordering::Relaxed);
         pool.done.fetch_add(1, Ordering::Relaxed);
@@ -118,17 +119,17 @@ pub fn done(job_id: u64, result: Bytes) -> bool {
 
 /// Worker thread: ask the calling thread to run callback `cb` with `args`; blocks for the answer.
 pub fn callback(job_id: u64, cb: u64, args: Bytes) -> Result<Bytes, &'static str> {
-    let (caller, _) = jobs().lock().unwrap().get(&job_id).cloned().ok_or("unknown job")?;
+    let (caller, _) = jobs().lock_unpoisoned().get(&job_id).cloned().ok_or("unknown job")?;
     let (tx, rx) = bounded(1);
     let seq = NEXT.fetch_add(1, Ordering::Relaxed);
-    callbacks().lock().unwrap().insert((job_id, seq), PendingCallback { reply: tx });
+    callbacks().lock_unpoisoned().insert((job_id, seq), PendingCallback { reply: tx });
     caller.inject(Outcome::OffloadCallback { job: job_id, seq, cb, args });
     rx.recv().map_err(|_| "caller gone")
 }
 
 /// Calling thread: answer a callback request.
 pub fn callback_result(job_id: u64, seq: u64, result: Bytes) -> bool {
-    match callbacks().lock().unwrap().remove(&(job_id, seq)) {
+    match callbacks().lock_unpoisoned().remove(&(job_id, seq)) {
         Some(p) => p.reply.send(result).is_ok(),
         None => false,
     }

@@ -4828,3 +4828,91 @@ Failed asserting that 1 is identical to 0.
 ```
 
 PHP suite after: **315 tests / 740 assertions**, phpstan level 9 and php-cs-fixer clean.
+
+## V-94 — the two findings the audit ranked first, with the defect reproduced before the fix (CONFIRMED)
+
+Date: 2026-09-19T05:5xZ. Both were filed as `A-OUTPUT-FIBERKEY` and `A-REACTOR-POISON` and are the
+two the audit said would bite first.
+
+### 1. A fiber that died mid-binding kept its binding, and the next fiber at that address inherited it
+
+`output.rs` keyed `SINKS` and `BOUND` by the running fiber and nothing removed an entry when the fiber
+was destroyed. The `// SAFETY:` note argued a stale key could not collide "because a context is only
+reused once its entries are gone (`zif_capture_reset` at request end)" — a promise made by PHP code,
+not an invariant of the map, and the paths that skip it (a fatal, an unwound cancellation, a fiber
+simply abandoned) are the interesting ones. `superglobals.rs` has the identical problem and solves it
+with `zend_observer_fiber_destroy_register`.
+
+Two things had to change. The key was the `zend_fiber` **object** address while the destroy observer
+is handed the `zend_fiber_context` — different addresses, so a hook could not have found what to
+drop; `current()` returns the context now, as `superglobals.rs` does. And the observer is registered
+from MINIT unconditionally, not from inside the `IGNIS_NO_SUPERGLOBALS` branch.
+
+**Reproduced before it was fixed**, which took three attempts and the first two are worth recording
+because each passed against the defect:
+
+| probe | result against the unfixed build | why it did not discriminate |
+|---|---|---|
+| abandon a capturing fiber, then capture | leaked=0 | `capture_take` pops the top of the stack, so a stale buffer underneath never surfaces |
+| abandon a fiber holding a **binding**, then capture | leaked=0 | the live capture ran on the main stack, where the key is 0 — it could never land on a reused fiber address |
+| the same, with the live capture **in a fiber of its own** | **leaked=2000 of 2000** | that is the mechanism: the address is reused and the stale binding swallows the new fiber's output whole |
+
+After the fix: **0 of 2000, three runs.** `bench/php/output_abandoned_fiber.php`, now gated in
+`scripts/smoke.sh`. The bogus request id in the probe is deliberate: the reactor has never heard of
+it, so anything routed to the stale binding is dropped, which is what makes the theft visible without
+a server.
+
+### 2. A panic in one dispatcher task disabled every later reactor op
+
+`reactor.rs` took its cancellable-task map with `.lock().unwrap()` inside spawned tokio tasks, so a
+panic in one of those critical sections poisoned the mutex and every later `Op::Sleep`, `Op::Watch`
+and `Op::CancelWatch` panicked on the lock — inside a task, so a dispatcher that has silently stopped
+rather than an error anyone sees. `watch.rs` already handled it correctly at two sites and nothing
+else in the crate did.
+
+Forty-two sites across `reactor.rs` (16), `http.rs` (11), `offload.rs` (6), `grpc.rs` (4),
+`php/route.rs` (4), `php/park.rs` (3), `backend/temporal.rs` (3) and `watch.rs` (2, already correct).
+Fixed once rather than forty-two times: `crates/ignis/src/lock.rs` is a `lock_unpoisoned()` that takes
+the guard either way, with the module doc stating the condition under which that is sound — none of
+these maps carries an invariant spanning two entries — and saying that a mutex which does must not use
+it. Test: `lock::tests::a_poisoned_mutex_still_hands_over_its_data` poisons a real mutex from a
+panicking thread, asserts `lock()` is an error, and takes the data anyway.
+
+`backend/temporal.rs`'s three are behind the `temporal` feature, which needs `protoc` and cannot be
+built here; that leg is CI's `e9-temporal` job and nothing local.
+
+### Gate
+
+`cargo nextest`: **57** (55 before this batch, +2). Full gate and the compat suites below.
+
+### V-94 addendum — sixteen PHP functions reflected another function's parameter names
+
+`A-ARGINFO`. The arg-info tables in `module.rs` were keyed by **arity**: one `ARGINFO_ONE` whose
+parameter was called `$value`, shared by nine functions; `ARGINFO_GRPC3` borrowed by
+`ignis_offload_submit`; `ARGINFO_RESPOND` borrowed by `ignis_respond_chunk` and `ignis_stream_bind`.
+Three consequences, and the third is the one the engine was being lied to about:
+
+- named arguments took another function's names — `ignis_respond_chunk(id: …, bytes: …)` was a
+  fatal, `ignis_respond_chunk(id: …, status: …)` was not;
+- `ReflectionFunction` reported those names as fact;
+- a borrowed head carries the lender's `required_num_args`, so `ignis_stream_bind` declared three
+  parameters while telling Zend four were required, `ignis_respond_chunk` two against four, and
+  `ignis_offload_submit` marked an optional `$affinity` required.
+
+Every function has its own table now, declared by a one-line `arginfo!` macro next to the others and
+named after the function rather than its shape. That includes the feature-gated ones: `ARGINFO_T2`
+and `ARGINFO_T3`, whose parameters were literally `a`, `b`, `c`, are gone and the five temporal
+functions carry `url`/`namespace`/`taskQueue`, `worker`/`completionJson` and so on.
+
+Checked by reflection against the stubs, which is the only place the question can be asked — under
+plain php-cli the `ignis_*` names belong to the test fake:
+
+```
+arginfo_names checked=37 wrong=1 {"ignis_serve":{"binary":["address"],"stubs":["addr"]}}
+arginfo_names checked=37 wrong=0
+```
+
+The first line is the check finding my own mistake: I had named it `address` where the stub and the
+module doc both say `addr`. The binary moved, not the stub — renaming a public parameter is an API
+change and there was no reason for one. `bench/php/arginfo_names.php` also fails any function whose
+required count exceeds its declared count, and is gated in `scripts/smoke.sh`.

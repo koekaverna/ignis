@@ -6,6 +6,7 @@ mod backend;
 mod config;
 mod grpc;
 mod http;
+mod lock;
 mod metrics;
 mod offload;
 mod php;
