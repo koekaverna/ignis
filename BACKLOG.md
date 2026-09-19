@@ -552,7 +552,7 @@ them came to sit over code they do not describe.
 the real reason; `worker_arg` becomes an `unsafe fn`. The 14 copies are not a style problem to sweep —
 whatever is genuinely common goes in the module doc once, and each site keeps what is its own.
 
-### A-LEAKS-RUST Three thread-local and process-wide maps that only grow `main` `open — 2026-09-18`
+### A-LEAKS-RUST Three thread-local and process-wide maps that only grow `main` `PARTLY DONE 2026-09-19 — (b) and (c) landed and re-run by main; (a) temporal WORKERS still open; the bench arm the acceptance asks for does not exist`
 **What.** (a) `temporal.rs:41,81` — `WORKERS` never removes an entry; `zif_shutdown` (`:333`) calls
 `initiate_shutdown()` and leaves it, while the module doc says "for the process lifetime (or until
 shutdown)". (b) `offload.rs:44` — `JOBS` entries are removed only in `done()`, so a worker that dies
@@ -564,8 +564,23 @@ then blocks a worker on `rx.recv()` with no timeout. (c) The offload job queues 
 **Acceptance.** A dead worker's job fails its caller and releases the op; `WORKERS` drops what it
 shuts down; the reply wait has a timeout. Bench: kill an offload worker mid-job under
 `bench/e16-offload.sh` and show `ignis_inflight()` returning to zero.
+**Landed 2026-09-19, re-run by main (fmt, clippy `-D warnings`, 60/60 workspace, 8/8 offload).**
+(b) `JOBS` values became `RunningJob { caller, op, worker }`, stamped by `next()`; `worker_gone(i)`
+fails whatever worker `i` still held through the same `caller.complete(op, Outcome::Failed(..))`
+path a rejected submit already used, and `main.rs` calls it after the worker loop returns for any
+reason. `CALLBACKS` entries are now removed win or lose and the reply wait is bounded
+(`recv_timeout`, 30 s). (c) both queues are `bounded(4096)` with `try_send`, and a full queue is
+refused as a distinct reason rather than blocking the submitter. `submit()`'s error text changed
+from `"worker gone"` to `"offload worker gone"` / `"offload queue is full"`; checked, nothing
+matches on it.
+**Not done, and this is why the item is not closed.** (a) `temporal.rs`'s `WORKERS` is untouched —
+it is `crates/ignis/src/backend/`, main-only territory. And the acceptance's bench arm **was not
+built**: `bench/e16-offload.sh` has no way to crash an offload worker's PHP mid-job, so the only
+executable evidence is the unit test against the map. **The production wiring — `run_offload_worker`
+calling `worker_gone` — is therefore untested**, which is this project's own recurring defect shape
+(a gate that cannot fail) and must be named, not glossed. Closing this item needs that arm.
 
-### A-SWALLOWED-RUST Errors dropped where the drop changes behaviour `agent` `open — 2026-09-18`
+### A-SWALLOWED-RUST Errors dropped where the drop changes behaviour `agent` `PARTLY DONE 2026-09-19 — the three Rust sites landed and were re-run by main; the PHP site (dispatchUnawaited) is still in flight`
 **What.** `offload.rs:57` `let _ = POOL.set(…)` — a second `initialize(n)` is silently ignored, so
 `--offload N` after a pool exists keeps the old width and says nothing. `main.rs:319`
 `let _ = h.join()` — an offload thread that panicked is indistinguishable from one that exited

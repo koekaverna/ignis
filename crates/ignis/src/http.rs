@@ -246,7 +246,9 @@ async fn accept_loop(listener: TcpListener, registry: Arc<Registry>) {
                 continue;
             }
         };
-        let _ = stream.set_nodelay(true);
+        if let Err(error) = stream.set_nodelay(true) {
+            tracing::warn!(%error, "set_nodelay failed; this connection may see Nagle-related latency");
+        }
         let Ok(permit) = connection_permits.clone().try_acquire_owned() else {
             refuse_over_capacity(stream);
             continue;

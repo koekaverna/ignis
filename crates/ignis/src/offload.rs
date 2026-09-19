@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use bytes::Bytes;
-use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 
 use crate::lock::LockUnpoisoned;
 use crate::reactor::{Outcome, Reactor};
@@ -34,28 +35,52 @@ struct PendingCallback {
     reply: Sender<Bytes>,
 }
 
+/// The reactor that submitted a job, the op id to complete on it, and which worker (if any) is
+/// currently running it — `None` until `next()` hands the job to a worker.
+struct RunningJob {
+    caller: Arc<Reactor>,
+    op: u64,
+    worker: Option<usize>,
+}
+
 static POOL: OnceLock<Pool> = OnceLock::new();
 static NEXT: AtomicU64 = AtomicU64::new(1);
 /// (job id, callback seq) → worker waiting for the caller's answer.
 static CALLBACKS: OnceLock<Mutex<HashMap<(u64, u64), PendingCallback>>> = OnceLock::new();
-/// The reactor that submitted a job, and the op id to complete on it.
-type JobCaller = (Arc<Reactor>, u64);
 
-/// Jobs in flight, by id (for `done` to find the caller).
-static JOBS: OnceLock<Mutex<HashMap<u64, JobCaller>>> = OnceLock::new();
+/// Jobs in flight, by id (for `done` to find the caller, and for `worker_gone` to find what a dead
+/// worker was holding).
+static JOBS: OnceLock<Mutex<HashMap<u64, RunningJob>>> = OnceLock::new();
+
+/// Depth of each offload queue (shared and per-worker pinned). Headroom over the heaviest measured
+/// burst (E16's 100-worker arm submits 100 concurrent jobs), not a tuned ceiling.
+/// ponytail: revisit with a real number if `submit` ever refuses "queue is full" in practice.
+const QUEUE_CAPACITY: usize = 4096;
+
+/// How long a worker waits for the calling thread to answer a callback before giving up. The
+/// calling thread can die (fatal, drained shutdown) between `inject` and its answer; unbounded
+/// meant the worker — and the job it is running — blocked forever.
+const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn callbacks() -> &'static Mutex<HashMap<(u64, u64), PendingCallback>> {
     CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
-fn jobs() -> &'static Mutex<HashMap<u64, JobCaller>> {
+fn jobs() -> &'static Mutex<HashMap<u64, RunningJob>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Create the pool with `n` worker slots (threads are started by main.rs).
+///
+/// A second call is a configuration mistake, not a reason to start a second pool: the existing one
+/// keeps serving with its original width, and this says so rather than pretending `n` took effect.
 pub fn initialize(n: usize) {
-    let (shared_tx, shared_rx) = unbounded();
-    let pinned = (0..n).map(|_| unbounded()).collect();
-    let _ = POOL.set(Pool { shared_tx, shared_rx, pinned, busy: AtomicUsize::new(0), done: AtomicU64::new(0) });
+    let (shared_tx, shared_rx) = bounded(QUEUE_CAPACITY);
+    let pinned = (0..n).map(|_| bounded(QUEUE_CAPACITY)).collect();
+    let pool = Pool { shared_tx, shared_rx, pinned, busy: AtomicUsize::new(0), done: AtomicU64::new(0) };
+    if POOL.set(pool).is_err() {
+        let existing_width = POOL.get().map_or(0, |pool| pool.pinned.len());
+        tracing::warn!(requested = n, existing_width, "offload pool already initialized; --offload N ignored");
+    }
 }
 
 /// Calling thread: submit a job; the returned op id completes with `Outcome::Blob(result)`.
@@ -71,11 +96,15 @@ pub fn submit(caller: Arc<Reactor>, func: String, args: Bytes, affinity: Option<
     };
     let op = caller.reserve_op();
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    jobs().lock_unpoisoned().insert(id, (caller.clone(), op));
-    if sender.send(Job { id, func, args }).is_err() {
+    jobs().lock_unpoisoned().insert(id, RunningJob { caller: caller.clone(), op, worker: None });
+    if let Err(error) = sender.try_send(Job { id, func, args }) {
         jobs().lock_unpoisoned().remove(&id);
-        caller.complete(op, Outcome::Failed("offload worker gone".into()));
-        return Err("worker gone");
+        let reason = match error {
+            TrySendError::Full(_) => "offload queue is full",
+            TrySendError::Disconnected(_) => "offload worker gone",
+        };
+        caller.complete(op, Outcome::Failed(reason.into()));
+        return Err(reason);
     }
     Ok(op)
 }
@@ -91,6 +120,9 @@ pub fn next(worker: usize) -> Option<Job> {
     };
     if job.id == 0 {
         return None;
+    }
+    if let Some(running) = jobs().lock_unpoisoned().get_mut(&job.id) {
+        running.worker = Some(worker);
     }
     pool.busy.fetch_add(1, Ordering::Relaxed);
     Some(job)
@@ -108,23 +140,49 @@ pub fn shutdown() {
 
 /// Worker thread: deliver the serialized result to the calling fiber.
 pub fn done(job_id: u64, result: Bytes) -> bool {
-    let Some((caller, op)) = jobs().lock_unpoisoned().remove(&job_id) else { return false };
+    let Some(running) = jobs().lock_unpoisoned().remove(&job_id) else { return false };
     if let Some(pool) = POOL.get() {
         pool.busy.fetch_sub(1, Ordering::Relaxed);
         pool.done.fetch_add(1, Ordering::Relaxed);
     }
-    caller.complete(op, Outcome::Blob(Some(result)));
+    running.caller.complete(running.op, Outcome::Blob(Some(result)));
     true
+}
+
+/// A worker's thread has ended while `JOBS` still shows it running one — a PHP fatal unwound the
+/// whole worker loop before its own `try`/`catch` (`WorkerRuntime::run`) or `done()` ever ran. Fails
+/// the job's caller the same way a rejected `submit` already does, and releases the op `poll()`
+/// would otherwise wait on forever. A no-op if the worker held nothing (the ordinary case: it left
+/// the loop only after its last job was already `done()`).
+///
+/// Returns how many jobs were failed — 0 or 1, since a worker runs one job at a time.
+pub fn worker_gone(worker: usize) -> usize {
+    let stuck: Vec<u64> =
+        jobs().lock_unpoisoned().iter().filter(|(_, running)| running.worker == Some(worker)).map(|(&id, _)| id).collect();
+    for id in &stuck {
+        if let Some(running) = jobs().lock_unpoisoned().remove(id) {
+            running.caller.complete(running.op, Outcome::Failed("offload worker gone".into()));
+        }
+    }
+    stuck.len()
 }
 
 /// Worker thread: ask the calling thread to run callback `cb` with `args`; blocks for the answer.
 pub fn callback(job_id: u64, cb: u64, args: Bytes) -> Result<Bytes, &'static str> {
-    let (caller, _) = jobs().lock_unpoisoned().get(&job_id).cloned().ok_or("unknown job")?;
+    callback_with_timeout(job_id, cb, args, CALLBACK_TIMEOUT)
+}
+
+/// `callback`'s real work, with the wait bounded by `timeout` instead of the production constant —
+/// a test gets to exercise the timeout without waiting out the real one.
+fn callback_with_timeout(job_id: u64, cb: u64, args: Bytes, timeout: Duration) -> Result<Bytes, &'static str> {
+    let caller = jobs().lock_unpoisoned().get(&job_id).map(|running| running.caller.clone()).ok_or("unknown job")?;
     let (tx, rx) = bounded(1);
     let seq = NEXT.fetch_add(1, Ordering::Relaxed);
     callbacks().lock_unpoisoned().insert((job_id, seq), PendingCallback { reply: tx });
     caller.inject(Outcome::OffloadCallback { job: job_id, seq, cb, args });
-    rx.recv().map_err(|_| "caller gone")
+    let result = rx.recv_timeout(timeout);
+    callbacks().lock_unpoisoned().remove(&(job_id, seq));
+    result.map_err(|_| "caller gone")
 }
 
 /// Calling thread: answer a callback request.
@@ -211,5 +269,67 @@ mod tests {
         assert!(!done(404, Bytes::new()));
         assert!(!callback_result(404, 1, Bytes::new()));
         assert!(next(7).is_none(), "there is no worker 7");
+    }
+
+    /// A-LEAKS-RUST (b): a worker that dies mid-job (a PHP fatal unwinding the whole worker loop)
+    /// must not leave its job's caller waiting forever with `Reactor::inflight` stuck raised.
+    #[test]
+    fn a_worker_that_dies_mid_job_fails_its_caller_and_releases_the_op() {
+        initialize(1);
+        let (_runtime, reactor) = caller();
+
+        let op = submit(reactor.clone(), "slow".into(), Bytes::new(), None).unwrap();
+        let job = next(0).expect("the queued job");
+
+        assert_eq!(worker_gone(0), 1, "the worker was holding exactly the job it died with");
+        assert!(!done(job.id, Bytes::new()), "the job was already resolved as failed, not merely abandoned");
+        assert_eq!(worker_gone(0), 0, "a worker holding nothing fails nothing");
+
+        let completions = reactor.poll(Some(Duration::from_secs(2)));
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].id, op);
+        let Outcome::Failed(reason) = &completions[0].outcome else { panic!("{:?}", completions[0].outcome) };
+        assert_eq!(reason.as_str(), "offload worker gone");
+        assert_eq!(reactor.inflight(), 0, "the reserved op was released, not left permanently raised");
+    }
+
+    /// A-LEAKS-RUST (c): a full queue is refused explicitly, through the same reserve-then-release
+    /// path a disconnected worker already used, rather than blocking the submitting thread.
+    #[test]
+    fn a_full_queue_is_refused_explicitly_and_releases_the_op() {
+        initialize(1);
+        let (_runtime, reactor) = caller();
+        for _ in 0..QUEUE_CAPACITY {
+            submit(reactor.clone(), "f".into(), Bytes::new(), None).unwrap();
+        }
+
+        assert_eq!(submit(reactor.clone(), "f".into(), Bytes::new(), None), Err("offload queue is full"));
+
+        let completions = reactor.poll(Some(Duration::from_secs(2)));
+        assert_eq!(completions.len(), 1, "only the refusal completed; the accepted jobs are still queued");
+        let Outcome::Failed(reason) = &completions[0].outcome else { panic!("{:?}", completions[0].outcome) };
+        assert_eq!(reason.as_str(), "offload queue is full", "distinct from a disconnected worker");
+        assert_eq!(reactor.inflight(), QUEUE_CAPACITY as u64, "the accepted jobs' ops are still reserved");
+    }
+
+    /// A-LEAKS-RUST (b): `CALLBACKS` leaks the same way `JOBS` does when the calling thread dies
+    /// before answering; the worker must not block on `rx.recv()` forever.
+    #[test]
+    fn a_callback_the_caller_never_answers_times_out_and_is_cleaned_up() {
+        initialize(1);
+        let (_runtime, reactor) = caller();
+        let op = submit(reactor.clone(), "f".into(), Bytes::new(), None).unwrap();
+        let job = next(0).expect("the queued job");
+
+        let answer = callback_with_timeout(job.id, 1, Bytes::new(), Duration::from_millis(50));
+        assert_eq!(answer, Err("caller gone"));
+        assert!(callbacks().lock_unpoisoned().is_empty(), "a timed-out callback does not linger in CALLBACKS");
+
+        assert!(done(job.id, Bytes::new()), "the job itself is unaffected by its own callback timing out");
+
+        let completions = reactor.poll(Some(Duration::from_secs(2)));
+        assert_eq!(completions.len(), 2, "the injected callback request, and the job's own result");
+        assert!(completions.iter().any(|c| matches!(c.outcome, Outcome::OffloadCallback { .. })));
+        assert!(completions.iter().any(|c| c.id == op && matches!(c.outcome, Outcome::Blob(_))));
     }
 }

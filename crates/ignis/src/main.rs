@@ -301,29 +301,50 @@ fn spawn_offload_workers(offload: usize) -> Vec<std::thread::JoinHandle<()>> {
         .map(|i| {
             std::thread::Builder::new()
                 .name(format!("ignis-offload-{i}"))
-                .spawn(move || {
-                    php::module::OFFLOAD_WORKER.with(|c| c.set(Some(i)));
-                    let mut w = match php::embed::WorkerThread::attach() {
-                        Ok(w) => w,
-                        Err(e) => {
-                            eprintln!("offload thread {i}: {e:#}");
-                            return;
-                        }
-                    };
-                    if let Err(e) = w.eval(include_str!("../../../php/packages/offload/src/worker.php"), "ignis-offload-worker") {
-                        eprintln!("offload thread {i}: {e:#}");
-                    }
-                })
+                .spawn(move || run_offload_worker(i))
                 .expect("spawn offload thread")
         })
         .collect()
 }
 
+/// One offload worker's whole life: attach, run the worker loop until it ends (normally at the
+/// shutdown poison, or early on a PHP fatal), then release whatever job `JOBS` still shows it
+/// holding (A-LEAKS-RUST) — the ordinary case is that it holds nothing, because a job is only ever
+/// left running here by a fatal that unwound the loop before `WorkerRuntime::run`'s own `try`/`catch`
+/// and `done()` could.
+fn run_offload_worker(index: usize) {
+    php::module::OFFLOAD_WORKER.with(|c| c.set(Some(index)));
+    match php::embed::WorkerThread::attach() {
+        Ok(mut worker) => {
+            if let Err(e) = worker.eval(include_str!("../../../php/packages/offload/src/worker.php"), "ignis-offload-worker") {
+                eprintln!("offload thread {index}: {e:#}");
+            }
+        }
+        Err(e) => eprintln!("offload thread {index}: {e:#}"),
+    }
+    offload::worker_gone(index);
+}
+
 /// E16: the offload workers leave their PHP requests before the engine shuts down.
 fn stop_offload_workers(handles: Vec<std::thread::JoinHandle<()>>) {
     offload::shutdown();
-    for h in handles {
-        let _ = h.join();
+    for (worker, handle) in handles.into_iter().enumerate() {
+        if let Err(panic) = handle.join() {
+            tracing::warn!(worker, panic = %offload_thread_panic_message(&panic), "offload thread panicked");
+        }
+    }
+}
+
+/// The payload `std::thread::JoinHandle::join` hands back on a panic is `Box<dyn Any>`; a panic
+/// raised with `panic!("{}", ..)` or a bare string literal is the only shape worth naming, so
+/// anything else says so rather than pretending to describe it.
+fn offload_thread_panic_message(panic: &(dyn std::any::Any + Send + 'static)) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        message.to_string()
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_string()
     }
 }
 
