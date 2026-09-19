@@ -545,7 +545,7 @@ and `Ignis\Loop` (V-93) could not have been caught by a unit test because there 
 `$watchOf`) get a suite that runs with the fake reactor, or the exclusion is documented in
 `phpunit.xml` with what it costs — and `R-REVOLT-FLAKE` is the reason to prefer the first.
 
-### A-BACKEND-B-CI Nothing anywhere builds backend (b) `main` `open — 2026-09-18`
+### A-BACKEND-B-CI Nothing anywhere builds backend (b) `main` `open — 2026-09-18; a second instance of the same shape found 2026-09-19, see below`
 **What.** `crates/ignis/src/backend/async_core.rs` is behind `cfg(php_async_abi)`, which needs the
 true-async engine (`scripts/build-php-async.sh`). No CI job builds it and this box has no such engine,
 which is why it sat with a two-arm `match` against a nine-variant enum until V-91. The tripwire now in
@@ -569,7 +569,7 @@ substance, and it buys no behaviour. Doing it *with* a correctness change hides 
 step. Signature-level names (`zif_*(ex, rv)`) come last and may be argued for as the Zend vocabulary,
 the way Swoole's `cid` is — but then that argument goes in DECISIONS.md.
 
-### A-RUST-DEAD Three pieces of machinery kept alive by an empty default `main` `open — 2026-09-18`
+### A-RUST-DEAD Three pieces of machinery kept alive by an empty default `main` `DONE 2026-09-19 — one was dead and is deleted; the other two were reachable and the item's premise was wrong about them`
 **What.** (a) `route.rs:45` `const DEFAULT_FUNCTIONS: &str = ""` means the loop at `:82-92` never
 runs, so `trampoline`, `call_original`, `frame_name` and `ORIG_FN` — about 80 lines — are unreachable
 unless `IGNIS_OFFLOAD_FUNCTIONS` is set by hand. (b) `locklib.rs` is 202 lines of the H36 test harness
@@ -579,6 +579,25 @@ build has no trace of them", which is true of the function table and not of the 
 alive.
 **Acceptance.** For each: a caller, a feature gate, or deletion. (b) behind a `cfg(feature)` would
 also make the claim in its doc block true.
+**Done 2026-09-19, and two thirds of this item were wrong.** Checked each against the tree rather
+than against the entry.
+**(a) is not dead: it has a caller, and that caller is documented.** `DEFAULT_FUNCTIONS` is empty,
+but `install()` reads `IGNIS_OFFLOAD_FUNCTIONS` first, and that variable is a documented escape
+hatch — ADR-0016 §66, `docs/reference/php-api.md:184`, `DECISIONS.md:178`, and the V-59 addendum
+that made the default empty all describe it. `trampoline`/`call_original`/`frame_name`/`ORIG_FN` are
+reached through it. Nothing changed; the acceptance's "a caller" is satisfied. What is true and
+worth keeping separate: **nothing exercises that path**, so those ~80 lines can rot the way backend
+(b) did — that is `A-RUST-TESTS`'s shape, not this item's.
+**(b) is not dead either, and a feature gate would have made things worse.** `locklib` is
+registered only when `IGNIS_LOCKLIB` names the shared object (`superglobals.rs:246`) and
+`bench/e18-deadlock.sh` is its caller. A `cfg(feature)` would make the doc block's claim true and
+would also mean that bench needed a special build to run — and it is in **no gate today**
+(`smoke.sh`, `gate.sh` and `ci.yml` were all checked), so gating it would turn an unrun bench into
+an unrunnable one. Declined with the reason; the doc block was corrected instead, because what it
+claimed ("a normal build has no trace of them") is true of the function table and false of the
+binary, and the two are not the same claim.
+**(c) was genuinely dead and is gone.** `_unused(_: c_int)` existed to keep `c_int` imported, and
+`c_int` was imported only for `_unused` — a closed loop referenced by nothing. Both deleted.
 
 ### A-PARK-ARITHMETIC Overflow before the clamp, and two syscall shims that answer wrongly `main` `open — 2026-09-18`
 **What.** (a) `module.rs:110` does `(ms.max(0) as u64) * 1000` with no clamp, so
@@ -592,7 +611,7 @@ parks the fiber for the life of the process, and that ceiling carries no `ponyta
 functions and `park.rs` has no tests at all today — see A-RUST-TESTS); `sleep` returns the remainder;
 `flock` either takes a deadline or says in a `ponytail:` line that it does not and why.
 
-### A-UNSAFE-CONTRACTS Four `// SAFETY:` notes that do not justify their code `main` `open — 2026-09-18`
+### A-UNSAFE-CONTRACTS Four `// SAFETY:` notes that do not justify their code `main` `PARTLY DONE 2026-09-19 — locklib and worker_arg fixed; the two park.rs sites remain, and they land with the park bundle`
 **What.** The four-line paragraph "Nothing here dereferences the caller's buffer — it is handed
 straight back to the kernel" appears verbatim 14× in `park.rs` and is **false** at two of them:
 `ignis_park_select` (`:604`) does `std::ptr::read`, `FD_ISSET` and `ptr::write` on the caller's fd
@@ -607,6 +626,15 @@ them came to sit over code they do not describe.
 **Acceptance.** The two `park.rs` sites get notes about what they actually touch; `locklib`'s states
 the real reason; `worker_arg` becomes an `unsafe fn`. The 14 copies are not a style problem to sweep —
 whatever is genuinely common goes in the module doc once, and each site keeps what is its own.
+**Two of four done 2026-09-19.** `locklib::install` now states the real reason it is sound: `fns` is
+a stack copy that does **not** need to outlive the call, because `zend_register_functions` copies
+each entry before returning — what must be `'static` is what the entries point at, every `fname`
+and arginfo being a literal. `worker_arg` (`backend/temporal.rs`) became an `unsafe fn` with a
+`# Safety` block, and its six call sites were wrapped; it was a safe function whose comment
+asserted a caller contract its signature did not require, so any caller could hand it a null.
+**Remaining: the two `park.rs` sites** — `ignis_park_select` (`:604`) and `ignis_park_ppoll`
+(`:578`), both carrying the copied "nothing here dereferences the caller's buffer" paragraph while
+doing exactly that.
 
 ### A-LEAKS-RUST Three thread-local and process-wide maps that only grow `main` `PARTLY DONE 2026-09-19 — (b) and (c) landed and re-run by main; (a) temporal WORKERS still open; the bench arm the acceptance asks for does not exist`
 **What.** (a) `temporal.rs:41,81` — `WORKERS` never removes an entry; `zif_shutdown` (`:333`) calls

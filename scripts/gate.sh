@@ -35,6 +35,22 @@ step "the off build compiles"; cargo check --workspace --no-default-features --l
 step "deny";                   cargo deny check
 step "nextest";                cargo nextest run --workspace
 
+# CI's `temporal` job runs clippy and nextest with --all-features and builds with --features
+# temporal. None of the steps above compile `crates/ignis/src/backend/temporal.rs` at all: it is
+# behind `cfg(feature = "temporal")`, and `cargo fmt` is the only thing here that even parses it.
+# Proved the hard way on 2026-09-19 — a syntax error introduced in that file left clippy and all
+# 60 tests green. The feature needs protoc (its sdk-core protos are built by a build script) and
+# only CI's image has it, so this gate names the gap instead of pretending to cover it.
+step "every feature (the temporal job)"
+if command -v protoc >/dev/null; then
+  cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+  cargo nextest run --workspace --all-features
+else
+  echo "NOT COVERED HERE: protoc is absent, so --all-features cannot build on this box."
+  echo "  CI job 'temporal' covers it (.github/workflows/ci.yml). cargo fmt above parsed the file;"
+  echo "  a TYPE error in feature-gated code would still reach CI from here. Install protoc to close it."
+fi
+
 step "php half (in the builder image, as CI runs it)"
 command -v docker >/dev/null || { echo "docker is required for the php half" >&2; exit 1; }
 docker run --rm -v "$PWD":/w -w /w -e COMPOSER_ALLOW_SUPERUSER=1 "$IMAGE" bash -euc '

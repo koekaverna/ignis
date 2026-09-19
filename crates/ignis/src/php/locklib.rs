@@ -7,7 +7,10 @@
 //! their blocking paths, which is why the shim `bench/e18/locklib.c` exists. This build has no
 //! `ext/ffi` and PHP hands out no raw file descriptors, so three internal functions bridge the
 //! gap. They are registered **only** when `IGNIS_LOCKLIB` names the shared object, so a normal
-//! build has no trace of them:
+//! build's **function table** has no trace of them — the code itself is in every binary, which is
+//! not the same claim and used to be written as if it were. A `cfg(feature)` would make the
+//! stronger claim true and would also mean `bench/e18-deadlock.sh` needed a special build to run
+//! at all; it is in no gate today as it is, so that trade was declined (BACKLOG A-RUST-DEAD):
 //!
 //! - `ignis_locklib_pipe(): array` — a fresh empty pipe, `[read fd, write fd]`.
 //! - `ignis_locklib_write(int $fd, string $data): int` — write from the PHP thread.
@@ -187,8 +190,11 @@ pub unsafe fn install() {
     if std::env::var_os("IGNIS_LOCKLIB").is_none() {
         return;
     }
-    // SAFETY: MINIT; a null scope and function table mean "the global one", and the entries live
-    // for the process lifetime. MODULE_PERSISTENT because the module is built into the binary.
+    // SAFETY: MINIT; a null scope and function table mean "the global one". `fns` is a stack copy
+    // and does not need to outlive this call: zend_register_functions copies each entry into the
+    // function table before it returns. What must outlive the call is what the entries point at —
+    // every `fname` and arginfo here is a `'static` literal. MODULE_PERSISTENT because the module
+    // is built into the binary, so the registration must survive request shutdown.
     let rc = unsafe {
         let mut fns = FUNCTIONS.0;
         fns[4].fname = std::ptr::null(); // Zend's end marker
