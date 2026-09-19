@@ -158,6 +158,16 @@ Bench: a handler that creates cycles; compare p99 and RSS with `IGNIS_LOOP_GC=1`
 `wrk -c 64`, 3 reps each.
 **Acceptance.** `bench/m4-loop-gc.sh` prints both arms; the orchestrator re-runs; a V-n either way
 (a null result is a result).
+**Publish what was collected, not only that it ran (found 2026-09-19).** `Loop::collectGarbage()`
+(`Loop.php:386`) discards `gc_collect_cycles()`'s return value and counts `$gcRuns` alone, so there
+is today no signal for whether the loop-scheduled collection collects anything — which is half of
+what this item is supposed to measure. Counting the collected nodes is a one-line change and the
+bench needs it. Related, and prospective rather than current: php-async CHANGELOG #234 is a
+threshold that never came back down because a collection on a service coroutine reported **0
+collected nodes** to the caller that triggered it. We call `gc_collect_cycles()` inline, so PHP's
+own accounting still sees the true count and the trap is not ours — it becomes ours the day
+`A-DESTRUCTOR-IO` moves collection onto a service fiber, which is why that item now carries this
+soak as acceptance.
 
 ---
 
@@ -797,6 +807,14 @@ per-resource: php-async CHANGELOG #200, verified verbatim — a `PDOStatement` o
 returned it to the pool "while the coroutine binding still owned it and returned it a second time —
 the pool destroyed the same connection twice", fixed so that "every release path detaches the owning
 binding first". The lesson is the shape of the fix, not its scope.
+**And we are already one enforcement short of it, checked 2026-09-19.** `PooledConnection` has the
+idempotence — `$returned` with a doc block naming exactly the case ("a caller may return the lease
+early, and the destructor still runs afterwards") — so we arrived at #200's fix independently. But
+ours guards the **wrapper** and theirs guards the **binding**: our safety holds only while exactly
+one `PooledConnection` exists per `DriverConnection`, and `ConnectionPool::release()` is public, so
+nothing enforces that. A service holding the raw connection and releasing it is `S-DBAL-DIRECT`'s
+shape reaching the pool. #200 is therefore evidence **for** this mechanism, not merely prior art
+beside it.
 **Acceptance.** V-96's capture cases caught 6/6 **including the array-write and setter forms the
 static rule misses**; `S-DBAL-DIRECT`, `S-EXCLUSIVE` and `S-RESET-ARRAYPOOL` detected by this
 mechanism with no code of their own; per-property-write overhead measured, target within the
@@ -805,6 +823,13 @@ observer's 100 ns.
 state, which is offload's.
 **Constraints.** `main` lane, FFI territory. Blocked by `R-TA-CONTEXT` question (1): if per-scope
 storage can sit on `internal_context`, backend (b) gets this for free and the design changes.
+**Reentrancy, checked 2026-09-19 and currently free.** Upstream's
+`zend_coroutine_switch_handlers_vector_t` carries an `in_execution` flag; our two switch handlers
+(`superglobals.rs:180`, `park.rs:143`) have no such guard and do not need one today, because one
+swaps zvals and the other sets a thread-local and neither can itself cause a switch. A taint check
+on every property write is the first thing that puts real work on that path, so this item inherits
+the guard as a requirement, not as an optimisation — and it is cheaper to design in than to
+retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
