@@ -872,3 +872,26 @@ the acceptance directed — no log — and now names who depends on the silence:
 `kind => 'error'`, matching none of the three dispatched tags, with nobody left to tell because the
 caller already dropped the handle. Pinned by
 `LoopTest::testAnUnawaitedCompletionMatchingNoneOfTheThreeTagsIsSilentlyDropped`.
+
+## Merged duplicates, 2026-09-19 (reconciliation against the code)
+
+### S1-CAP Cap concurrent connections at the listener (M4-3/B8) `main` `MERGED into M4-3 on 2026-09-19 — the same defect filed twice; this id is kept only so links to it resolve`
+**What.** ADR-0025. Nothing bounds accepted connections, and V-37 measured ~33 kB per held one, so
+RSS is unbounded under load — the half of B1's acceptance a fiber budget cannot reach.
+**Acceptance.** `limits.max_connections` enforced at accept; over the cap the listener stops
+accepting rather than queueing unboundedly; RSS at 2× the cap is flat. Lands with S3-LIMITS.
+
+### S4-ANSWER-MAP One `HashMap<u64, Answer>` instead of three `main` `MERGED into R-ANSWER-MAP on 2026-09-19 — its own text already said "Already filed as R-ANSWER-MAP"; this id is kept only so links resolve`
+Already filed as R-ANSWER-MAP. Owner included it in this cycle. Lands with S2-STREAM-CANCEL and the
+lock-free `Registry::pick`, and needs E4/E10/E11 re-measured on a quiet box before it is called done.
+**Done:** the map. `enum Answer { Whole | Streaming | Grpc }` behind one `answers: Mutex<HashMap<u64,
+Answer>>`, with `take_answer(id, expected)` checking the variant *before* removing — the first cut of
+this change reintroduced V-75's bug class by removing without checking, and the new test caught it.
+`cancel_request`, `fail_pending` and `pending_requests` are one map each now instead of three, which
+is what made `pending_requests` correct by construction.
+**Not done, deliberately:** the lock-free `Registry::pick`. `pending_requests()` is still
+`answers.lock().len()`, so `pick` holds `reactors.lock()` and takes one more lock per candidate —
+down from three, not to zero. The remaining change is an `AtomicUsize` bumped on deliver and dropped
+on answer. It is a hot-path performance claim, and this box measures +/-6.7 % run to run on hello
+throughput (V-82), so its effect is under the instrument. Landing it here would be exactly the
+unmeasured optimisation the cycle's own rule forbids. **Needs a quiet box and E4/E10 before/after.**
