@@ -9,7 +9,7 @@ owner's question of 2026-09-16 ("will we see in the logs if someone is holding?"
 Until 2026-09-16 the process printed nothing below `error`: a worker could die and respawn with the
 operator seeing nothing (JOURNAL 17:05Z). Raising the floor to `warn` broke every phpt test until
 the harness set its own level (fibers main 108 → 72, V-38 method note). Health is answered by the
-runtime (`/_ignis/health`, V-38); pg lease age is visible and logged (V-44); a stalled thread is
+runtime (`/_ignis/health`, V-38); pg lease age was visible and logged (V-44) until the pool it measured was deleted (V-87), and nothing has replaced it; a stalled thread is
 counted by the watchdog after 1 s (V-17) — and the clock it uses started at the wrong end until
 V-38 fixed it. Nothing else is observable without reading `/stats` from an example script.
 
@@ -26,7 +26,7 @@ V-38 fixed it. Nothing else is observable without reading `/stats` from an examp
 | Default log floor `warn`; `RUST_LOG` overrides; the phpt harness sets `error` for itself | **built** (V-38) |
 | A worker respawn, a stalled thread and a clean `exit()` are distinguishable in the log | **built** (H-10: exit → debug, fatal → warn with status) |
 | Health answered by the runtime, never by PHP: 200 while a worker is alive and not stalled, 503 otherwise | **built** (V-38) |
-| Hold-time on every lease: gauge while held, warn line at release past a threshold | **built for pg** (V-44); offload jobs, stream waits, gRPC calls — **unbuilt** (BACKLOG M4-6 inventories them) |
+| Hold-time on every lease: gauge while held, warn line at release past a threshold | **unbuilt** — it was built for the runtime PostgreSQL pool (V-44) and deleted with it on 2026-09-18 (ADR-0015 closed, V-87); the lease that exists today is the userland Doctrine pool's, which the runtime cannot see unless PHP publishes it (`S-POOL-LEASE-AGE`). Offload jobs, stream waits, gRPC calls — also unbuilt. All of them inventoried with citations in research 42, which proposes five metrics closing 11 of 12 rows |
 | Every park is a span: fd, library, PHP function, duration | **unbuilt** — `IGNIS_PARK_TRACE=1` prints a line per decision (V-45), not a span |
 | Loop lag per thread as a first-class metric (time between `poll` returning with work and the next `poll`) | **unbuilt** — only the 1 s stall counter exists (V-17); the V-38 clock fix is its foundation |
 | `ignis dump`: fibers with traces, ops in flight, leases, the admission queue | **unbuilt** |

@@ -85,6 +85,11 @@ unless exempted by hand.
 `/stats` had; `bench/e11-cancel.sh`, `bench/e12-isolation.sh`, `bench/a3-soak.sh`, `bench/b1-budget.sh`
 read from the new path and still pass.
 **Constraints.** `main`: touches `module.rs` and `http.rs`.
+**One requirement research 42 adds beyond this item's own text.** A *package* must be able to
+contribute fields to the published stats — not only the runtime and `Loop`. `S-POOL-LEASE-AGE`'s
+fix is a Doctrine-pool number that lives entirely in PHP, and its predecessor M4-1 could be a
+Rust-side change only because the pool was Rust's. Without a contribution path, every future
+package-owned gauge repeats the hand-built `/stats` this item exists to delete.
 
 ---
 
@@ -127,13 +132,25 @@ opcache. `SIGTERM`: drain then exit.
 non-2xx, **0** socket errors, `restarts` in `/_ignis/health` increments by `threads` each time.
 **Constraints.** `main` (`main.rs`, `http.rs`). Agent writes `bench/m4-reload.sh` first.
 
-### M4-6 Held-resource logging audit `agent` `open`
+### M4-6 Held-resource logging audit `agent` `DONE 2026-09-19 — docs/research/42-observability.md, re-run by main (metric count and the discarded age both re-measured)`
 **What.** After M4-1: an inventory `docs/research/42-observability.md` of every wait a fiber can
 be in (stream read/write/connect, sleep, pg lease, offload job, watch, gRPC call, Temporal
 activation) and, for each, whether its age is visible in `/_ignis/stats`, in a log line, in both,
 or in neither. Propose the minimal set to close the "neither" rows.
 **Acceptance.** Table complete against `grep -n "Op::" crates/ignis/src/reactor.rs`; every "neither"
 row has a proposed metric name.
+**Result.** 13 rows, **zero** of them visible in both channels and zero visible in a log line alone;
+12 genuine "neither". Five proposed metrics close 11 of the 12 — `ignis_op_oldest_age_seconds`
+alone covers rows 1-7, because every one of those waits, universal park included, bottoms out in
+the same `Op::Sleep`/`Op::Watch` id space. Row 9 is deliberately left open: it is self-bounded by
+`PoolTimeoutException`.
+**Two claims main re-measured before accepting.** `/_ignis/metrics` serves **19** metric families,
+not V-55's 22 — the three that went are the deleted pool's (V-87), so this is drift in the citation,
+not a regression; `docs/operate.md` and ADR-0022 corrected, and V-55, JOURNAL and the closed-index
+row left alone because they record what was true when written. And the one age this system already
+computes is thrown away: `module.rs:268` calculates a disconnect's `age_us`, `Loop.php:1007-1009`
+stores it in `$cancelAgeUsMax`, and `Loop::publishStats()` (`Loop.php:398-414`) publishes ten fields,
+none of them that one — confirmed by reading the call.
 
 ### M4-7 Watchdog reports the fiber, not only the thread `main` `open`
 **What.** Pain map Swoole 4: when a thread stalls > 1 s, log which request (id, uri, age) it was
@@ -142,6 +159,16 @@ running. The reactor knows the pending request ids; the PHP side knows the curre
 a per-thread atomic the watchdog reads.
 **Acceptance.** `/spin?s=5` in `examples/hello_server.php` produces one `warn!` with `uri=/spin?s=5`
 and `age_ms` ≥ 1000 within 1.5 s of the stall.
+**From research 42, before this is built: there are two parking registries, not one.** A fiber waits
+in either PHP's `Loop::$waiting` (an explicit `ignis_watch`/sleep/gRPC call) **or** C's
+`wait.rs::PARKED` (a libc call interposed by universal park), the two sets are disjoint, and
+**neither carries a timestamp**. A watchdog taught to name the request from one registry will be
+silent for every wait parked in the other — which is most unmodified blocking code, the case this
+runtime exists for. Also: a stuck park can be counted but not named, because no PHP-level identity
+reaches the C interposer by design (ADR-0020), so closing that needs the same request-id lookup
+this item is already building. And offload worker threads never register with `main.rs`'s stalling
+`Registry` at all, so an offload callback blocked on `recv_timeout` is invisible to the watchdog by
+construction.
 
 ### M4-9 Cancellation of offload jobs and PG queries on disconnect (E11') `main` `open`
 **What.** ROADMAP E11': today a client disconnect cancels the fiber (V-14) but a query already sent
@@ -322,7 +349,7 @@ Measured before deciding, and the numbers are kept because they are the point: t
 
 ### S-DBAL-DIRECT A service that injects `Doctrine\DBAL\Connection` directly keeps it for the life of the thread `main` `open — found while building E24 (V-85), the manager path is fixed, this one is not`. `DoctrineFiberScopePass` now marks every id in `doctrine.connections` non-shared, so a fiber's own EntityManager builds its own connection and two overlapping requests never meet inside one PostgreSQL socket (V-85: 6 of 6 requests correct with the pass, 5 of 6 wrong without it — including one that returned **another request's row with a 200**). But a definition is resolved when its consumer is constructed, and application services are built once per container, which is once per thread: a repository or a service that takes the connection in its constructor and keeps it in a property therefore still shares one handle across every fiber on that thread. **What it needs:** the same shape the manager got — a shared `FiberConnection` published under the connection id, resolving the fiber's instance from a locator on every call. DBAL 4 has no `ConnectionInterface` and `Doctrine\DBAL\Connection` is a concrete class with a constructor that opens nothing, so the decorator has to extend it and override the query surface rather than implement an interface (research 38 §3 describes the inventory step: every `Reference` to a connection id or one of its four aliases, recorded as a container parameter). **Gate before it lands:** an E24 arm whose controller takes `Connection` in its constructor instead of going through the manager, failing today and passing after. **Cheaper interim:** the compiler pass can *name* those services in a container parameter and the bundle can log them at boot, which turns a silent data leak into a startup warning.
 
-### S-POOL-LEASE-AGE A hung fiber keeps its database connection forever `main` `open — measured 2026-09-18 (V-85 addendum 5): the crash path returns the lease, the hang path does not`. A connection comes back when `Scope::clear()` drops the request's `FiberManager`, which happens in `Loop::admitRequest`'s `finally` — so an exception, a cancelled request and a deadline all release, and six deliberately dying handlers through a pool of 2 leave the pool healthy. A fiber that never resumes never reaches that `finally`: its connection is in no idle list, the pool shrinks by one permanently, and at `size` hangs every request is refused with `PoolTimeoutException` until the thread restarts. **Three fixes, in order of price.** (1) Record an `Instant` at acquire and report `oldest_lease_ms` per pool in `/_ignis/stats` — makes the leak visible minutes before the pool empties, ~20 lines, no behaviour change. (2) A soft reaper: a lease older than a configured age is written off, the pool opens a replacement and counts it; the hung fiber keeps its socket until the thread dies, which is correct, because nothing here can safely take a connection away from a fiber that might still wake up. (3) The real fix, and not this package's: a per-request watchdog in the runtime that throws `DeadlineExceeded` into a fiber that has not progressed, so the ordinary `finally` runs and **every** resource is released, not just connections — related to `R-STREAM-CANCEL` and to the watchdog naming the fiber (M4-7). **Gate before any of them lands:** an E24 arm that parks a handler forever (a `Fiber::suspend()` with nothing to resume it), asserts the pool degrades by exactly one, and — for (2) — that it recovers after the configured age.
+### S-POOL-LEASE-AGE A hung fiber keeps its database connection forever `main` `open — measured 2026-09-18 (V-85 addendum 5): the crash path returns the lease, the hang path does not`. A connection comes back when `Scope::clear()` drops the request's `FiberManager`, which happens in `Loop::admitRequest`'s `finally` — so an exception, a cancelled request and a deadline all release, and six deliberately dying handlers through a pool of 2 leave the pool healthy. A fiber that never resumes never reaches that `finally`: its connection is in no idle list, the pool shrinks by one permanently, and at `size` hangs every request is refused with `PoolTimeoutException` until the thread restarts. **Research 42 (2026-09-19) settles where fix (1) can live: PHP only.** M4-1 tracked lease age in Rust because the pool was Rust's; this pool is `php/packages/doctrine/src/Pool/ConnectionPool.php` and the runtime cannot see it at all, so the age must be published through the per-reactor channel (`reactor.rs:152`) — which needs `M3-7` to accept fields from a package. `acquire()`/`release()` (`ConnectionPool.php:64-93`) record no `Instant` today; proposed name `ignis_doctrine_pool_oldest_lease_seconds`. **Three fixes, in order of price.** (1) Record an `Instant` at acquire and report `oldest_lease_ms` per pool in `/_ignis/stats` — makes the leak visible minutes before the pool empties, ~20 lines, no behaviour change. (2) A soft reaper: a lease older than a configured age is written off, the pool opens a replacement and counts it; the hung fiber keeps its socket until the thread dies, which is correct, because nothing here can safely take a connection away from a fiber that might still wake up. (3) The real fix, and not this package's: a per-request watchdog in the runtime that throws `DeadlineExceeded` into a fiber that has not progressed, so the ordinary `finally` runs and **every** resource is released, not just connections — related to `R-STREAM-CANCEL` and to the watchdog naming the fiber (M4-7). **Gate before any of them lands:** an E24 arm that parks a handler forever (a `Fiber::suspend()` with nothing to resume it), asserts the pool degrades by exactly one, and — for (2) — that it recovers after the configured age.
 
 ### S-EXCLUSIVE Two fibers can still reach one resource, and nothing stops them `main` `open — research 39, 2026-09-18`. Ownership under fibers is discipline today, not enforcement: `ConnectionPool::acquire()` pops the connection out of its idle list and `Scope` is keyed by the fiber, but one `$this->connection = $connection` in a shared service defeats both silently — which is how V-85 produced another request's rows with a 200. Research 39 lays out eight options across three enforcement surfaces (the object boundary, the fiber-switch observer, PHPStan) and rejects one (new syntax in php-src). **The order it recommends:** (1) a fiber-affinity check in `PooledConnection` plus the one-lease-per-fiber rule — five lines, turns the leak into an exception naming the bug; (2) extract `Ignis\Mutex`/`Ignis\Semaphore` into `ignis/runtime`, since the Doctrine pool already contains a hand-rolled one and applications have shared state we currently offer nothing for; (3) a PHPStan rule for the `S-DBAL-DIRECT` shape — a shared service storing a resource that must not be shared, caught before the code runs; (4) a "held across a suspension" detector on the fiber-switch observer, which is the only option that covers resources nobody wrapped and makes ADR-0038's rule enforceable — **gated on E2's 3.83 µs warm switch, which it may not move**; (5) an opt-in guarded proxy through `create_object` for classes we do not wrap. None of it is a new mechanism (ADR-0037): the primitives are `Future` plus the loop, the detector is the context slot, the proxy is the existing route hook. **Not covered by any of it:** cross-thread sharing (a different problem — offload's worker-pinned handles or the runtime owning the resource), and a fiber that hangs while holding something (`S-POOL-LEASE-AGE`).
 
