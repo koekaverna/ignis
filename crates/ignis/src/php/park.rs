@@ -322,7 +322,7 @@ unsafe fn sock_timeout_ms(fd: c_int, write: bool) -> c_int {
     if unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut tv as *mut libc::timeval as *mut c_void, &mut len) } != 0 {
         return 0;
     }
-    (tv.tv_sec as i64 * 1000 + (tv.tv_usec as i64 + 999) / 1000).clamp(0, c_int::MAX as i64) as c_int
+    milliseconds_ceil(tv.tv_sec as i64, tv.tv_usec as i64, 1000)
 }
 
 #[derive(PartialEq)]
@@ -531,9 +531,46 @@ unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> Option<bool> 
     Some(Some(woke) != timer)
 }
 
-/// Milliseconds for a timespec timeout, rounded up so a short wait never becomes a spin.
+/// Milliseconds from whole seconds plus a sub-second remainder, rounded up so a short wait never
+/// becomes a spin. Saturates **before** the clamp: a caller-supplied timeout past the millisecond
+/// range becomes the longest wait `c_int` can express, where multiplying first would wrap it into
+/// a short one — or, in a debug build, panic across the FFI boundary (A-PARK-ARITHMETIC).
+fn milliseconds_ceil(seconds: i64, sub_second: i64, units_per_millisecond: i64) -> c_int {
+    let whole = seconds.saturating_mul(1000);
+    let remainder = sub_second.saturating_add(units_per_millisecond - 1) / units_per_millisecond;
+    whole.saturating_add(remainder).clamp(0, c_int::MAX as i64) as c_int
+}
+
+/// Microseconds for a `nanosleep` interval, or `None` when POSIX says the call is `EINVAL` --
+/// a negative `tv_sec`, or a `tv_nsec` outside `[0, 999_999_999]`. Returning `None` hands the
+/// request to the real syscall, which produces that error itself rather than us guessing at it.
+/// The cast this replaces was `tv_sec as u64`, which turned a negative interval into a wait of
+/// roughly 584,000 years (A-PARK-ARITHMETIC).
+fn microseconds_of(req: &libc::timespec) -> Option<u64> {
+    let seconds = req.tv_sec;
+    let nanoseconds = req.tv_nsec;
+    if seconds < 0 || !(0..1_000_000_000).contains(&nanoseconds) {
+        return None;
+    }
+    Some((seconds as u64).saturating_mul(1_000_000).saturating_add(nanoseconds as u64 / 1000))
+}
+
+/// What POSIX `sleep()` owes its caller: 0 when the interval elapsed, otherwise the seconds still
+/// to go, rounded **up** so an interrupted sleep never claims to have finished. This returned a
+/// flat 0 on every path until 2026-09-19, which told a caller its sleep completed when a signal
+/// had cut it short (A-PARK-ARITHMETIC (c)).
+fn unslept_seconds(syscall_result: c_int, remaining: &libc::timespec) -> c_uint {
+    if syscall_result == 0 {
+        return 0;
+    }
+    let seconds = remaining.tv_sec.max(0);
+    let rounded_up = if remaining.tv_nsec > 0 { seconds.saturating_add(1) } else { seconds };
+    rounded_up.clamp(0, c_uint::MAX as i64) as c_uint
+}
+
+/// Milliseconds for a timespec timeout.
 fn ms_ceil(ts: &libc::timespec) -> c_int {
-    (ts.tv_sec * 1000 + (ts.tv_nsec + 999_999) / 1_000_000).clamp(0, c_int::MAX as i64) as c_int
+    milliseconds_ceil(ts.tv_sec, ts.tv_nsec, 1_000_000)
 }
 
 unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: libc::nfds_t, timeout: c_int) -> c_int {
@@ -581,9 +618,13 @@ pub unsafe extern "C" fn ignis_park_ppoll(
     mask: *const libc::sigset_t,
 ) -> c_int {
     // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // given, and `ret` is that call site's return address. `fds` and `mask` are handed to the
+    // kernel unchanged, but unlike its neighbours this one **does** read the caller's memory:
+    // `ms_ceil(&*ts)` dereferences the caller's `timespec` to turn the wait into milliseconds.
+    // That is sound for the same reason the kernel's own read of it is -- libc's caller owns a
+    // live `timespec` for the duration of the call -- and it is a different contract from the
+    // shared paragraph that sat here until 2026-09-19, which claimed nothing here dereferences
+    // the caller's buffer.
     unsafe {
         // A signal mask changes what the wait observes; that wait stays the kernel's.
         if !mask.is_null() {
@@ -607,9 +648,13 @@ pub unsafe extern "C" fn ignis_park_select(
     tv: *mut libc::timeval,
 ) -> c_int {
     // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // given, and `ret` is that call site's return address. This one reads **and writes** the
+    // caller's memory, which the shared paragraph that sat here until 2026-09-19 denied: the fd
+    // sets are copied out with `ptr::read`, tested with `FD_ISSET`, and written back with
+    // `ptr::write` so the caller sees exactly the ready set `select` promises, and `tv` is read
+    // for the timeout. All four are live objects owned by libc's caller for the duration of the
+    // call -- the same lifetime the kernel relies on for the unparked path -- and each is
+    // null-checked before use, because `select` allows any of them to be null.
     unsafe {
         // pselect6 is the one select syscall every Linux arch has; a NULL sigmask makes it select.
         let sel = |r: *mut libc::fd_set, w: *mut libc::fd_set, e: *mut libc::fd_set, ts: *const libc::timespec| {
@@ -720,21 +765,23 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_nanosleep(ret: *const c_void, req: *const libc::timespec, rem: *mut libc::timespec) -> c_int {
     // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // given, and `ret` is that call site's return address. Unlike its neighbours this one **does**
+    // read the caller's buffer: `*req` is dereferenced below to compute the wait. That is sound for
+    // the same reason the kernel's own read of it is -- libc's caller owns a live `timespec` for the
+    // duration of the call -- but it is a different contract, and the shared paragraph claiming
+    // nothing here dereferences the caller's buffer sat over this function until 2026-09-19.
+    // `rem` is written only on the success path, where the full interval elapsed.
     unsafe {
         if let Some(_g) = may_park(ret, "nanosleep")
             && !req.is_null()
+            && let Some(us) = microseconds_of(&*req)
+            && park_sleep(us)
         {
-            let us = (*req).tv_sec as u64 * 1_000_000 + (*req).tv_nsec as u64 / 1000;
-            if park_sleep(us) {
-                if !rem.is_null() {
-                    (*rem).tv_sec = 0;
-                    (*rem).tv_nsec = 0;
-                }
-                return 0;
+            if !rem.is_null() {
+                (*rem).tv_sec = 0;
+                (*rem).tv_nsec = 0;
             }
+            return 0;
         }
         libc::syscall(libc::SYS_nanosleep, req, rem) as c_int
     }
@@ -765,13 +812,14 @@ pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_ui
     // the program already made; parking only delays it.
     unsafe {
         if let Some(_g) = may_park(ret, "sleep")
-            && park_sleep(s as u64 * 1_000_000)
+            && park_sleep((s as u64).saturating_mul(1_000_000))
         {
             return 0;
         }
-        let ts = libc::timespec { tv_sec: s as libc::time_t, tv_nsec: 0 };
-        libc::syscall(libc::SYS_nanosleep, &ts as *const libc::timespec, std::ptr::null_mut::<libc::timespec>());
-        0
+        let requested = libc::timespec { tv_sec: s as libc::time_t, tv_nsec: 0 };
+        let mut remaining = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let rc = libc::syscall(libc::SYS_nanosleep, &requested as *const libc::timespec, &mut remaining as *mut libc::timespec);
+        unslept_seconds(rc as c_int, &remaining)
     }
 }
 
@@ -841,6 +889,17 @@ pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: 
 /// How long a fiber waits between `flock(LOCK_NB)` attempts, doubling from the first to the second.
 /// Short enough that an uncontended-by-the-time-we-look lock costs little, long enough that a lock
 /// held for a whole request is not polled hundreds of times.
+// ponytail: this retry loop has no overall deadline, and deliberately so. A blocking `flock()`
+// has no timeout in POSIX -- the caller asked to wait until the lock is theirs -- so returning
+// EWOULDBLOCK after some interval of our choosing would be an error no caller is written to
+// expect. The ceiling that remains is real and named here: a lock whose holder died without
+// releasing it parks this fiber for the life of the process. That is strictly better than the
+// behaviour it replaced, where the same case blocked the whole OS thread and every fiber on it
+// (R-SESS, V-58), and it is visible rather than silent, because each retry is an `Op::Sleep` on
+// this thread's reactor and research 42 proposes `ignis_op_oldest_age_seconds` over exactly that
+// id space. Upgrade path: a per-request watchdog that throws into a fiber which has not
+// progressed (S-POOL-LEASE-AGE fix 3) releases this the same way it releases every other held
+// resource -- one mechanism instead of a timeout per call site.
 const FLOCK_RETRY_FIRST_US: u64 = 200;
 const FLOCK_RETRY_MAX_US: u64 = 20_000;
 
@@ -1052,5 +1111,68 @@ unsafe fn probe_libpq(h: *mut c_void) {
         if !conn.is_null() {
             finish(conn);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn timespec(seconds: i64, nanoseconds: i64) -> libc::timespec {
+        libc::timespec { tv_sec: seconds as libc::time_t, tv_nsec: nanoseconds as _ }
+    }
+
+    /// A-PARK-ARITHMETIC (b): the clamp is applied after the multiply, so a timeout larger than
+    /// `i64::MAX / 1000` wraps instead of saturating — in a debug build that is an overflow panic
+    /// across an FFI boundary, and in a release build a long wait silently becomes a spin.
+    #[test]
+    fn a_timeout_past_the_millisecond_range_saturates_instead_of_wrapping() {
+        assert_eq!(ms_ceil(&timespec(i64::MAX, 0)), c_int::MAX);
+        assert_eq!(ms_ceil(&timespec(i64::MAX / 1000 + 1, 0)), c_int::MAX);
+    }
+
+    #[test]
+    fn a_sub_millisecond_timeout_rounds_up_so_it_never_becomes_a_spin() {
+        assert_eq!(ms_ceil(&timespec(0, 1)), 1);
+        assert_eq!(ms_ceil(&timespec(0, 999_999)), 1);
+        assert_eq!(ms_ceil(&timespec(0, 1_000_001)), 2);
+    }
+
+    #[test]
+    fn a_zero_timeout_stays_zero_and_a_negative_one_clamps_to_it() {
+        assert_eq!(ms_ceil(&timespec(0, 0)), 0);
+        assert_eq!(ms_ceil(&timespec(-1, 0)), 0);
+    }
+
+    #[test]
+    fn whole_seconds_and_nanoseconds_are_added_not_replaced() {
+        assert_eq!(ms_ceil(&timespec(2, 500_000_000)), 2500);
+    }
+
+    /// A-PARK-ARITHMETIC (b): `tv_sec as u64` turned a negative interval into ~584,000 years of
+    /// sleep. POSIX calls that `EINVAL`, so the interval is refused here and the real syscall gets
+    /// to produce the error itself.
+    #[test]
+    fn a_nanosleep_interval_posix_calls_invalid_is_refused_rather_than_wrapped() {
+        assert_eq!(microseconds_of(&timespec(-1, 0)), None);
+        assert_eq!(microseconds_of(&timespec(0, -1)), None);
+        assert_eq!(microseconds_of(&timespec(0, 1_000_000_000)), None);
+    }
+
+    /// A-PARK-ARITHMETIC (c): an interrupted `sleep()` owes its caller the remainder, and every
+    /// path returned 0 -- which reads as "the interval elapsed".
+    #[test]
+    fn an_interrupted_sleep_reports_what_is_left_rounded_up() {
+        assert_eq!(unslept_seconds(0, &timespec(9, 0)), 0, "a completed sleep owes nothing");
+        assert_eq!(unslept_seconds(-1, &timespec(3, 0)), 3);
+        assert_eq!(unslept_seconds(-1, &timespec(3, 1)), 4, "a part second still to go counts as one");
+        assert_eq!(unslept_seconds(-1, &timespec(0, 0)), 0);
+    }
+
+    #[test]
+    fn a_valid_nanosleep_interval_is_microseconds_and_saturates() {
+        assert_eq!(microseconds_of(&timespec(0, 0)), Some(0));
+        assert_eq!(microseconds_of(&timespec(1, 500_000)), Some(1_000_500));
+        assert_eq!(microseconds_of(&timespec(i64::MAX, 999_999_999)), Some(u64::MAX));
     }
 }

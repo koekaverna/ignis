@@ -174,7 +174,7 @@ unsafe extern "C" fn zif_ignis_submit_sleep(ex: *mut sys::zend_execute_data, rv:
             return;
         };
         let Some(reactor) = reactor_or_throw() else { return };
-        let id = reactor.submit(Op::Sleep { us: (ms.max(0) as u64) * 1000 });
+        let id = reactor.submit(Op::Sleep { us: (ms.max(0) as u64).saturating_mul(1000) });
         zval::set_long(rv, id as i64);
     }
 }
