@@ -1,0 +1,40 @@
+parametersSchema:
+	ignisRequestScoped: structure([
+		sources: arrayOf(listOf(string()), string())
+		perRequestClasses: listOf(string())
+	])
+
+parameters:
+	ignisRequestScoped:
+		# Every call here hands back something that belongs to ONE request. Holding the service that
+		# returns it is fine and is the design (V-96): these are fiber-scoped façades. Holding what
+		# they return is what pins an object to the request that happened to call first.
+		sources:
+			Symfony\Component\HttpFoundation\RequestStack:
+				- getCurrentRequest
+				- getMainRequest
+				- getParentRequest
+				- getSession
+			Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface:
+				- getToken
+			Doctrine\ORM\EntityManagerInterface:
+				- getConnection
+				- getRepository
+				- getUnitOfWork
+				- getEventManager
+			Doctrine\Persistence\ManagerRegistry:
+				- getManager
+				- getConnection
+		# Classes whose own instances live for one request, so keeping a request-scoped value in one
+		# of them is correct. A controller is the ordinary case: Symfony builds it per request.
+		perRequestClasses:
+			- Symfony\Bundle\FrameworkBundle\Controller\AbstractController
+
+services:
+	-
+		class: Ignis\PHPStan\RequestScopedValueInPropertyRule
+		arguments:
+			sources: %ignisRequestScoped.sources%
+			perRequestClasses: %ignisRequestScoped.perRequestClasses%
+		tags:
+			- phpstan.rules.rule

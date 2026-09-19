@@ -80,6 +80,7 @@ nav:
       - Revolt: packages/revolt.md
       - Swoole shim: packages/swoole.md
       - Temporal: packages/temporal.md
+      - PHPStan rule: packages/phpstan.md
   - Reference:
       - Configuration: reference/configuration.md
       - PHP API: reference/php-api.md

@@ -1,0 +1,13 @@
+{
+    "name": "ignis/phpstan",
+    "description": "A PHPStan rule for the one defect fiber scope cannot fix by itself: a long-lived object that stores a value taken out of a request-scoped service, and is pinned to that request for ever (V-96).",
+    "type": "phpstan-extension",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.4",
+        "phpstan/phpstan": "^2.2"
+    },
+    "autoload": { "psr-4": { "Ignis\\PHPStan\\": "src/" } },
+    "extra": { "phpstan": { "includes": ["extension.neon"] } },
+    "config": { "allow-plugins": false }
+}

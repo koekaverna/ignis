@@ -5068,3 +5068,38 @@ use the first request's socket for every request afterwards, which is V-85 with 
 guard V-16, V-68 and V-69 did not have at this shape: they proved the scoped services work, not that
 a singleton holding them still resolves per request. E21 GREEN, eight arms, every control failing as
 it must.
+
+### V-96 addendum — the capture is a static-analysis problem, so it gets a PHPStan rule
+
+`S-SINGLETON-CAPTURE`'s defect is an assignment in a method body: `$this->x = $stack->getCurrentRequest()`.
+No compiler pass sees it and no runtime scope prevents it. Static analysis does, so `ignis/phpstan`
+is a package with one rule — `RequestScopedValueInProperty` — reported with identifier
+`ignis.requestScopedValueInProperty`.
+
+It flags a value from a request-scoped source landing in a property, instance or static, and it
+deliberately does **not** flag the injection: keeping `RequestStack` or `EntityManagerInterface` is
+the supported shape (V-96 measured six requests each seeing their own), and a rule that rejected it
+would fail an application at its first controller.
+
+**The first version missed the code that provoked it**, which is the part worth recording. It looked
+only at the outermost call of the assigned expression, and a singleton almost never stores the
+`Request`: `bench/e21`'s `SingletonCapture` stores
+`$this->requests->getCurrentRequest()?->query->get('tag')` — outermost call `get()` — and
+`spl_object_hash($this->manager->getConnection())` — outermost node a function call. Run against that
+file, the rule reported `[OK] No errors` while V-96's measurement showed both properties pinned. It
+walks the whole expression now:
+
+```
+27  Property $capturedTag stores the result of RequestStack::getCurrentRequest(), …
+28  Property $capturedConnection stores the result of EntityManagerInterface::getConnection(), …
+[ERROR] Found 2 errors
+```
+
+Exactly the two lines the measurement pinned, in real application code rather than a rule fixture.
+
+Checked both ways: `RequestScopedValueInPropertyRuleTest` (a `RuleTestCase`) pins six errors and the
+two correct shapes in the same file — the façade kept as a service, and a local variable — and fails
+when the rule is stubbed out. The rule is included in this repository's own `phpstan.neon` and our
+userland is clean under it.
+
+PHP suite: **316 tests / 741 assertions**, phpstan level 9 on both configs, php-cs-fixer clean.

@@ -10,6 +10,12 @@
 #
 # There is deliberately no phpstan-baseline.neon. The debt is being driven to zero; a baseline is
 # the file that would make that optional.
+includes:
+    # Our own rule, applied to our own code first: a long-lived object must not keep a value taken
+    # out of a request-scoped service (V-96). It is a package so an application can require it —
+    # there is no phpstan/extension-installer here, hence the explicit include.
+    - packages/phpstan/extension.neon
+
 parameters:
     # Raised 8 -> 9 on 2026-09-18 (S4-MIXED). Measured with 6 clean: 7 = 36, 8 = 39, 9 = 349,
     # 10 = 399. The 39 were worth taking and four were bug-shaped -- a PDOStatement|false
@@ -35,6 +41,8 @@ parameters:
         - packages/doctrine/src
         - packages/grpc/src
         - packages/offload/src
+        - packages/phpstan/src
+        - packages/phpstan/tests
         - packages/runtime/src
         - packages/runtime/tests
         - packages/swoole/src
@@ -55,6 +63,7 @@ parameters:
 
     excludePaths:
         - */vendor/*
+        - packages/phpstan/tests/data/*
 
     # php/tests is not analysed on purpose: the fake reactor declares ignis_serve() and
     # ignis_cancel_parked_any() with bodies that return, and analysing them turns three calls in
