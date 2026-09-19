@@ -83,6 +83,15 @@ fn register(w: Worker) -> u64 {
     id
 }
 
+/// Drop a worker the caller has shut down. The module doc promises entries live "for the process
+/// lifetime (or until shutdown)"; until 2026-09-19 only the first half was true, so a long-running
+/// process accumulated one `Arc<Worker>` per worker it had ever created (A-LEAKS-RUST (a)).
+fn forget_worker(id: u64) {
+    if let Some(workers) = WORKERS.lock_unpoisoned().as_mut() {
+        workers.remove(&id);
+    }
+}
+
 fn worker(id: u64) -> Option<Arc<Worker>> {
     WORKERS.lock_unpoisoned().as_ref().and_then(|m| m.get(&id).cloned())
 }
@@ -349,6 +358,7 @@ pub unsafe extern "C" fn zif_shutdown(ex: *mut sys::zend_execute_data, rv: *mut 
         submit(rv, async move {
             let Some(w) = worker(id) else { return Outcome::Failed("unknown worker".into()) };
             w.initiate_shutdown();
+            forget_worker(id);
             Outcome::Json("\"ok\"".into())
         });
     }

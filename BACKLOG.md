@@ -549,7 +549,7 @@ be done twice: research 43 proposes collapsing 11 of the 14 io-shaped shims into
 helper (≈−80 lines), which deletes those copies structurally rather than editing them. The correctness
 defect — notes that lie about their code — is what made this red, and it is closed.
 
-### A-LEAKS-RUST Three thread-local and process-wide maps that only grow `main` `PARTLY DONE 2026-09-19 — (b) and (c) landed and re-run by main; (a) temporal WORKERS still open; the bench arm the acceptance asks for does not exist`
+### A-LEAKS-RUST Three thread-local and process-wide maps that only grow `main` `DONE 2026-09-19 — all three, with the arm the acceptance asked for, falsified before it was trusted`
 **What.** (a) `temporal.rs:41,81` — `WORKERS` never removes an entry; `zif_shutdown` (`:333`) calls
 `initiate_shutdown()` and leaves it, while the module doc says "for the process lifetime (or until
 shutdown)". (b) `offload.rs:44` — `JOBS` entries are removed only in `done()`, so a worker that dies
@@ -570,12 +570,19 @@ reason. `CALLBACKS` entries are now removed win or lose and the reply wait is bo
 refused as a distinct reason rather than blocking the submitter. `submit()`'s error text changed
 from `"worker gone"` to `"offload worker gone"` / `"offload queue is full"`; checked, nothing
 matches on it.
-**Not done, and this is why the item is not closed.** (a) `temporal.rs`'s `WORKERS` is untouched —
-it is `crates/ignis/src/backend/`, main-only territory. And the acceptance's bench arm **was not
-built**: `bench/e16-offload.sh` has no way to crash an offload worker's PHP mid-job, so the only
-executable evidence is the unit test against the map. **The production wiring — `run_offload_worker`
-calling `worker_gone` — is therefore untested**, which is this project's own recurring defect shape
-(a gate that cannot fail) and must be named, not glossed. Closing this item needs that arm.
+**(a) done 2026-09-19:** `zif_shutdown` now calls `forget_worker(id)` after `initiate_shutdown()`,
+so the map keeps the promise its own module doc makes — entries live for the process lifetime *or
+until shutdown*, where only the first half was true.
+**The arm exists now, and it is the whole point of this entry.** `bench/php/offload_worker_dies.php`
+plus its prelude offloads a job that calls `exit()` — uncatchable, so `WorkerRuntime::run`'s own
+try/catch never sees it and the worker loop unwinds with the job still marked running, which is the
+shape a PHP fatal produces. Gated in `scripts/smoke.sh`. Measured with the fix:
+`inflight_before=0 inflight_after=0 failed=true`, `reason=offload: offload worker gone`.
+**Falsified before being trusted**, which is what the previous note on this item said was missing:
+with `offload::worker_gone(index)` deleted from `run_offload_worker` and the binary rebuilt, the
+probe does not fail — it **hangs**, `exit=124`, because the calling fiber waits on a completion
+nothing will ever send. That is the defect, reproduced on demand, so the timeout is part of the
+assertion rather than a safety net around it.
 
 ### A-RUST-TESTS The two files with the most `unsafe` have no tests at all `agent` `open — 2026-09-18`
 **What.** Eleven of twenty modules have no test module — 3,092 lines, 47 % of the crate — and they
