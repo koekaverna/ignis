@@ -762,3 +762,113 @@ recurring finding (V-93, V-94).
 **Constraints.** `main`. Classic mode keeps the resetter. The no-op must not silently swallow a reset
 an application asked for by hand (`$container->get('services_resetter')->reset()` in a console
 command is legitimate and shares the process).
+
+## Cycle 2026-09-19 — closed by the agent round and the main queue
+
+### M4-6 Held-resource logging audit `agent` `DONE 2026-09-19 — docs/research/42-observability.md, re-run by main (metric count and the discarded age both re-measured)`
+**What.** After M4-1: an inventory `docs/research/42-observability.md` of every wait a fiber can
+be in (stream read/write/connect, sleep, pg lease, offload job, watch, gRPC call, Temporal
+activation) and, for each, whether its age is visible in `/_ignis/stats`, in a log line, in both,
+or in neither. Propose the minimal set to close the "neither" rows.
+**Acceptance.** Table complete against `grep -n "Op::" crates/ignis/src/reactor.rs`; every "neither"
+row has a proposed metric name.
+**Result.** 13 rows, **zero** of them visible in both channels and zero visible in a log line alone;
+12 genuine "neither". Five proposed metrics close 11 of the 12 — `ignis_op_oldest_age_seconds`
+alone covers rows 1-7, because every one of those waits, universal park included, bottoms out in
+the same `Op::Sleep`/`Op::Watch` id space. Row 9 is deliberately left open: it is self-bounded by
+`PoolTimeoutException`.
+**Two claims main re-measured before accepting.** `/_ignis/metrics` serves **19** metric families,
+not V-55's 22 — the three that went are the deleted pool's (V-87), so this is drift in the citation,
+not a regression; `docs/operate.md` and ADR-0022 corrected, and V-55, JOURNAL and the closed-index
+row left alone because they record what was true when written. And the one age this system already
+computes is thrown away: `module.rs:268` calculates a disconnect's `age_us`, `Loop.php:1007-1009`
+stores it in `$cancelAgeUsMax`, and `Loop::publishStats()` (`Loop.php:398-414`) publishes ten fields,
+none of them that one — confirmed by reading the call.
+
+### A-DUPES Two copies of the same thing, in three places `agent` `DONE 2026-09-19 — (a) and (b) fixed, (c) kept as two shapes with the reason; re-run by main, including a falsification of the new gate`
+**What.** (a) `CallbackRef` and `RemoteException` are declared twice, `class_exists`-guarded, in
+`offload/src/ignis-offload.php:14` and `offload/src/worker.php:19` — and the two sides disagree on the
+error envelope, so `RemoteException::$remoteTrace` is always empty for a callback failure while the
+job path carries it. (b) The raw-request validator is written twice, `Loop::asIgnisRequest()`
+(`Loop.php:473`) and `Runner::requestFrom()` (`Classic/Runner.php:139`), the same eight checks with a
+different exception prefix. (c) `Loop::publishStats()` and `Loop::budgetStats()` build overlapping
+arrays with different key sets for the same seven counters.
+**Acceptance.** One declaration each, the callback envelope carrying the trace, and a test that a
+failed callback reaches the caller with a stack. (c) may be left with a note saying why two shapes
+exist, if they do.
+**Done 2026-09-19. (a) the defect was real and is fixed:** `Client::runCallback()` serialised a
+three-element envelope `[class, message, code]` where the job path sends four, and
+`WorkerRuntime::unpackCallbackAnswer()` never read a fourth element anyway — so `remoteTrace` was
+empty by construction on both sides at once. Both halves fixed; `EnvelopeTest` drives a real
+throwing callback through `runCallback()` and asserts the trace arrives with the throwing frame in
+it.
+**"One declaration each" is not reachable from PHP, and that is a finding, not an excuse.**
+`worker.php` is `include_str!`ed into the binary (`main.rs`) and evaluated under a synthetic
+filename, so `__DIR__` inside it resolves to the process's working directory, not to the package —
+a `require` of a shared file would find nothing in a real deployment. Merging the declarations
+needs a second `include_str!`, i.e. a Rust change, which is outside an `agent`'s reach. The
+contract was made real the other way instead: `EnvelopeTest` tokenises both files and asserts the
+two declarations are identical token for token.
+**Main falsified that gate rather than trusting it:** renaming `$remoteTrace` to
+`$remoteTraceDrifted` in `worker.php` alone makes the test fail and print the differing token
+(`23 => '$remoteTrace'` against `23 => '$remoteTraceDrifted'`); restored, 12/12 green again. It can
+fail, which is the whole point of adding it.
+**(b)** the eight checks now live once, in `Ignis\Http\Request::validateRaw()`, with each caller
+passing its own two exception strings — `Loop`'s wording is asserted verbatim by an existing test
+and `Runner`'s by nothing, so both were preserved rather than unified on a guess. Dead
+`asStringHeaders()`/`stringHeaders()` removed. Checked against the removed code: neither copy
+lower-cased header names before, and neither does now.
+**(c) left as two shapes, with the reason on each.** `publishStats()`'s ten keys are a fixed wire
+contract matched 1:1 by `metrics.rs`'s `Published::set()`; `budgetStats()` is the public surface the
+examples compose their own `/stats` from, deliberately narrower and carrying `inflight`, which the
+Rust side tracks itself. Merging would either widen the hot-path array or strip callers. This is
+the case the acceptance explicitly permitted.
+**Gate, re-run by main:** PHPStan level 9 both configs `[OK] No errors` (still exactly two
+`ignoreErrors`), php-cs-fixer `0 of 150`, PHPUnit `320 tests, 757 assertions` green.
+
+### A-RUST-DEAD Three pieces of machinery kept alive by an empty default `main` `DONE 2026-09-19 — one was dead and is deleted; the other two were reachable and the item's premise was wrong about them`
+**What.** (a) `route.rs:45` `const DEFAULT_FUNCTIONS: &str = ""` means the loop at `:82-92` never
+runs, so `trampoline`, `call_original`, `frame_name` and `ORIG_FN` — about 80 lines — are unreachable
+unless `IGNIS_OFFLOAD_FUNCTIONS` is set by hand. (b) `locklib.rs` is 202 lines of the H36 test harness
+compiled into the production binary, reachable only via `IGNIS_LOCKLIB`; its own doc says "a normal
+build has no trace of them", which is true of the function table and not of the binary. (c)
+`temporal.rs:348` is `#[allow(dead_code)] fn _unused(_: c_int) {}`, a placeholder keeping an import
+alive.
+**Acceptance.** For each: a caller, a feature gate, or deletion. (b) behind a `cfg(feature)` would
+also make the claim in its doc block true.
+**Done 2026-09-19, and two thirds of this item were wrong.** Checked each against the tree rather
+than against the entry.
+**(a) is not dead: it has a caller, and that caller is documented.** `DEFAULT_FUNCTIONS` is empty,
+but `install()` reads `IGNIS_OFFLOAD_FUNCTIONS` first, and that variable is a documented escape
+hatch — ADR-0016 §66, `docs/reference/php-api.md:184`, `DECISIONS.md:178`, and the V-59 addendum
+that made the default empty all describe it. `trampoline`/`call_original`/`frame_name`/`ORIG_FN` are
+reached through it. Nothing changed; the acceptance's "a caller" is satisfied. What is true and
+worth keeping separate: **nothing exercises that path**, so those ~80 lines can rot the way backend
+(b) did — that is `A-RUST-TESTS`'s shape, not this item's.
+**(b) is not dead either, and a feature gate would have made things worse.** `locklib` is
+registered only when `IGNIS_LOCKLIB` names the shared object (`superglobals.rs:246`) and
+`bench/e18-deadlock.sh` is its caller. A `cfg(feature)` would make the doc block's claim true and
+would also mean that bench needed a special build to run — and it is in **no gate today**
+(`smoke.sh`, `gate.sh` and `ci.yml` were all checked), so gating it would turn an unrun bench into
+an unrunnable one. Declined with the reason; the doc block was corrected instead, because what it
+claimed ("a normal build has no trace of them") is true of the function table and false of the
+binary, and the two are not the same claim.
+**(c) was genuinely dead and is gone.** `_unused(_: c_int)` existed to keep `c_int` imported, and
+`c_int` was imported only for `_unused` — a closed loop referenced by nothing. Both deleted.
+
+### A-SWALLOWED-RUST Errors dropped where the drop changes behaviour `agent` `DONE 2026-09-19 — three Rust sites log what was lost; the PHP site documents why its silence is correct and a test pins it; all re-run by main`
+**What.** `offload.rs:57` `let _ = POOL.set(…)` — a second `initialize(n)` is silently ignored, so
+`--offload N` after a pool exists keeps the old width and says nothing. `main.rs:319`
+`let _ = h.join()` — an offload thread that panicked is indistinguishable from one that exited
+cleanly. `http.rs:248` `let _ = stream.set_nodelay(true)`. And on the PHP side, `Loop::dispatchUnawaited()`
+(`Loop.php:425`) drops an unawaited array payload matching none of its three tags with no log at all —
+`Router::release()` relies on exactly that, which makes the silence load-bearing and undocumented.
+**Acceptance.** Each either logs at `warn` with what was lost, or carries one line saying why losing
+it is correct. The `dispatchUnawaited` case needs the second, and then a test pinning it.
+**Done 2026-09-19.** The three Rust sites name what was lost (`offload.rs` second `initialize`,
+`main.rs` panicked worker, `http.rs` `set_nodelay`). `dispatchUnawaited` took the second option as
+the acceptance directed — no log — and now names who depends on the silence:
+`Ignis\Offload\Router::release()`'s fire-and-forget free job, whose failure arrives tagged
+`kind => 'error'`, matching none of the three dispatched tags, with nobody left to tell because the
+caller already dropped the handle. Pinned by
+`LoopTest::testAnUnawaitedCompletionMatchingNoneOfTheThreeTagsIsSilentlyDropped`.

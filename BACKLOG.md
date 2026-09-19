@@ -132,26 +132,6 @@ opcache. `SIGTERM`: drain then exit.
 non-2xx, **0** socket errors, `restarts` in `/_ignis/health` increments by `threads` each time.
 **Constraints.** `main` (`main.rs`, `http.rs`). Agent writes `bench/m4-reload.sh` first.
 
-### M4-6 Held-resource logging audit `agent` `DONE 2026-09-19 — docs/research/42-observability.md, re-run by main (metric count and the discarded age both re-measured)`
-**What.** After M4-1: an inventory `docs/research/42-observability.md` of every wait a fiber can
-be in (stream read/write/connect, sleep, pg lease, offload job, watch, gRPC call, Temporal
-activation) and, for each, whether its age is visible in `/_ignis/stats`, in a log line, in both,
-or in neither. Propose the minimal set to close the "neither" rows.
-**Acceptance.** Table complete against `grep -n "Op::" crates/ignis/src/reactor.rs`; every "neither"
-row has a proposed metric name.
-**Result.** 13 rows, **zero** of them visible in both channels and zero visible in a log line alone;
-12 genuine "neither". Five proposed metrics close 11 of the 12 — `ignis_op_oldest_age_seconds`
-alone covers rows 1-7, because every one of those waits, universal park included, bottoms out in
-the same `Op::Sleep`/`Op::Watch` id space. Row 9 is deliberately left open: it is self-bounded by
-`PoolTimeoutException`.
-**Two claims main re-measured before accepting.** `/_ignis/metrics` serves **19** metric families,
-not V-55's 22 — the three that went are the deleted pool's (V-87), so this is drift in the citation,
-not a regression; `docs/operate.md` and ADR-0022 corrected, and V-55, JOURNAL and the closed-index
-row left alone because they record what was true when written. And the one age this system already
-computes is thrown away: `module.rs:268` calculates a disconnect's `age_us`, `Loop.php:1007-1009`
-stores it in `$cancelAgeUsMax`, and `Loop::publishStats()` (`Loop.php:398-414`) publishes ten fields,
-none of them that one — confirmed by reading the call.
-
 ### M4-7 Watchdog reports the fiber, not only the thread `main` `open`
 **What.** Pain map Swoole 4: when a thread stalls > 1 s, log which request (id, uri, age) it was
 running. The reactor knows the pending request ids; the PHP side knows the current fiber's request
@@ -489,47 +469,6 @@ stops spelling `code=N` silently becomes `Status::UNKNOWN`.
 table) or a shape (and must be justified where it is). The gRPC one is probably just a defect: the
 status belongs in the completion, not in its message.
 
-### A-DUPES Two copies of the same thing, in three places `agent` `DONE 2026-09-19 — (a) and (b) fixed, (c) kept as two shapes with the reason; re-run by main, including a falsification of the new gate`
-**What.** (a) `CallbackRef` and `RemoteException` are declared twice, `class_exists`-guarded, in
-`offload/src/ignis-offload.php:14` and `offload/src/worker.php:19` — and the two sides disagree on the
-error envelope, so `RemoteException::$remoteTrace` is always empty for a callback failure while the
-job path carries it. (b) The raw-request validator is written twice, `Loop::asIgnisRequest()`
-(`Loop.php:473`) and `Runner::requestFrom()` (`Classic/Runner.php:139`), the same eight checks with a
-different exception prefix. (c) `Loop::publishStats()` and `Loop::budgetStats()` build overlapping
-arrays with different key sets for the same seven counters.
-**Acceptance.** One declaration each, the callback envelope carrying the trace, and a test that a
-failed callback reaches the caller with a stack. (c) may be left with a note saying why two shapes
-exist, if they do.
-**Done 2026-09-19. (a) the defect was real and is fixed:** `Client::runCallback()` serialised a
-three-element envelope `[class, message, code]` where the job path sends four, and
-`WorkerRuntime::unpackCallbackAnswer()` never read a fourth element anyway — so `remoteTrace` was
-empty by construction on both sides at once. Both halves fixed; `EnvelopeTest` drives a real
-throwing callback through `runCallback()` and asserts the trace arrives with the throwing frame in
-it.
-**"One declaration each" is not reachable from PHP, and that is a finding, not an excuse.**
-`worker.php` is `include_str!`ed into the binary (`main.rs`) and evaluated under a synthetic
-filename, so `__DIR__` inside it resolves to the process's working directory, not to the package —
-a `require` of a shared file would find nothing in a real deployment. Merging the declarations
-needs a second `include_str!`, i.e. a Rust change, which is outside an `agent`'s reach. The
-contract was made real the other way instead: `EnvelopeTest` tokenises both files and asserts the
-two declarations are identical token for token.
-**Main falsified that gate rather than trusting it:** renaming `$remoteTrace` to
-`$remoteTraceDrifted` in `worker.php` alone makes the test fail and print the differing token
-(`23 => '$remoteTrace'` against `23 => '$remoteTraceDrifted'`); restored, 12/12 green again. It can
-fail, which is the whole point of adding it.
-**(b)** the eight checks now live once, in `Ignis\Http\Request::validateRaw()`, with each caller
-passing its own two exception strings — `Loop`'s wording is asserted verbatim by an existing test
-and `Runner`'s by nothing, so both were preserved rather than unified on a guess. Dead
-`asStringHeaders()`/`stringHeaders()` removed. Checked against the removed code: neither copy
-lower-cased header names before, and neither does now.
-**(c) left as two shapes, with the reason on each.** `publishStats()`'s ten keys are a fixed wire
-contract matched 1:1 by `metrics.rs`'s `Published::set()`; `budgetStats()` is the public surface the
-examples compose their own `/stats` from, deliberately narrower and carrying `inflight`, which the
-Rust side tracks itself. Merging would either widen the hot-path array or strip callers. This is
-the case the acceptance explicitly permitted.
-**Gate, re-run by main:** PHPStan level 9 both configs `[OK] No errors` (still exactly two
-`ignoreErrors`), php-cs-fixer `0 of 150`, PHPUnit `320 tests, 757 assertions` green.
-
 ### A-PHP-FLOOR The minimum PHP version is declared in three places and they disagree `agent` `open — 2026-09-18`
 **What.** Root `>=8.4`, every package `>=8.4` except `ignis/revolt` `>=8.1` and
 `ignis/temporal-core-transport` `>=8.2`; `php/phpstan.neon` encodes `min: 80200` and re-runs revolt at
@@ -568,36 +507,6 @@ substance, and it buys no behaviour. Doing it *with* a correctness change hides 
 **Acceptance.** One commit per file, no behaviour change, `cargo nextest` and the gate green at each
 step. Signature-level names (`zif_*(ex, rv)`) come last and may be argued for as the Zend vocabulary,
 the way Swoole's `cid` is — but then that argument goes in DECISIONS.md.
-
-### A-RUST-DEAD Three pieces of machinery kept alive by an empty default `main` `DONE 2026-09-19 — one was dead and is deleted; the other two were reachable and the item's premise was wrong about them`
-**What.** (a) `route.rs:45` `const DEFAULT_FUNCTIONS: &str = ""` means the loop at `:82-92` never
-runs, so `trampoline`, `call_original`, `frame_name` and `ORIG_FN` — about 80 lines — are unreachable
-unless `IGNIS_OFFLOAD_FUNCTIONS` is set by hand. (b) `locklib.rs` is 202 lines of the H36 test harness
-compiled into the production binary, reachable only via `IGNIS_LOCKLIB`; its own doc says "a normal
-build has no trace of them", which is true of the function table and not of the binary. (c)
-`temporal.rs:348` is `#[allow(dead_code)] fn _unused(_: c_int) {}`, a placeholder keeping an import
-alive.
-**Acceptance.** For each: a caller, a feature gate, or deletion. (b) behind a `cfg(feature)` would
-also make the claim in its doc block true.
-**Done 2026-09-19, and two thirds of this item were wrong.** Checked each against the tree rather
-than against the entry.
-**(a) is not dead: it has a caller, and that caller is documented.** `DEFAULT_FUNCTIONS` is empty,
-but `install()` reads `IGNIS_OFFLOAD_FUNCTIONS` first, and that variable is a documented escape
-hatch — ADR-0016 §66, `docs/reference/php-api.md:184`, `DECISIONS.md:178`, and the V-59 addendum
-that made the default empty all describe it. `trampoline`/`call_original`/`frame_name`/`ORIG_FN` are
-reached through it. Nothing changed; the acceptance's "a caller" is satisfied. What is true and
-worth keeping separate: **nothing exercises that path**, so those ~80 lines can rot the way backend
-(b) did — that is `A-RUST-TESTS`'s shape, not this item's.
-**(b) is not dead either, and a feature gate would have made things worse.** `locklib` is
-registered only when `IGNIS_LOCKLIB` names the shared object (`superglobals.rs:246`) and
-`bench/e18-deadlock.sh` is its caller. A `cfg(feature)` would make the doc block's claim true and
-would also mean that bench needed a special build to run — and it is in **no gate today**
-(`smoke.sh`, `gate.sh` and `ci.yml` were all checked), so gating it would turn an unrun bench into
-an unrunnable one. Declined with the reason; the doc block was corrected instead, because what it
-claimed ("a normal build has no trace of them") is true of the function table and false of the
-binary, and the two are not the same claim.
-**(c) was genuinely dead and is gone.** `_unused(_: c_int)` existed to keep `c_int` imported, and
-`c_int` was imported only for `_unused` — a closed loop referenced by nothing. Both deleted.
 
 ### A-PARK-ARITHMETIC Overflow before the clamp, and two syscall shims that answer wrongly `main` `open — 2026-09-18`
 **What.** (a) `module.rs:110` does `(ms.max(0) as u64) * 1000` with no clamp, so
@@ -663,23 +572,6 @@ built**: `bench/e16-offload.sh` has no way to crash an offload worker's PHP mid-
 executable evidence is the unit test against the map. **The production wiring — `run_offload_worker`
 calling `worker_gone` — is therefore untested**, which is this project's own recurring defect shape
 (a gate that cannot fail) and must be named, not glossed. Closing this item needs that arm.
-
-### A-SWALLOWED-RUST Errors dropped where the drop changes behaviour `agent` `DONE 2026-09-19 — three Rust sites log what was lost; the PHP site documents why its silence is correct and a test pins it; all re-run by main`
-**What.** `offload.rs:57` `let _ = POOL.set(…)` — a second `initialize(n)` is silently ignored, so
-`--offload N` after a pool exists keeps the old width and says nothing. `main.rs:319`
-`let _ = h.join()` — an offload thread that panicked is indistinguishable from one that exited
-cleanly. `http.rs:248` `let _ = stream.set_nodelay(true)`. And on the PHP side, `Loop::dispatchUnawaited()`
-(`Loop.php:425`) drops an unawaited array payload matching none of its three tags with no log at all —
-`Router::release()` relies on exactly that, which makes the silence load-bearing and undocumented.
-**Acceptance.** Each either logs at `warn` with what was lost, or carries one line saying why losing
-it is correct. The `dispatchUnawaited` case needs the second, and then a test pinning it.
-**Done 2026-09-19.** The three Rust sites name what was lost (`offload.rs` second `initialize`,
-`main.rs` panicked worker, `http.rs` `set_nodelay`). `dispatchUnawaited` took the second option as
-the acceptance directed — no log — and now names who depends on the silence:
-`Ignis\Offload\Router::release()`'s fire-and-forget free job, whose failure arrives tagged
-`kind => 'error'`, matching none of the three dispatched tags, with nobody left to tell because the
-caller already dropped the handle. Pinned by
-`LoopTest::testAnUnawaitedCompletionMatchingNoneOfTheThreeTagsIsSilentlyDropped`.
 
 ### A-RUST-TESTS The two files with the most `unsafe` have no tests at all `agent` `open — 2026-09-18`
 **What.** Eleven of twenty modules have no test module — 3,092 lines, 47 % of the crate — and they
@@ -1051,3 +943,7 @@ an investigation — is in [`BACKLOG-CLOSED.md`](BACKLOG-CLOSED.md).
 | **S-RELOAD** | Code reloading without restarting the process `main` `DONE 2026-09-19 (V-90): IGNIS_WATCH over get_included_files(), workers one at a time, SIGHUP, gate bench/e25-reload.sh. What is left is the watcher's blind spot — a file never loaded is never watched — for which Node's answer is --watch-path and ours is not built.` In worker mode a file change does **nothing, ever**: the kernel is booted once per thread and its classes live in that engine until the thread dies. Classic mode has no such problem — the script is included per request and opcache's defaults pick a change up within ~2 s — so this is specifically the Symfony path, and today the only answer is restarting the process. **Most of the machinery already exists:** `spawn_worker` gives a respawned thread a fresh TSRM context (new class table, new statics), the listener is process-wide so a thread can leave and return without dropping a connection (V-17: recovery inside the 50 ms tick, 95.7 % of baseline), and `http_unregister_current()` takes one thread out of dispatch while the others serve. **What is missing is the trigger** — a worker's script ends only on a fatal or by returning, and `serve()` never returns (`S-SERVE-STOP`). **The order to build it:** (1) `Ignis\stop()`, with unregister → drain → return rather than today's return → unregister; (2) `SIGHUP` as a rolling restart, one worker at a time, which is the half of M4-5 that has been waiting for it — gate: `wrk` across a reload with zero non-2xx and the new code answering afterwards; (3) **a watcher over `get_included_files()`** — Node's model (`--watch` follows "the entry point and any required or imported module"), and for us the *primary* rather than the fallback, because the owner named the deciding property: restarting the worker after each request — RoadRunner's `pool.debug`, where they landed after deleting their own watcher — **destroys concurrency in development**, and every bug of the last week (V-68, V-69, V-85) needs two requests overlapping to appear. Measured on our own fixture: one request includes **283 files** (258 vendor, 23 `var/cache`, 2 own) against **4,621 PHP files under `vendor/`** — 16× fewer inotify watches, the compiled container watched for free because the application loaded it, and no ignore list to maintain. The gap is Node's gap: a file never loaded is never watched, answered by an explicit `--watch-path` that adds to the set rather than replacing it. PHP reports the set through a zif after boot and after each request (first call 283 strings, later ones an almost-always-empty delta); Rust owns the watches, the debounce and the grace period, and the workers stop one at a time so requests keep overlapping through the reload; (3a) per-request restart stays available as an opt-in for people who want RoadRunner's behaviour, documented with its cost — it serialises development, so a fiber-scope bug will not show up there; (4) `opcache_reset()` on an **explicit** reload while a respawn-after-fatal keeps leaving SHM untouched — the two events mean different things, and a production ini with `validate_timestamps=0` would otherwise make reload silently do nothing. **Rejected:** rebuilding the kernel per request in debug mode — it costs a boot per request, which is what worker mode exists to avoid, and it only reloads what the kernel rebuilds, so the illusion holds until it does not. |
 | **E18-A** | ADR-0020 `main` `done (accepted; policy table from research 27). H32/H33 CONFIRMED by V-45, H35 by research 28, H36 by V-51; H34 answered "not as written" — this box's libcurl uses a threaded resolver (R-DNS)` |
 | **H-12** | E4 hello throughput is 58k req/s on this box today, V-6 measured 128k `main` `CLOSED 2026-09-18 — V-82 (the trailing "open" this status also carried is struck: the residual 4-5% is recorded, not open work): the bisect is refused with a number, the effect is under the instrument's noise`. `open — measured (V-46 addendum 3): V-6's own commit gives 61.5–63.1k on this box, so 128k → 62k is the box; the code-side drop 2026-09-15 → HEAD is ≈ 4–5 % (58.3–60.0k) and still worth one bisect in a quiet slot` — V-46 addendum 2: park on and off both ~58k, p99 1.8 ms, quiet box, same wrk shape as V-6 (`-t2 -c64 -d10s`, 1 PHP thread). Either the box changed (WSL2 kernel 6.18 now; V-6's kernel not recorded) or something landed between 2026-09-15 and cycle 1 (budget admission, health route, superglobals lazy swap, log floor). Bisect with `git bisect run` over `bench/wrk-hello.sh` before any perf claim cites V-6 again. |
+| **M4-6** | Held-resource logging audit `agent` `DONE 2026-09-19 — docs/research/42-observability.md, re-run by main (metric count and the discarded age both re-measured)` |
+| **A-DUPES** | Two copies of the same thing, in three places `agent` `DONE 2026-09-19 — (a) and (b) fixed, (c) kept as two shapes with the reason; re-run by main, including a falsification of the new gate` |
+| **A-RUST-DEAD** | Three pieces of machinery kept alive by an empty default `main` `DONE 2026-09-19 — one was dead and is deleted; the other two were reachable and the item's premise was wrong about them` |
+| **A-SWALLOWED-RUST** | Errors dropped where the drop changes behaviour `agent` `DONE 2026-09-19 — three Rust sites log what was lost; the PHP site documents why its silence is correct and a test pins it; all re-run by main` |
