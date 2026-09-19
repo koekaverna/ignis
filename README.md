@@ -142,7 +142,11 @@ require '/path/to/ignis/php/packages/runtime/src/classic.php';
 
 Ignis\Classic\listen('/var/www/html/public', '0.0.0.0:8080');
 while ($script = Ignis\Classic\accept()) {
-    include $script;          // top level of this script: real globals
+    try {
+        include $script;      // top level of this script: real globals
+    } catch (Ignis\Classic\Finished) {
+        // finish() ends the script, not the worker; without this it unwinds the loop
+    }
     Ignis\Classic\respond();
 }
 ```

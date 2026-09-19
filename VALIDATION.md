@@ -4916,3 +4916,77 @@ The first line is the check finding my own mistake: I had named it `address` whe
 module doc both say `addr`. The binary moved, not the stub — renaming a public parameter is an API
 change and there was no reason for one. `bench/php/arginfo_names.php` also fails any function whose
 required count exceeds its declared count, and is gated in `scripts/smoke.sh`.
+
+## V-95 — Symfony's service reset reaches across requests, and the trigger is not the one it looked like (CONFIRMED, fixed)
+
+Date: 2026-09-19T06:4xZ. Raised by the owner as `S-RESET-FIBER`: "`services_resetter` is process-wide;
+a reset from one fiber destroys the request state of fibers parked in the same thread". Confirmed —
+and the mechanism he named is not the one in this Symfony.
+
+### The trigger, read before building
+
+There is no `ResetServicesListener` in the installed Symfony and nothing resets on `kernel.terminate`.
+`Kernel::handle()` drives it (`php/vendor/symfony/http-kernel/Kernel.php:66-80,124-146`): `handle()`
+sets `resetServices = true` and increments `requestStackSize`; the **next** `handle()` calls `boot()`,
+which resets **only while `requestStackSize` is 0**.
+
+That guard is why this had not been seen. A request still inside `handle()` holds the counter above
+zero and no reset happens — which is also why `FiberScopePass`'s own doc block says the reset "only
+happens when nothing else is in flight, which under load is never". The hole is everything a request
+does **after** `handle()` returns, with the counter back down:
+
+- a `StreamedResponse` — `IgnisWorkerRunner.php:33` hands `sendContent(...)` to the loop, which drives
+  it later, with Doctrine, Twig and the token storage live inside it;
+- `kernel.terminate` listeners, which under universal park suspend on any I/O they do.
+
+### Measured, with a control that must fail
+
+`bench/e21/` gained a `ResetWitness` (a `kernel.reset`-tagged service holding one value) and a
+`/reset` route returning a `StreamedResponse` whose producer remembers a value, parks, and reads it
+back. A streams for 300 ms; B enters `handle()` meanwhile.
+
+| arm | leaks |
+|---|---|
+| control, no `IgnisBundle` | **3 of 3** — the defect is real |
+| with `IgnisBundle` | **0 of 3** |
+
+Two earlier versions of that probe measured the wrong thing and both are worth recording, because each
+would have "passed" a broken build:
+
+1. The first sent **both** requests to `/reset`, so B overwrote the witness directly. That is a shared
+   singleton, not a reset — the defect E21 already covers — and it read 3/3 with the fix in place. The
+   harness's `probe()` had always sent A and B to one route; it takes B's route separately now.
+2. Before that, the very first shape asserted only at the end of the run, where a reset that has
+   already happened is invisible.
+
+### The fix
+
+`FiberScopePass` replaces `services_resetter` with `Ignis\Symfony\FiberServicesResetter`, whose
+`reset()` does nothing: in fiber mode a request's state dies with its `Ignis\Scope`, per request
+rather than per lull in the traffic. The compiled container confirms it —
+`new \Ignis\Symfony\FiberServicesResetter([...15 ids...], false)`.
+
+**What it costs, stated rather than glossed:** a service that accumulates state and is *not*
+fiber-scoped loses its only cleanup. `reset()` therefore names those services once, in debug, instead
+of leaving the developer to find out. Fifteen on this fixture, `App\Service\ResetWitness` and
+`doctrine` among them.
+
+Classic mode is unaffected by construction rather than by a mode check: `IgnisBundle` is registered by
+an application running under the fiber worker, and a classic front controller rebuilds its kernel per
+request.
+
+### Two parts of the owner's specification are not built, and why
+
+- *"A `ResetInterface` tag auto-registers the service as fiber-scoped and removes it from the
+  resetter."* Not done. `FiberScopePass` states its own rule at the top — "only rows that are measured
+  are listed; adding one is a line here plus a decorator, and it needs a test that fails without it" —
+  and blanket auto-scoping of every tagged service is the opposite of that. Filed as
+  `S-RESET-AUTOSCOPE` with the fifteen ids this fixture produces as its starting inventory.
+- *"A dev-mode guard throws when `reset()` hits a service that has a fiber-scoped proxy."* Moot as
+  specified: with the resetter a no-op, `reset()` hits nothing. The useful half — telling the developer
+  which services no longer get reset — is what `FiberServicesResetter::reset()` does.
+
+### Gate
+
+PHP: phpstan level 9 both configs, php-cs-fixer, **315 tests / 740 assertions**. `bench/e21` GREEN on
+all six arms, every control failing as it must.

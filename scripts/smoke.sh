@@ -98,6 +98,10 @@ $T ./target/release/ignis bench/php/output_abandoned_fiber.php || { echo "abando
 
 echo "== the binary's parameter names are the stubs' (arg-info was shared by arity until 2026-09-19)"
 $T ./target/release/ignis bench/php/arginfo_names.php || { echo "arginfo names FAILED"; exit 1; }
+
+echo "== classic listen(): finish() ends the request, not the worker"
+# Its own port: the app.php address below is not set yet, and this step starts a server of its own.
+IGNIS_LISTEN="${IGNIS_LISTEN:-127.0.0.1:8184}" $T bench/classic-finish.sh || { echo "classic finish FAILED"; exit 1; }
 echo "== E23 (streaming: the client reads while PHP is still producing)"
 timeout 180 bench/e23-stream.sh 2>&1 | sed 's/^/  /' | tail -8
 [ "${PIPESTATUS[0]}" = 0 ] || { echo "E23 FAILED"; exit 1; }

@@ -32,6 +32,11 @@ Ignis\Classic\listen($docroot, $addr);
 fwrite(STDERR, "classic worker: $docroot on $addr\n");
 
 while ($script = Ignis\Classic\accept()) {
-    include $script;
+    try {
+        include $script;          // top level of THIS script, so the included file's variables are real globals (V-53)
+    } catch (Ignis\Classic\Finished) {
+        // finish() ends the script, not the worker. Without this catch it unwinds the loop and the
+        // thread stops serving -- in the one mode legacy code most needs `exit()`.
+    }
     Ignis\Classic\respond();
 }

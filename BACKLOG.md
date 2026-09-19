@@ -558,6 +558,31 @@ are the wrong eleven: `park.rs` (1,051 lines, the largest file in the crate), `w
 **Acceptance.** A test module in each of those, testing the pure logic named above. Not a coverage
 number: ADR-0041 already says the percentage cannot mean much here (V-78).
 
+
+### S-RESET-AUTOSCOPE A `kernel.reset` service should become fiber-scoped, not merely un-reset `main` `open — raised by the owner 2026-09-19, deferred with a reason`
+**What.** The owner's specification for `S-RESET-FIBER` had a second half: a `ResetInterface` tag
+auto-registers the service as fiber-scoped and takes it out of the resetter. V-95 built the first half
+— the resetter is a no-op in fiber mode — and left this on purpose.
+**Why it was not built with the rest.** `FiberScopePass` states its own rule in its doc block: *only
+rows that are measured are listed; adding one is a line here plus a decorator, and it needs a test
+that fails without it.* Blanket auto-scoping of every tagged service is the opposite — it would put a
+proxy in front of fifteen services on the E21 fixture alone, none of them measured, and a wrong proxy
+is a harder defect than the state it was meant to isolate.
+**The inventory to work from**, read out of that fixture's compiled container:
+`App\Service\ResetWitness`, `cache.app`, `cache.property_info`, `cache.security_expression_language`,
+`cache.security_is_csrf_token_valid_attribute_expression_language`,
+`cache.security_is_granted_attribute_expression_language`, `cache.serializer`, `cache.system`,
+`cache.validator`, `container.env_var_processor`, `controller.cache_attribute_listener`, `doctrine`,
+`doctrine.debug_data_holder`, `security.logout_url_generator`, `security.untracked_token_storage`.
+Most are caches, shared on purpose, which must **not** be per fiber — and that is the point: the tag
+is not a reliable signal of "per-request state", which is exactly what auto-scoping would assume.
+**Acceptance.** Per service, in the order of that list: a probe that shows two overlapping requests
+disturbing each other through it, then a fiber-scoped replacement, then the probe green with the
+control still failing. A service whose probe cannot be made to fail is not scoped, and the reason is
+written down. Ends with one line in `FiberScopePass` per scoped service, which is what its rule asks.
+**Constraints.** `main`. `FiberServicesResetter` already names the services that lose their reset, in
+debug, so nothing here is silent while it waits.
+
 ---
 
 ## Closed — index
@@ -567,6 +592,7 @@ an investigation — is in [`BACKLOG-CLOSED.md`](BACKLOG-CLOSED.md).
 
 | item | outcome |
 |---|---|
+| **S-RESET-FIBER** | Symfony's service reset is process-wide, and a fiber can be inside the services it resets `main` `DONE 2026-09-19 (V-95)` — `services_resetter` is a no-op in fiber mode; E21's `/reset` arm, control 3/3 and fixed 0/3 |
 | **A-ARGINFO** | Four PHP functions reflect somebody else's parameter names `main` `DONE 2026-09-19 (V-94 addendum)` — one table per function, declared by an `arginfo!` macro; `bench/php/arginfo_names.php` reflects all 37 against the stubs and is in smoke |
 | **A-REACTOR-POISON** | A panic in the dispatcher poisons a mutex and every later op panics with it `main` `DONE 2026-09-19 (V-94)` — one `lock_unpoisoned()` in `crates/ignis/src/lock.rs`, 42 sites across eight files, with a test that poisons a real mutex and takes the data anyway |
 | **A-OUTPUT-FIBERKEY** | `output.rs` keys per-fiber state by address with no destroy hook `main` `DONE 2026-09-19 (V-94)` — keyed by `zend_fiber_context` now and dropped by a destroy observer registered at MINIT; probe `bench/php/output_abandoned_fiber.php` in smoke, 2000/2000 leaked before the fix and 0/2000 after |

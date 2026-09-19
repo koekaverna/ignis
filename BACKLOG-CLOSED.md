@@ -727,3 +727,38 @@ reads and they disagree with the binary.
 each shared table naming every function allowed to use it and why the names fit. A test that
 reflects each `ignis_*` function and compares against `stubs/ignis.php` — `StubsMatchTheBinaryTest`
 is the place.
+
+### S-RESET-FIBER Symfony's service reset is process-wide, and a fiber can be inside the services it resets `main` `DONE 2026-09-19 (V-95)` — `services_resetter` is a no-op in fiber mode; E21's `/reset` arm, control 3/3 and fixed 0/3
+**What the owner raised.** `services_resetter` is process-wide; a reset driven by one request destroys
+the request state of fibers parked on the same thread — `RequestStack` cleared, `EntityManager`
+closed. Proposed fix: in fiber mode `ignis/symfony-runtime` removes the reset listener and replaces
+`services_resetter` with a no-op (scope death is the reset); a `ResetInterface` tag auto-registers the
+service as fiber-scoped and takes it out of the resetter; a dev-mode guard throws when `reset()` hits a
+service that has a fiber-scoped proxy. Classic mode keeps the resetter as it is.
+
+**Corrected before building, by reading the installed Symfony.** There is no `ResetServicesListener`
+in this version and nothing resets on `kernel.terminate`. The reset is driven by `Kernel::handle()`
+itself (`php/vendor/symfony/http-kernel/Kernel.php:66-80,124-146`): `handle()` sets
+`resetServices = true` and increments `requestStackSize`; the **next** `handle()` calls `boot()`,
+which resets **only if `requestStackSize` is 0**.
+
+That guard is why this has not already been seen: while any request is inside `handle()` the counter
+is non-zero and no reset happens. The hole is everything a request does **after** `handle()` returns,
+where the counter is back down:
+
+- a `StreamedResponse` — `IgnisWorkerRunner.php:33` hands `sendContent(...)` to the loop, which drives
+  it *later*, and Doctrine, Twig and the token storage are all live inside it;
+- `kernel.terminate` listeners (`:39`), which under universal park can suspend on any I/O they do.
+
+In both, a second request entering `handle()` finds `requestStackSize == 0`, resets every resettable
+service, and the first fiber resumes into the wreckage. So the owner's conclusion stands and the
+trigger does not: it is `boot()` at the start of the next request, not a terminate listener.
+
+**Acceptance.** The owner's test, with the shape corrected: two interleaved requests with Doctrine
+where A is **streaming or terminating** (not merely finished) while B enters `handle()`; A must
+complete. Plus a control on the unfixed build that must fail, or the test proves nothing — and a
+counter-example is required for the guard above, because a test that cannot fail is this cycle's
+recurring finding (V-93, V-94).
+**Constraints.** `main`. Classic mode keeps the resetter. The no-op must not silently swallow a reset
+an application asked for by hand (`$container->get('services_resetter')->reset()` in a console
+command is legitimate and shares the process).

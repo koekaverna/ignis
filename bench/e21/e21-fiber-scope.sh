@@ -37,9 +37,12 @@ $db->exec("CREATE TABLE IF NOT EXISTS thing (id INTEGER PRIMARY KEY, name VARCHA
 $db->exec("INSERT OR REPLACE INTO thing (id,name) VALUES (1,\"seed\")");'
 
 fail=0
-# $1 label, $2 route, $3 "leaks expected"(1) or "must not leak"(0), rest: env for the server
+# $1 label, $2 route for A, $3 "leaks expected"(1) or "must not leak"(0), $4 route for B (default: A's),
+# rest: env for the server. B needs a route of its own when the probe measures whether *another*
+# request disturbs A -- sending both to the same route measures a shared singleton instead, which is
+# a different defect and already covered above.
 probe() {
-  local label="$1" route="$2" want="$3"; shift 3
+  local label="$1" route="$2" want="$3" routeb="$4"; shift 4
   rm -rf "$APP/var/cache"
   ss -ltn "sport = :$PORT" | grep -q LISTEN && { echo "port $PORT busy"; exit 2; }
   ( export IGNIS_THREADS=1 IGNIS_LISTEN=127.0.0.1:$PORT APP_ENV=prod APP_DEBUG=0 \
@@ -54,7 +57,7 @@ probe() {
   for i in $(seq 1 "$N"); do
     curl -s -m 10 -u alice:alicepw "http://127.0.0.1:$PORT$route?tag=A$i&ms=300" > /tmp/e21-a.json & local PA=$!
     sleep 0.1
-    curl -s -m 10 -u bob:bobpw "http://127.0.0.1:$PORT$route?tag=B$i&ms=0" > /tmp/e21-b.json & local PB=$!
+    curl -s -m 10 -u bob:bobpw "http://127.0.0.1:$PORT$routeb?tag=B$i&ms=0" > /tmp/e21-b.json & local PB=$!
     wait $PA; wait $PB
     case "$(cat /tmp/e21-a.json)" in *'"leaked":true'*) leaks=$((leaks+1));; esac
   done
@@ -70,11 +73,14 @@ probe() {
 }
 
 echo "== security token (V-68)"
-probe "  control, no IgnisBundle " /whoami 1 IGNIS_NO_SCOPE=1
-probe "  with IgnisBundle        " /whoami 0
+probe "  control, no IgnisBundle " /whoami 1 /whoami IGNIS_NO_SCOPE=1
+probe "  with IgnisBundle        " /whoami 0 /whoami
 echo "== Doctrine identity map (V-69)"
-probe "  control, no bundle      " /em     1 IGNIS_NO_DOCTRINE_SCOPE=1
-probe "  with IgnisDoctrineBundle" /em     0
+probe "  control, no bundle      " /em     1 /em     IGNIS_NO_DOCTRINE_SCOPE=1
+probe "  with IgnisDoctrineBundle" /em     0 /em
+echo "== service reset across requests (S-RESET-FIBER): A streams while B enters handle()"
+probe "  control, no IgnisBundle " /reset  1 /whoami IGNIS_NO_SCOPE=1
+probe "  with IgnisBundle        " /reset  0 /whoami
 
 [ "$fail" = 0 ] && echo "E21: GREEN" || echo "E21: FAILED"
 exit $fail

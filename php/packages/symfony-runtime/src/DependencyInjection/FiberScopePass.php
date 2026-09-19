@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ignis\Symfony\DependencyInjection;
 
 use Ignis\Symfony\FiberRequestStack;
+use Ignis\Symfony\FiberServicesResetter;
 use Ignis\Symfony\FiberTokenStorage;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -36,6 +37,36 @@ final class FiberScopePass implements CompilerPassInterface
         foreach (['security.token_storage', 'security.untracked_token_storage'] as $id) {
             $this->replace($container, $id, (new Definition(FiberTokenStorage::class))->setArguments(['security.token']));
         }
+
+        $this->disableTheServiceReset($container);
+    }
+
+    /**
+     * Takes `services_resetter` out of the request path, because under fibers it reaches across
+     * requests rather than between them.
+     *
+     * `Kernel::handle()` arms the reset and the **next** `handle()` performs it from `boot()`, guarded
+     * by `requestStackSize == 0`. That guard covers a request still inside `handle()` and nothing
+     * after it: a `StreamedResponse` body is produced by the loop once `handle()` has returned, and
+     * `kernel.terminate` listeners park on their own I/O. Measured on the E21 fixture — a streaming
+     * request lost its service state to a concurrent one in 3 of 3 rounds, `/reset` arm.
+     *
+     * The list of ids is read here rather than in the resetter because it exists at compile time and
+     * not at run time: `FiberServicesResetter` only reports it, in debug.
+     */
+    private function disableTheServiceReset(ContainerBuilder $container): void
+    {
+        if (!$container->hasDefinition('services_resetter')) {
+            return;
+        }
+        $declined = array_keys($container->findTaggedServiceIds('kernel.reset'));
+        sort($declined);
+        $container->setDefinition(
+            'services_resetter',
+            (new Definition(FiberServicesResetter::class))
+                ->setArguments([$declined, '%kernel.debug%'])
+                ->setPublic(true),
+        );
     }
 
     private function replace(ContainerBuilder $container, string $id, Definition $definition): void
