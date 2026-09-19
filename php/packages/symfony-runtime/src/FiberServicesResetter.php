@@ -25,6 +25,17 @@ use Symfony\Component\DependencyInjection\ServicesResetterInterface;
  * that is a real cost rather than a free win. `reset()` says so once, in debug, naming the services,
  * because the alternative is a leak nobody is told about. Classic mode keeps Symfony's own resetter:
  * there requests do not overlap and the reset is correct as written.
+ *
+ * **The caches were the obvious worry and they are measured, not assumed** (V-95 addendum). Nine of
+ * the fifteen tagged services on the E21 fixture are cache pools, and for an `AbstractAdapter` pool
+ * `reset()` never held a value: it commits deferred writes and drops a small internal map, while the
+ * entries themselves live in the backing store and are re-read. So nothing goes stale, and nothing
+ * grows — 3,000 distinct keys through `cache.app` moved the PHP heap by **40 bytes** (5,446,664 →
+ * 5,446,704) and left RSS inside its noise band (69,912 → 69,980 kB).
+ *
+ * The one configuration that *is* exposed is a pool backed by `ArrayAdapter`, where `reset()` is
+ * `clear()` and the adapter is the store rather than a window onto one. This fixture's prod config
+ * has none; `S-RESET-ARRAYPOOL` carries the case and what to do about it.
  */
 final class FiberServicesResetter implements ServicesResetterInterface
 {

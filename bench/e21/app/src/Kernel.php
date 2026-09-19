@@ -92,6 +92,7 @@ final class Kernel extends BaseKernel
         $s->get(\App\Controller\EmProbe::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\PgProbe::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\ResetProbe::class)->tag('controller.service_arguments');
+        $s->get(\App\Controller\CacheGrowth::class)->tag('controller.service_arguments');
         // In services_resetter's list on purpose: that list is what Kernel::boot() empties.
         $s->get(\App\Service\ResetWitness::class)->tag('kernel.reset', ['method' => 'reset']);
     }
@@ -102,6 +103,7 @@ final class Kernel extends BaseKernel
         $routes->add('em', '/em')->controller([\App\Controller\EmProbe::class, '__invoke']);
         $routes->add('pg', '/pg')->controller([\App\Controller\PgProbe::class, '__invoke']);
         $routes->add('reset', '/reset')->controller([\App\Controller\ResetProbe::class, '__invoke']);
+        $routes->add('cachegrowth', '/cachegrowth')->controller([\App\Controller\CacheGrowth::class, '__invoke']);
     }
 
     public function getCacheDir(): string

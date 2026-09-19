@@ -4990,3 +4990,37 @@ request.
 
 PHP: phpstan level 9 both configs, php-cs-fixer, **315 tests / 740 assertions**. `bench/e21` GREEN on
 all six arms, every control failing as it must.
+
+### V-95 addendum — the caches were the obvious worry, and they do not grow or go stale
+
+Asked by the owner as soon as the reset became a no-op: the caches will go stale and never be
+cleared. Measured instead of argued, and the answer is no on both counts for the normal case.
+
+`reset()` on an `AbstractAdapter` pool — `cache.app` here is a `FilesystemAdapter` — is not a cache
+clear. It commits deferred writes, blanks `namespaceVersion` and drops a small internal key map
+(`php/vendor/symfony/cache/Traits/AbstractAdapterTrait.php:286`). The cached entries live in the
+backing store and are re-read, so there is nothing for a missing `reset()` to leave stale.
+
+`bench/e21/app/src/Controller/CacheGrowth.php`, one distinct cache key per request through the pool,
+single thread, prod:
+
+| after | PHP heap | RSS |
+|---|---|---|
+| 1 key | 11,911,640 B (boot still settling) | 69,912 kB |
+| 1,000 distinct keys | 5,446,664 B | 70,100 kB |
+| 3,000 distinct keys | **5,446,704 B** (+40 bytes over 2,000 more keys) | 69,980 kB |
+
+Flat. Nine of the fifteen tagged services are pools of this kind, and none of them is the reason the
+reset existed.
+
+**What is genuinely exposed, and is not this fixture:** a pool backed by `ArrayAdapter`, whose
+`reset()` is `clear()` (`Adapter/ArrayAdapter.php:328`) because there the adapter *is* the store. An
+application configuring `cache.adapter.array` for a request-scoped pool would grow without bound now.
+Filed as `S-RESET-ARRAYPOOL` rather than guessed at — this fixture's prod container builds
+`FilesystemAdapter`, so there is nothing here to measure it against.
+
+Two false starts in the probe, both recorded because each printed a number that looked like an
+answer: reflecting `$ids` on the trait that declares it (wrong — reflection wants the using class),
+then on the using class (wrong again — this Symfony's `FilesystemAdapter` has no such property at
+all, so the version that `reset()` clears is not the version installed). Memory is the quantity the
+question is about and it needs no internals.

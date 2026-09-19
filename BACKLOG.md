@@ -568,20 +568,47 @@ rows that are measured are listed; adding one is a line here plus a decorator, a
 that fails without it.* Blanket auto-scoping of every tagged service is the opposite — it would put a
 proxy in front of fifteen services on the E21 fixture alone, none of them measured, and a wrong proxy
 is a harder defect than the state it was meant to isolate.
-**The inventory to work from**, read out of that fixture's compiled container:
-`App\Service\ResetWitness`, `cache.app`, `cache.property_info`, `cache.security_expression_language`,
-`cache.security_is_csrf_token_valid_attribute_expression_language`,
-`cache.security_is_granted_attribute_expression_language`, `cache.serializer`, `cache.system`,
-`cache.validator`, `container.env_var_processor`, `controller.cache_attribute_listener`, `doctrine`,
-`doctrine.debug_data_holder`, `security.logout_url_generator`, `security.untracked_token_storage`.
-Most are caches, shared on purpose, which must **not** be per fiber — and that is the point: the tag
-is not a reliable signal of "per-request state", which is exactly what auto-scoping would assume.
+**The inventory, sorted by reading each service's own `reset()`** (2026-09-19). Fifteen services carry
+the tag on the E21 fixture and **two** are candidates:
+
+| verdict | services | why |
+|---|---|---|
+| must stay shared — 9 | `cache.app`, `cache.system`, `cache.validator`, `cache.serializer`, `cache.property_info`, `cache.security_expression_language`, `cache.security_is_csrf_token_valid_attribute_expression_language`, `cache.security_is_granted_attribute_expression_language`, `container.env_var_processor` | their `reset()` is `clear()` — the whole cache. Per fiber, every request would start with an empty cache and the memory would multiply: scoping these defeats the thing they are |
+| nothing to scope — 1 | `controller.cache_attribute_listener` | its `reset()` body is empty (`http-kernel/EventListener/CacheAttributeListener.php:131`) |
+| already handled — 2 | `security.untracked_token_storage`, `doctrine` | `FiberScopePass` replaces the first (V-68); `ignis/doctrine` gives the second a manager per fiber (V-69, V-85) |
+| a test double — 1 | `App\Service\ResetWitness` | exists only to make the reset observable (V-95) |
+| **candidates — 2** | **`security.logout_url_generator`** — `reset()` clears `currentFirewallName`/`currentFirewallContext` (`security-http/Logout/LogoutUrlGenerator.php:159`), which the firewall sets **per request**; **`doctrine.debug_data_holder`** — `reset()` clears `$data`, every query of every request, and it is registered in debug only | the first can hand one request's firewall context to another and nothing covers it today; the second mixes requests' queries in the profiler and grows without bound now that the reset is gone |
+
+That table is the argument against auto-scoping by tag: it would put a proxy in front of nine services
+that must stay shared in order to reach two, and one of those two is debug-only. The tag means
+"stateful between requests", not "state belongs to one request", and only reading each `reset()` tells
+them apart.
 **Acceptance.** Per service, in the order of that list: a probe that shows two overlapping requests
 disturbing each other through it, then a fiber-scoped replacement, then the probe green with the
 control still failing. A service whose probe cannot be made to fail is not scoped, and the reason is
 written down. Ends with one line in `FiberScopePass` per scoped service, which is what its rule asks.
 **Constraints.** `main`. `FiberServicesResetter` already names the services that lose their reset, in
 debug, so nothing here is silent while it waits.
+
+### S-RESET-ARRAYPOOL A cache pool backed by `ArrayAdapter` is the one thing the disabled reset really leaks `main` `open — measured 2026-09-19 (V-95 addendum)`
+**What.** `FiberServicesResetter` stopped the service reset in fiber mode, and the caches were the
+first worry. Measured: for an `AbstractAdapter` pool the reset never held a value — it commits
+deferred writes and drops a small internal map, while the entries live in the backing store — so
+3,000 distinct keys through `cache.app` moved the PHP heap by 40 bytes and left RSS in its noise band.
+Nothing stale, nothing growing.
+`ArrayAdapter` is the exception and the only one found: its `reset()` is `clear()`
+(`symfony/cache/Adapter/ArrayAdapter.php:328`) because there the adapter **is** the store, not a
+window onto one. An application that configures `cache.adapter.array` — common for a request-scoped
+memoisation pool, and the default in `test` — now has a pool that grows for the life of the worker.
+**Why it is not already fixed.** There is nothing here to measure it against: the E21 fixture's prod
+container builds `FilesystemAdapter`, and a fix aimed at a configuration no test exercises is the
+shape this cycle keeps finding (a control that cannot fail).
+**Acceptance.** The fixture gains a second pool configured `cache.adapter.array`, a probe that shows
+it growing across N distinct keys, then whichever of these the measurement supports: reset only the
+array-backed pools at a point where the thread is quiescent; or refuse to start with an array-backed
+pool in fiber mode and say why; or scope such a pool per fiber. The probe must fail before the fix.
+**Constraints.** Do not reset an array-backed pool mid-request to "fix" it — that is the V-95 defect
+with a different victim: a parked request would lose entries it wrote itself.
 
 ---
 
