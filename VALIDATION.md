@@ -5024,3 +5024,47 @@ answer: reflecting `$ids` on the trait that declares it (wrong — reflection wa
 then on the using class (wrong again — this Symfony's `FilesystemAdapter` has no such property at
 all, so the version that `reset()` clears is not the version installed). Memory is the quantity the
 question is about and it needs no internals.
+
+## V-96 — a singleton holding a fiber-scoped service is correct; one holding a value out of it is pinned (CONFIRMED, both halves measured)
+
+Date: 2026-09-19T07:3xZ. Raised by the owner as `S-SINGLETON-CAPTURE`, in one sentence containing two
+claims: a singleton that *receives a fiber-scoped service in its constructor*, **or** *stores a value
+read from one in a property*, is pinned to the first request that instantiated it. Measured before
+building, because the two halves do not hold together and the proposed fix followed from the first.
+
+`bench/e21`, new `/singleton` route: `App\Service\SingletonCapture` takes `RequestStack` and
+`EntityManagerInterface` and, in its constructor, captures `getCurrentRequest()`'s tag and
+`getConnection()`'s object hash. Two interleaved requests, three rounds, one thread.
+
+| what the singleton keeps | 6 requests |
+|---|---|
+| the **service** | `live == tag` every time — **0 leaks**; `getConnection()` hands out a different Connection per request: `…0120`, `…0116`, `…0136`, `…012c`, `…014c`, `…0142` |
+| a **value** taken from it | `captured` is `"warm"` in all six — the warm-up request's — and the captured Connection is `…00d6` in all six while every live request has its own |
+
+Holding the service is the supported shape and the reason `FiberRequestStack` and
+`FiberEntityManager` exist: singleton façades whose every method reads `Ignis\Scope`. Holding a value
+out of one is the defect, and the captured `Connection` is the sharp end of it — a singleton would
+use the first request's socket for every request afterwards, which is V-85 with a different owner.
+
+### The three proposed fixes, against what was measured
+
+1. **A compiler pass failing the build when a non-lazy singleton depends on a fiber-scoped service.**
+   It would reject the correct shape. Every Symfony controller and service injects `RequestStack`; a
+   pass like this fails an application at its first controller in order to prevent the row the table
+   above shows to be right. A pass *could* flag a scoped service that is not a façade — there is none
+   today.
+2. **Warm the container at thread start.** Not reachable. The fixture's compiled prod container has
+   **172 service factories and 4 public services** — `event_dispatcher`, `http_kernel`, `router`,
+   `security.token_storage`. The other 168 are private and instantiated only through their consumers,
+   which is inside a request by construction; nothing outside the container can reach them.
+3. **A dev-mode scope tag.** The only one aimed at the defect, and the defect is runtime code —
+   `$this->request = $stack->getCurrentRequest()` — that no compiler pass can see. The reachable
+   version is `S-EXCLUSIVE` (research 39): a resource handed out by a fiber-scoped façade refuses use
+   from a foreign fiber, which catches the capture at the moment it does harm and names both sides.
+
+### Kept
+
+`bench/e21` gained the `/singleton` arm asserting the façade stays correct — **0 of 3** — which is a
+guard V-16, V-68 and V-69 did not have at this shape: they proved the scoped services work, not that
+a singleton holding them still resolves per request. E21 GREEN, eight arms, every control failing as
+it must.

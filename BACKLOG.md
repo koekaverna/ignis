@@ -610,6 +610,51 @@ pool in fiber mode and say why; or scope such a pool per fiber. The probe must f
 **Constraints.** Do not reset an array-backed pool mid-request to "fix" it — that is the V-95 defect
 with a different victim: a parked request would lose entries it wrote itself.
 
+### S-SINGLETON-CAPTURE A singleton that keeps a *value* from a fiber-scoped service is pinned to one request `main` `open — raised by the owner 2026-09-19; premise split and measured before building`
+**What the owner raised.** A singleton that receives a fiber-scoped service in its constructor, or
+stores a value read from one in a property, is pinned to the first request that instantiated it;
+fiber scope does not help and since `S-RESET-FIBER` there is no reset to save it. Proposed: (1) a
+compiler pass that fails the build when a non-lazy singleton depends on a fiber-scoped service;
+(2) warm the container at thread start; (3) a dev-mode scope tag that throws when a value from a
+scoped service lands in a property of a non-scoped object.
+
+**Measured first** (`bench/e21`, `/singleton`, `SingletonCapture` holding both `RequestStack` and
+`EntityManagerInterface`, two interleaved requests, three rounds). The sentence contains two claims
+and they do not hold together:
+
+| what the singleton keeps | result |
+|---|---|
+| the **service** (`RequestStack`, `EntityManagerInterface`) | **correct, 6 of 6** — `live == tag` every time, and `getConnection()` hands out a different Connection per request (…0120, …0116, …0136, …012c, …014c, …0142) |
+| a **value** taken out of it in the constructor | **pinned, 6 of 6** — `captured` is `"warm"` in every request, and the captured Connection is the warm-up's `…00d6` while every live request has its own |
+
+Holding the service is the supported shape and is why `FiberRequestStack` and `FiberEntityManager`
+exist: they are singleton **façades** whose every method reads `Ignis\Scope` (V-16, V-68, V-69).
+Holding a value out of one is the defect.
+
+**Where that leaves the three proposed fixes.**
+1. *Fail the build on the dependency* — would reject the design. Every Symfony controller and service
+   injects `RequestStack`; a pass like this fails an application at its first controller, to prevent a
+   shape the table above shows to be correct. What a pass **could** flag is a scoped service that is
+   not a façade, and today there is none.
+2. *Warm the container at thread start* — not reachable. The fixture's compiled prod container has
+   **172 service factories and 4 public services** (`event_dispatcher`, `http_kernel`, `router`,
+   `security.token_storage`). The other 168 are private and instantiable only through their consumers,
+   which happens inside a request by construction. Nothing outside can warm them.
+3. *A dev-mode scope tag* — the only one aimed at the actual defect, and the actual defect is runtime
+   code (`$this->request = $stack->getCurrentRequest()`) that no compiler pass can see. This is
+   `S-EXCLUSIVE` with research 39 behind it: the reachable version is that a resource handed out by a
+   fiber-scoped façade refuses to be used from a foreign fiber, which catches the capture at the
+   moment it does harm and names both sides.
+
+**Kept from this.** `bench/e21` gained the `/singleton` arm asserting the façade stays correct — a
+real guard for V-16/V-68/V-69, which had no test at this shape. The capture half is `captured_leaked:
+true` by construction and is the defect itself; it becomes an assertion when `S-EXCLUSIVE` gives it
+something to fail against.
+**Acceptance** (inherits `S-EXCLUSIVE`'s): the owner's test — chaos mode, two interleaved requests, a
+singleton holding a `Request` and one holding an `EntityManager` — each must see its own request or
+be told, at the moment of misuse, that it is holding another fiber's. Not silence, and not a build
+that refuses the correct shape.
+
 ---
 
 ## Closed — index
