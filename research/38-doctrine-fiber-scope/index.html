@@ -1,0 +1,2301 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 38 — a per-fiber Doctrine EntityManager under Ignis - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-38-a-per-fiber-doctrine-entitymanager-under-ignis" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 38 — a per-fiber Doctrine EntityManager under Ignis
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-where-the-evidence-comes-from-and-a-correction-to-the-premise" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Where the evidence comes from — and a correction to the premise
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-service-ids-as-they-actually-appear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The service ids, as they actually appear
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-lazy-and-what-the-bundle-already-does-with-kernelreset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. lazy, and what the bundle already does with kernel.reset
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-what-breaks-if-the-entity-manager-definition-is-marked-shared-false" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. What breaks if the entity-manager definition is marked shared: false
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-the-compiler-pass-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The compiler-pass spec
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-request-end-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The request-end reset
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-the-connection-bill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. The connection bill
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-holes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Holes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-gate-what-must-pass-before-this-is-called-working" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Gate — what must pass before this is called working
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-38-a-per-fiber-doctrine-entitymanager-under-ignis">Research 38 — a per-fiber Doctrine EntityManager under Ignis<a class="headerlink" href="#research-38-a-per-fiber-doctrine-entitymanager-under-ignis" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-09-17. Question from the owner: make Doctrine's <code>EntityManager</code> per-fiber, the way
+<code>Ignis\Symfony\FiberRequestStack</code> (<code>php/packages/symfony-runtime/src/FiberRequestStack.php:11</code>) is
+per-fiber, and say precisely what the compiler pass, the request-end reset and the connection bill
+look like. Everything below is read out of an installed vendor tree and a compiled container; every
+claim carries a <code>file:line</code>.</p>
+<h2 id="0-where-the-evidence-comes-from-and-a-correction-to-the-premise">0. Where the evidence comes from — and a correction to the premise<a class="headerlink" href="#0-where-the-evidence-comes-from-and-a-correction-to-the-premise" title="Permanent link">&para;</a></h2>
+<p>The brief said "a Symfony 8.1.7 app with doctrine installed is at <code>/home/koe/projects/symfony-ignis</code>".
+<strong>It is not installed there.</strong> <code>/home/koe/projects/symfony-ignis/composer.json</code> requires
+<code>symfony/framework-bundle 8.1.*</code>, <code>symfony/runtime</code>, <code>ignis/runtime</code> and nothing else;
+<code>vendor/doctrine/</code> does not exist and <code>composer.lock</code> contains no <code>doctrine/*</code> package. No composer
+was run there and nothing in that tree was modified.</p>
+<p>The nearest real subject on this box, and the one used for everything below, is
+<strong><code>/home/koe/projects/1xbet/payment-pipelines</code></strong> — <code>symfony/framework-bundle v8.1.7</code> (the same
+Symfony as the target app) with <code>doctrine/doctrine-bundle 3.3.2</code>, <code>doctrine/orm 3.7.1</code>,
+<code>doctrine/dbal 4.4.4</code>, <code>doctrine/persistence 4.2.0</code>. It has a <strong>compiled dev container</strong>
+(<code>var/cache/dev/App_KernelDevDebugContainer.xml</code>, 1667 services) so the service graph below is
+as-built, not as-remembered. Read only; nothing was written or run there either.</p>
+<p>Throughout, <code>vendor/…</code> and <code>var/…</code> paths are relative to <code>/home/koe/projects/1xbet/payment-pipelines/</code>.</p>
+<p>Two consequences to keep in mind: the <em>counts</em> in §4 and §7 are that app's counts, not the owner's
+app's, and they are the only real numbers here. Everything about <strong>cost</strong> — EM construction time per
+fiber, RSS per per-fiber EM, connection setup latency — is <strong>unmeasured</strong>. No bench exists yet; §8
+says which one has to.</p>
+<h2 id="1-the-service-ids-as-they-actually-appear">1. The service ids, as they actually appear<a class="headerlink" href="#1-the-service-ids-as-they-actually-appear" title="Permanent link">&para;</a></h2>
+<p>Ids are built by <code>DoctrineExtension</code> from the connection/manager names. <code>%s</code> is the configured name;
+with the default configuration that name is literally <code>default</code>
+(<code>vendor/doctrine/doctrine-bundle/src/DependencyInjection/DoctrineExtension.php:476-477</code> and <code>:482-483</code>
+prepend a <code>default</code> connection and a <code>default</code> entity manager when none is configured).</p>
+<table>
+<thead>
+<tr>
+<th>id</th>
+<th>kind</th>
+<th>class</th>
+<th>declared where</th>
+<th>flags as compiled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>doctrine.dbal.default_connection</code></td>
+<td><strong>definition</strong> (<code>ChildDefinition</code> of <code>doctrine.dbal.connection</code>)</td>
+<td><code>Doctrine\DBAL\Connection</code></td>
+<td><code>DoctrineExtension.php:630-639</code>; abstract parent <code>config/dbal.php:54-56</code></td>
+<td><code>public="true"</code>, <strong>shared</strong>, <strong>not lazy</strong> — <code>var/cache/dev/App_KernelDevDebugContainer.xml:4739</code></td>
+</tr>
+<tr>
+<td><code>doctrine.dbal.default_connection.configuration</code></td>
+<td>definition</td>
+<td><code>Doctrine\DBAL\Configuration</code></td>
+<td><code>DoctrineExtension.php:598</code></td>
+<td>shared</td>
+</tr>
+<tr>
+<td><code>doctrine.dbal.default_connection.event_manager</code></td>
+<td>definition</td>
+<td><code>Symfony\Bridge\Doctrine\ContainerAwareEventManager</code></td>
+<td><code>DoctrineExtension.php:625</code>; parent <code>config/dbal.php:58-62</code></td>
+<td>shared — <code>…Container.xml:4680</code></td>
+</tr>
+<tr>
+<td><code>doctrine.orm.default_entity_manager</code></td>
+<td><strong>definition</strong> (<code>ChildDefinition</code> of <code>doctrine.orm.entity_manager.abstract</code>)</td>
+<td><code>Doctrine\ORM\EntityManager</code></td>
+<td><code>DoctrineExtension.php:1027-1037</code></td>
+<td><code>public="true"</code>, <strong>shared</strong>, <strong><code>lazy="true"</code></strong> — <code>…Container.xml:5122</code></td>
+</tr>
+<tr>
+<td><code>doctrine.orm.default_configuration</code></td>
+<td>definition</td>
+<td><code>Doctrine\ORM\Configuration</code></td>
+<td>abstract parent <code>config/orm.php:69</code></td>
+<td>shared</td>
+</tr>
+<tr>
+<td><code>doctrine.orm.default_manager_configurator</code></td>
+<td>definition</td>
+<td><code>Doctrine\Bundle\DoctrineBundle\ManagerConfigurator</code></td>
+<td>parent <code>config/orm.php:82-87</code>, wired as the EM's configurator <code>DoctrineExtension.php:1037</code></td>
+<td>shared</td>
+</tr>
+<tr>
+<td><code>doctrine</code></td>
+<td>definition</td>
+<td><code>Doctrine\Bundle\DoctrineBundle\Registry</code></td>
+<td><code>config/dbal.php:67-76</code></td>
+<td><code>public</code>, shared, <strong><code>kernel.reset</code> → <code>reset</code></strong></td>
+</tr>
+<tr>
+<td><code>doctrine.orm.container_repository_factory</code></td>
+<td>definition</td>
+<td><code>…\Repository\ContainerRepositoryFactory</code></td>
+<td><code>config/orm.php:75-80</code>, attached to the EM's <code>Configuration</code> via <code>setRepositoryFactory</code> (<code>DoctrineExtension.php:977</code>)</td>
+<td>shared</td>
+</tr>
+</tbody>
+</table>
+<p>Aliases (all verified in the compiled container, <code>…Container.xml:8811-8826</code>):</p>
+<table>
+<thead>
+<tr>
+<th>alias</th>
+<th>→ target</th>
+<th>declared where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>database_connection</code> (public)</td>
+<td><code>doctrine.dbal.default_connection</code></td>
+<td><code>DoctrineExtension.php:516-517</code></td>
+</tr>
+<tr>
+<td><code>Doctrine\DBAL\Connection</code></td>
+<td><code>doctrine.dbal.default_connection</code></td>
+<td><code>config/dbal.php:32</code></td>
+</tr>
+<tr>
+<td><code>.Doctrine\DBAL\Connection $default</code> / <code>Doctrine\DBAL\Connection $defaultConnection</code></td>
+<td><code>doctrine.dbal.default_connection</code></td>
+<td><code>registerAliasForArgument</code>, <code>DoctrineExtension.php:641-642</code></td>
+</tr>
+<tr>
+<td><code>doctrine.dbal.event_manager</code></td>
+<td><code>doctrine.dbal.default_connection.event_manager</code></td>
+<td><code>DoctrineExtension.php:518</code></td>
+</tr>
+<tr>
+<td><strong><code>doctrine.orm.entity_manager</code> (public)</strong></td>
+<td><strong><code>doctrine.orm.default_entity_manager</code></strong></td>
+<td><code>DoctrineExtension.php:844-845</code></td>
+</tr>
+<tr>
+<td><code>Doctrine\ORM\EntityManagerInterface</code></td>
+<td><code>doctrine.orm.default_entity_manager</code></td>
+<td><code>config/orm.php:55</code></td>
+</tr>
+<tr>
+<td><code>.Doctrine\ORM\EntityManagerInterface $default</code> / <code>…$defaultEntityManager</code></td>
+<td><code>doctrine.orm.default_entity_manager</code></td>
+<td><code>registerAliasForArgument</code>, <code>DoctrineExtension.php:1039-1040</code></td>
+</tr>
+<tr>
+<td><code>doctrine.orm.default_entity_manager.event_manager</code></td>
+<td><code>doctrine.dbal.default_connection.event_manager</code></td>
+<td><code>DoctrineExtension.php:1042-1045</code></td>
+</tr>
+<tr>
+<td><code>Doctrine\Persistence\ManagerRegistry</code></td>
+<td><code>doctrine</code></td>
+<td><code>config/dbal.php:33</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>The one concrete id to target is <code>doctrine.orm.default_entity_manager</code></strong> — <code>doctrine.orm.entity_manager</code>
+and <code>Doctrine\ORM\EntityManagerInterface</code> are aliases onto it, so decorating the concrete id covers
+every injection path. Same for <code>doctrine.dbal.default_connection</code> and its four aliases.</p>
+<p>The registry resolves managers <em>by id through the container on every call</em>, it caches nothing:
+<code>AbstractManagerRegistry::getManager()</code> is <code>return $this-&gt;getService($this-&gt;managers[$name])</code>
+(<code>vendor/doctrine/persistence/src/AbstractManagerRegistry.php:122</code>), and <code>getService()</code> is
+<code>$this-&gt;container-&gt;get($name)</code> (<code>vendor/symfony/doctrine-bridge/ManagerRegistry.php:27-30</code>). Good
+news for us: the registry does not have to be taught anything about fibers to see a per-fiber
+manager — it just has to keep asking the container.</p>
+<h2 id="2-lazy-and-what-the-bundle-already-does-with-kernelreset">2. <code>lazy</code>, and what the bundle already does with <code>kernel.reset</code><a class="headerlink" href="#2-lazy-and-what-the-bundle-already-does-with-kernelreset" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Lazy</strong>: only the entity manager. <code>config/orm.php:71-73</code> marks the abstract
+  <code>doctrine.orm.entity_manager.abstract</code> <code>-&gt;lazy()</code>, inherited by the child
+  (<code>lazy="true"</code> at <code>…Container.xml:5122</code>). <strong>The connection is not lazy</strong> — it is a plain shared
+  service built by the <code>doctrine.dbal.connection_factory</code> factory (<code>…Container.xml:4739-4755</code>).
+  The DBAL connection is nonetheless not <em>connected</em> until first use, which is why a non-lazy
+  definition is harmless today.</li>
+<li><strong><code>kernel.reset</code></strong> — <code>grep -rn "kernel.reset" vendor/doctrine/</code> returns exactly three hits:</li>
+<li><code>vendor/doctrine/doctrine-bundle/config/dbal.php:76</code> — <code>doctrine</code> (the <code>Registry</code>), method <code>reset</code>;</li>
+<li><code>vendor/doctrine/doctrine-bundle/config/middlewares.php:29</code> — the debug data holder;</li>
+<li><code>vendor/doctrine/doctrine-bundle/src/DependencyInjection/DoctrineExtension.php:770</code> — <code>form.type.entity</code>.</li>
+</ul>
+<p><strong>The entity manager itself is not tagged <code>kernel.reset</code>.</strong> All Doctrine request-scoped cleanup
+  goes through <code>Registry::reset()</code> (<code>vendor/doctrine/doctrine-bundle/src/Registry.php:34-75</code>), which
+  for each manager id:
+  1. returns immediately if <code>$this-&gt;container-&gt;initialized($serviceId)</code> is false (<code>Registry.php:43-45</code>);
+  2. returns immediately if the service is an uninitialized lazy object (<code>Registry.php:62-65</code>);
+  3. <strong>calls <code>$manager-&gt;clear()</code> if <code>$manager-&gt;isOpen()</code></strong> (<code>Registry.php:67-71</code>);
+  4. otherwise calls <code>resetManager($managerName)</code> (<code>Registry.php:74</code>), which is
+     <code>resetService()</code> → <code>ReflectionClass::resetAsLazyGhost/resetAsLazyProxy</code>
+     (<code>vendor/symfony/doctrine-bridge/ManagerRegistry.php:47-88</code>) — and <strong>throws
+     <code>LogicException('Resetting a non-lazy manager service is not supported…')</code> if the service is not
+     lazy</strong> (<code>ManagerRegistry.php:87</code>). That is why the bundle marks the EM <code>lazy()</code>.</p>
+<p><code>reset()</code> is reached at runtime through <code>services_resetter</code>
+  (<code>Symfony\Component\HttpKernel\DependencyInjection\ServicesResetter</code>), and <code>doctrine</code> is in its
+  iterator — <code>…Container.xml:1718</code> (<code>&lt;argument key="doctrine" … on-invalid="ignore_uninitialized"/&gt;</code>).</p>
+<p><strong>Note what <code>clear()</code> is and is not.</strong> <code>EntityManager::clear()</code> is
+  <code>$this-&gt;unitOfWork-&gt;clear()</code> (<code>vendor/doctrine/orm/src/EntityManager.php:425-428</code>), and
+  <code>UnitOfWork::clear()</code> nulls 20 identity/changeset arrays and fires <code>Events::onClear</code>
+  (<code>vendor/doctrine/orm/src/UnitOfWork.php:2395-2419</code>). It does <strong>not</strong> touch the connection and it
+  does <strong>not</strong> roll back an open transaction. Nothing in DoctrineBundle rolls back at request end:
+  the only <code>Connection::close()</code> in the bundle is <code>DoctrineBundle::shutdown()</code>
+  (<code>vendor/doctrine/doctrine-bundle/src/DoctrineBundle.php:104-112</code>), which runs at process end.</p>
+<h2 id="3-what-breaks-if-the-entity-manager-definition-is-marked-shared-false">3. What breaks if the entity-manager definition is marked <code>shared: false</code><a class="headerlink" href="#3-what-breaks-if-the-entity-manager-definition-is-marked-shared-false" title="Permanent link">&para;</a></h2>
+<p>Nothing in DoctrineBundle <em>holds</em> the manager in a property — <code>Registry</code> re-resolves it through the
+container every time (§1), <code>ContainerAwareEventManager</code> holds only the container and listener
+bookkeeping (<code>vendor/symfony/doctrine-bridge/ContainerAwareEventManager.php:26-38</code> — <code>$initialized</code>,
+<code>$initializedSubscribers</code>, <code>$initializedHashMapping</code>, <code>$methods</code>, <code>$container</code>, <code>$listeners</code>; no
+manager). So the <em>bundle</em> survives.</p>
+<p><strong>The application does not.</strong> In the compiled container, <strong>38 shared application services take
+<code>doctrine.orm.default_entity_manager</code> as a constructor argument</strong> (<code>grep -c 'id="doctrine.orm.default_entity_manager"/&gt;'</code>
+→ 39, of which 38 are <code>App\…</code> services and one is
+<code>doctrine.orm.default_entity_manager.property_info_extractor</code>) — e.g.
+<code>App\Pipeline\Infrastructure\Repository\PipelineRepository</code>,
+<code>App\Run\Projection\RunMaterializer</code>, <code>App\Run\Ingress\WebhookReceiver</code>. Each is itself shared, so
+each captures <strong>one</strong> EM instance at its own first instantiation and hands that same instance to
+every fiber forever. Marking the EM <code>shared: false</code> gives those 38 services a <em>fresh</em> manager once,
+at boot, and changes nothing afterwards — it is strictly worse than today, because the identity of
+that captured manager is now arbitrary rather than "the one everything else uses".</p>
+<p>Two more instance-pinning caches, both real:</p>
+<ul>
+<li><strong><code>ContainerRepositoryFactory::$managedRepositories</code></strong> keys its cache by
+  <code>$metadata-&gt;getName() . spl_object_hash($entityManager)</code>
+  (<code>vendor/doctrine/doctrine-bundle/src/Repository/ContainerRepositoryFactory.php:96-105</code>). The
+  factory is a <strong>shared</strong> service reached through the shared <code>Configuration</code>
+  (<code>DoctrineExtension.php:977</code>), so one map serves every per-fiber EM. <code>spl_object_hash</code> is derived
+  from the object handle and handles are <strong>reused after free</strong>: if per-fiber EMs are ever destroyed
+  and rebuilt, a new EM can collide with a freed one's hash and be handed a repository still holding
+  the dead manager. This is a correctness bug, not just a leak. It argues for <em>keeping</em> each fiber's
+  EM alive rather than rebuilding it per request (§5).</li>
+<li><strong><code>ServiceEntityRepository</code></strong> in 3.3.2 no longer takes an EM in its constructor — it takes the
+  registry and memoises <code>$this-&gt;repository ??= $this-&gt;resolveRepository()</code> on first use
+  (<code>vendor/doctrine/doctrine-bundle/src/Repository/ServiceEntityRepository.php:41,52,127-142</code>), where
+  <code>resolveRepository()</code> builds <code>new EntityRepository($manager, $classMetadata)</code> from
+  <code>$this-&gt;registry-&gt;getManagerForClass(...)</code>. The repository service is shared, so <strong>the first fiber
+  to touch it pins its EM into every later fiber's queries.</strong></li>
+</ul>
+<p><strong>Conclusion: <code>shared: false</code> on the id everything injects is the wrong lever.</strong> The id everything
+injects must stay <strong>shared and stable</strong>, and be a fiber-aware façade — exactly the
+<code>FiberRequestStack</code> shape, where the shared <code>request_stack</code> service is the façade and
+<code>Ignis\Scope</code> holds the per-fiber value (<code>FiberRequestStack.php:13-26</code>). <code>shared: false</code> belongs on
+the <em>inner</em> definition only.</p>
+<p>For the record, <code>Doctrine\ORM\Decorator\EntityManagerDecorator</code> <strong>does</strong> exist in 3.7.1
+(<code>vendor/doctrine/orm/src/Decorator/EntityManagerDecorator.php:33</code>), is <code>abstract</code>, extends
+<code>Doctrine\Persistence\ObjectManagerDecorator</code>, implements <code>EntityManagerInterface</code>, and delegates
+<strong>every</strong> call through the single protected property
+<code>ObjectManagerDecorator::$wrapped</code> (<code>vendor/doctrine/persistence/src/ObjectManagerDecorator.php:18</code>).
+The three the brief asked about all route through it:
+<code>getConnection()</code> → <code>$this-&gt;wrapped-&gt;getConnection()</code> (<code>EntityManagerDecorator.php:55-58</code>),
+<code>getRepository()</code> → <code>$this-&gt;wrapped-&gt;getRepository()</code> (<code>:40-43</code>),
+<code>getUnitOfWork()</code> → <code>$this-&gt;wrapped-&gt;getUnitOfWork()</code> (<code>:140</code>). The combined public surface is
+<strong>35 methods</strong>: 27 declared on <code>EntityManagerDecorator</code> (<code>:40</code>–<code>:170</code>) plus 8 inherited unchanged
+from <code>ObjectManagerDecorator</code> (<code>persist</code>, <code>remove</code>, <code>clear</code>, <code>detach</code>, <code>flush</code>, <code>initializeObject</code>,
+<code>isUninitializedObject</code>, <code>contains</code>).</p>
+<p><code>$wrapped</code> is a <em>property</em>, not an accessor, so extending <code>EntityManagerDecorator</code> and leaving it
+alone would pin one manager. The fiber-aware subclass must re-point <code>$wrapped</code> on entry to each
+call. That is the whole mechanism.</p>
+<h2 id="4-the-compiler-pass-spec">4. The compiler-pass spec<a class="headerlink" href="#4-the-compiler-pass-spec" title="Permanent link">&para;</a></h2>
+<p>One pass, <code>Ignis\Symfony\Doctrine\FiberScopePass</code>, registered from the app kernel (or from an
+<code>IgnisDoctrineBundle</code> if one is ever wanted), <code>PassConfig::TYPE_BEFORE_OPTIMIZATION</code>, <strong>priority 0 —
+i.e. after every DoctrineBundle pass</strong>. Justification for the position, not preference:</p>
+<ul>
+<li>Extensions all run before any compiler pass, so <code>doctrine.orm.default_entity_manager</code> and
+  <code>doctrine.dbal.default_connection</code> already exist with their final arguments by the time any
+  <code>BEFORE_OPTIMIZATION</code> pass runs.</li>
+<li>DoctrineBundle registers <code>ServiceRepositoryCompilerPass</code>, <code>EntityListenerPass</code>, <code>IdGeneratorPass</code>,
+  <code>MiddlewaresPass</code>, <code>RegisterEventListenersAndSubscribersPass</code> at <code>BEFORE_OPTIMIZATION</code> /
+  default priority (<code>vendor/doctrine/doctrine-bundle/src/DoctrineBundle.php:51,61-71</code>). Passes at
+  equal priority run in registration order and bundles are built before the kernel's own passes, so
+  registering from the kernel at priority 0 lands after all of them. Running <em>earlier</em> would mean
+  <code>MiddlewaresPass</code> and friends mutating the definition after we had renamed it.</li>
+<li>It must run <strong>before</strong> <code>DecoratorServicePass</code> (optimization group), which is what performs the
+  <code>.inner</code> rename (<code>vendor/symfony/dependency-injection/Compiler/DecoratorServicePass.php:62</code>) — so
+  we declare decoration and let Symfony do the renaming, rather than renaming ids by hand.</li>
+</ul>
+<p>What the pass does:</p>
+<ol>
+<li>
+<p><strong>Guard.</strong> <code>if (!$container-&gt;hasDefinition('doctrine.orm.default_entity_manager')) return;</code> —
+   generalised as: for every id in the <code>doctrine.entity_managers</code> parameter
+   (<code>DoctrineExtension.php:831-835</code>) and every id in <code>doctrine.connections</code> (<code>:526-530</code>). Never
+   hard-code <code>default</code>; multi-manager apps exist and the parameter is the authority.</p>
+</li>
+<li>
+<p><strong>Per entity-manager id <code>$em</code>:</strong></p>
+</li>
+<li><code>$inner = $container-&gt;getDefinition($em);</code></li>
+<li><code>$inner-&gt;setShared(false);</code> — each <code>$container-&gt;get()</code> now builds a fresh manager.</li>
+<li><code>$inner-&gt;setLazy(false);</code> — the <code>lazy()</code> from <code>config/orm.php:73</code> exists so that
+     <code>Registry::resetService()</code> can reset the ghost in place (<code>ManagerRegistry.php:39-88</code>). Under
+     this design the fiber slot is the reset unit (§5) and the decorator only calls <code>get()</code> when a
+     fiber actually touches Doctrine, so the ghost is a second proxy layer buying nothing.
+     <em>Cost of removing it is unmeasured; if the ORM <code>Configuration</code> ever grows a constructor-time
+     cost this is the knob to revisit.</em></li>
+<li><code>$inner-&gt;setPublic(false);</code> — the public id is now the decorator.</li>
+<li>Register <code>$em.'.fiber'</code> = <code>new Definition(FiberEntityManager::class)</code>,
+     <code>-&gt;setDecoratedService($em)</code> (Symfony renames the old definition to <code>$em.'.inner'</code> and points
+     the alias <code>$em</code> at ours), <code>-&gt;setArguments([new Reference($em.'.fiber.inner'), $em.'.inner'])</code>
+     — i.e. a <code>ServiceLocator</code> (or the <code>service_container</code> reference, matching how <code>Registry</code> itself
+     is wired at <code>config/dbal.php:67-75</code>) plus the inner id as a string, <strong>not</strong> a plain
+     <code>Reference</code> to the inner: a <code>Reference</code> would be resolved once at decorator construction and
+     defeat the whole thing. <code>-&gt;setPublic(true)</code> so <code>doctrine.orm.entity_manager</code> stays public.</li>
+<li>
+<p>Do <strong>not</strong> touch the aliases. <code>doctrine.orm.entity_manager</code>,
+     <code>Doctrine\ORM\EntityManagerInterface</code> and the two <code>registerAliasForArgument</code> aliases all point
+     at <code>$em</code>, which is now the decorator. All 38 injection sites of §3 keep working unchanged.</p>
+</li>
+<li>
+<p><strong>Per connection id <code>$conn</code>:</strong> <code>$container-&gt;getDefinition($conn)-&gt;setShared(false);</code> and nothing
+   else. There is no <code>ConnectionInterface</code> in DBAL 4 and <code>Doctrine\DBAL\Connection</code> is a concrete
+   class with ~40 public methods and private driver state
+   (<code>vendor/doctrine/dbal/src/Connection.php:63</code>), so there is no cheap decorator for it. Non-shared
+   is enough <strong>for the path that matters</strong>: the per-fiber inner EM references
+   <code>doctrine.dbal.default_connection</code> (<code>DoctrineExtension.php:1033</code>), so each fiber's manager gets
+   its own connection as a side effect of its own construction. The path that does not get fixed is
+   §7 hole 1.</p>
+</li>
+<li>
+<p><strong>Replace the registry class.</strong> <code>$container-&gt;getDefinition('doctrine')-&gt;setClass(FiberRegistry::class)</code>
+   where <code>FiberRegistry extends Doctrine\Bundle\DoctrineBundle\Registry</code> and overrides
+   <code>resetService(string $name): void</code> to drop this fiber's slot instead of calling
+   <code>resetAsLazyGhost</code>. Without this, any application call to <code>$registry-&gt;resetManager()</code> — the
+   normal thing to do after catching a <code>Doctrine\ORM\Exception\ORMException</code> — reaches
+   <code>ManagerRegistry.php:87</code> and throws <code>LogicException('Resetting a non-lazy manager service is not
+   supported…')</code>, because our decorator is not a lazy object. ~15 lines, one class.</p>
+</li>
+<li>
+<p><strong>Gate (build-time).</strong> In the same pass, collect every definition whose arguments contain a
+   <code>Reference</code> to a connection id or to one of its four aliases, excluding the entity-manager inner
+   definitions, and record the list as a container parameter (<code>ignis.doctrine.direct_connections</code>)
+   so <code>bin/console</code> and the smoke gate can print it. In the subject app that list has exactly one
+   entry (§7). See §8 for what it must be used for.</p>
+</li>
+</ol>
+<p>The class itself, in <code>php/packages/symfony-runtime/src/Doctrine/FiberEntityManager.php</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="x">final class FiberEntityManager extends EntityManagerDecorator</span>
+<span class="x">{</span>
+<span class="x">    private const KEY = 'doctrine.em.';</span>
+
+<span class="x">    public function __construct(private ContainerInterface $locator, private string $innerId) {}</span>
+
+<span class="x">    /** The fiber's own manager; built on first touch, reused for the rest of the fiber's life. */</span>
+<span class="x">    public function inner(): EntityManagerInterface</span>
+<span class="x">    {</span>
+<span class="x">        $key = self::KEY . $this-&gt;innerId;</span>
+<span class="x">        $em  = Scope::get($key);</span>
+<span class="x">        if ($em === null) {</span>
+<span class="x">            $em = $this-&gt;locator-&gt;get($this-&gt;innerId);   // shared:false → a fresh EM + Connection</span>
+<span class="x">            Scope::set($key, $em);</span>
+<span class="x">        }</span>
+<span class="x">        return $this-&gt;wrapped = $em;</span>
+<span class="x">    }</span>
+<span class="x">    // …35 overrides, each `return $this-&gt;inner()-&gt;foo(...)`.</span>
+<span class="x">}</span>
+</code></pre></div>
+<p><code>Scope</code> is <code>php/packages/runtime/src/ignis.php:686-712</code> — a <code>WeakMap</code> keyed by <code>\Fiber</code>, with a
+<code>$main</code> array for the no-fiber case. It has no <code>delete</code>; the idiom for dropping a slot is
+<code>Scope::set($key, null)</code>, as <code>Ignis\Pg\Lease::release()</code> does
+(<code>php/packages/pg/src/ignis-pg.php:136,145</code>).</p>
+<p><strong>Why 35 hand-written overrides and not something clever.</strong> <code>$wrapped</code> is a declared protected
+property read directly by every inherited method (<code>ObjectManagerDecorator.php:25,30,35,…</code>), so the
+only alternatives are <code>__call</code> (impossible: the parent declares the methods, so <code>__call</code> never
+fires) or re-pointing <code>$wrapped</code> from outside on every fiber switch (a new mechanism, which the
+mechanism budget forbids). The overrides are mechanical and each is one line. <code>FiberRequestStack</code>
+made the same trade at a smaller scale — it overrides all five <code>RequestStack</code> methods
+(<code>FiberRequestStack.php:21-55</code>).</p>
+<h2 id="5-the-request-end-reset">5. The request-end reset<a class="headerlink" href="#5-the-request-end-reset" title="Permanent link">&para;</a></h2>
+<p><strong>The trap, stated plainly.</strong> <code>Ignis\Loop</code> reuses parked fibers — <code>poolBody()</code> loops forever and
+pushes itself back onto <code>self::$idle</code> between jobs (<code>php/packages/runtime/src/ignis.php</code>, <code>poolBody</code>
+/ <code>spawn</code>), and that reuse is V-4, the project's single biggest win. <code>Scope</code>'s <code>WeakMap</code> is keyed by
+the <code>\Fiber</code> object, so <strong>a pooled fiber's <code>Scope</code> entries never expire</strong>: the manager, its identity
+map, its connection and its open transaction all survive into whatever request lands on that fiber
+next. The existing per-fiber state avoids this by being written fresh every request
+(<code>Scope::set('ignis.request', $id)</code> at admit and <code>…, null)</code> in the <code>finally</code>, <code>ignis.php:561,579</code>;
+<code>FiberRequestStack</code> is pushed and popped by the kernel). A Doctrine manager is not written fresh —
+that is the point of keeping it — so it must be reset explicitly.</p>
+<p><strong>What must be called, in order, when a request finishes:</strong></p>
+<ol>
+<li><code>$em = Scope::get('doctrine.em.'.$innerId);</code> — <code>null</code> means this fiber never touched Doctrine.
+   Do nothing. (Necessary: the decorator must not <em>create</em> a manager during cleanup, which is
+   exactly the mistake <code>Registry::resetOrClearManager</code> avoids with its <code>initialized()</code> check,
+   <code>Registry.php:43-45</code>.)</li>
+<li><strong>Roll back an open transaction.</strong>
+   <code>if ($em-&gt;getConnection()-&gt;isTransactionActive()) { $em-&gt;getConnection()-&gt;rollBack(); }</code>
+   (<code>vendor/doctrine/dbal/src/Connection.php:348</code> and <code>:1126</code>). <strong>DoctrineBundle does not do this
+   today and nothing else will.</strong> Under php-fpm a leaked <code>BEGIN</code> dies with the process; on a pooled
+   fiber it becomes the next request's transaction, on the same connection, holding the same locks.
+   This is the single most dangerous carry-over and it is not covered by <code>clear()</code> (§2).</li>
+<li><strong>Clear or drop.</strong> Mirror <code>Registry::resetOrClearManager</code> (<code>Registry.php:55-74</code>):
+   <code>$em-&gt;isOpen() ? $em-&gt;clear() : Scope::set($key, null);</code> — a healthy manager is cleared and
+   <strong>kept</strong>, a closed one is dropped so the next request on this fiber builds a new one.
+   Keeping the healthy manager is deliberate: dropping it every request would rebuild the
+   <code>ClassMetadataFactory</code>, <code>UnitOfWork</code> and <code>ProxyFactory</code> per request
+   (<code>vendor/doctrine/orm/src/EntityManager.php:130-148</code>), re-open a connection per request, and feed
+   the <code>spl_object_hash</code> collision in <code>ContainerRepositoryFactory</code> (§3). The cost of <em>not</em> keeping
+   it is unmeasured; the cost of keeping it is §6.</li>
+</ol>
+<p><strong>Where it goes.</strong> <code>php/packages/symfony-runtime/src/IgnisWorkerRunner.php:24-54</code>. The handler
+closure currently runs <code>Request::createFromGlobals()</code> → <code>$kernel-&gt;handle()</code> → response marshalling →
+<code>$kernel-&gt;terminate()</code> → <code>return new IgnisResponse(...)</code>. The reset belongs in a <code>try { … } finally { … }</code>
+wrapping the <strong>entire</strong> closure body, so it runs after <code>terminate()</code> (line 51) and also on the throw
+path — a request that dies mid-transaction is precisely the one that must not leak its <code>BEGIN</code>.
+It must be inside the per-request closure, never in <code>run()</code>: <code>run()</code> executes once.</p>
+<p><strong>What must not be called.</strong> Not <code>services_resetter-&gt;reset()</code>. That id exists
+(<code>…Container.xml:1698</code>, public) and does include <code>doctrine</code>, but it also includes <code>request_stack</code>
+(<code>…Container.xml:1703</code>) and every other resettable service on the thread; calling it from one fiber
+would reset state belonging to the other fibers interleaved with it. And not <code>Registry::reset()</code>
+unaltered — with <code>shared:false</code> on the inner, <code>$this-&gt;container-&gt;initialized($serviceId)</code>
+(<code>Registry.php:43</code>) is permanently false for a non-shared id, so it would silently do nothing; with
+the decorator in place at the public id it would clear <em>the current fiber's</em> manager, which is
+correct but does not roll back (step 2) and is not reachable from a per-request hook that does not
+exist yet.</p>
+<h2 id="6-the-connection-bill">6. The connection bill<a class="headerlink" href="#6-the-connection-bill" title="Permanent link">&para;</a></h2>
+<p>With a per-fiber connection, <strong>open connections = peak concurrent fibers per PHP thread × threads</strong>,
+and because pooled fibers are never freed, the peak is <strong>sticky</strong>: once N fibers have existed on a
+thread, N connections stay open on it for the life of the process, even at idle. <code>clear()</code> does not
+close a connection and nothing else in the request path does either (§2).</p>
+<p>For the owner's own configuration, <code>/home/koe/projects/symfony-ignis/ignis.toml</code>: <code>threads = 4</code>,
+<code>[budget] fibers = 1024</code>. Worst case <strong>4 × 1024 = 4096</strong> connections from one Ignis process. MySQL
+ships <code>max_connections = 151</code>; PostgreSQL ships <code>max_connections = 100</code>. The default configuration
+therefore oversubscribes a stock database by more than an order of magnitude.</p>
+<p>What bounds it — all three are existing knobs, no new mechanism:</p>
+<ul>
+<li><strong><code>IGNIS_FIBER_BUDGET</code></strong> / <code>[budget] fibers</code> (ADR-0019, <code>ignis.php:411-425</code>): the hard cap on
+  concurrently admitted <em>request</em> fibers per thread. This is the multiplicand. Set it to the
+  per-thread share of the database's connection budget, not to a throughput target.</li>
+<li><strong><code>IGNIS_THREADS</code></strong> / <code>threads</code> (ADR-0010): the multiplier.</li>
+<li>The bill is per <strong>process</strong>, so <code>--supervise</code> with multiple processes multiplies again.</li>
+</ul>
+<p>The rule to publish with the feature: <em><code>threads × fibers ≤ (max_connections − headroom)</code></em>, and a
+boot-time warning when the product exceeds a configured <code>doctrine.max_connections</code>. Whether the
+per-fiber connection actually costs what a per-fiber connection costs — setup latency, RSS,
+server-side memory — is <strong>unmeasured</strong>; §8 gates it.</p>
+<p>Relevant to the shape of the bill: since 2026-09-17 (V-59 addendum) <code>PDO</code> is <strong>not</strong> offload-routed;
+only <code>SQLite3</code> is (<code>crates/ignis/src/php/route.rs:41-52</code>), because <code>pdo_pgsql</code>/<code>pdo_mysql</code> talk over
+a socket and park (303 ms parked vs 2,753 ms through an 8-worker pool). So a per-fiber PDO handle is
+a real socket held by a real parked fiber — the count above is a count of sockets, and none of it is
+mitigated by the offload pool. <code>pdo_sqlite</code> is the exception and blocks the thread
+(<code>route.rs:48-51</code>); a Doctrine app on SQLite gets no concurrency from this design at all.</p>
+<h2 id="7-holes">7. Holes<a class="headerlink" href="#7-holes" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Direct <code>Connection</code> injection — the design does not cover it.</strong> Services that constructor-inject
+   <code>Doctrine\DBAL\Connection</code> (or <code>database_connection</code>, or a <code>$defaultConnection</code>-named argument)
+   are themselves shared, so each captures <strong>one</strong> connection at first instantiation and every fiber
+   then issues statements through that one handle. There is no interleaving protection anywhere in
+   DBAL; two fibers sharing a PDO handle interleave at the wire. <strong>Size of the hole, measured in the
+   subject app:</strong> of 1667 compiled services, exactly <strong>one</strong> application service takes a raw
+   connection — <code>App\Integration\Legacy\LegacyOrderRepository</code>, via the
+   <code>Doctrine\DBAL\Connection $legacyConnection</code> argument alias — and exactly <strong>one</strong> framework
+   service takes <code>doctrine.dbal.default_connection</code> directly, and that one is
+   <code>doctrine.orm.default_entity_manager</code> itself. <code>database_connection</code>,
+   <code>Doctrine\DBAL\Connection</code> and <code>cache.default_doctrine_dbal_provider</code> have <strong>zero</strong> argument
+   references. So the practical hole is <em>one app service in one app</em> — small, but not zero, and
+   silent when hit. The only honest treatment is the build-time list from §4 step 5 plus a documented
+   failure mode; a per-fiber <code>Connection</code> would need either a 40-method subclass through DBAL's
+   <code>wrapper_class</code> option (<code>DoctrineExtension.php:644-647</code>) or an upstream <code>ConnectionInterface</code>.
+   <strong>Unmeasured:</strong> whether two fibers on one PDO handle corrupt results or merely serialise.</li>
+<li><strong><code>ContainerRepositoryFactory</code> cache keyed by <code>spl_object_hash</code></strong>
+   (<code>ContainerRepositoryFactory.php:96</code>) — shared across all per-fiber EMs, unbounded in entries, and
+   handle-reuse can return a repository bound to a freed manager. Mitigated, not fixed, by keeping
+   each fiber's EM alive (§5). A real fix is a per-fiber repository factory, i.e. a second decorator;
+   out of scope here and worth its own note before anyone rebuilds EMs per request.</li>
+<li><strong><code>ServiceEntityRepository</code> memoisation</strong> (<code>ServiceEntityRepository.php:52,127-142</code>) — the shared
+   repository service caches <code>new EntityRepository($manager, …)</code> from whichever fiber touched it
+   first. Apps that use <code>ServiceEntityRepository</code> (the <code>make:entity</code> default) get the first fiber's
+   EM in every later fiber unless those repository services are also made non-shared. Untested
+   against this design.</li>
+<li><strong><code>ContainerAwareEventManager</code> stays shared</strong> — its listener <em>instances</em> are container services,
+   so a stateful Doctrine event listener is still shared across fibers. That is ADR-0029's "vendor
+   state" problem, not this design's, but Doctrine listeners are a common place for it.</li>
+<li><strong>The idle-connection listener</strong> (<code>Symfony\Bridge\Doctrine\Middleware\IdleConnection\Listener:39-50</code>)
+   looks connections up by <em>name</em> — <code>$this-&gt;container-&gt;get("doctrine.dbal.{$name}_connection")</code> — so
+   with <code>shared:false</code> it builds a brand-new connection just to <code>close()</code> it, and the expiry
+   <code>ArrayObject</code> is keyed by connection name across all fibers. The subject app has
+   <code>idle_connection_ttl: 600</code> set (<code>…Container.xml:4743</code>). Either drop the middleware under Ignis or
+   accept a per-request wasted connect. Unmeasured.</li>
+<li><strong><code>DoctrineBundle::shutdown()</code></strong> (<code>DoctrineBundle.php:80-113</code>) closes connections via
+   <code>$container-&gt;initialized($id)</code>, which is permanently false for a non-shared id — process shutdown
+   will close nothing. Harmless in a long-lived worker, noted so nobody is surprised in tests.</li>
+<li><strong>Multiple entity managers / multiple connections</strong> are handled by iterating the
+   <code>doctrine.entity_managers</code> and <code>doctrine.connections</code> parameters (§4 step 1), but a second manager
+   sharing a connection with the first (<code>DoctrineExtension.php:1023-1025</code>) means two per-fiber
+   managers over two per-fiber connections where the stock app had two managers over one. Multiplies
+   §6. Untested.</li>
+<li><strong>Cost is entirely unmeasured.</strong> Per-fiber EM construction, per-fiber connection setup, RSS per
+   fiber with a live <code>UnitOfWork</code>, and the 35-method delegation overhead all have no number.</li>
+</ol>
+<h2 id="8-gate-what-must-pass-before-this-is-called-working">8. Gate — what must pass before this is called working<a class="headerlink" href="#8-gate-what-must-pass-before-this-is-called-working" title="Permanent link">&para;</a></h2>
+<p>Every item is a pass/fail check, not a judgement call.</p>
+<ol>
+<li><strong>Isolation.</strong> Two concurrent requests, each <code>persist()</code>ing a distinct entity and
+   <code>sleep()</code>ing between persist and flush so they are guaranteed to interleave; assert each response
+   sees only its own entity, and that <code>$em-&gt;getUnitOfWork()-&gt;size()</code> is 1 in each. Fails today with
+   the shared EM. Run under <code>IGNIS_CHAOS=1</code> with two seeds, per the research-20 protocol.</li>
+<li><strong>No carry-over across fiber reuse.</strong> A request that <code>persist()</code>s without flushing, followed by
+   ≥ <code>2 × threads</code> further requests on the same listener so the fiber is provably reused; assert the
+   later requests see an empty identity map. Directly tests the trap this document exists for.</li>
+<li><strong>Transaction leak.</strong> A request that opens a transaction and throws; assert the next request on
+   that fiber sees <code>isTransactionActive() === false</code>, and that the row the first request wrote is
+   absent. Fails without §5 step 2.</li>
+<li><strong>Closed-manager recovery.</strong> Force an <code>ORMException</code> so <code>isOpen()</code> goes false; assert the next
+   request on that fiber gets a working manager (i.e. the slot was dropped), and that
+   <code>$registry-&gt;resetManager()</code> called from application code does <strong>not</strong> throw the
+   <code>LogicException</code> from <code>ManagerRegistry.php:87</code> (tests §4 step 4).</li>
+<li><strong>Connection count.</strong> With <code>threads=2</code>, <code>fibers=8</code>, drive 64 concurrent requests; assert
+   <code>SHOW STATUS LIKE 'Threads_connected'</code> (or <code>pg_stat_activity</code>) never exceeds 16, and that it does
+   not keep growing over a 10k-request soak. This is the number §6 asserts and has not measured.</li>
+<li><strong>RSS soak.</strong> 100k requests through the Doctrine path, RSS sampled per 10k, gated the way E4 is —
+   a flat tail, not a slope. The <code>ContainerRepositoryFactory</code> map (hole 2) fails here if it is going
+   to fail.</li>
+<li><strong>Direct-<code>Connection</code> inventory.</strong> <code>ignis.doctrine.direct_connections</code> (§4 step 5) is printed at
+   boot and is <strong>empty</strong> for the app under test, or every entry is explicitly acknowledged in the
+   app's config. A silent hole 1 is the failure this catches.</li>
+<li><strong>E15 does not regress.</strong> <code>dbal</code> and <code>orm</code> suite pass counts under <code>scripts/ci-gate.sh</code> stay at
+   their V-27 baselines (dbal 3901/1 failure/633 skipped, orm 3641/16/62/79) — this design touches
+   no ORM internals, so any movement there is ours.</li>
+<li><strong>Numbers into VALIDATION.md.</strong> Gates 5 and 6 produce a V-n with the exact command and machine
+   state; until then §6 stays labelled unmeasured in STATUS.md.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

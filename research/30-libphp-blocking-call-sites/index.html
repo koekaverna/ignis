@@ -1,0 +1,2683 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>30 — libphp's blocking call sites: a symbol-level audit (placeholder; ADR-0037 §5) - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#30-libphps-blocking-call-sites-a-symbol-level-audit-placeholder-adr-0037-5" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              30 — libphp's blocking call sites: a symbol-level audit (placeholder; ADR-0037 §5)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#group-b-sleep-usleep-nanosleep-in-libphp-audited-2026-09-17-php-8510" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Group (b) — sleep / usleep / nanosleep in libphp (audited 2026-09-17, php-8.5.10)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group-a-extsockets-audited-2026-09-16-php-8510" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Group (a) — ext/sockets (audited 2026-09-16, php-8.5.10)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group-c-mainstreams-mainnetwork-extopenssl-audited-2026-09-16-php-8510" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Group (c) — main/streams, main/network, ext/openssl (audited 2026-09-16, php-8.5.10)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group-d-opcache-session-script-loading-plain-file-io-audited-2026-09-16-php-8510" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Group (d) — opcache, session, script loading, plain-file I/O (audited 2026-09-16, php-8.5.10)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Group (d) — opcache, session, script loading, plain-file I/O (audited 2026-09-16, php-8.5.10)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#opcache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        opcache
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-extsessionmod_filesc-the-files-save-handler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        session (ext/session/mod_files.c, the files save handler)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zend-script-loading-and-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zend/ script loading and compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plain-file-io-extstandard-mainrfc1867c-mainmainc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plain-file I/O (ext/standard, main/rfc1867.c, main/main.c)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group-e-the-rest-and-what-stays-block-audited-2026-09-16-php-8510" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Group (e) — the rest, and what stays block (audited 2026-09-16, php-8.5.10)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#libphp-symbols-that-stay-block-with-the-reason" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        libphp symbols that stay block, with the reason
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#symbols-still-to-interpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Symbols still to interpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#semantics-a-point-hook-implements-that-a-bare-syscall-interposition-cannot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantics a point hook implements that a bare syscall interposition cannot
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#question" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Question
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#method-to-be-executed-not-estimated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method (to be executed, not estimated)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-does-not-cover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this does not cover
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="30-libphps-blocking-call-sites-a-symbol-level-audit-placeholder-adr-0037-5">30 — libphp's blocking call sites: a symbol-level audit (placeholder; ADR-0037 §5)<a class="headerlink" href="#30-libphps-blocking-call-sites-a-symbol-level-audit-placeholder-adr-0037-5" title="Permanent link">&para;</a></h1>
+<p>Status: <strong>groups (a), (b), (c), (d), (e) done.</strong> This document exists so the gate in ADR-0037 §6
+step 2 has a name. One <code>block</code> verdict found in (d)/(e): <code>fcntl(F_SETLKW)</code> at
+<code>ext/opcache/zend_shared_alloc.c:510</code> (<code>zend_shared_alloc_lock()</code>), reached with the TSRM mutex
+<code>zts_lock</code> held (<code>:499</code>) — and reachable <strong>per-request</strong>, on any opcache cache-miss compile
+(<code>persistent_compile_file</code> → <code>cache_script_in_shared_memory</code>, <code>ZendAccelerator.c:1995</code>/<code>:2185</code>),
+not just at RINIT the way group (b)'s <code>usleep</code> was. Everything else in (d)/(e) with an fd is a
+regular file and forwards regardless of interposition (<code>would_block()</code>'s <code>S_IFREG</code> exclusion);
+everything without an fd (DNS) is offload's, not park's, same as groups (a)/(c) already found.</p>
+<h2 id="group-b-sleep-usleep-nanosleep-in-libphp-audited-2026-09-17-php-8510">Group (b) — <code>sleep</code> / <code>usleep</code> / <code>nanosleep</code> in libphp (audited 2026-09-17, php-8.5.10)<a class="headerlink" href="#group-b-sleep-usleep-nanosleep-in-libphp-audited-2026-09-17-php-8510" title="Permanent link">&para;</a></h2>
+<p><code>grep -rnE '\b(usleep|nanosleep|sleep)\(' main Zend TSRM ext/standard ext/sockets ext/openssl
+ext/opcache ext/session ext/pcntl</code> over the compiled tree (<code>--disable-all</code> + ADR-0027 §4's list):</p>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>call site</th>
+<th>lock held on the path</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sleep</code></td>
+<td><code>ext/standard/basic_functions.c</code> <code>PHP_FUNCTION(sleep)</code> → <code>php_sleep</code> = <code>sleep</code> (<code>main/php.h:264</code>)</td>
+<td>none — PHP function body</td>
+<td>park</td>
+</tr>
+<tr>
+<td><code>usleep</code></td>
+<td><code>ext/standard/basic_functions.c:1154</code> <code>PHP_FUNCTION(usleep)</code></td>
+<td>none</td>
+<td>park</td>
+</tr>
+<tr>
+<td><code>nanosleep</code></td>
+<td><code>ext/standard/basic_functions.c:1182</code> (<code>time_nanosleep</code>), <code>:1233</code> (<code>time_sleep_until</code>)</td>
+<td>none</td>
+<td>park</td>
+</tr>
+<tr>
+<td><code>usleep</code></td>
+<td><code>main/streams/plain_wrapper.c:446</code></td>
+<td>—</td>
+<td>not compiled on Linux (<code>PeekNamedPipe</code>, Windows pipe read-ahead)</td>
+</tr>
+<tr>
+<td><code>usleep</code></td>
+<td><code>ext/opcache/ZendAccelerator.c:863</code>, <code>:874</code> in <code>kill_all_lockers()</code> ← <code>accel_is_inactive()</code> (<code>:935</code>) ← <code>ZEND_RINIT_FUNCTION(zend_accelerator)</code> (<code>:2652</code>) between <code>zend_shared_alloc_lock()</code> (<code>:2713</code>) and unlock (<code>:2759</code>)</td>
+<td><strong>yes, the opcache SHM lock</strong> — but the site runs in RINIT on the main fiber (gate 0 → the real <code>usleep</code>), and only when <em>another process</em> holds the lock</td>
+<td>park (unreachable inside a fiber under this runtime; revisit if RINIT ever runs in a fiber)</td>
+</tr>
+</tbody>
+</table>
+<p>Test: V-46 — V-22's gate through park with the hook deleted.</p>
+<h2 id="group-a-extsockets-audited-2026-09-16-php-8510">Group (a) — <code>ext/sockets</code> (audited 2026-09-16, php-8.5.10)<a class="headerlink" href="#group-a-extsockets-audited-2026-09-16-php-8510" title="Permanent link">&para;</a></h2>
+<p>Every call site in <code>ext/sockets/sockets.c</code> and <code>ext/sockets/sendrecvmsg.c</code> that reaches one of the
+target libc symbols, read from source (<code>~/php-src</code> at tag <code>php-8.5.10</code>). <code>ext/sockets</code> is built in
+(<code>--enable-sockets</code>, ADR-0027 §4). No lock (TSRM, opcache SHM, or otherwise) is held at any of
+these call sites at the moment of the syscall — the one mutex found (<code>ancillary_mutex</code>, below) is
+released well before it. Compared against <code>crates/ignis/src/php/sockets.rs</code>, which currently hooks
+<code>socket_read/recv/recvfrom/recvmsg/accept/write/send/sendto/sendmsg</code> (park via
+poll-then-delegate) and leaves <code>socket_connect</code>/<code>socket_addrinfo_connect</code>/<code>socket_addrinfo_lookup</code>
+unhooked (ADR-0018).</p>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>file:line (php-8.5.10)</th>
+<th>enclosing function</th>
+<th>reached from</th>
+<th>lock held?</th>
+<th>fd mode at the call</th>
+<th>timeout handling</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>accept</code>, <code>accept4</code></td>
+<td><code>sockets.c:294</code> (<code>accept4</code>), <code>:301</code> (<code>accept</code> fallback)</td>
+<td><code>php_accept_connect</code></td>
+<td><code>PHP_FUNCTION(socket_accept)</code> (<code>:739</code>)</td>
+<td>none</td>
+<td><code>in_sock-&gt;blocking</code> (mirrors the fd's real O_NONBLOCK, set by <code>socket_set_nonblock</code>/<code>socket_set_block</code>); default is blocking</td>
+<td><strong>none at all</strong> — no <code>poll()</code>/timeout wrapper before the call, unlike <code>main/network.c</code>'s accept path below</td>
+<td>park — needs <code>accept</code>/<code>accept4</code> interposed (not in the current 11); no stock timeout semantics to preserve, so a plain would-block-then-<code>Op::Watch</code> is a faithful match once interposed</td>
+</tr>
+<tr>
+<td><code>select</code></td>
+<td><code>sockets.c:692</code></td>
+<td><code>PHP_FUNCTION(socket_select)</code></td>
+<td><code>socket_select()</code></td>
+<td>none</td>
+<td>N/A (multi-fd <code>fd_set</code>)</td>
+<td>yes — <code>tv_p</code> built from <code>$sec</code>/<code>$usec</code> and passed straight into <code>select()</code>; <code>select()</code> <em>is</em> the wait</td>
+<td>park — needs <code>select</code> interposed (not in the current 11: only <code>poll</code> is); a fan-out like <code>ignis_park_poll</code>'s (one <code>Op::Watch</code> per fd) but keyed to <code>fd_set</code> bits, not <code>pollfd[]</code></td>
+</tr>
+<tr>
+<td><code>read</code> (via <code>recv</code>)</td>
+<td><code>sockets.c:381</code> inside <code>php_read</code> (byte-at-a-time loop)</td>
+<td><code>php_read</code> ← <code>PHP_FUNCTION(socket_read)</code> <code>PHP_NORMAL_READ</code> path (<code>:340</code>, <code>:958</code>)</td>
+<td><code>socket_read($s, $len, PHP_NORMAL_READ)</code></td>
+<td>none</td>
+<td><code>fcntl(F_GETFL)</code> read at <code>:346</code> — used only to stop the "no data twice" retry, not to skip the call</td>
+<td>none — relies on <code>SO_RCVTIMEO</code> if the caller set it</td>
+<td>park — <code>recv</code> already interposed; <strong>gap</strong>: <code>ignis_park_recv</code> has no <code>SO_RCVTIMEO</code> awareness (see "semantic gaps" below), unlike <code>sockets.rs</code>'s <code>so_timeout_us</code>/<code>swap_so_timeout</code></td>
+</tr>
+<tr>
+<td><code>recv</code></td>
+<td><code>sockets.c:969</code> (<code>socket_read</code> <code>PHP_BINARY_READ</code>), <code>:1461</code> (<code>socket_recv</code>)</td>
+<td><code>PHP_FUNCTION(socket_read)</code>, <code>PHP_FUNCTION(socket_recv)</code></td>
+<td><code>socket_read($s,$len,PHP_BINARY_READ)</code>, <code>socket_recv()</code></td>
+<td>none</td>
+<td>fd's real blocking mode; <code>flags</code> param passed straight through (<code>MSG_DONTWAIT</code> honoured by <code>ignis_park_recv</code>'s own flag check)</td>
+<td>none — <code>SO_RCVTIMEO</code> only</td>
+<td>park — same <code>SO_RCVTIMEO</code> gap as above</td>
+</tr>
+<tr>
+<td><code>write</code></td>
+<td><code>sockets.c:926</code></td>
+<td><code>PHP_FUNCTION(socket_write)</code> (non-Windows branch)</td>
+<td><code>socket_write()</code></td>
+<td>none</td>
+<td>fd's real blocking mode</td>
+<td>none — <code>SO_SNDTIMEO</code> only</td>
+<td>park — <code>write</code> already interposed; same timeout gap</td>
+</tr>
+<tr>
+<td><code>send</code></td>
+<td><code>sockets.c:1503</code></td>
+<td><code>PHP_FUNCTION(socket_send)</code></td>
+<td><code>socket_send()</code></td>
+<td>none</td>
+<td>fd's real blocking mode; <code>flags</code> passed through</td>
+<td>none — <code>SO_SNDTIMEO</code> only</td>
+<td>park — same gap</td>
+</tr>
+<tr>
+<td><code>recvfrom</code></td>
+<td><code>sockets.c:1562</code> (AF_UNIX), <code>:1586</code> (AF_INET), <code>:1613</code> (AF_INET6), <code>:1641</code> (AF_PACKET)</td>
+<td><code>PHP_FUNCTION(socket_recvfrom)</code></td>
+<td><code>socket_recvfrom()</code></td>
+<td>none</td>
+<td>fd's real blocking mode</td>
+<td>none</td>
+<td>park — <code>recvfrom</code> already interposed</td>
+</tr>
+<tr>
+<td><code>sendto</code></td>
+<td><code>sockets.c:1728</code> (AF_UNIX), <code>:1745</code> (AF_INET), <code>:1762</code> (AF_INET6), <code>:1777</code> (AF_INET fallback)</td>
+<td><code>PHP_FUNCTION(socket_sendto)</code></td>
+<td><code>socket_sendto()</code></td>
+<td>none</td>
+<td>fd's real blocking mode</td>
+<td>none</td>
+<td>park — <code>sendto</code> already interposed</td>
+</tr>
+<tr>
+<td><code>connect</code></td>
+<td><code>sockets.c:1260</code> (AF_INET6), <code>:1279</code> (AF_INET), <code>:1293</code> (AF_UNIX)</td>
+<td><code>PHP_FUNCTION(socket_connect)</code></td>
+<td><code>socket_connect()</code></td>
+<td>none</td>
+<td><strong>fd left exactly as the user set it</strong> — nothing here sets O_NONBLOCK first (unlike <code>main/network.c:352</code>, below)</td>
+<td>none — no polling at all; a blocking-fd <code>connect()</code> blocks until the kernel completes or refuses it</td>
+<td>park — this is precisely the case <code>ignis_park_connect</code> is built for (toggle O_NONBLOCK on, connect, park on writable, restore, read <code>SO_ERROR</code>); <code>connect</code> is already among the current 11, but <code>libphp</code> is not yet in the <code>IGNIS_PARK</code> <code>SEED</code> — a <strong>policy</strong> gap, not a missing symbol (<code>park.rs:56</code>)</td>
+</tr>
+<tr>
+<td><code>connect</code></td>
+<td><code>sockets.c:2935</code></td>
+<td><code>PHP_FUNCTION(socket_addrinfo_connect)</code></td>
+<td><code>socket_addrinfo_connect()</code></td>
+<td>none</td>
+<td>fd freshly created (<code>socket()</code> just above), always blocking</td>
+<td>none</td>
+<td>park — same as above, same policy gap</td>
+</tr>
+<tr>
+<td><code>sendmsg</code></td>
+<td><code>ext/sockets/sendrecvmsg.c:207</code></td>
+<td><code>PHP_FUNCTION(socket_sendmsg)</code></td>
+<td><code>socket_sendmsg()</code></td>
+<td>see below</td>
+<td>fd's real blocking mode</td>
+<td>none</td>
+<td>park — needs <code>sendmsg</code> interposed (not in the current 11)</td>
+</tr>
+<tr>
+<td><code>recvmsg</code></td>
+<td><code>ext/sockets/sendrecvmsg.c:248</code></td>
+<td><code>PHP_FUNCTION(socket_recvmsg)</code></td>
+<td><code>socket_recvmsg()</code></td>
+<td>see below</td>
+<td>fd's real blocking mode</td>
+<td>none</td>
+<td>park — needs <code>recvmsg</code> interposed</td>
+</tr>
+<tr>
+<td><code>getaddrinfo</code></td>
+<td><code>sockets.c:2829</code></td>
+<td><code>PHP_FUNCTION(socket_addrinfo_lookup)</code></td>
+<td><code>socket_addrinfo_lookup()</code></td>
+<td>none</td>
+<td>no fd — pure resolver call</td>
+<td>none</td>
+<td><strong>block</strong> — no fd exists to park on; belongs to the <em>offload</em> mechanism (a worker thread), not park, regardless of interposition</td>
+</tr>
+</tbody>
+</table>
+<p>Near-miss lock, not a <code>block</code> verdict: <code>get_ancillary_reg_entry()</code> (<code>ext/sockets/sendrecvmsg.c:155</code>)
+takes <code>ancillary_mutex</code> (a <code>tsrm_mutex_lock</code>/<code>unlock</code> pair, <code>sendrecvmsg.c:90</code>, <code>:162</code>, <code>:168</code>) to
+lazily initialise the ancillary-cmsg registry, called from the <code>msghdr</code> conversion that runs
+<strong>before</strong> <code>socket_sendmsg</code>/<code>socket_recvmsg</code>'s own <code>sendmsg()</code>/<code>recvmsg()</code> call — the mutex is
+released long before the blocking syscall, so it is not held on the path park would suspend.</p>
+<h2 id="group-c-mainstreams-mainnetwork-extopenssl-audited-2026-09-16-php-8510">Group (c) — <code>main/streams</code>, <code>main/network</code>, <code>ext/openssl</code> (audited 2026-09-16, php-8.5.10)<a class="headerlink" href="#group-c-mainstreams-mainnetwork-extopenssl-audited-2026-09-16-php-8510" title="Permanent link">&para;</a></h2>
+<p><code>main/network.c</code>, <code>main/streams/xp_socket.c</code>, <code>main/streams/plain_wrapper.c</code> (pipe paths only —
+plain files are excluded from park by <code>would_block()</code>'s <code>S_IFREG</code> check regardless), the pipe
+subset of <code>main/streams/streams.c</code> (which turned out to hold <strong>no direct libc call sites</strong> — every
+read/write there is a <code>stream-&gt;ops-&gt;read</code>/<code>write</code> vtable dispatch that resolves into
+<code>plain_wrapper.c</code>/<code>xp_socket.c</code>/Ignis's own <code>stream.rs</code>, already covered elsewhere),
+<code>ext/standard/streamsfuncs.c</code>, <code>ext/standard/dns.c</code>, and <code>ext/openssl/xp_ssl.c</code>. As in group (a),
+no lock is held at the moment of any of these calls — no <code>mutex</code>/<code>_lock</code> hit at all in
+<code>xp_socket.c</code>, <code>xp_ssl.c</code>, or <code>streamsfuncs.c</code>, and <code>main/network.c</code> has none either.</p>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>file:line (php-8.5.10)</th>
+<th>enclosing function</th>
+<th>reached from</th>
+<th>lock held?</th>
+<th>fd mode at the call</th>
+<th>timeout handling</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>getaddrinfo</code></td>
+<td><code>main/network.c:192</code></td>
+<td><code>php_network_getaddresses</code></td>
+<td>every <code>host:port</code> connect, via <code>php_network_connect_socket_to_host</code></td>
+<td>none</td>
+<td>no fd</td>
+<td>none</td>
+<td><strong>block</strong> — offload, not park (no fd)</td>
+</tr>
+<tr>
+<td><code>connect</code></td>
+<td><code>main/network.c:352</code></td>
+<td><code>php_network_connect_socket</code></td>
+<td><code>php_tcp_sockop_connect</code> (<code>xp_socket.c:770</code>) ← <code>stream_socket_client()</code>/hooked-off <code>tcp://</code></td>
+<td>none</td>
+<td><strong>already non-blocking</strong> — <code>SET_SOCKET_BLOCKING_MODE</code> (<code>network.c:349</code>, <code>fcntl(F_SETFL, O_NONBLOCK)</code>) runs immediately before</td>
+<td>yes, fully — see the <code>poll</code> row below</td>
+<td><strong>forward</strong> — <code>ignis_park_connect</code>'s own "already non-blocking: the library drives it itself" branch (<code>park.rs:337-340</code>) fires; <code>connect</code> is already interposed and does the right thing with zero new code</td>
+</tr>
+<tr>
+<td><code>poll</code> (via <code>php_pollfd_for</code>, macro <code>php_poll2</code>→<code>poll</code> on Linux/<code>HAVE_POLL</code>, <code>main/php_network.h:143</code> def, <code>:189</code> call site)</td>
+<td><code>network.c:399</code> (connect retry loop), <code>:774</code> (accept wait), <code>xp_socket.c:144</code> (<code>php_sock_stream_wait_for_data</code>, read wait), <code>:81</code> (write wait), <code>xp_ssl.c:1880</code> (<code>SSL_connect</code>/<code>SSL_accept</code> handshake wait), <code>:2080</code>/<code>:2083</code>/<code>:2117</code>/<code>:2120</code> (<code>SSL_read</code>/<code>SSL_write</code> wait)</td>
+<td><code>php_network_connect_socket</code>, <code>php_network_accept_incoming</code>, <code>php_sock_stream_wait_for_data</code>, <code>php_sockop_write</code>, <code>php_openssl_enable_crypto</code>, <code>php_openssl_sockop_io</code></td>
+<td><code>tcp://</code>/<code>ssl://</code> connect, accept, read, write, TLS handshake, TLS read/write</td>
+<td>none</td>
+<td>N/A — <code>poll(2)</code> itself</td>
+<td><strong>yes, always</strong> — every one of these builds an explicit <code>struct timeval</code>/ms timeout and passes it through; this is PHP polling itself with a timeout before the data call, exactly the pattern ADR-0037 assumes</td>
+<td>park — <code>poll</code> is already among the current 11 and already timeout-correct; only needs <code>libphp</code> added to the <code>IGNIS_PARK</code> <code>SEED</code> (policy, not code)</td>
+</tr>
+<tr>
+<td><code>accept</code></td>
+<td><code>main/network.c:783</code></td>
+<td><code>php_network_accept_incoming</code></td>
+<td><code>php_tcp_sockop_accept</code> (<code>xp_socket.c:872</code>)</td>
+<td>none</td>
+<td>whatever the listener's fd carries</td>
+<td><strong>already satisfied by the <code>poll</code> above</strong> — <code>accept()</code> only runs after <code>php_pollfd_for</code> (line 774) reports readable</td>
+<td>forward — no new interposition needed; the socket is ready by construction (barring a TOCTOU race, same as stock)</td>
+</tr>
+<tr>
+<td><code>select</code> (<code>PHP_USE_POLL_2_EMULATION</code>, <code>php_poll2</code>)</td>
+<td><code>network.c:1317</code></td>
+<td><code>php_poll2</code></td>
+<td>(unused fallback)</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td><strong>not compiled</strong> on this build: <code>HAVE_POLL</code> is defined on Linux/glibc, so <code>php_poll2(...)</code> is <code>#define</code>d straight to <code>poll(...)</code> (<code>main/php_network.h:163</code>) and this <code>select()</code>-emulation body (guarded by <code>#if defined(PHP_USE_POLL_2_EMULATION)</code>, <code>network.c:1262</code>) never compiles in</td>
+</tr>
+<tr>
+<td><code>gethostbyname</code></td>
+<td><code>network.c:1412</code></td>
+<td><code>php_network_gethostbyname</code></td>
+<td>(unused fallback)</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td><strong>not compiled</strong>: guarded by <code>#if !defined(HAVE_GETHOSTBYNAME_R)</code>; glibc defines <code>HAVE_GETHOSTBYNAME_R</code>, so the real path is <code>gethostbyname_r</code> below</td>
+</tr>
+<tr>
+<td><code>gethostbyname_r</code></td>
+<td><code>network.c:1352</code> (<code>HAVE_FUNC_GETHOSTBYNAME_R_6</code> variant — the one glibc matches)</td>
+<td><code>gethostname_re</code> ← <code>php_network_gethostbyname</code> (<code>:1424</code>)</td>
+<td><code>gethostbyname()</code>/<code>gethostbynamel()</code> (<code>ext/standard/dns.c:235</code>, <code>:270</code>)</td>
+<td>none</td>
+<td>no fd</td>
+<td>none</td>
+<td><strong>block</strong> — offload, not park; matches the <code>gethostbyname*</code> family</td>
+</tr>
+<tr>
+<td><code>getnameinfo</code></td>
+<td><code>ext/standard/dns.c:184</code> (AF_INET6), <code>:191</code> (AF_INET)</td>
+<td><code>php_gethostbyaddr</code></td>
+<td><code>gethostbyaddr()</code> (<code>dns.c:171</code>)</td>
+<td>none</td>
+<td>no fd</td>
+<td>none</td>
+<td><strong>block</strong> — offload, not park</td>
+</tr>
+<tr>
+<td><code>send</code></td>
+<td><code>xp_socket.c:73</code></td>
+<td><code>php_sockop_write</code></td>
+<td><code>fwrite</code>/stream write on <code>tcp://</code>/<code>udp://</code></td>
+<td>none</td>
+<td><code>MSG_DONTWAIT</code> set explicitly whenever a timeout is configured (<code>(sock-&gt;is_blocked &amp;&amp; ptimeout) ? MSG_DONTWAIT : 0</code>); the real wait happens in the <code>poll</code> row above, then the call retries via <code>goto retry</code> at line ~86</td>
+<td>see <code>poll</code> row</td>
+<td>park — <code>send</code> already interposed; <code>MSG_DONTWAIT</code> makes <code>ignis_park_send</code> correctly skip parking on this call (the wait already happened at <code>poll</code>)</td>
+</tr>
+<tr>
+<td><code>recv</code></td>
+<td><code>xp_socket.c:191</code></td>
+<td><code>php_sockop_read</code></td>
+<td><code>fread</code>/stream read on <code>tcp://</code>/<code>udp://</code></td>
+<td>none</td>
+<td>same <code>MSG_DONTWAIT</code>-when-timed pattern, driven by <code>php_sock_stream_wait_for_data</code> (<code>:123</code>) before this call</td>
+<td>see <code>poll</code> row</td>
+<td>park — same as <code>send</code> above</td>
+</tr>
+<tr>
+<td><code>sendto</code>/<code>send</code></td>
+<td><code>xp_socket.c:281</code> (<code>sendto</code>, has peer addr), <code>:286</code>/<code>:288</code> (<code>send</code>, no peer addr)</td>
+<td><code>sock_sendto</code></td>
+<td><code>stream_socket_sendto()</code></td>
+<td>none</td>
+<td>fd's real blocking mode — <strong>no</strong> <code>MSG_DONTWAIT</code>/poll wrapper here at all</td>
+<td>none</td>
+<td>park — matches stock's plain blocking wait exactly, no PHP-side timeout to preserve</td>
+</tr>
+<tr>
+<td><code>recvfrom</code>/<code>recv</code></td>
+<td><code>xp_socket.c:303</code> (<code>recvfrom</code>, wants peer addr), <code>:324</code> (<code>recv</code>, no peer addr)</td>
+<td><code>sock_recvfrom</code></td>
+<td><code>stream_socket_recvfrom()</code></td>
+<td>none</td>
+<td>fd's real blocking mode, no wrapper</td>
+<td>none</td>
+<td>park — same as above</td>
+</tr>
+<tr>
+<td><code>recv</code> (liveness probe)</td>
+<td><code>xp_socket.c:377</code>, <code>xp_ssl.c:2498</code></td>
+<td><code>php_sockop_set_option</code>/<code>PHP_STREAM_OPTION_CHECK_LIVENESS</code>, <code>php_openssl_sockop_set_option</code> (same option)</td>
+<td><code>feof()</code> on a socket/SSL stream</td>
+<td>none</td>
+<td><code>MSG_PEEK|MSG_DONTWAIT</code> always</td>
+<td>preceded by its own <code>php_pollfd_for</code> (<code>xp_socket.c:~369</code>, <code>xp_ssl.c:~2399</code>)</td>
+<td>forward — <code>MSG_DONTWAIT</code> makes <code>ignis_park_recv</code> skip parking; the wait already happened at <code>poll</code></td>
+</tr>
+<tr>
+<td><code>write</code>/<code>read</code> (pipe)</td>
+<td><code>plain_wrapper.c:385</code> (<code>write</code>), <code>:457</code>/<code>:463</code> (<code>read</code>)</td>
+<td><code>php_stdiop_write</code>, <code>php_stdiop_read</code></td>
+<td><code>fwrite</code>/<code>fread</code> on any <code>php_stream_stdio_ops</code> stream — plain files <strong>and</strong> <code>proc_open()</code>/<code>popen()</code> pipes</td>
+<td>none</td>
+<td>fd's real blocking mode; no PHP-side poll/timeout wrapper on Linux (the <code>PeekNamedPipe</code>/<code>usleep(10)</code> loop just above, <code>:439</code>-<code>:448</code>, is <code>#ifdef PHP_WIN32</code> only)</td>
+<td>none</td>
+<td>park for a pipe fd (<code>S_IFIFO</code> — <code>would_block()</code>'s <code>fstat</code> check already admits it, <code>park.rs:166</code>); <strong>forward</strong> for a plain file fd (<code>S_IFREG</code> — the same check already excludes it) — <code>read</code>/<code>write</code> already interposed, no gap</td>
+</tr>
+<tr>
+<td><code>usleep</code></td>
+<td><code>plain_wrapper.c:446</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>already in group (b): Windows-only, not compiled on Linux</td>
+</tr>
+<tr>
+<td><code>select</code></td>
+<td><code>ext/standard/streamsfuncs.c:826</code> (<code>php_select</code> macro <code>:32</code> = <code>select</code>)</td>
+<td><code>PHP_FUNCTION(stream_select)</code></td>
+<td><code>stream_select()</code></td>
+<td>none</td>
+<td>N/A (multi-fd <code>fd_set</code>)</td>
+<td>yes — <code>tv_p</code> from <code>$seconds</code>/<code>$microseconds</code>, passed straight into <code>select()</code></td>
+<td>park — needs <code>select</code> interposed (same gap as group (a)); <strong>and</strong> cannot be a bare syscall wrap — see semantic gaps below (<code>stream_array_emulate_read_fd_set</code>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="group-d-opcache-session-script-loading-plain-file-io-audited-2026-09-16-php-8510">Group (d) — opcache, session, script loading, plain-file I/O (audited 2026-09-16, php-8.5.10)<a class="headerlink" href="#group-d-opcache-session-script-loading-plain-file-io-audited-2026-09-16-php-8510" title="Permanent link">&para;</a></h2>
+<p><code>ext/opcache/{ZendAccelerator.c,zend_shared_alloc.c,zend_file_cache.c,zend_accelerator_module.c}</code>,
+<code>ext/session/mod_files.c</code> (the default <code>files</code> save handler — <code>mod_mm.c</code> is compiled but dead, see
+below; <code>mod_user.c</code>/<code>mod_user_class.c</code>/<code>session.c</code> have no call site in the symbol list, they
+delegate to userland), <code>Zend/zend_stream.c</code>, <code>Zend/zend_virtual_cwd.c</code>, and the plain-file paths of
+<code>ext/standard/file.c</code> and <code>main/rfc1867.c</code>/<code>main/main.c</code>. All compiled in on this build (<code>opcache</code>,
+<code>session</code> are both in ADR-0027 §4's list; <code>Zend/</code>, <code>main/</code> are core).</p>
+<h3 id="opcache">opcache<a class="headerlink" href="#opcache" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>file:line (php-8.5.10)</th>
+<th>enclosing function</th>
+<th>reached from</th>
+<th>lock held on the path</th>
+<th>fd kind</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fcntl(F_SETLKW)</code></td>
+<td><code>zend_shared_alloc.c:510</code></td>
+<td><code>zend_shared_alloc_lock()</code></td>
+<td>every <code>zend_shared_alloc_lock()</code> call site: <code>ZendAccelerator.c:821,1248,1292,1404,1586</code> (<code>cache_script_in_shared_memory</code> ← <code>persistent_compile_file</code>, <code>:1995</code>/<code>:2185</code> — <strong>the per-request opcache-cache-miss compile path, runs inside a fiber</strong>, not RINIT-only), <code>:2601,2713</code> (RINIT restart check, group (b)'s <code>usleep</code> neighbour), <code>:2864,2946,3291,3306,3320,5068</code>; <code>zend_accelerator_module.c:930</code> (<code>opcache_reset()</code>); <code>zend_file_cache.c:2031</code> (file-cache-hit promoted into SHM)</td>
+<td><strong>yes — <code>zts_lock</code></strong>, a <code>tsrm_mutex_lock</code> taken at <code>zend_shared_alloc.c:499</code> immediately before the <code>fcntl</code> loop, released only after <code>ZCG(locked)=1</code> is set past the call</td>
+<td>regular file — <code>lock_file</code>, an <code>O_TMPFILE</code> fd opened at <code>zend_shared_alloc.c:104</code></td>
+<td><strong>block</strong> — reached with <code>zts_lock</code> held (a process-wide, non-fiber-aware TSRM mutex): parking here would suspend the fiber with <code>zts_lock</code> still held, stalling every other fiber on the same OS thread that needs it too (e.g. a nested SHM-lock attempt); the fd being a regular file would forward anyway, but the lock is the harder reason and fires whether or not the fd rule does</td>
+</tr>
+<tr>
+<td><code>fcntl(F_SETLK)</code>/<code>fcntl(F_GETLK)</code></td>
+<td><code>ZendAccelerator.c:288,309,326,358,384,406,890,923</code></td>
+<td><code>accel_restart_enter/leave/is_active</code>, <code>accel_activate_add</code>, <code>accel_deactivate_sub</code>, <code>accel_unlock_all</code> (the restart/locker bookkeeping the task asked about)</td>
+<td>opcache RINIT/RSHUTDOWN, restart scheduling</td>
+<td>n/a</td>
+<td>regular file (<code>lock_file</code>)</td>
+<td><strong>not applicable</strong> — <code>F_SETLK</code>/<code>F_GETLK</code> are the non-blocking lock variants: they return at once (<code>EAGAIN</code>/<code>EACCES</code> on contention, or the query result) and never invoke a wait, so no park/block question applies regardless of fd or lock state. Only <code>F_SETLKW</code> (above) blocks.</td>
+</tr>
+<tr>
+<td><code>usleep</code></td>
+<td><code>ZendAccelerator.c:863,874</code></td>
+<td><code>kill_all_lockers()</code></td>
+<td>already in group (b)</td>
+<td>opcache SHM lock, RINIT-only</td>
+<td>n/a</td>
+<td>see group (b) — unchanged, listed here only so the restart/locker story is complete in one place</td>
+</tr>
+<tr>
+<td><code>writev</code>/<code>write</code></td>
+<td><code>zend_file_cache.c:1104</code> (<code>writev</code>), <code>:1121,1127,1133</code> (<code>write</code>, no-<code>HAVE_SYS_UIO_H</code> fallback — dead on Linux, <code>writev</code> is the live path)</td>
+<td><code>zend_file_cache_script_write()</code> ← <code>zend_file_cache_script_store()</code> (<code>:1141</code>) ← <code>cache_script_in_shared_memory()</code> (<code>ZendAccelerator.c:1657</code>) / <code>store_script_in_file_cache()</code> — opcache's file-cache write, per cache-miss compile</td>
+<td>the same cache-miss compile path as the SHM-lock row above, when <code>opcache.file_cache</code> is set</td>
+<td><strong>the file's own <code>flock(LOCK_EX)</code></strong>, taken at <code>zend_file_cache.c:1178</code> (<code>zend_file_cache_flock</code> → <code>flock(2)</code>, <code>HAVE_FLOCK</code> is defined on Linux/glibc) and released at <code>:1229</code>/<code>close()</code> at <code>:1232</code> — <strong>not</strong> the opcache SHM lock (<code>zend_shared_alloc_lock</code> is not held anywhere inside this function; verified by reading the body)</td>
+<td>regular file (opened via <code>zend_file_cache_open</code> = <code>open()</code>, <code>O_CREAT\|O_EXCL\|O_RDWR</code>)</td>
+<td><strong>forwarded-anyway</strong> — <code>would_block()</code>'s <code>S_IFREG</code> exclusion fires regardless of the flock; the lock is real but moot to the verdict since park was never on the table for this fd</td>
+</tr>
+<tr>
+<td><code>read</code></td>
+<td><code>zend_file_cache.c:1931,1997</code></td>
+<td><code>zend_file_cache_script_load_ex()</code> ← <code>zend_file_cache_script_load()</code> ← <code>persistent_compile_file()</code> (cache-hit path, file cache instead of/before SHM)</td>
+<td>every request that resolves a script from the file cache</td>
+<td><code>flock(LOCK_SH)</code> at <code>:1925</code>, released at <code>:1967</code>/<code>:1980</code>/<code>:1999</code>/<code>:2008</code> depending on the early-return taken</td>
+<td>regular file</td>
+<td>forwarded-anyway — same <code>S_IFREG</code> reason</td>
+</tr>
+<tr>
+<td><code>flock</code></td>
+<td><code>zend_file_cache.c:1178</code> (<code>LOCK_EX</code>), <code>:1925</code> (<code>LOCK_SH</code>), and the <code>LOCK_UN</code> sites at <code>:1229,1933,1945,1955,1967,1980,1999,2008</code></td>
+<td><code>zend_file_cache_flock()</code> (<code>#elif defined(HAVE_FLOCK) # define zend_file_cache_flock flock</code>, <code>:98</code>)</td>
+<td>file-cache store/load, both directions</td>
+<td>n/a (this call <em>is</em> the lock)</td>
+<td>regular file (the <code>.bin</code> cache file itself, not <code>lock_file</code>)</td>
+<td>forwarded-anyway — <code>flock()</code>'s own target fd is <code>S_IFREG</code> too, so <code>would_block()</code> excludes it exactly like the read/write calls it brackets</td>
+</tr>
+</tbody>
+</table>
+<h3 id="session-extsessionmod_filesc-the-files-save-handler">session (<code>ext/session/mod_files.c</code>, the <code>files</code> save handler)<a class="headerlink" href="#session-extsessionmod_filesc-the-files-save-handler" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>file:line (php-8.5.10)</th>
+<th>enclosing function</th>
+<th>reached from</th>
+<th>lock held on the path</th>
+<th>fd kind</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flock</code> (<code>LOCK_EX</code>)</td>
+<td><code>mod_files.c:210</code></td>
+<td><code>ps_files_open()</code> ← <code>ps_files_write()</code>/<code>ps_files_read()</code></td>
+<td><code>session_start()</code> and every session read/write while the session is open</td>
+<td>none on the path <em>to</em> this call</td>
+<td>regular file — the session data file</td>
+<td><strong>forwarded-anyway</strong> (<code>S_IFREG</code>) — but flag distinctly: this is PHP's well-known cross-request session serialization point. Two requests for the same session ID contend on this exact <code>flock()</code>, and the second one blocks for however long the first holds the session open — which, under Ignis, is the whole PHP OS thread stalling (not just the fiber), because a regular file can never park. <code>getaddrinfo</code>'s "no fd" case gets offload as an escape hatch; this one has an fd, so by the letter of the two rules it stays <code>forwarded-anyway</code>, but operationally it is the least excusable forward in this audit — worth its own line in ADR-0037 if session concurrency ever becomes a measured pain point.</td>
+</tr>
+<tr>
+<td><code>pwrite</code></td>
+<td><code>mod_files.c:245</code></td>
+<td><code>ps_files_write()</code></td>
+<td><code>session_write_close()</code>/session shutdown</td>
+<td>the <code>flock(LOCK_EX)</code> from <code>:210</code>, held for the life of the open fd</td>
+<td>regular file</td>
+<td>forwarded-anyway (<code>S_IFREG</code>)</td>
+</tr>
+<tr>
+<td><code>pread</code></td>
+<td><code>mod_files.c:492</code></td>
+<td><code>ps_files_read()</code></td>
+<td><code>session_start()</code>'s initial read</td>
+<td>same <code>flock(LOCK_EX)</code> from <code>:210</code> (session reads take the same exclusive lock as writes — <code>ps_files_open()</code> doesn't distinguish)</td>
+<td>regular file</td>
+<td>forwarded-anyway (<code>S_IFREG</code>)</td>
+</tr>
+<tr>
+<td><code>write</code>/<code>read</code></td>
+<td><code>mod_files.c:264</code>/<code>:512</code></td>
+<td>same functions, <code>#else</code> fallback</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td><strong>not compiled</strong>: <code>HAVE_PWRITE</code>/<code>HAVE_PREAD</code> are defined on this Linux/glibc build (<code>build/php.m4</code>'s <code>AC_CACHE_CHECK([whether pwrite works] …)</code>, a real feature test, not a version guess), so the raw <code>write</code>/<code>read</code> branches are dead code</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>ext/session/mod_mm.c</code></td>
+<td>(whole file)</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td><strong>not active</strong>: the entire file is <code>#ifdef HAVE_LIBMM</code> (<code>mod_mm.c:19</code>); <code>HAVE_LIBMM</code> needs <code>--with-mm</code>, which (a) is not in ADR-0027 §4's configure line and (b) <code>config.m4</code> refuses it combined with <code>--enable-zts</code>, which this build always uses — dead regardless</td>
+</tr>
+</tbody>
+</table>
+<h3 id="zend-script-loading-and-compilation">Zend/ script loading and compilation<a class="headerlink" href="#zend-script-loading-and-compilation" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>file:line (php-8.5.10)</th>
+<th>enclosing function</th>
+<th>reached from</th>
+<th>lock held</th>
+<th>fd kind</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>— (<code>fread</code>)</td>
+<td><code>Zend/zend_stream.c:27</code> (<code>zend_stream_stdio_reader</code>)</td>
+<td><code>zend_stream_open()</code>/<code>zend_stream_fixup()</code>'s raw-<code>FILE*</code> fallback</td>
+<td>would be <code>include</code>/<code>require</code>/the main script, <strong>if</strong> no <code>stream_open_function</code> were installed</td>
+<td>—</td>
+<td>—</td>
+<td><strong>unreachable on this build</strong>: <code>main/main.c:2242</code> unconditionally sets <code>zuf.stream_open_function = php_stream_open_for_zend</code> during <code>php_module_startup()</code>, so <code>zend_stream_open()</code>'s first line (<code>if (zend_stream_open_function) return zend_stream_open_function(handle);</code>, <code>zend_stream.c:87</code>) always takes that branch instead. The real read path for the top-level script <em>and</em> every <code>include</code>/<code>require</code> is <code>main/main.c:1685</code> (<code>php_stream_open_for_zend_ex</code>) → <code>php_stream_open_wrapper()</code> → <code>main/streams/plain_wrapper.c</code>'s stream ops — <strong>already audited in group (c)</strong> (<code>plain_wrapper.c:457</code>/<code>:463</code>, <code>php_stdiop_read</code>, verdict <code>forward</code> for <code>S_IFREG</code>). No new call site here; this row exists to record that the naive reading of <code>zend_stream.c</code> is a dead end.</td>
+</tr>
+<tr>
+<td><code>open</code></td>
+<td><code>Zend/zend_virtual_cwd.c:1463</code> (<code>O_CREAT</code> variant), <code>:1469</code> (plain)</td>
+<td><code>virtual_open()</code> (the <code>VCWD_OPEN</code> macro)</td>
+<td><code>include_path</code> search, realpath-cache population, <code>tempnam()</code>, any cwd-relative file open</td>
+<td>none</td>
+<td>regular file/dir</td>
+<td>forwarded-anyway (<code>S_IFREG</code>) — and note <code>open</code> isn't even in <code>park.rs</code>'s stage-1 or stage-2 interposition scope today (its own doc comment lists only <code>read/write/recv/send/recvfrom/sendto/poll/connect/nanosleep/usleep/sleep</code> for stage 1 and <code>getaddrinfo/select/accept*/vectored/__poll_chk</code> for stage 2), so this forwards unconditionally regardless of fd kind; only a FIFO opened without <code>O_NONBLOCK</code> would make <code>open()</code> itself capable of blocking on data, and <code>virtual_open()</code>'s normal callers never hit one</td>
+</tr>
+</tbody>
+</table>
+<h3 id="plain-file-io-extstandard-mainrfc1867c-mainmainc">plain-file I/O (<code>ext/standard</code>, <code>main/rfc1867.c</code>, <code>main/main.c</code>)<a class="headerlink" href="#plain-file-io-extstandard-mainrfc1867c-mainmainc" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>file:line (php-8.5.10)</th>
+<th>enclosing function</th>
+<th>reached from</th>
+<th>lock held</th>
+<th>fd kind</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flock</code></td>
+<td><code>main/streams/plain_wrapper.c:783</code></td>
+<td><code>php_stdiop_set_option()</code> (<code>PHP_STREAM_OPTION_LOCKING</code>) ← <code>main/streams/streams.c</code>'s <code>php_stream_lock()</code> ← <code>ext/standard/file.c:203</code> (<code>PHP_FUNCTION(flock)</code>)</td>
+<td>userland <code>flock()</code> on any local-file stream</td>
+<td>none</td>
+<td>regular file (the wrapped local file, the common case)</td>
+<td>forwarded-anyway (<code>S_IFREG</code>) — this is the userland <code>flock()</code> function's own call site, distinct from opcache's/session's internal locking above</td>
+</tr>
+<tr>
+<td><code>write</code></td>
+<td><code>main/rfc1867.c:1043,1045</code></td>
+<td><code>rfc1867_post_handler()</code></td>
+<td>any multipart file upload — writes the uploaded body to the temp upload file</td>
+<td>none</td>
+<td>regular file (<code>php_open_temporary_fd</code>-created tmp file)</td>
+<td>forwarded-anyway (<code>S_IFREG</code>) — a real per-request hot-path write, worth naming even though the verdict is unremarkable</td>
+</tr>
+<tr>
+<td><code>write</code></td>
+<td><code>main/main.c:972,975</code></td>
+<td><code>php_log_err_with_severity()</code> (<code>main.c:923</code>)</td>
+<td>any warning/error while <code>error_log</code> ini points to a plain file (not syslog, not the SAPI logger)</td>
+<td>none on Linux — the <code>php_flock(fd, LOCK_EX)</code> wrap around this write is <code>#ifdef PHP_WIN32</code> only (<code>:968</code>-<code>:970</code>)</td>
+<td>regular file</td>
+<td>forwarded-anyway (<code>S_IFREG</code>)</td>
+</tr>
+<tr>
+<td><code>close</code></td>
+<td><code>ext/standard/file.c:697</code> (<code>tempnam()</code>), <code>main/php_open_temporary_file.c:375</code></td>
+<td>—</td>
+<td>temp-file creation cleanup</td>
+<td>—</td>
+<td>regular file</td>
+<td>no verdict needed — <code>close()</code> doesn't wait on data the way the other symbols do; listed only because the grep matched it</td>
+</tr>
+</tbody>
+</table>
+<h2 id="group-e-the-rest-and-what-stays-block-audited-2026-09-16-php-8510">Group (e) — the rest, and what stays <code>block</code> (audited 2026-09-16, php-8.5.10)<a class="headerlink" href="#group-e-the-rest-and-what-stays-block-audited-2026-09-16-php-8510" title="Permanent link">&para;</a></h2>
+<p>Everything else the symbol-list grep turned up across the compiled tree (<code>~/php-src</code> at
+<code>php-8.5.10</code>, ADR-0027 §4's <code>--disable-all</code> + <code>mbstring, sockets, pdo, pdo_sqlite, sqlite3,
+fibers, zlib, filter, ctype, tokenizer, session, iconv, pdo_pgsql, pgsql, curl, openssl, opcache</code>),
+including places the task explicitly asked about that turned out to have nothing.</p>
+<table>
+<thead>
+<tr>
+<th>area</th>
+<th>finding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TSRM/TSRM.c</code></td>
+<td><strong>zero call sites</strong> for any symbol in the list. <code>tsrm_startup</code>/<code>tsrm_shutdown</code>/<code>tsrm_mutex_alloc</code> use <code>pthread_mutex_init</code>/<code>pthread_mutex_lock</code>/<code>pthread_key_create</code>, none of which are audited symbols. Nothing to report.</td>
+</tr>
+<tr>
+<td><code>ext/pcntl</code></td>
+<td><strong>not compiled.</strong> Absent from ADR-0027 §4's extension list (<code>mbstring, sockets, pdo, pdo_sqlite, sqlite3, fibers, zlib, filter, ctype, tokenizer, session, iconv, pdo_pgsql, pgsql, curl, openssl, opcache</code>) — confirmed by grep against that list, nothing more to check.</td>
+</tr>
+<tr>
+<td><code>ext/standard/dns.c</code> — <code>dns_get_record()</code>/<code>checkdnsrr()</code>/<code>getmxrr()</code></td>
+<td><code>dns.c:429,961,1102</code> all call <code>php_dns_search(...)</code> (<code>ext/standard/php_dns.h</code> macro → <code>res_nsearch</code>/<code>res_search</code>/<code>dns_search</code>). That function, and the <code>connect</code>/<code>send</code>/<code>recv</code>/<code>poll</code> it does internally, lives in <strong><code>libresolv.so</code></strong>, not compiled into <code>libphp.so</code> — out of this audit's scope by the same "only code compiled into this build" rule that kept research 27's libcurl/libpq audit separate from this one. <code>gethostbyname()</code>/<code>gethostbynamel()</code>/<code>gethostbyaddr()</code> (<code>dns.c:219,245,171</code>) were already resolved to group (c)'s <code>network.c:1352</code>/<code>dns.c:184,191</code> rows — no new call site there. If the park table is ever extended past libphp, libresolv needs its own research-27-shaped entry, not a row here.</td>
+</tr>
+<tr>
+<td><code>ext/mbstring</code>, <code>ext/pdo</code>, <code>ext/pdo_sqlite</code>, <code>ext/sqlite3</code>, <code>ext/zlib</code>, <code>ext/filter</code>, <code>ext/ctype</code>, <code>ext/tokenizer</code>, <code>ext/iconv</code></td>
+<td>swept with the full symbol list across every <code>.c</code> in each extension: <strong>zero hits</strong>.</td>
+</tr>
+<tr>
+<td><code>Zend/zend_fibers.c</code></td>
+<td>zero hits — the fiber context switch is <code>ucontext</code>/assembly, not a call to anything in the symbol list.</td>
+</tr>
+<tr>
+<td><code>Zend/zend_call_stack.c:725,733,737,771</code></td>
+<td><code>open</code>/<code>close</code>/<code>pread</code> inside <code>zend_call_stack_get_solaris_proc_maps()</code> — the whole function is <code>#ifdef HAVE_LIBPROC_H</code> (Solaris <code>libproc</code>), <strong>not compiled</strong> on this Linux/glibc build.</td>
+</tr>
+<tr>
+<td><code>Zend/zend_gdb.c:114,118,143</code></td>
+<td><code>open</code>/<code>read</code>/<code>close</code> inside <code>zend_gdb_present()</code> — compiled (<code>#if defined(__linux__)</code> is true here), but grepping the entire tree for callers of <code>zend_gdb_present</code>/<code>zend_gdb_register_code</code> finds <strong>none</strong> — dead code, unreachable at runtime.</td>
+</tr>
+<tr>
+<td><code>main/fastcgi.c</code></td>
+<td>Added via <code>PHP_ADD_SOURCES_X([main], [fastcgi.c], …, [PHP_FASTCGI_OBJS], [no])</code> (<code>configure.ac:1684</code>-<code>1689</code>) — a separate object group linked only into <code>sapi/cgi</code> and <code>sapi/fpm</code>. <code>scripts/build-php.sh</code> passes <code>--disable-cgi</code> and builds no fpm SAPI, so <code>PHP_FASTCGI_OBJS</code> is compiled (per the object rule in the Makefile) but never linked into <code>libphp.so</code>/the embed SAPI Ignis actually runs.</td>
+</tr>
+<tr>
+<td><code>main/main.c:2600,2667</code></td>
+<td><code>open(".", 0)</code>/<code>close(old_cwd_fd)</code> bracketing <code>php_execute_script()</code> — cwd save/restore, a directory fd, no data transferred; not meaningfully blocking.</td>
+</tr>
+<tr>
+<td><code>main/fopen_wrappers.c:830</code></td>
+<td><code>close(fdtest)</code> — trivial, part of an <code>open_basedir</code> probe.</td>
+</tr>
+</tbody>
+</table>
+<p>Nothing in group (e) needed a <code>park</code>/<code>block</code> verdict beyond what's already in group (d)'s table:
+every real call site here either isn't compiled, has no caller, forwards for the same <code>S_IFREG</code>
+reason as group (d), or (DNS) lives in a library outside libphp's scope.</p>
+<h2 id="libphp-symbols-that-stay-block-with-the-reason">libphp symbols that stay <code>block</code>, with the reason<a class="headerlink" href="#libphp-symbols-that-stay-block-with-the-reason" title="Permanent link">&para;</a></h2>
+<p>One row, because one real <code>block</code> verdict exists across the entire audit (groups (a)-(e)):</p>
+<table>
+<thead>
+<tr>
+<th>symbol</th>
+<th>file:line</th>
+<th>reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fcntl(F_SETLKW)</code></td>
+<td><code>ext/opcache/zend_shared_alloc.c:510</code> (<code>zend_shared_alloc_lock()</code>)</td>
+<td>Reached with <code>zts_lock</code> (a TSRM mutex, <code>tsrm_mutex_lock</code> at <code>:499</code>) already held. Parking a fiber here would suspend it with a process-wide, non-fiber-aware mutex still locked, stalling every other fiber on the OS thread that also needs <code>zts_lock</code> — a real deadlock/stall risk, not a theoretical one, since this fires on every opcache cache-miss compile (<code>persistent_compile_file</code> → <code>cache_script_in_shared_memory</code>, reachable inside a request fiber, not just RINIT).</td>
+</tr>
+</tbody>
+</table>
+<p>Everything else that stays off <code>park</code> does so for one of two structural reasons, not a lock:</p>
+<ul>
+<li><strong>No fd to park on at all</strong> (offload's territory, not park's): <code>getaddrinfo</code> (<code>sockets.c:2829</code>,
+  <code>network.c:192</code>), <code>gethostbyname_r</code> (<code>network.c:1352</code>), <code>getnameinfo</code> (<code>dns.c:184,191</code>) — all
+  already in groups (a)/(c). <code>dns_get_record</code>'s <code>res_nsearch</code>/<code>res_search</code> path belongs here too in
+  spirit, but its syscalls are in <code>libresolv.so</code>, outside libphp — noted in group (e), not re-listed
+  as a libphp symbol.</li>
+<li><strong>Regular file, so <code>would_block()</code>'s <code>S_IFREG</code> check refuses it regardless of policy</strong>
+  (forwarded-anyway, group (d)'s largest bucket): opcache file-cache <code>read</code>/<code>writev</code>/<code>write</code>/<code>flock</code>
+  (<code>zend_file_cache.c</code>), session file <code>pread</code>/<code>pwrite</code>/<code>flock</code> (<code>mod_files.c</code>), userland <code>flock()</code>
+  (<code>plain_wrapper.c:783</code>), script/<code>include</code>/<code>require</code> reads (<code>plain_wrapper.c:457</code>/<code>:463</code>, group
+  (c)), <code>main/rfc1867.c</code>'s upload write, <code>main/main.c</code>'s <code>error_log</code> write, <code>Zend/zend_virtual_cwd.c</code>'s
+  <code>virtual_open()</code>. None of these need a <code>block</code> verdict — they were never park candidates, lock or
+  no lock — but they're listed here because the task asked for every symbol that stays off <code>park</code>,
+  not just the lock-caused ones.</li>
+</ul>
+<h2 id="symbols-still-to-interpose">Symbols still to interpose<a class="headerlink" href="#symbols-still-to-interpose" title="Permanent link">&para;</a></h2>
+<p>Beyond the current eleven (<code>read write recv send recvfrom sendto poll connect nanosleep usleep
+sleep</code>), reaching every group (a)/(c) call site above needs:</p>
+<ul>
+<li><strong><code>accept</code>, <code>accept4</code></strong> — <code>ext/sockets</code>' <code>socket_accept()</code> calls these directly with no prior
+  <code>poll()</code> (<code>sockets.c:294</code>, <code>:301</code>); <code>main/network.c</code>'s <code>accept()</code> (<code>:783</code>) does <em>not</em> need this —
+  it only ever runs after an already-interposed <code>poll()</code> reports readable.</li>
+<li><strong><code>select</code></strong> — <code>socket_select()</code> (<code>sockets.c:692</code>) and <code>stream_select()</code>
+  (<code>streamsfuncs.c:826</code>) both call <code>select()</code> directly; PHP's own <code>select()</code>-based <code>poll()</code>
+  emulation (<code>network.c:1317</code>) is dead code on this Linux/glibc build, so it contributes nothing.</li>
+<li><strong><code>recvmsg</code>, <code>sendmsg</code></strong> — <code>ext/sockets/sendrecvmsg.c:248</code>, <code>:207</code>; no other libphp use found in
+  either group.</li>
+<li><strong><code>getaddrinfo</code></strong> — <code>sockets.c:2829</code>, <code>network.c:192</code>. Interposing the symbol is necessary but
+  not sufficient: there is no fd to park on, so this (and the next row) need the <em>offload</em>
+  mechanism (CLAUDE.md's three-mechanism table), not park's readiness model.</li>
+<li><strong><code>gethostbyname</code>/<code>gethostbyname_r</code>/<code>getnameinfo</code></strong> — <code>network.c:1352</code> (the real path;
+  plain <code>gethostbyname</code> at <code>:1412</code> is dead code on glibc), <code>dns.c:184</code>/<code>:191</code>. Same offload-not-park
+  story as <code>getaddrinfo</code>.</li>
+</ul>
+<p>Everything else needed for these two groups (<code>read write recv send recvfrom sendto poll connect</code>)
+is <strong>already</strong> among the current eleven — the remaining gap for all of it is the <code>IGNIS_PARK</code>
+<code>SEED</code> policy string (<code>park.rs:56</code>), which does not yet list <code>libphp</code> for any symbol but
+<code>sleep</code>/<code>usleep</code>/<code>nanosleep</code>. No lock-related <code>block</code> verdict was found in either group.</p>
+<h2 id="semantics-a-point-hook-implements-that-a-bare-syscall-interposition-cannot">Semantics a point hook implements that a bare syscall interposition cannot<a class="headerlink" href="#semantics-a-point-hook-implements-that-a-bare-syscall-interposition-cannot" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong><code>can_block()</code>'s listening/unconnected/unbound check</strong> (<code>sockets.rs:232</code>). A generic
+   <code>recv</code>/<code>send</code> interposition's <code>would_block()</code>+<code>ready_now()</code> only asks "is this fd a blocking
+   socket, and is it ready now" — it has no notion that <code>POLLIN</code> on a <strong>listening</strong> socket means "a
+   connection is queued", not "data is available", or that an unconnected/unbound socket's data ops
+   fail at once (<code>ENOTCONN</code>) rather than ever becoming ready. Parking one of those on <code>Op::Watch</code>
+   waits for an event that may never mean what the caller asked for, or never arrives at all. Real
+   hazard only for <code>recv</code>/<code>send</code>-family ops on a listening or unconnected socket — <code>accept</code> has no
+   equivalent problem (it only ever makes sense on a listener, and <code>accept()</code> on anything else
+   fails immediately rather than blocking).</li>
+<li><strong><code>SO_RCVTIMEO</code>/<code>SO_SNDTIMEO</code></strong> (<code>sockets.rs:163</code>, <code>:300</code>-<code>:301</code>). The point hook reads the
+   socket's kernel timeout via <code>getsockopt</code> and races the readiness <code>Op::Watch</code> against an
+   <code>Op::Sleep</code> timer, then replays the original call with a 1 µs timeout so it reports the timeout
+   the stock way. <code>ignis_park_recv</code>/<code>ignis_park_send</code> (<code>park.rs:222</code>-<code>:247</code>) have <strong>no</strong> timeout
+   awareness at all — a parked <code>recv</code>/<code>send</code> on a socket with <code>SO_RCVTIMEO</code> set would wait forever
+   instead of honouring the kernel-configured timeout. This is the sharpest concrete regression
+   risk in group (a); it does not affect group (c), where every timed wait goes through <code>poll</code>
+   (already timeout-correct).</li>
+<li><strong><code>stream_select()</code>'s buffered-read-ahead short-circuit</strong> (<code>stream_array_emulate_read_fd_set</code>,
+   <code>streamsfuncs.c:~808</code>, wired to Ignis's own <code>stream.rs::has_buffered</code> by <code>accept.rs</code>'s
+   <code>hooked_select</code>). A bare <code>select</code>/<code>poll</code> syscall interposition parks on the real fd and has no
+   way to know that Ignis's <code>tcp://</code> hook already buffered bytes ahead of it in userland (read-ahead
+   the kernel fd no longer shows) — without this, a stream with buffered data would wait on a fd
+   that will never signal it. This is a coupling specific to Ignis's own transport hook (research 6),
+   not a stock-PHP concern, but it means a future <code>select</code> park cannot simply be "wrap the syscall".</li>
+<li><strong><code>accept.rs</code>'s <code>default_socket_timeout</code> swap for stock-shaped timeout errors.</strong> Cosmetic only
+   (matches error text/return shape on timeout) — not a hang risk, unlike 1–3.</li>
+</ol>
+<p>Test: V-46 — V-22's gate through park with the hook deleted (to extend to groups (a)/(c) once
+their symbols move to the table, per ADR-0037 §6 step 2).</p>
+<h2 id="question">Question<a class="headerlink" href="#question" title="Permanent link">&para;</a></h2>
+<p>Which call sites inside <code>libphp.so</code> (PHP 8.5.10 ZTS as built by <code>scripts/build-php.sh</code>) make a
+blocking syscall, and is any of them reached while a lock is held — the opcache SHM lock
+(<code>zend_shared_alloc_lock</code>), TSRM mutexes (<code>tsrm_mutex_lock</code>), the reentrancy locks
+(<code>tsrm_reentrancy</code>), or any <code>pthread_mutex</code> in an extension? Research 27 answered this for
+OpenSSL, libcurl and libpq from source with line references and explicitly did <strong>not</strong> walk
+libphp's compile/execute path. Until this audit exists, every libphp symbol stays <code>block</code> in
+ADR-0037's table.</p>
+<h2 id="method-to-be-executed-not-estimated">Method (to be executed, not estimated)<a class="headerlink" href="#method-to-be-executed-not-estimated" title="Permanent link">&para;</a></h2>
+<ol>
+<li><code>nm -D --undefined-only /opt/php85-zts/lib/libphp.so</code> filtered to research 26's export list —
+   the symbols libphp imports (research 26 already lists them; reuse).</li>
+<li>For each symbol, the call sites in <code>~/php-src</code> at <code>php-8.5.10</code>, grouped by extension and by
+   engine area: <code>main/streams/*</code> (plain files, sockets), <code>ext/standard</code> (<code>sleep</code>, <code>usleep</code>,
+   <code>gethostbyname</code>, <code>stream_select</code>), <code>ext/sockets</code>, <code>ext/openssl</code>, <code>ext/session</code> (file handler
+   locks — <code>flock</code>), <code>ext/opcache</code> (<code>zend_shared_alloc</code>, file cache <code>read</code>/<code>write</code> under
+   <code>zend_shared_alloc_lock</code>), <code>Zend/</code> (compile: <code>zend_stream_open</code> → <code>read</code> on the script;
+   <code>zend_signal</code>), <code>TSRM/</code>.</li>
+<li>For each call site: the lock state on the path to it, from source, with <code>file:line</code> — the
+   research-27 table shape: symbol | call site | lock held? (chain) | verdict <code>park</code> / <code>block</code>.</li>
+<li>Groups, in the order they would move to the table: (a) <code>ext/sockets</code> calls (<code>recv</code>/<code>send</code>/
+   <code>accept</code>/<code>connect</code>/<code>poll</code> — replaces <code>sockets.rs</code>, V-29), (b) <code>ext/standard</code> <code>sleep</code>/<code>usleep</code>
+   (replaces <code>sleep.rs</code>, V-22), (c) <code>main/streams</code> socket transport (<code>connect</code>/<code>poll</code>/<code>recv</code>/
+   <code>send</code> — replaces the factory's tcp path, V-12), (d) <code>ext/openssl</code> (replaces the rustls path,
+   V-25 — research 27's OpenSSL verdict applies to libssl; this group is libphp's <em>use</em> of it),
+   (e) everything else stays <code>block</code> with the reason (opcache file cache, session file locks,
+   script loading).</li>
+</ol>
+<h2 id="acceptance">Acceptance<a class="headerlink" href="#acceptance" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A table with one row per (symbol, call site) for groups (a)–(d), each with a <code>file:line</code> at
+  <code>php-8.5.10</code> and a lock-state verdict from the source path, not from memory.</li>
+<li>The list of libphp symbols that stay <code>block</code>, each with its reason.</li>
+<li>H36's shim (<code>bench/e18/locklib.c</code>, research 27) run under <code>park</code> for a libphp group that the
+  audit calls lock-free must <strong>not</strong> deadlock, and for a synthetic lock-holding site must — the
+  audit's verdicts are testable, not asserted.</li>
+<li>E15 fiber mode green with each group moved to <code>park</code> and its point hook off (ADR-0037 §6
+  step 3's gate), baseline unchanged or up.</li>
+</ul>
+<h2 id="what-this-does-not-cover">What this does not cover<a class="headerlink" href="#what-this-does-not-cover" title="Permanent link">&para;</a></h2>
+<p>Third-party extensions loaded into libphp (none in the current build: <code>--disable-all</code> plus the
+list in ADR-0027 §4). A new extension brings its own audit before its symbols get a row.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

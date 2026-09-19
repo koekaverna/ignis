@@ -1,0 +1,2189 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 44 — per-request state isolation: which of the five mechanisms survive deletion - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-44-per-request-state-isolation-which-of-the-five-mechanisms-survive-deletion" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 44 — per-request state isolation: which of the five mechanisms survive deletion
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-inventory-measured-wc-l" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The inventory, measured (wc -l)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-none-of-the-five-is-redundant-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. None of the five is redundant today
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-s-scoped-class-does-it-delete-the-facades" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. S-SCOPED-CLASS — does it delete the façades
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-s-ownership-does-it-close-the-three-items-it-claims-cheaper-than-what-already-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. S-OWNERSHIP — does it close the three items it claims, cheaper than what already exists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-r-ta-context-bearing-on-deletion-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. R-TA-CONTEXT — bearing on deletion only
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-s-reset-autoscope-does-it-shrink-to-two-named-services-and-a-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. S-RESET-AUTOSCOPE — does it shrink to two named services and a note
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-what-does-not-simplify-said-plainly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. What does not simplify — said plainly
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-ranked-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Ranked table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-verdict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Verdict
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-44-per-request-state-isolation-which-of-the-five-mechanisms-survive-deletion">Research 44 — per-request state isolation: which of the five mechanisms survive deletion<a class="headerlink" href="#research-44-per-request-state-isolation-which-of-the-five-mechanisms-survive-deletion" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-09-19. Question from the owner: not how to fix the open defects in per-request state
+isolation — <code>S-DBAL-DIRECT</code>, <code>S-EXCLUSIVE</code>, <code>S-RESET-ARRAYPOOL</code>, <code>S-RESET-AUTOSCOPE</code>,
+<code>S-REQUEST-FORMATS</code>, <code>S-SINGLETON-CAPTURE</code> are already filed — but <strong>which of them disappear if the
+path is removed instead of guarded</strong>, and whether the two newly filed mechanisms (<code>S-OWNERSHIP</code>,
+<code>S-SCOPED-CLASS</code>) are worth their code. Read-only: no code changed, no <code>git</code> write command run.</p>
+<p>Sources read in full: <code>CLAUDE.md</code>, <code>BRIEF.md</code> (E13, E8), <code>docs/adr/0006-fiber-scoped-superglobals.md</code>
+(including the 2026-09-17 addendum), <code>docs/adr/0037-three-mechanisms.md</code>,
+<code>docs/research/36-symfony-state-under-fibers.md</code>, <code>37-token-storage-under-fibers.md</code> (referenced,
+superseded by 36/38's findings), <code>38-doctrine-fiber-scope.md</code>, <code>39-exclusive-resources-under-fibers.md</code>,
+every <code>BACKLOG.md</code> entry named in the brief plus <code>R-TA-REQUEST-SCOPE</code>/<code>R-TA-SERVER</code>/<code>S-SCOPE-TERMINOLOGY</code>
+for context, <code>VALIDATION.md</code> V-85 (+ addenda), V-88, V-95 (+ addendum), V-96 (+ addendum), and every
+production file the five mechanisms are built from (read in full, not sampled). Upstream:
+<code>Zend/zend_async_API.h</code> fetched from <code>true-async/php-src</code> branch <code>PHP-8.6-true-async</code>
+(<code>raw.githubusercontent.com</code>, 1802 lines) — the specific structures <code>R-TA-CONTEXT</code> names, read to the
+depth the deletion question needs and no further; <code>R-TA-CONTEXT</code>'s own brief (locating the userland
+stub, the <code>Scope</code> class, <code>current_context</code>/<code>root_context</code>/<code>request_context</code>) was <strong>not</strong> started, per
+instruction.</p>
+<h2 id="1-the-inventory-measured-wc-l">1. The inventory, measured (<code>wc -l</code>)<a class="headerlink" href="#1-the-inventory-measured-wc-l" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>mechanism</th>
+<th>file(s)</th>
+<th>lines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>Ignis\Scope</code> (the storage)</td>
+<td><code>php/packages/runtime/src/Scope.php</code></td>
+<td>60</td>
+</tr>
+<tr>
+<td>2</td>
+<td>fiber-scoped façades</td>
+<td><code>FiberRequestStack.php</code> 89 + <code>FiberTokenStorage.php</code> 53 + <code>FiberEntityManager.php</code> 247 + <code>FiberManager.php</code> 58</td>
+<td><strong>447</strong></td>
+</tr>
+<tr>
+<td>2w</td>
+<td>— their compiler-pass wiring</td>
+<td><code>symfony-runtime/.../FiberScopePass.php</code> 93 + <code>doctrine/.../DoctrineFiberScopePass.php</code> 109</td>
+<td>202</td>
+</tr>
+<tr>
+<td>2b</td>
+<td>— supporting bundle/runtime glue</td>
+<td><code>IgnisBundle.php</code> 28 + <code>IgnisRuntime.php</code> 21 + <code>IgnisWorkerRunner.php</code> 112 + <code>IgnisDoctrineBundle.php</code> 65 + <code>IgnisDoctrineExtension.php</code> 33 + <code>DoctrinePoolPass.php</code> 83</td>
+<td>342</td>
+</tr>
+<tr>
+<td>3</td>
+<td>fiber-switch superglobal slots</td>
+<td><code>crates/ignis/src/php/superglobals.rs</code></td>
+<td>301</td>
+</tr>
+<tr>
+<td>4</td>
+<td>services-resetter no-op</td>
+<td><code>FiberServicesResetter.php</code> (the disabling logic itself is 27 lines inside 2w's <code>FiberScopePass.php</code>, not separate)</td>
+<td>61</td>
+</tr>
+<tr>
+<td>5</td>
+<td>PHPStan rule</td>
+<td><code>RequestScopedValueInPropertyRule.php</code> 170 + <code>extension.neon</code> 40</td>
+<td>210</td>
+</tr>
+<tr>
+<td>—</td>
+<td>connection pool (S-EXCLUSIVE's territory, not isolation itself)</td>
+<td><code>ConnectionPool.php</code> 186 + <code>PooledConnection.php</code> 42 + <code>PoolingMiddleware.php</code> 109 + <code>PoolingDriver.php</code> 33 + <code>PoolTimeoutException.php</code> 14</td>
+<td>384</td>
+</tr>
+</tbody>
+</table>
+<p>Narrow total (rows 1, 2, 3, 4, 5 — the five mechanisms as named in the brief, excluding wiring/glue
+and the pool): <strong>1,079 lines</strong>. Including the compiler-pass wiring and bundle glue that dispatches to
+them: <strong>1,623 lines</strong>. None of this is Rust/<code>unsafe</code> except superglobals.rs's 301 (15 <code>unsafe fn</code> /
+<code>unsafe {}</code> blocks, per ADR-0037 §1's own count for this mechanism).</p>
+<h2 id="2-none-of-the-five-is-redundant-today">2. None of the five is redundant today<a class="headerlink" href="#2-none-of-the-five-is-redundant-today" title="Permanent link">&para;</a></h2>
+<p>Each does a job the other four cannot:</p>
+<ol>
+<li><strong><code>Scope</code></strong> is the storage primitive — a <code>WeakMap&lt;Fiber, array&gt;</code> plus a <code>{main}</code> fallback. It is
+   the userland half of the <code>context</code> mechanism (ADR-0006). Nothing else in the five stores anything;
+   they all call into this one.</li>
+<li><strong>Façades</strong> are the <em>safe access pattern</em> built on 1 — a shared container singleton whose every
+   method reads <code>Scope</code> instead of <code>$this</code>. This is what makes "one request stack per fiber" reachable
+   from code that only ever sees the container's one instance (V-16, V-68, V-85, V-96: 0 leaks across
+   every measurement that exercises it).</li>
+<li><strong><code>superglobals.rs</code></strong> solves a problem 1 and 2 cannot: <code>$_SERVER</code>, <code>$_GET</code>, <code>$_POST</code>, <code>$_COOKIE</code>
+   are read by <strong>unmodified code</strong> through PHP's own variable syntax, not through a method call on an
+   injected service — there is nothing to make into a façade. It swaps the zend symbol table itself at
+   the fiber-switch observer (ADR-0006). Confirmed against upstream in §4: this is not a problem
+   upstream's context API addresses either.</li>
+<li><strong>The resetter no-op</strong> exists because Symfony's own built-in mechanism (<code>services_resetter</code>,
+   driven by <code>Kernel::boot()</code>'s <code>requestStackSize == 0</code> guard) is not merely unneeded under fibers, it
+   is <strong>actively wrong</strong>: research 36 and V-95 both show it firing on top of a request that is still
+   streaming or terminating. This is not "isolation" in the same sense as 1–3; it is turning off a
+   <em>different</em> framework's now-false assumption (that only one request is ever in flight on a thread).
+   Nothing else in the list does that job, because nothing else has an opinion on Symfony's own
+   lifecycle hooks.</li>
+<li><strong>The PHPStan rule</strong> is the one static backstop, and it catches a shape none of 1–4 can catch at
+   runtime for free: a <em>value</em> pulled out of a façade in a constructor and stored in a property —
+   <code>$this-&gt;request = $stack-&gt;getCurrentRequest()</code>. V-96 shows this is a real, silent defect (the
+   façade itself stays correct 6/6; the captured value is wrong 6/6) that no compiler pass can see
+   structurally (rejecting the <em>injection</em> would fail every controller in Symfony, V-96 §"three
+   proposed fixes", point 1) and no scope/façade mechanism prevents (the value has already left
+   <code>Scope</code> by the time it is captured).</li>
+</ol>
+<p><strong>Answer to "which of the five is redundant today": none.</strong> They sit at five different points —
+storage, access pattern, raw engine state, a foreign framework's lifecycle assumption, and static
+capture-detection — and each was built because a measurement (V-11, V-16, V-68, V-85, V-88, V-95,
+V-96) showed the point above it in this list did not cover it.</p>
+<p>One real (small) overlap, not a mechanism: <code>FiberScopePass</code> (symfony-runtime) and
+<code>DoctrineFiberScopePass</code> (doctrine) are two files doing the same <em>kind</em> of thing — moving a
+container id to a fiber-scoped replacement — split by package. That split is not redundancy; it is
+CLAUDE.md's own rule ("one package per integration since V-62") and merging them would create a
+dependency from <code>ignis/symfony-runtime</code> on <code>ignis/doctrine</code> (or vice versa) where today neither
+depends on the other. Not a deletion candidate.</p>
+<h2 id="3-s-scoped-class-does-it-delete-the-facades">3. <code>S-SCOPED-CLASS</code> — does it delete the façades<a class="headerlink" href="#3-s-scoped-class-does-it-delete-the-facades" title="Permanent link">&para;</a></h2>
+<p>The item's own acceptance test is specific: prototype on a standalone class, then <strong>rewrite
+<code>FiberRequestStack</code> on it</strong> — "if that class disappears the mechanism is right." Measuring that
+against the actual code:</p>
+<ul>
+<li><strong><code>FiberRequestStack</code> (89 lines) is the worst candidate to prove the claim on.</strong> It <code>extends
+  Symfony\Component\HttpFoundation\RequestStack</code> (<code>FiberRequestStack.php:21</code>), and the item's own open
+  questions list, unresolved: <em>"inheritance — a scoped class's parent must be scoped too"</em>
+  (<code>BACKLOG.md</code>, <code>S-SCOPED-CLASS</code>). <code>RequestStack</code> is vendor code; it was never declared
+  <code>#[FiberScoped]</code> and cannot be retroactively attributed. Until that open question is answered, it is
+  not established that the mechanism can apply to <code>FiberRequestStack</code> <strong>at all</strong> — so the class named
+  in the acceptance test may not be a legal target for it. This is not a nitpick: it is the specific
+  gap the item files as unresolved, and it sits directly on the one example the item chose to prove
+  itself against.</li>
+<li><strong><code>FiberEntityManager</code> (247 lines) is not even claimed.</strong> The acceptance test names
+  <code>FiberRequestStack</code> only. And structurally, <code>FiberEntityManager</code>'s per-fiber value is not a plain
+  property — it is lazily built through a <code>ContainerInterface</code> locator with <code>isOpen()</code>/reset logic
+  (<code>FiberEntityManager.php:44-56</code>), and its 35 forwarding methods exist because it implements
+  <code>EntityManagerInterface</code>'s 35-method surface (research 38 §3), not because it duplicates a property
+  access. Moving <em>properties</em> into per-scope storage does not remove a 35-method interface
+  implementation; the forwarders stay regardless.</li>
+<li><strong><code>FiberTokenStorage</code> (53 lines) is the one real candidate</strong>, and the item does not name it. It has
+  no vendor parent (<code>implements TokenStorageInterface, ResetInterface</code>, no <code>extends</code>,
+  <code>FiberTokenStorage.php:30</code>) and its state is a single scalar-ish value
+  (<code>Scope::get($this-&gt;key)</code>/<code>Scope::set($this-&gt;key, $token)</code>, <code>:36-51</code>). If <code>#[FiberScoped]</code> could
+  legally apply here, the two-line <code>getToken()</code>/<code>setToken()</code> bodies collapse to plain property
+  reads/writes and the class shrinks by perhaps 15–20 lines — the interface methods themselves do not
+  go away.</li>
+</ul>
+<p><strong>Best case, measured against the actual files: ≤53 of the 447 façade lines (12%) are a plausible
+target, and even that shrinks by roughly a third of its own size, not to zero.</strong> The 89- and 247-line
+files are not established candidates — one is blocked by an unresolved open question, the other is
+outside the item's own claim. Against that: six new object handlers
+(<code>create_object</code>, <code>read_property</code>, <code>write_property</code>, <code>has_property</code>, <code>unset_property</code>,
+<code>get_property_ptr_ptr</code>, <code>get_properties</code>) with class-link-time slot resolution is new <code>unsafe</code> engine
+code in the one place CLAUDE.md restricts to the main agent
+(<code>.claude/hooks/guard-ffi.sh</code> blocks subagents from <code>crates/ignis/src/php/**</code> and any file containing
+<code>unsafe</code>). For scale: ADR-0037 §1 measured the <em>existing</em> context mechanism (four fixed symbol-table
+slots, one job) at 269–301 lines / 15 <code>unsafe {}</code>. A general per-class, per-property, arbitrary-slot
+mechanism is a materially bigger and more exposed surface than that, for a deletion measured here at
+0–53 lines.</p>
+<p><strong>Verdict: not worth it as filed.</strong> The item's own acceptance plan (prototype first, measure the read
+cost, see if the class disappears) is the right gate and should stand — but the honest prediction,
+from the code as it exists today, is that it fails that gate: the class it names to prove itself on is
+blocked by its own open question, and the class it would actually help is not the one it names.</p>
+<h2 id="4-s-ownership-does-it-close-the-three-items-it-claims-cheaper-than-what-already-exists">4. <code>S-OWNERSHIP</code> — does it close the three items it claims, cheaper than what already exists<a class="headerlink" href="#4-s-ownership-does-it-close-the-three-items-it-claims-cheaper-than-what-already-exists" title="Permanent link">&para;</a></h2>
+<p>The item claims it closes <code>S-DBAL-DIRECT</code>, <code>S-EXCLUSIVE</code> and <code>S-RESET-ARRAYPOOL</code> "with no code of
+their own," via taint bits in every object's GC bits, transitive through property and array writes,
+with three release verbs (<code>Scope::escape</code>/<code>share</code>/<code>pin</code>). It states this is "the <code>context</code> mechanism
+(ADR-0006), not a fourth one."</p>
+<p><strong>That claim does not hold against ADR-0037's own definition of <code>context</code>.</strong> §2's table states what
+<code>context</code> is not allowed to do: <em>"allocate per switch: a slot swap is pointer moves; anything needing
+allocation happens at dispatch, not on the observer."</em> A taint check firing on <strong>every property write
+and every array-element write, for every object, system-wide</strong> — not only at a fiber switch — is a
+different shape of interception than a slot read at a switch point. The item's own text concedes the
+scale of it: <em>"A taint check on every property write is the first thing that puts real work on that
+path... cheaper to design in than to retrofit after a handler recurses"</em> — describing a new
+write-barrier-style hook, not a switch-time slot swap. Whether that counts as within-budget or as the
+fourth mechanism CLAUDE.md forbids proposing is a real question this research raises rather than
+settles; either way, it is <strong>not</strong> the same shape as the context mechanism as ADR-0037 defines it
+today, and the item should not claim it is one for free.</p>
+<p><strong>Each of the three named items already has a cheaper answer on paper, unbuilt but specified:</strong></p>
+<table>
+<thead>
+<tr>
+<th>item</th>
+<th>what <code>S-OWNERSHIP</code> would catch</th>
+<th>what already closes it, per the backlog's own research</th>
+<th>relative cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>S-EXCLUSIVE</code></td>
+<td>a resource used from a foreign fiber</td>
+<td>research 39's own top recommendation: <strong>O1</strong> (a <code>Fiber::getCurrent()</code> affinity check in <code>PooledConnection</code>, ~5 lines, "the largest return per line in the whole list") + <strong>O4</strong> (a one-lease-per-fiber rule in <code>Scope</code>)</td>
+<td>~10–20 lines, no engine change, no new mechanism</td>
+</tr>
+<tr>
+<td><code>S-DBAL-DIRECT</code></td>
+<td>a shared service holding a raw <code>Connection</code> for the thread's life</td>
+<td>the item's own text: <em>"the same shape the manager got — a shared <code>FiberConnection</code> published under the connection id"</em> — i.e. one more row of the <strong>façade mechanism already built and proven</strong> (§2, row 2), not a new one</td>
+<td>a few hundred lines of plain PHP decorator, same shape as <code>FiberEntityManager</code>, zero new <code>unsafe</code></td>
+</tr>
+<tr>
+<td><code>S-RESET-ARRAYPOOL</code></td>
+<td>a growing <code>ArrayAdapter</code>-backed pool</td>
+<td>a boot-time check ("refuse to start with an array-backed pool in fiber mode") or a documented limitation — the backlog item's own acceptance text names exactly this as one of the outcomes the measurement might support</td>
+<td>0–10 lines, no runtime mechanism at all</td>
+</tr>
+</tbody>
+</table>
+<p>Every one of the three is closer to "one more row in a table, or a five-line guard, or a boot check"
+than to "taint bits on every value in the process." Research 39 explicitly ranked and rejected the
+larger options in this space already — O5 (its own "held across a suspension" detector, the nearest
+thing to <code>S-OWNERSHIP</code>'s runtime half) is gated behind E2's 3.83 µs warm-switch budget and ranked
+<strong>fourth</strong> of five, behind the cheap wrapper check, the mutex/semaphore extraction, and a PHPStan
+rule. <code>S-OWNERSHIP</code> reopens ground research 39 already surveyed and ranked, without citing why the
+cheaper options it found are insufficient.</p>
+<p><strong>Verdict: not worth it as filed.</strong> Extend the PHPStan rule that already shipped for
+<code>S-SINGLETON-CAPTURE</code> (V-96 addendum, 170 lines, one AST-level check) with a second, narrow rule for
+the <code>S-DBAL-DIRECT</code> shape (a non-façade, scoped-marked type injected into a shared service's
+constructor and kept in a property — the shape V-96's rule <em>deliberately</em> does not flag today because
+the façade shape is correct), do O1+O4 for <code>S-EXCLUSIVE</code>, and settle <code>S-RESET-ARRAYPOOL</code> with a boot
+check. All three fit inside the three existing mechanisms and the fifth item (the PHPStan rule),
+extended by rows, not rebuilt.</p>
+<h2 id="5-r-ta-context-bearing-on-deletion-only">5. <code>R-TA-CONTEXT</code> — bearing on deletion only<a class="headerlink" href="#5-r-ta-context-bearing-on-deletion-only" title="Permanent link">&para;</a></h2>
+<p>Read <code>Zend/zend_async_API.h</code> at <code>true-async/php-src@PHP-8.6-true-async</code> directly (not the fork's
+higher-level stubs, and not the userland <code>Scope</code>/<code>current_context</code> surface — that is <code>R-TA-CONTEXT</code>'s
+own unstarted brief). Confirms the backlog's verbatim quotes and adds the detail needed here: the
+coroutine struct (<code>zend_async_API.h:1037-1050</code>) carries <strong>two separate</strong> fields —</p>
+<div class="highlight"><pre><span></span><code><span class="n">zend_async_context_t</span><span class="w"> </span><span class="o">*</span><span class="n">context</span><span class="p">;</span><span class="w">      </span><span class="cm">/* user-facing, string|object keys, Scope-chain lookup */</span>
+<span class="n">HashTable</span><span class="w"> </span><span class="o">*</span><span class="n">internal_context</span><span class="p">;</span><span class="w">        </span><span class="cm">/* "Internal context (for C extensions with numeric keys)" */</span>
+</code></pre></div>
+<p>with <code>internal_context</code> backed by <code>zend_async_internal_context_key_alloc</code>/<code>_find</code>/<code>_set</code>/<code>_unset</code>
+(<code>:1439-1450</code>) — a per-coroutine, engine-owned, numeric-keyed key→value store, disposed automatically
+at coroutine teardown (<code>zend_async_coroutine_internal_context_dispose</code>). The comment at line 1040
+states its intended use in upstream's own words: for C extensions, not for userland PHP code.</p>
+<p><strong>Three questions, answered only as far as they bear on deletion:</strong></p>
+<ol>
+<li><strong>Could our storage sit on <code>internal_context</code>?</strong> Structurally, yes — it is the same shape as
+   <code>Ignis\Scope::set</code>/<code>get</code>/<code>clear</code>: allocate a key once (<code>key_alloc</code>), read/write per coroutine
+   (<code>_find</code>/<code>_set</code>), free automatically on teardown. <strong>But this is backend (b) only</strong> — nothing on
+   this box has ever built backend (b) (BACKLOG's own note, confirmed unchanged), and <code>Scope.php</code>'s
+   public API (<code>set</code>/<code>get</code>/<code>clear</code>) would stay identical either way: only its <em>internal</em>
+   implementation would change, from a <code>WeakMap</code> to an FFI binding. <strong>No consuming code deletes</strong> —
+   the façades, the PHPStan rule and every call site go through <code>Scope</code>'s three static methods, not
+   its internals. The honest answer to "does our own storage get deleted": <strong>no.</strong> It gets a second,
+   backend-conditional implementation (<code>cfg(php_async_abi)</code>) the day backend (b) is real, which is
+   <strong>more</strong> total code across both backends, not less, until backend (a) is retired — which is not on
+   the table.</li>
+<li><strong>Does their <code>context</code> (not <code>internal_context</code>) cover our superglobal slots?</strong> No. <code>context</code> is
+   reached through an explicit API (<code>Async\request_context()</code> and friends) with string/object keys —
+   it is a side-channel map, not the PHP symbol table. <code>$_SERVER</code>/<code>$_GET</code>/<code>$_POST</code>/<code>$_COOKIE</code> are read
+   by unmodified code through ordinary PHP variable syntax; nothing in either <code>context</code> or
+   <code>internal_context</code> touches <code>EG(symbol_table)</code>. <strong><code>superglobals.rs</code> is unaffected by this question
+   either way</strong> — it solves a problem neither upstream field addresses.</li>
+<li><strong>What do <code>switch_handlers</code> give beyond <code>zend_observer_fiber_switch_register</code>?</strong> Upstream attaches
+   a per-coroutine <em>vector</em> of handler function pointers (<code>zend_coroutine_switch_handlers_vector_t</code>,
+   <code>:320-325</code>) rather than one process-wide registration inspecting per-context state, which is what
+   ours does (<code>superglobals.rs:180-215</code>, <code>SLOT</code>/<code>VIEW</code> thread-locals). Different shape, not a missing
+   capability — nothing here suggests our observer is doing something upstream's cannot, or vice
+   versa. This bears on an eventual ADR-0003 amendment, not on any deletion today.</li>
+</ol>
+<p><strong>Net effect on this slice's deletion question: none of the five mechanisms shrinks because of
+<code>R-TA-CONTEXT</code>.</strong> <code>Scope</code>'s <em>storage</em> is a plausible reimplementation target for backend (b), which
+is a future addition (a second code path), not a subtraction. <code>superglobals.rs</code> is unaffected.
+Façades, the resetter and the PHPStan rule sit above <code>Scope</code>'s API and never see its internals change.</p>
+<h2 id="6-s-reset-autoscope-does-it-shrink-to-two-named-services-and-a-note">6. <code>S-RESET-AUTOSCOPE</code> — does it shrink to two named services and a note<a class="headerlink" href="#6-s-reset-autoscope-does-it-shrink-to-two-named-services-and-a-note" title="Permanent link">&para;</a></h2>
+<p>Yes, and the backlog's own inventory (<code>BACKLOG.md</code>, <code>S-RESET-AUTOSCOPE</code>, table of 15 tagged services)
+already does the arithmetic: 9 must stay shared (they are caches whose <code>reset()</code> is a <code>clear()</code> that
+would defeat the cache), 1 has an empty <code>reset()</code> body, 2 are already handled by the façade mechanism
+(§2, row 2 — <code>security.untracked_token_storage</code> via <code>FiberTokenStorage</code>, <code>doctrine</code> via
+<code>FiberEntityManager</code>), 1 is a test double. That leaves exactly <strong>two</strong> real candidates —
+<code>security.logout_url_generator</code> and <code>doctrine.debug_data_holder</code> — each needing its own probe and its
+own fix (the inventory table gives the reason per row). <strong>The generic "a <code>ResetInterface</code> tag
+auto-registers fiber scope" idea is exactly what the item's own inventory argues against</strong>: applying
+it blanket would put a proxy in front of the 9 that must stay shared, in order to reach the 2 that
+should not be. The right shape is what the item already says it is: two named services and a note —
+not a new tag-driven auto-scoping framework. No new mechanism; each of the two is one more row of
+either the façade pattern (§2, row 2) or a documented exception, decided per-service by reading its
+<code>reset()</code>, the same way the inventory itself was built.</p>
+<h2 id="7-what-does-not-simplify-said-plainly">7. What does not simplify — said plainly<a class="headerlink" href="#7-what-does-not-simplify-said-plainly" title="Permanent link">&para;</a></h2>
+<p><code>S-REQUEST-FORMATS</code> has no code-shaped answer today and should not be given one to look finished.
+<code>Request::$formats</code> is <code>protected static</code>, thread-wide by construction
+(<code>http-foundation/Request.php:235</code>), and cannot be moved into <code>Scope</code> without rewriting
+<code>Symfony\Component\HttpFoundation\Request</code> itself — out of scope for an adapter package by design.
+The two paths (leave the reset inherited, or neutralise it) are both zero-code decisions gated on one
+measurement that has not been run (an E21 arm: one request registers a custom format, a second
+triggers the reset, does the first still see its own). Until that measurement exists, the honest
+status is "open, mitigated, no code to write" — not "closed" and not "needs a mechanism."</p>
+<h2 id="8-ranked-table">8. Ranked table<a class="headerlink" href="#8-ranked-table" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>verdict</th>
+<th>candidate</th>
+<th>backlog ids closed/affected</th>
+<th>measured line delta</th>
+<th>kill criterion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>keep</strong></td>
+<td><code>Ignis\Scope</code></td>
+<td>none (foundation for all)</td>
+<td>0 (no change)</td>
+<td>none proposed here — would be revisited only if <code>R-TA-CONTEXT</code>'s backend-(b) reimplementation ships and a second backend-conditional path is judged not worth carrying</td>
+</tr>
+<tr>
+<td><strong>keep</strong></td>
+<td>façades as written (<code>FiberRequestStack</code>, <code>FiberTokenStorage</code>, <code>FiberEntityManager</code>)</td>
+<td>none directly; underlies <code>S-SINGLETON-CAPTURE</code>'s correct shape (V-96)</td>
+<td>0 (no change)</td>
+<td>a working <code>S-SCOPED-CLASS</code> prototype that shrinks <code>FiberRequestStack</code> net of its own new engine code — §3 predicts this fails</td>
+</tr>
+<tr>
+<td><strong>keep</strong></td>
+<td><code>superglobals.rs</code></td>
+<td>none — unaffected by every proposal in this note</td>
+<td>0 (no change)</td>
+<td>none; confirmed distinct problem in §5 q2</td>
+</tr>
+<tr>
+<td><strong>keep, extend by 2 rows</strong></td>
+<td>resetter no-op + <code>FiberScopePass</code>/<code>DoctrineFiberScopePass</code></td>
+<td><code>S-RESET-AUTOSCOPE</code></td>
+<td>+est. 10–40 lines (two named services, §6)</td>
+<td>a probe for either of the two that cannot be made to fail — then it is not scoped, and the inventory already names that outcome as acceptable</td>
+</tr>
+<tr>
+<td><strong>merge into façade mechanism (§2, row 2)</strong></td>
+<td><code>FiberConnection</code> (new)</td>
+<td><code>S-DBAL-DIRECT</code></td>
+<td>+est. 150–300 lines (comparable order to <code>FiberEntityManager</code>'s 247, ~40-method surface per research 38)</td>
+<td>an E24 arm with a constructor-injected <code>Connection</code> failing today and passing after; if the decorator surface turns out unable to cover DBAL's private driver state, the fallback is the existing build-time warning list (research 38 §4 step 5), already specified, not a new mechanism</td>
+</tr>
+<tr>
+<td><strong>merge into wrapper (research 39 O1+O4)</strong></td>
+<td>fiber-affinity check + one-lease rule</td>
+<td><code>S-EXCLUSIVE</code> (and detects <code>S-SINGLETON-CAPTURE</code>'s capture shape at the point of use)</td>
+<td>+est. 10–20 lines in <code>PooledConnection.php</code>/<code>Scope.php</code></td>
+<td>the owner's chaos-mode two-interleaved-fiber test (already specified in the item) not catching a foreign-fiber use after the guard lands</td>
+</tr>
+<tr>
+<td><strong>merge into boot check</strong></td>
+<td>array-pool guard</td>
+<td><code>S-RESET-ARRAYPOOL</code></td>
+<td>+est. 0–10 lines</td>
+<td>none needed — this is a documentation/refusal decision, not a mechanism</td>
+</tr>
+<tr>
+<td><strong>no code — measure and document</strong></td>
+<td>request-formats trade-off</td>
+<td><code>S-REQUEST-FORMATS</code></td>
+<td>0</td>
+<td>the missing E21 arm (§7) run and read; either outcome is zero further code</td>
+</tr>
+<tr>
+<td><strong>delete from the roadmap as filed</strong></td>
+<td><code>S-OWNERSHIP</code> (taint bits, three release verbs)</td>
+<td>claims <code>S-DBAL-DIRECT</code>, <code>S-EXCLUSIVE</code>, <code>S-RESET-ARRAYPOOL</code> — all three already closed above at a fraction of the cost</td>
+<td>0 built; avoids an estimated several-hundred-line write-barrier-shaped addition across every object write in the engine</td>
+<td>superseded the moment any one of the three rows above is measured working — at that point this item has nothing left to close</td>
+</tr>
+<tr>
+<td><strong>delete from the roadmap as filed</strong></td>
+<td><code>S-SCOPED-CLASS</code> (<code>#[FiberScoped]</code>, six object handlers)</td>
+<td>claims to close "the façade half of V-96" — already closed by the façade pattern itself (V-96: 0/6 leaks)</td>
+<td>0 built; avoids an estimated 300+ line, <code>unsafe</code>-heavy addition (§3) for a ≤53-line, unresolved-precondition deletion</td>
+<td>a working prototype rewriting <code>FiberTokenStorage</code> (not <code>FiberRequestStack</code> — §3) that nets fewer lines than the handler code it required, with the parent-inheritance question answered first</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Total measured line delta from this note's recommendations, stated separately from estimates per
+ADR-0037's own convention:</strong> the two <strong>delete</strong> rows commit <strong>0 lines</strong> (nothing was ever built) and
+avoid a combined <strong>estimated 600–1,000+ lines of new <code>unsafe</code> FFI/engine code</strong> that this note found
+no evidence would net-positive against the ≤53+small number of lines they could actually remove. The
+<strong>merge</strong> rows add an <strong>estimated 170–370 lines</strong> total, entirely in userland PHP, entirely extending
+mechanisms that already exist and are already measured working (façade pattern, wrapper guard,
+PHPStan rule) — no Rust, no new <code>unsafe</code>, no fourth mechanism. Nothing in the existing five is deleted
+outright; §2 found no redundancy among them to remove.</p>
+<h2 id="9-verdict">9. Verdict<a class="headerlink" href="#9-verdict" title="Permanent link">&para;</a></h2>
+<p><code>S-OWNERSHIP</code> and <code>S-SCOPED-CLASS</code> are not worth their code as filed. Both would add real machinery —
+a process-wide write-barrier-shaped taint check and six new class-level object handlers — in the one
+place (<code>crates/ignis/src/php/**</code>, anything <code>unsafe</code>) CLAUDE.md restricts to the main agent, against
+deletions this note could not establish beyond "possibly 53 lines of one already-small façade,
+contingent on an open question the item itself has not answered." Every red item either mechanism
+claims to close already has a cheaper, specified, in-budget answer: research 39's own top-ranked
+option (O1+O4, ~10–20 lines) for <code>S-EXCLUSIVE</code>, one more row of the existing façade pattern for
+<code>S-DBAL-DIRECT</code>, and a boot-time check for <code>S-RESET-ARRAYPOOL</code>. The smaller shape does the job.</p>
+<p>The five mechanisms this slice already runs on are not redundant with each other — §2 shows each
+covers ground the other four do not — so there is no "collapse into fewer" available today either.
+The one genuine shrink available is <code>S-RESET-AUTOSCOPE</code>'s: a speculative tag-driven auto-scoping
+framework was never built, and the inventory already on file (<code>BACKLOG.md</code>) shows it should not be —
+two named services and a note is the whole of it, which is smaller than what was proposed, not merely
+cheaper.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

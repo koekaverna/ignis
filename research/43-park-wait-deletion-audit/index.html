@@ -1,0 +1,2242 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 43 — park.rs / wait.rs: what disappears if the path is deleted instead of guarded - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-43-parkrs-waitrs-what-disappears-if-the-path-is-deleted-instead-of-guarded" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 43 — park.rs / wait.rs: what disappears if the path is deleted instead of guarded
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-files-measure-as-they-stand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the files measure as they stand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lead-1-the-duplicated-shims-measured-and-a-real-merge-candidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lead 1 — the duplicated shims: measured, and a real merge candidate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lead-1b-found-not-asked-for-waitrss-await_op-is-a-specialization-of-await_any" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lead 1b (found, not asked for) — wait.rs's await_op is a specialization of await_any
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lead-2-the-16-symbol-seed-table-refuted-as-a-block-by-default-simplification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lead 2 — the 16-symbol seed table: refuted as a block-by-default simplification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lead-3-r-sess-already-fixed-in-code-the-backlog-text-is-stale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lead 3 — R-SESS: already fixed in code; the backlog text is stale
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lead-4-r-foreign-fiber-cannot-be-closed-by-shrinking-the-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lead 4 — R-FOREIGN-FIBER: cannot be closed by shrinking the table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lead-5-r-pdo-sqlite-the-simplification-already-shipped-do-not-build-the-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lead 5 — R-PDO-SQLITE: the simplification already shipped; do not build the proxy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lead-6-a-park-arithmetic-three-sites-one-real-merge-and-one-unrelated-bug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lead 6 — A-PARK-ARITHMETIC: three sites, one real merge and one unrelated bug
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-rust-tests-parkrswaitrs-half" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A-RUST-TESTS (park.rs/wait.rs half)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#e18-i-stage-2-remainder-the-backlog-text-is-behind-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        E18-I (stage-2 remainder): the backlog text is behind the code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ranked-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ranked table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-surprised-me-what-this-rules-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What surprised me / what this rules out
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-43-parkrs-waitrs-what-disappears-if-the-path-is-deleted-instead-of-guarded">Research 43 — park.rs / wait.rs: what disappears if the path is deleted instead of guarded<a class="headerlink" href="#research-43-parkrs-waitrs-what-disappears-if-the-path-is-deleted-instead-of-guarded" title="Permanent link">&para;</a></h1>
+<p>Scope: <code>crates/ignis/src/php/park.rs</code>, <code>crates/ignis/csrc/park.c</code>, <code>crates/ignis/src/php/wait.rs</code>,
+the <code>IGNIS_PARK</code> policy table (ADR-0020/0037). Question asked (owner, via the orchestrating
+session): not how to fix the open defects in this slice — they are filed — but which of them stop
+existing if the path is removed rather than guarded. Read-only: no code changed, no <code>unsafe</code>
+touched, nothing built. Every number below is measured with <code>wc -l</code> / <code>grep -c</code> / <code>md5sum</code> against
+<code>main</code> at commit range ending <code>55cba25</code>, or labelled <strong>estimate</strong> when it projects an unbuilt
+change, following ADR-0037 §1's own convention of separating the two.</p>
+<h2 id="sources">Sources<a class="headerlink" href="#sources" title="Permanent link">&para;</a></h2>
+<p><code>CLAUDE.md</code>, <code>BRIEF.md</code>, <code>docs/adr/0037-three-mechanisms.md</code>, <code>docs/adr/0020-universal-park.md</code>
+(referenced, not re-read line by line — 0037 supersedes its numbers), <code>docs/adr/0038-locks-across-a-fiber-boundary.md</code>,
+<code>BACKLOG.md</code> (<code>A-PARK-ARITHMETIC</code>, <code>A-UNSAFE-CONTRACTS</code>, <code>A-RUST-TESTS</code>, <code>R-FOREIGN-FIBER</code>,
+<code>R-SESS</code>, <code>R-PDO-SQLITE</code>, <code>E18-I</code>), <code>VALIDATION.md</code> (<code>V-4</code>, <code>V-45</code>, <code>V-47</code>, <code>V-58</code>, <code>V-59</code>, <code>V-59</code>
+addendum, <code>V-63</code>), the source files themselves and their git history (<code>git log -- crates/ignis/src/php/park.rs</code>).</p>
+<h2 id="what-the-files-measure-as-they-stand">What the files measure as they stand<a class="headerlink" href="#what-the-files-measure-as-they-stand" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>crates/ignis/src/php/park.rs   1056 lines   44 "unsafe {"   41 "unsafe fn"/"unsafe extern"
+crates/ignis/src/php/wait.rs    169 lines    4 "unsafe {"    4 "unsafe fn"/"unsafe extern"
+crates/ignis/csrc/park.c         73 lines
+crates/ignis/src/php/module.rs 1155 lines   40 "unsafe {"   38 "unsafe fn"/"unsafe extern"
+</code></pre></div>
+<p><strong><code>park.rs</code> is no longer the largest file in the crate.</strong> <code>A-RUST-TESTS</code> and this task's own brief
+both say so ("1,051 lines, the largest file in the crate"); <code>module.rs</code> has overtaken it at 1155
+lines (<code>park.rs</code> is 1056). <code>park.rs</code> is still first by every <code>unsafe</code> measure that matters for
+<code>A-RUST-TESTS</code>'s actual argument — 44 <code>unsafe {</code> blocks against <code>module.rs</code>'s 40, 41 <code>unsafe
+fn</code>/<code>unsafe extern</code> against 38 — so the item's reasoning survives, but its headline fact needs
+correcting.</p>
+<p><code>park.rs</code> exports 19 interposed handlers (<code>grep -c 'pub unsafe extern "C" fn ignis_park_'</code>):
+<code>read write recv send recvfrom sendto poll ppoll select connect nanosleep usleep sleep accept4
+recvmsg sendmsg flock readv writev</code>. <code>park.c</code> (73 lines) is the C shim that captures each caller's
+return address and forwards to these — one line per symbol, already minimal; there is no dedup
+candidate there (a macro would save characters, not clarity, and C has no zero-cost closure to hide
+the <code>__builtin_return_address(0)</code> capture behind).</p>
+<p>The four-line <code>// SAFETY: csrc/park.c calls this…Nothing here dereferences the caller's buffer…</code>
+paragraph appears <strong>17 times</strong>, byte-identical (<code>md5sum</code> on each extracted block: 17/17 match one
+hash) — not 14 as <code>A-UNSAFE-CONTRACTS</code> and this task's brief both state. It sits over every handler
+except <code>poll</code> (which now forwards to the shared <code>poll_impl</code> and carries its own note) and <code>flock</code>
+(its own note, about why there is nothing to dereference). It is <strong>false at three of the 17</strong>, not
+two: <code>ignis_park_select</code> (<code>:601</code>, does <code>std::ptr::read</code>/<code>FD_ISSET</code>/<code>ptr::write</code> on the caller's fd
+sets) and <code>ignis_park_ppoll</code> (<code>:576</code>, dereferences <code>ts</code>) are the two <code>A-UNSAFE-CONTRACTS</code> names;
+<strong><code>ignis_park_nanosleep</code> (<code>:721</code>) is a third, unnamed in the backlog item</strong>, and it reads <code>(*req)</code>
+for <code>tv_sec</code>/<code>tv_nsec</code> two lines into its body.</p>
+<h2 id="lead-1-the-duplicated-shims-measured-and-a-real-merge-candidate">Lead 1 — the duplicated shims: measured, and a real merge candidate<a class="headerlink" href="#lead-1-the-duplicated-shims-measured-and-a-real-merge-candidate" title="Permanent link">&para;</a></h2>
+<p>Eleven of the 19 handlers share one shape exactly: <code>may_park</code> → (an <code>MSG_DONTWAIT</code> check, for six
+of the eleven) → <code>would_block</code> → <code>ready_now</code> → <code>park_io</code> → EAGAIN-or-fall-through-to-the-raw-syscall.
+Measured body length per function (<code>awk</code> over <code>#[unsafe(no_mangle)] … }</code> spans):</p>
+<table>
+<thead>
+<tr>
+<th>fn</th>
+<th>lines</th>
+<th>fn</th>
+<th>lines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>read</td>
+<td>18</td>
+<td>accept4</td>
+<td>20</td>
+</tr>
+<tr>
+<td>write</td>
+<td>18</td>
+<td>recvmsg</td>
+<td>19</td>
+</tr>
+<tr>
+<td>recv</td>
+<td>19</td>
+<td>sendmsg</td>
+<td>19</td>
+</tr>
+<tr>
+<td>send</td>
+<td>19</td>
+<td>readv</td>
+<td>18</td>
+</tr>
+<tr>
+<td>recvfrom</td>
+<td>27</td>
+<td>writev</td>
+<td>18</td>
+</tr>
+<tr>
+<td>sendto</td>
+<td>27</td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Sum: <strong>222 lines</strong> across 11 functions for what is, past the symbol name and the final syscall
+call, the same six lines of control flow copy-pasted 11 times.</p>
+<p><strong>The merge (estimate, unbuilt):</strong> one shared <code>unsafe fn park_gate(ret, sym, fd, flags_nonblocking,
+write) -&gt; bool</code> holding the <code>may_park &amp;&amp; !flags_nonblocking &amp;&amp; would_block &amp;&amp; !ready_now &amp;&amp;
+park_io(..) == TimedOut</code> chain (~10 lines with its own single doc comment), with each of the 11
+handlers reduced to a thin wrapper (<code>no_mangle</code> attribute + signature + one short comment pointing
+at <code>park_gate</code>'s doc + <code>if park_gate(..) { EAGAIN; return -1 }</code> + the raw syscall). A drafted
+example for <code>read</code>:</p>
+<p><div class="highlight"><pre><span></span><code><span class="cp">#[unsafe(no_mangle)]</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">unsafe</span><span class="w"> </span><span class="k">extern</span><span class="w"> </span><span class="s">"C"</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">ignis_park_read</span><span class="p">(</span><span class="n">ret</span><span class="p">:</span><span class="w"> </span><span class="o">*</span><span class="k">const</span><span class="w"> </span><span class="n">c_void</span><span class="p">,</span><span class="w"> </span><span class="n">fd</span><span class="p">:</span><span class="w"> </span><span class="nc">c_int</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">:</span><span class="w"> </span><span class="o">*</span><span class="k">mut</span><span class="w"> </span><span class="n">c_void</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">isize</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// SAFETY: see park_gate's doc. buf/n are forwarded to the kernel unchanged, never read here.</span>
+<span class="w">    </span><span class="k">unsafe</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">park_gate</span><span class="p">(</span><span class="n">ret</span><span class="p">,</span><span class="w"> </span><span class="s">"read"</span><span class="p">,</span><span class="w"> </span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="kc">false</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="o">*</span><span class="n">libc</span><span class="p">::</span><span class="n">__errno_location</span><span class="p">()</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">libc</span><span class="p">::</span><span class="n">EAGAIN</span><span class="p">;</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="n">libc</span><span class="p">::</span><span class="n">syscall</span><span class="p">(</span><span class="n">libc</span><span class="p">::</span><span class="n">SYS_read</span><span class="p">,</span><span class="w"> </span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">isize</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+— 12 lines against today's 18. Weighted across the 11 (recvfrom/sendto stay a little longer for
+their extra <code>addr</code>/<code>alen</code> args): <strong>estimate ≈142 lines total (11 wrappers + 1 helper), against 222
+today — estimate −80 lines</strong>, and the duplicated-paragraph count drops by 11 of the current 17 (the
+helper carries one copy; the six functions that still differ — poll, select, ppoll, connect,
+sleep-family, flock — are untouched by this merge and keep their own notes). This is also most of
+<code>A-UNSAFE-CONTRACTS</code>'s stated acceptance for free: "whatever is genuinely common goes in the module
+doc once."</p>
+<p><strong>What this does not touch:</strong> the raw <code>libc::syscall(SYS_*, …)</code> calls themselves, so H32/H33's
+numbers (curl 279–337 ms, pgsql 296–333 ms, V-45) and the phpt gate that created each hook are
+unmoved by construction — the kill criterion is simply that they stay unmoved after the merge.</p>
+<h2 id="lead-1b-found-not-asked-for-waitrss-await_op-is-a-specialization-of-await_any">Lead 1b (found, not asked for) — <code>wait.rs</code>'s <code>await_op</code> is a specialization of <code>await_any</code><a class="headerlink" href="#lead-1b-found-not-asked-for-waitrss-await_op-is-a-specialization-of-await_any" title="Permanent link">&para;</a></h2>
+<p><code>await_op(id)</code> (<code>wait.rs:40-63</code>, 24 lines) and <code>await_any(ids)</code> (<code>wait.rs:71-114</code>, 44 lines) do the
+same suspend/resume dance — insert into <code>PARKED</code>, <code>zend_fiber_suspend</code>, check the exception, read
+back out of <code>RESULTS</code> — with <code>await_any</code> doing it for a slice instead of one id. <code>await_op</code> has
+exactly one caller in the whole crate (<code>grep -rn await_op crates/ignis/src</code>): <code>park_sleep</code>
+(<code>park.rs:359</code>), used by the sleep/usleep/nanosleep/flock family, not by <code>Ignis\Loop</code>'s own hot
+resume path.</p>
+<p><strong>The merge (estimate, unbuilt):</strong> <code>await_op</code> becomes <code>unsafe fn await_op(id: u64) -&gt; Option&lt;Outcome&gt;
+{ unsafe { await_any(&amp;[id]).map(|(_, o)| o) } }</code> — checked by hand against <code>await_any</code>'s behaviour
+for a one-element slice: same null/switch-blocked guard, same <code>PARKED</code> insert/suspend, same
+exception check, same <code>RESULTS</code> removal-and-return. <strong>Estimate ≈5 lines against 24 — estimate −19
+lines.</strong> Because the sole caller is off the <code>Ignis\Loop</code> warm-resume path that E2 measures, the
+merge's kill criterion is cheap: E2 warm stays ≤3.83 µs (it should not even move, since nothing on
+that path changes), and a test asserting <code>await_op(id) == await_any(&amp;[id]).map(second)</code> under the
+existing park/flock scenarios (V-45, V-58) is the correctness check.</p>
+<h2 id="lead-2-the-16-symbol-seed-table-refuted-as-a-block-by-default-simplification">Lead 2 — the 16-symbol seed table: refuted as a <code>block</code>-by-default simplification<a class="headerlink" href="#lead-2-the-16-symbol-seed-table-refuted-as-a-block-by-default-simplification" title="Permanent link">&para;</a></h2>
+<p><code>SEED</code> (<code>park.rs:64</code>) has 16 <code>libphp:*</code> rows plus 4 whole-library rows (<code>libcurl</code>, <code>libpq</code>,
+<code>libssl</code>, <code>libcrypto</code> — 20 total, matching the task's "16 symbols" if the four whole-library rows
+are read separately, which the code itself does). Traced each <code>libphp:</code> row against what regresses
+if it defaults to <code>block</code>:</p>
+<table>
+<thead>
+<tr>
+<th>row</th>
+<th>what breaks under <code>block</code></th>
+<th>measured evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sleep</code>/<code>usleep</code>/<code>nanosleep</code></td>
+<td>Symfony <code>LockRegistry</code>'s stampede lock (its loser loop polls <code>flock(LOCK_NB)</code> + <code>usleep(100 ms)</code>) stops proceeding — the exact scenario V-58 measured working <em>because</em> <code>usleep</code> parks</td>
+<td>V-58: "60 of 60" ticks parked, "never finished" (killed at 60 s) unparked</td>
+</tr>
+<tr>
+<td><code>read</code>/<code>write</code>/<code>recv</code>/<code>send</code>/<code>recvfrom</code>/<code>sendto</code>/<code>recvmsg</code>/<code>sendmsg</code>/<code>poll</code>/<code>select</code>/<code>connect</code></td>
+<td><code>file_get_contents('http://…')</code>, <code>fsockopen</code>, any PHP stream over a socket blocks the OS thread — this is E6's and E18's headline acceptance</td>
+<td>E18 acceptance (1)/(2); V-45's H32/H33 numbers exist only because these rows park</td>
+</tr>
+<tr>
+<td><code>accept</code></td>
+<td>a PHP-level socket accept loop blocks the thread it runs on</td>
+<td>A4/ADR-0018's rule this row carries forward from the deleted <code>accept.rs</code> (ADR-0037 cycle 2, V-48)</td>
+</tr>
+<tr>
+<td><code>flock</code></td>
+<td><strong>reopens the R-SESS deadlock this row exists to close</strong> — see Lead 3</td>
+<td>V-58</td>
+</tr>
+<tr>
+<td><code>libcurl</code></td>
+<td>62× regression (328 ms → 20,346 ms at N=100)</td>
+<td>V-59</td>
+</tr>
+<tr>
+<td><code>libpq</code></td>
+<td>9× regression (303 ms → 2,753 ms at N=100)</td>
+<td>V-59 addendum</td>
+</tr>
+<tr>
+<td><code>libssl</code>/<code>libcrypto</code></td>
+<td>every <code>https://</code> stream regresses to blocking during TLS; A6/B7's "closes by disappearance" result (ADR-0037 cycle 3) depends on these parking</td>
+<td>ADR-0037 §6 step 4</td>
+</tr>
+</tbody>
+</table>
+<p><strong>No row in the seed table is a deletion candidate.</strong> Every one is traced to a specific, already-measured
+regression, several of them the project's own headline numbers (E1/E6/E18). The concrete lead in
+the brief — "determine whether a smaller interposed surface closes [R-SESS/R-FOREIGN-FIBER] by
+construction" — is answered <strong>no</strong> for both, for different reasons (Leads 3 and 4 below). This is
+a refuted simplification, recorded as the brief asks.</p>
+<h2 id="lead-3-r-sess-already-fixed-in-code-the-backlog-text-is-stale">Lead 3 — R-SESS: already fixed in code; the backlog text is stale<a class="headerlink" href="#lead-3-r-sess-already-fixed-in-code-the-backlog-text-is-stale" title="Permanent link">&para;</a></h2>
+<p><code>R-SESS</code>'s text (<code>BACKLOG.md:328</code>) reads "Fixes to choose from, none built" and cites three unbuilt
+options. <strong><code>ignis_park_flock</code> (<code>park.rs:858-886</code>) already is a fourth, built fix</strong>, shipped in
+<code>a6c1a56</code> ("interpose flock so a blocking lock inside a fiber parks (S1-FLOCK, V-58)") — the same
+commit <code>V-58</code>, the validation entry <code>R-SESS</code>'s own text cites for its severity correction. The
+mechanism: a blocking <code>flock(LOCK_EX)</code> is rewritten to a <code>LOCK_NB</code> probe in a loop, backing off from
+<code>FLOCK_RETRY_FIRST_US=200</code> µs to <code>FLOCK_RETRY_MAX_US=20_000</code> µs (<code>park.rs:844-845</code>), parking on each
+wait via the existing <code>park_sleep</code> primitive instead of blocking the OS thread. This is exactly
+Symfony's own <code>LockRegistry</code> shape (<code>LOCK_NB</code> + <code>usleep</code> poll), applied mechanically to <code>ext/session</code>'s
+<code>flock</code> call by the interposer — which is what ADR-0038 decision 2 already prescribes ("any code
+that must use a file lock is expected to take this shape"), just applied by the runtime instead of
+by the application.</p>
+<p>Reproducing V-58's second arm (<code>scratchpad/flock2.php</code>: fiber A holds the lock, fiber B blocks on
+<code>flock</code>, "killed at 12 s with no progress") against the code that existed <strong>before</strong> <code>a6c1a56</code> would
+hang exactly as measured; against <code>main</code> today, <code>ignis_park_flock</code> intercepts B's call before it
+reaches the kernel, so it degrades to a bounded poll loop instead. <code>ADR-0038</code>'s status line already
+says as much ("accepted for the rule…the session-handler choice below is proposed and unbuilt") but
+its decision 3 ("the runtime refuses to start when sessions are enabled with the files handler") and
+decision 4 (ship a PostgreSQL session handler) are framed as still needed; they are not, for the
+deadlock this item names — the deadlock is already closed by construction of the <code>flock</code> row in the
+policy table.</p>
+<p><strong>What is genuinely still open</strong> is <code>A-PARK-ARITHMETIC</code> item (d), already filed against this same
+function: the retry loop has no overall deadline, so a lock held by a <strong>crashed</strong> holder (not a live
+one still running its own request) parks every waiter for the life of the process. That is a
+liveness bug in already-shipped code, not a missing mechanism — the fix is a bounded deadline (or a
+documented <code>ponytail:</code> ceiling) on the loop that already exists, a handful of lines, not ADR-0038's
+heavier guards.</p>
+<p><strong>Recommendation:</strong> close <code>R-SESS</code>'s deadlock claim by pointing at <code>a6c1a56</code>/V-58; keep only the
+crashed-holder liveness gap, folded into <code>A-PARK-ARITHMETIC</code> (d) where it is already tracked; mark
+ADR-0038 decisions 3 and 4 not-needed unless a <em>product</em> reason (not a deadlock reason) reopens them.</p>
+<h2 id="lead-4-r-foreign-fiber-cannot-be-closed-by-shrinking-the-table">Lead 4 — R-FOREIGN-FIBER: cannot be closed by shrinking the table<a class="headerlink" href="#lead-4-r-foreign-fiber-cannot-be-closed-by-shrinking-the-table" title="Permanent link">&para;</a></h2>
+<p>The defect (<code>V-63</code>, reproduced by <code>vendor/revolt/event-loop/examples/fiber-local-automatic.php</code>
+under <code>REVOLT_DRIVER=StreamSelectDriver</code>) is in <code>on_switch</code>'s gate — "park if the target context is
+not <code>EG(main_fiber_context)</code>" — which is true for <strong>any</strong> fiber, including one a foreign scheduler
+made. This is orthogonal to which syscalls are in the policy table: the same hang happens whether
+the foreign fiber calls a <code>libphp:usleep</code>-policy sleep or a <code>libcurl</code>-policy <code>curl_exec</code>. Shrinking
+the seed table to zero "fixes" it only by disabling park entirely, which fails E1/E2/E6/E18's own
+numbers (Lead 2). <strong>This is a case where the honest answer is "cannot be simplified away, a guard is
+required"</strong> — the guard being the one already designed in the backlog (a thread-local set of
+runtime-owned <code>zend_fiber_context</code> pointers, <code>on_switch</code> consulting it instead of <code>to != main</code>).</p>
+<p>Kill criterion, already named correctly in the backlog item: <code>bench/e7-revolt.sh</code>'s AMPHP-on-
+<code>StreamSelectDriver</code> repro passes without <code>IGNIS_NO_UNIVERSAL_PARK=1</code>, and E2 warm fiber switch
+stays ≤3.83 µs (V-4/V-45/V-47's number; V-63 records 3.62–3.83 µs as the current quiet-box range).</p>
+<h2 id="lead-5-r-pdo-sqlite-the-simplification-already-shipped-do-not-build-the-proxy">Lead 5 — R-PDO-SQLITE: the simplification already shipped; do not build the proxy<a class="headerlink" href="#lead-5-r-pdo-sqlite-the-simplification-already-shipped-do-not-build-the-proxy" title="Permanent link">&para;</a></h2>
+<p><code>route.rs:58</code> reads <code>const DEFAULT_CLASSES: &amp;str = "SQLite3";</code>, dated in its own comment to
+2026-09-17 (<code>V-59</code> addendum): <strong><code>PDO</code> is already out of the auto-route default.</strong> <code>R-PDO-SQLITE</code>'s
+own framing — "today the choice is <code>IGNIS_OFFLOAD_CLASSES</code>, per class and not per driver, and an
+application using both under concurrency cannot have both right" — describes a conflict that, for
+the <em>default</em> configuration, no longer exists: neither <code>pdo_sqlite</code> nor <code>pdo_pgsql</code> is auto-routed
+today, so <code>pdo_pgsql</code> parks (303 ms, <code>V-59</code> addendum) and <code>pdo_sqlite</code> blocks the thread briefly per
+query, a cost <code>route.rs</code>'s own comment says is "the same rule that already governs
+<code>file_get_contents</code>, opcache and sessions" (ADR-0024's accepted non-goal). The conflict only recurs
+if an operator explicitly sets <code>IGNIS_OFFLOAD_CLASSES=PDO</code> to get <code>pdo_sqlite</code> concurrency — at
+which point they have opted into the documented tradeoff, and the ~60-line <code>create_object</code>-on-the-
+proxy design (<code>R-PDO-SQLITE</code>'s own acceptance) is what would fix <em>that</em> case, not the default one.</p>
+<p><strong>Recommendation:</strong> do not build the proxy. Rewrite <code>R-PDO-SQLITE</code>'s text to match <code>route.rs</code>'s
+current default and downgrade it to "reopen only if an operator reports the opt-in conflict in
+practice." Net: 0 lines removed from what exists (there is nothing to delete — the deletion already
+happened in <code>V-59</code>'s change), but +60 lines are never written, and the item stops being read as an
+open defect in the default path, which it is not.</p>
+<h2 id="lead-6-a-park-arithmetic-three-sites-one-real-merge-and-one-unrelated-bug">Lead 6 — A-PARK-ARITHMETIC: three sites, one real merge and one unrelated bug<a class="headerlink" href="#lead-6-a-park-arithmetic-three-sites-one-real-merge-and-one-unrelated-bug" title="Permanent link">&para;</a></h2>
+<p>Two of the three named sites share the exact shape "<code>sec * 1000 + subsec_adjustment</code>, clamped after
+the multiply": <code>sock_timeout_ms</code> (<code>park.rs:315-326</code>, the <code>SO_RCVTIMEO</code>/<code>SO_SNDTIMEO</code> reader) and
+<code>ms_ceil</code> (<code>park.rs:535-537</code>, used by <code>ppoll</code>'s caller-supplied <code>timespec</code>). These two collapse into
+one shared saturating helper — modest size change (roughly neutral: two 1-line clamp expressions
+become two 1-line calls to one ~4-line function), but real value: the arithmetic bug has one home
+to fix and one place <code>A-RUST-TESTS</code>' unit test targets, instead of two. The third site,
+<code>module.rs:177</code> (<code>(ms.max(0) as u64) * 1000</code>, converting a PHP-supplied millisecond count to
+microseconds for <code>Op::Sleep</code>), is a different unit shape in a different file — the correct fix is
+<code>.saturating_mul(1000)</code> in place, stdlib doing the job in one line (ponytail rung 3), not a shared
+helper reaching across files for one call site.</p>
+<p>The other two items in <code>A-PARK-ARITHMETIC</code> — <code>ignis_park_sleep</code> always returning 0 instead of the
+POSIX remainder, and <code>ignis_park_flock</code>'s missing deadline — are not simplification candidates by
+this task's own test (nothing to delete that makes them disappear): the sleep-remainder question
+only has a wrong answer if a parked sleep can complete <em>partially</em>, which <code>Op::Sleep</code> does not
+model today (it finishes fully or <code>park_sleep</code> reports "could not park" and falls back to the real,
+POSIX-correct <code>nanosleep</code>) — so this is a smaller fix than the item implies, worth noting but not
+re-scoping here. The flock deadline is the residual half of Lead 3.</p>
+<h2 id="a-rust-tests-parkrswaitrs-half">A-RUST-TESTS (park.rs/wait.rs half)<a class="headerlink" href="#a-rust-tests-parkrswaitrs-half" title="Permanent link">&para;</a></h2>
+<p>Confirmed: neither file has a <code>#[cfg(test)]</code> module today (<code>grep -n "mod tests\|#\[test\]"</code> returns
+nothing in either). The named pure-logic targets still exist at the acceptance's description, at
+today's line numbers: <code>would_block</code> (<code>park.rs:206-249</code>), <code>park_pollfds</code>' cancel bookkeeping
+(<code>park.rs:501-532</code>), the <code>select</code> fd-set copy/refill (<code>park.rs:601-673</code>), <code>ms_ceil</code>
+(<code>park.rs:535-537</code>, one of the two arithmetic-merge sites above). This is not a deletion candidate —
+it is the one line item in scope that adds code — but Leads 1 and 1b shrink what it has to cover:
+one <code>park_gate</code> function to test instead of the same six lines checked across 11 bodies, and one
+<code>await_op</code>/<code>await_any</code> equivalence check instead of two independent suspend/resume paths.</p>
+<h2 id="e18-i-stage-2-remainder-the-backlog-text-is-behind-the-code">E18-I (stage-2 remainder): the backlog text is behind the code<a class="headerlink" href="#e18-i-stage-2-remainder-the-backlog-text-is-behind-the-code" title="Permanent link">&para;</a></h2>
+<p><code>BACKLOG.md:108</code> lists the stage-2 remainder as "getaddrinfo, ECANCELED, boot self-check,
+blocked-in-fiber detector." Measured: <code>php::park::selfcheck()</code> is called at <code>main.rs:245</code>, and
+<code>PARK_FAILED</code> is read by <code>metrics.rs:19,109</code> — <strong>both already built and wired</strong>, matching
+<code>ADR-0037</code> §4's own progress note ("(a) built and measured V-52; (b) half built"). <code>getaddrinfo</code> is
+a deliberate non-build (<code>R-DNS</code>, owner decision 2026-09-17, stated in <code>park.rs</code>'s own module doc,
+line 29-30) — not a gap. The one item that is genuinely absent is <code>ECANCELED</code> handling for a parked
+call under cancellation (<code>grep -rn ECANCELED crates/ignis/src</code> — zero matches anywhere in the
+crate), plus the watchdog half of the blocked-in-fiber detector, which the ADR itself places outside
+<code>park.rs</code> ("a thread stuck in a syscall cannot report on itself…it belongs to the watchdog,
+ADR-0012"). Recommendation: rewrite the "left:" list; no code change follows from this reading.</p>
+<h2 id="ranked-table">Ranked table<a class="headerlink" href="#ranked-table" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>verdict</th>
+<th>candidate</th>
+<th>backlog ids closed/affected</th>
+<th>measured / estimated line delta</th>
+<th>kill criterion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MERGE</strong></td>
+<td>11 io-shaped handlers → one <code>park_gate</code> helper + thin wrappers</td>
+<td><code>A-UNSAFE-CONTRACTS</code> (removes 11 of the 17 duplicated notes), <code>A-RUST-TESTS</code> (one function to test)</td>
+<td>measured today 222 lines / 11 bodies; <strong>estimate ≈142 after, estimate −80</strong></td>
+<td>phpt gate ≥ baseline in the suites that created H32/H33 (V-45/V-47); H32 279–337 ms and H33 296–333 ms unmoved</td>
+</tr>
+<tr>
+<td><strong>MERGE</strong></td>
+<td><code>await_op</code> → 3-line wrapper around <code>await_any(&amp;[id])</code></td>
+<td><code>A-RUST-TESTS</code></td>
+<td>measured today 24 lines; <strong>estimate ≈5 after, estimate −19</strong></td>
+<td>E2 warm ≤3.83 µs unmoved (await_op's only caller, <code>park_sleep</code>, is off the Loop's hot path); equivalence test against <code>await_any</code></td>
+</tr>
+<tr>
+<td><strong>MERGE</strong></td>
+<td><code>sock_timeout_ms</code> + <code>ms_ceil</code> → one saturating helper; <code>module.rs:177</code> gets <code>.saturating_mul(1000)</code> in place</td>
+<td><code>A-PARK-ARITHMETIC</code> (a)(b)</td>
+<td>measured today: two 1-line clamps; <strong>estimate roughly neutral, 0 to −2</strong></td>
+<td>unit test per site with <code>PHP_INT_MAX</code>/<code>i64::MAX</code> inputs, run under <code>cargo +nightly miri test -p ignis -- php::park</code></td>
+</tr>
+<tr>
+<td><strong>DELETE (do not build)</strong></td>
+<td>R-PDO-SQLITE's ~60-line <code>create_object</code>-on-proxy design</td>
+<td><code>R-PDO-SQLITE</code></td>
+<td>0 removed from existing code (nothing to delete — <code>route.rs:58</code>'s <code>DEFAULT_CLASSES = "SQLite3"</code> already shipped the simplification, V-59 addendum); <strong>+60 lines never written</strong></td>
+<td>none — reopen only if an operator hits the opt-in conflict in practice</td>
+</tr>
+<tr>
+<td><strong>KEEP</strong></td>
+<td>all 20 <code>IGNIS_PARK</code> seed rows</td>
+<td>closes nothing by dropping a row — every row traced to a specific measured regression</td>
+<td>0</td>
+<td>re-run V-58 (LockRegistry) and V-59/V-59-addendum (curl/pgsql) with any candidate row moved to <code>block</code>; any regression keeps the row</td>
+</tr>
+<tr>
+<td><strong>KEEP, fix the residual, not the mechanism</strong></td>
+<td><code>ignis_park_flock</code>'s retry loop</td>
+<td><code>R-SESS</code> (deadlock claim closes by pointing at <code>a6c1a56</code>/V-58), <code>A-PARK-ARITHMETIC</code> (d)</td>
+<td>a bounded deadline is a handful of lines, additive</td>
+<td>reproduce <code>scratchpad/flock2.php</code>-style two-fiber scenario against <code>main</code>; it now completes instead of hanging at 12 s (confirms the deadlock is already closed); a crashed-holder variant (kill the lock holder's process) proves the residual gap and the fix for it</td>
+</tr>
+<tr>
+<td><strong>KEEP, guard required</strong></td>
+<td>R-FOREIGN-FIBER's owned-fiber-context fix</td>
+<td><code>R-FOREIGN-FIBER</code></td>
+<td>new state, small, unavoidable — not sized here because unbuilt</td>
+<td><code>bench/e7-revolt.sh</code> passes without <code>IGNIS_NO_UNIVERSAL_PARK=1</code>; E2 warm ≤3.83 µs</td>
+</tr>
+<tr>
+<td><strong>KEEP, textual only</strong></td>
+<td>select/ppoll/<strong>nanosleep</strong>'s SAFETY notes</td>
+<td><code>A-UNSAFE-CONTRACTS</code></td>
+<td>~0 (comment rewrite; nanosleep is a third site not named in the backlog)</td>
+<td>none beyond <code>cargo build</code> — ADR-0041's gate already requires a note per unsafe block</td>
+</tr>
+<tr>
+<td><strong>KEEP, textual only</strong></td>
+<td>E18-I's stage-2 "left:" list</td>
+<td><code>E18-I</code></td>
+<td>0 (self-check and the detector's surprising half are already built)</td>
+<td>none — <code>main.rs:245</code>/<code>metrics.rs:109</code> are the evidence</td>
+</tr>
+<tr>
+<td><strong>ADD (in scope, not a deletion)</strong></td>
+<td>tests for the pure logic in park.rs/wait.rs</td>
+<td><code>A-RUST-TESTS</code></td>
+<td>additive; smaller after the two merges above</td>
+<td>a test per named function; not a coverage percentage (ADR-0041, V-78)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Total measured/estimated line delta if every MERGE and DELETE row above were carried out:</strong>
+estimate <strong>−99 to −101 lines</strong> (−80 io-shape merge, −19 await_op merge, 0 to −2 arithmetic merge)
+against <code>park.rs</code> + <code>wait.rs</code>'s combined 1225 measured lines today — about 8% of the two files. The
+DELETE row (R-PDO-SQLITE) removes nothing that exists; it prevents +60 lines from being written,
+which is not counted in the −101 since it is not a subtraction from measured code. This is a modest
+number and stated as such: park.rs has no wholesale-mechanism-removal candidate (every seed-table
+row is load-bearing, Lead 2), so the honest ceiling here is duplication removal within the
+mechanism, not removal of the mechanism.</p>
+<h2 id="what-surprised-me-what-this-rules-out">What surprised me / what this rules out<a class="headerlink" href="#what-surprised-me-what-this-rules-out" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>park.rs is not the crate's largest file any more</strong> (module.rs, 1155 lines, passed it) — the
+  premise both the task brief and <code>A-RUST-TESTS</code> state needs correcting, even though the "most
+  <code>unsafe</code>" half of the argument still holds (44 blocks / 41 fns against module.rs's 40/38).</li>
+<li><strong>The duplicated SAFETY paragraph is undercounted</strong> (17, not 14) <strong>and under-flagged as false</strong>
+  (3 sites, not 2 — <code>nanosleep</code> dereferences <code>*req</code> and was not named).</li>
+<li><strong>R-PDO-SQLITE's premise is already false in the code.</strong> <code>DEFAULT_CLASSES</code> dropped <code>PDO</code> on
+  2026-09-17 (V-59 addendum); the backlog item's own text was not updated to match, so it currently
+  reads as an open defect in the default path when the default path is the fixed one.</li>
+<li><strong>R-SESS's "none built" framing is stale.</strong> <code>ignis_park_flock</code> (<code>a6c1a56</code>) is a fourth, built fix
+  for exactly the deadlock the item describes, and it is validated by the very <code>V-58</code> entry the item
+  cites for its own severity correction. ADR-0038's decisions 3/4 describe guards for a problem the
+  mechanism already closes; only the crashed-holder liveness gap (<code>A-PARK-ARITHMETIC</code> (d)) remains.</li>
+<li><strong>R-FOREIGN-FIBER refutes the "shrink the surface" hypothesis directly</strong> — it is a gate-ownership
+  defect, not a which-symbols-are-parked defect, so no policy-table change closes it; a guard is the
+  only fix, and the mechanism budget already allows it (a refinement inside <code>park</code>, not a fourth
+  mechanism).</li>
+<li><strong>E18-I's own progress is ahead of its backlog line.</strong> Boot self-check and the detector's
+  surprising half are wired into <code>main.rs</code>/<code>metrics.rs</code>; the stage-2 "left:" list has not been
+  updated since.</li>
+</ul>
+<p>No fourth mechanism is proposed anywhere above, and none of the three (park, offload, context) is
+proposed for removal — <code>park</code> is load-bearing for E1/E6/E7/E18 by the seed-table trace in Lead 2,
+which is itself the strongest refutation in this note: the obvious-looking simplification ("shrink
+the policy table") was checked row by row and does not survive contact with the measurements.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2214 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 45 — the PHP packages, and which defects disappear if the path is removed - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-45-the-php-packages-and-which-defects-disappear-if-the-path-is-removed" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 45 — the PHP packages, and which defects disappear if the path is removed
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Method
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-a-adapter-mechanisms-mechanism-shape-or-defect-verified-against-the-actual-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. A-ADAPTER-MECHANISMS — mechanism, shape, or defect, verified against the actual code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-classic-mode-the-minimum-that-keeps-its-one-real-guarantee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Classic mode — the minimum that keeps its one real guarantee
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-ignisrevolt-154-lines-unlocking-an-ecosystem-with-two-cheap-real-defects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. ignis/revolt — 154 lines unlocking an ecosystem, with two cheap real defects
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-ignisswoole-the-strongest-delete-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. ignis/swoole — the strongest delete case
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-ignistemporal-prototype-frozen-by-the-projects-own-admission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. ignis/temporal-prototype — frozen by the project's own admission
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-a-php-floor-verified-unrelated-to-deletion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. A-PHP-FLOOR — verified, unrelated to deletion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-answering-the-owners-question-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Answering the owner's question directly
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-45-the-php-packages-and-which-defects-disappear-if-the-path-is-removed">Research 45 — the PHP packages, and which defects disappear if the path is removed<a class="headerlink" href="#research-45-the-php-packages-and-which-defects-disappear-if-the-path-is-removed" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-09-19. Owner's question: not "how do we fix these defects" — every one below is already
+filed — but <strong>which of them disappear if we remove the path instead of guarding it</strong>. This is a
+read-only inventory: nothing in <code>php/packages/</code> or <code>crates/</code> changed while writing it. Every number
+below is measured (<code>wc -l</code>, <code>grep -c</code>, <code>git log</code>, <code>grep -rl</code>), not estimated.</p>
+<h2 id="0-method">0. Method<a class="headerlink" href="#0-method" title="Permanent link">&para;</a></h2>
+<p>For each of the eleven directories under <code>php/packages/</code>: source lines (<code>find src -name '*.php' |
+xargs wc -l</code>), test lines and test-method count (<code>grep -Ec 'function test[A-Z]|#\[Test\]'</code>),
+<code>composer.json</code>'s own one-line description, and <strong>exercised-by</strong> — split into two honest tiers
+because the repository conflates them everywhere else:</p>
+<ul>
+<li><strong>unit-gated</strong>: <code>php/phpunit.xml</code> runs it on every push (<code>.github/workflows/ci.yml</code> job
+  <code>php-unit</code>), or it is the one package excluded from that file (<code>ignis/revolt</code>) and has its own
+  reason.</li>
+<li><strong>integration-gated</strong>: a <code>bench/e*.sh</code> script exercises the package end-to-end (a real Ignis
+  binary, real dependencies) <strong>and that script is invoked by <code>.github/workflows/ci.yml</code> or
+  <code>nightly.yml</code></strong> — not merely present in <code>bench/</code>. This distinction turned out to be the single
+  biggest finding: most integration benches exist and pass when run by hand, and are wired into
+  nothing.</li>
+</ul>
+<p>Backlog ids are quoted from <code>BACKLOG.md</code> as of this commit; every quote was re-read in full, not
+matched by grep alone.</p>
+<h2 id="1-the-table">1. The table<a class="headerlink" href="#1-the-table" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>package</th>
+<th style="text-align: right;">src</th>
+<th style="text-align: right;">test (methods)</th>
+<th>composer description (verbatim, trimmed)</th>
+<th>unit-gated</th>
+<th>integration-gated</th>
+<th>backlog ids</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>runtime</code></td>
+<td style="text-align: right;">2427</td>
+<td style="text-align: right;">1698 (93)</td>
+<td>"The Ignis userland: the fiber scheduler … Requires the ignis binary; does nothing under php-fpm or php-cli."</td>
+<td>yes</td>
+<td>yes — <code>examples/app.php</code>, <code>examples/hello.php</code>, <code>scripts/smoke.sh</code> (E1/E2/E4/E6/E7/E11/E12/E13), <code>bench/e15-phpt.sh</code>, <code>bench/e15-frankenphp.sh</code> (all in <code>ci.yml</code>)</td>
+<td>R-GLOBALS, A-CLASSIC-FINISH, S0-FRANK, M3-5a, M3-5b</td>
+<td><strong>KEEP</strong>, mandatory — everything else requires it. Classic mode inside it is a <strong>NARROW</strong> target, see §3.</td>
+</tr>
+<tr>
+<td><code>offload</code></td>
+<td style="text-align: right;">708</td>
+<td style="text-align: right;">1098 (49)</td>
+<td>"<code>Ignis\offload()</code>: synchronous worker threads … for the calls universal park cannot reach."</td>
+<td>yes</td>
+<td>yes — <code>nightly.yml</code> runs <code>bench/php/e16_offload.php</code> directly through the real pool; <code>examples/app.php</code> calls <code>Ignis\offload()</code></td>
+<td>A-ADAPTER-MECHANISMS (the <code>eval()</code>)</td>
+<td><strong>KEEP.</strong> Test lines exceed source lines (1098 vs 708) — the opposite of bloat.</td>
+</tr>
+<tr>
+<td><code>grpc</code></td>
+<td style="text-align: right;">301</td>
+<td style="text-align: right;">307 (24)</td>
+<td>"gRPC handlers and clients … tonic serves h2 next to HTTP, the PHP side sees plain data."</td>
+<td>yes</td>
+<td><strong>no</strong> — <code>bench/e10-grpc.sh</code> exists, has a real demo (<code>examples/grpc_server.php</code> + <code>examples/grpc/greeter.proto</code>), E10 is CONFIRMED (V-20) — but the script is not called from <code>ci.yml</code> or <code>nightly.yml</code></td>
+<td>A-ADAPTER-MECHANISMS (the <code>preg_match</code>)</td>
+<td><strong>KEEP</strong>, real feature, real defect. Fix the defect (§2); wire <code>e10-grpc.sh</code> into <code>nightly.yml</code> — nothing but a human running it by hand currently catches a wire-format regression between <code>reactor.rs</code>'s error completion and this file.</td>
+</tr>
+<tr>
+<td><code>doctrine</code></td>
+<td style="text-align: right;">1063</td>
+<td style="text-align: right;">639 (33)</td>
+<td>"Doctrine ORM under Ignis fibers: one EntityManager per request instead of one per process …"</td>
+<td>yes</td>
+<td><strong>no</strong> — <code>bench/e21/e21-fiber-scope.sh</code> exists and is what found and confirmed a request answering with <em>another request's row, HTTP 200</em> (V-85); it is not in <code>ci.yml</code> or <code>nightly.yml</code></td>
+<td>S-DBAL-DIRECT, S-POOL-LEASE-AGE, S-EXCLUSIVE</td>
+<td><strong>KEEP</strong> — this is the package the pain map now credits for PHP-FPM row 8 and RoadRunner row 1, since the runtime-owned pool it used to be was deleted (ADR-0015, V-87). Given what its own bench caught once, leaving it un-gated is the highest-regret gap in this inventory; wire <code>bench/e21</code> in.</td>
+</tr>
+<tr>
+<td><code>symfony-runtime</code></td>
+<td style="text-align: right;">457</td>
+<td style="text-align: right;">363 (22)</td>
+<td>"symfony/runtime adapter … boots the kernel once and serves each request in its own fiber, with a per-fiber RequestStack."</td>
+<td>yes</td>
+<td><strong>no</strong> — <code>bench/e8-symfony.sh</code> exists (E8 CONFIRMED, V-16: 7.2k/25.2k req/s), not wired</td>
+<td>none open</td>
+<td><strong>KEEP</strong> — this is the flagship "plain Symfony, unmodified" story (pain map, FrankenPHP-1/RoadRunner-8). Wire <code>e8-symfony.sh</code> (and M3-8's prod-mode leg) into <code>nightly.yml</code>.</td>
+</tr>
+<tr>
+<td><code>revolt</code></td>
+<td style="text-align: right;">154</td>
+<td style="text-align: right;">115 (4, and excluded from <code>phpunit.xml</code>)</td>
+<td>"Revolt event-loop driver backed by the Ignis reactor (E7): AMPHP libraries run unchanged …"</td>
+<td><strong>excluded on purpose</strong></td>
+<td>yes — <code>bench/e15-revolt.sh</code> in <code>ci.yml</code>, runs AMPHP's own <code>DriverTest</code> (≈80 tests) against <code>IgnisDriver</code></td>
+<td>A-REVOLT-UNTESTED, R-REVOLT-FLAKE</td>
+<td><strong>KEEP.</strong> Smallest file in the tree (154 lines) unlocking an entire ecosystem (E7, V-13: 7/8 AMPHP examples byte-identical). Two cheap, real defects, not a deletion case — see §4.</td>
+</tr>
+<tr>
+<td><code>swoole</code></td>
+<td style="text-align: right;">503</td>
+<td style="text-align: right;">171 (9)</td>
+<td>"A shim for a subset of the Swoole coroutine API … A compatibility layer, not a Swoole implementation."</td>
+<td>yes</td>
+<td>yes — <code>bench/e15-swoole.sh --all</code> in <code>ci.yml</code> (<code>timeout 1800</code>)</td>
+<td>A-SWOOLE-TICKERS</td>
+<td><strong>DELETE</strong>, recommended — see §5. The strongest case in this inventory.</td>
+</tr>
+<tr>
+<td><code>phpstan</code></td>
+<td style="text-align: right;">170</td>
+<td style="text-align: right;">150 (1)</td>
+<td>"A PHPStan rule for the one defect fiber scope cannot fix by itself … (V-96)."</td>
+<td>yes</td>
+<td>yes, continuously — <code>php/phpstan.neon</code> <code>includes:</code> it, and <code>scripts/gate.sh</code>'s <code>stan</code> step runs it on every gate</td>
+<td>none open</td>
+<td><strong>KEEP</strong> — smallest and cheapest package here, self-hosted (the repo is its own user, every push), catches a real class of bug. Thin test count (1) is proportionate to one rule class, not a gap.</td>
+</tr>
+<tr>
+<td><code>temporal</code></td>
+<td style="text-align: right;">197</td>
+<td style="text-align: right;">83 (5)</td>
+<td>"Ignis host for the official temporalio/sdk-php (ADR-0040) … runs the worker as one workflow fiber plus a pool of activity fibers."</td>
+<td>yes</td>
+<td><strong>no</strong> — <code>bench/e20-sdkphp.sh</code> exists (E20 CONFIRMED, V-61/64/65/66), needs a real <code>temporal/sdk</code> composer install + core, not wired</td>
+<td>none open</td>
+<td><strong>KEEP</strong> — the current, minimal, correct architecture; supersedes <code>temporal-prototype</code> below. Wire <code>e20-sdkphp.sh</code> into <code>nightly.yml</code> (it is heavier than a unit test, same shape as <code>e9-temporal.sh</code>'s existing CI job, so the infra precedent already exists).</td>
+</tr>
+<tr>
+<td><code>temporal-core-transport</code></td>
+<td style="text-align: right;">1381</td>
+<td style="text-align: right;">689 (9, plus a standalone <code>tests/conformance.php</code> needing no Ignis binary at all)</td>
+<td>"… Host-agnostic — it needs an activation source, not a particular runtime. Written to be offered upstream."</td>
+<td>yes</td>
+<td>yes — <code>tests/conformance.php</code> runs against both the ignis binary and stock PHP inside <code>bench/e20-sdkphp.sh</code> (same wiring gap as <code>temporal</code> above)</td>
+<td>none open</td>
+<td><strong>KEEP</strong> — the actual engineering asset behind E20; the biggest of the three Temporal packages because it is a complete translation layer, deliberately written to know nothing about Ignis.</td>
+</tr>
+<tr>
+<td><code>temporal-prototype</code></td>
+<td style="text-align: right;">460</td>
+<td style="text-align: right;">409 (20)</td>
+<td>"The pre-ADR-0040 workflow runtime of our own … <strong>Frozen</strong> — kept because the replay test was built on it. New work uses <code>ignis/temporal</code> with the official SDK."</td>
+<td>yes</td>
+<td>yes — <code>bench/e9-temporal.sh</code> in <code>ci.yml</code></td>
+<td>(E9's caveat in GOALS.md; see §6)</td>
+<td><strong>DELETE</strong>, recommended — see §6. Second-strongest case in this inventory, and the project's own composer.json already calls it frozen.</td>
+</tr>
+</tbody>
+</table>
+<p>Totals: 7821 source lines / 5722 test lines across all eleven packages (<code>find php/packages/*/src
+-name '*.php' \| xargs wc -l</code>, same for <code>tests</code>).</p>
+<p><code>examples/app.php</code>, which <code>CLAUDE.md</code> calls the API spec, requires exactly two packages:
+<code>runtime</code> and <code>offload</code> (<code>grep -n "^require" examples/app.php</code>). That is expected, not a finding
+against the other nine — <code>app.php</code> is the core scheduler API demo; <code>examples/classic_server.php</code>
+and <code>examples/classic_worker.php</code> cover classic mode (<code>runtime</code> only), <code>examples/grpc_server.php</code>
+covers <code>grpc</code>. <strong><code>doctrine</code>, <code>symfony-runtime</code>, <code>temporal</code>, <code>temporal-core-transport</code>,
+<code>temporal-prototype</code>, <code>revolt</code> and <code>swoole</code> have no file under <code>examples/</code> at all</strong> — their only
+demonstration is a <code>bench/e*.sh</code> script (for the first three, one that CI never runs) or, for
+<code>revolt</code>/<code>swoole</code>, a ported upstream test suite. That absence is itself worth recording: for six of
+eleven packages, the only place a reader can see the package actually used end-to-end is a script
+this inventory found is not gated.</p>
+<h2 id="2-a-adapter-mechanisms-mechanism-shape-or-defect-verified-against-the-actual-code">2. <code>A-ADAPTER-MECHANISMS</code> — mechanism, shape, or defect, verified against the actual code<a class="headerlink" href="#2-a-adapter-mechanisms-mechanism-shape-or-defect-verified-against-the-actual-code" title="Permanent link">&para;</a></h2>
+<p>CLAUDE.md's mechanism budget says adapters carry none of their own. Three do, confirmed by reading
+each site named in the backlog item, not by trusting its description:</p>
+<p><strong><code>offload/src/ignis-offload.php:260</code>, <code>proxyClass()</code> — <code>eval()</code>.</strong> Confirmed: it builds a
+<code>namespace Ignis\Offload\Proxy; class X extends \X { … }</code> string via reflection (parameter lists,
+return types, one forwarding call to <code>Router::method()</code> per public method) and <code>eval()</code>s it once
+per class, memoized by <code>class_exists('Ignis\Offload\Proxy\\' . $class, false)</code>. <strong>Verdict: shape,
+not a new wait mechanism</strong> — it produces an LSP-compatible subclass so an offloaded object still
+passes <code>instanceof</code> and type hints, which <code>__call()</code> alone cannot do when the parent class already
+declares the methods being overridden. <code>ADR-0016</code> describes the proxy generally but never mentions
+<code>eval()</code> by name or defends it as a decision. <strong>Action: no deletion — name it in ADR-0016</strong> (one
+paragraph: why codegen over <code>__call</code>, why <code>eval</code> over a build step) so the next reader does not
+have to re-derive this. Zero lines removed; a documentation gap closed.</p>
+<p><strong><code>temporal/src/CoreSource.php:66</code>, <code>poll()</code> — catches <code>\RuntimeException</code> and returns <code>null</code>.</strong>
+Confirmed. sdk-php's <code>ActivationSource::poll(): ?string</code> contract has exactly one non-string
+outcome, "clean shutdown," so a transport failure and an intentional stop are indistinguishable to
+the caller. <strong>Verdict: shape forced by an upstream interface, but currently over-broad</strong> — it
+catches <em>every</em> <code>RuntimeException</code>, including a malformed completion, not only the reactor's actual
+shutdown signal. <strong>Action: narrow the catch</strong>, not delete the package: if <code>ignis_temporal_poll</code>
+already distinguishes "worker is stopping" from "the completion could not be parsed" (a question
+for the Rust side, out of this slice's scope), that distinction should reach here as a typed
+exception rather than being flattened before it arrives. Filed as a new, small defect; does not
+change the package's KEEP verdict.</p>
+<p><strong><code>grpc/src/ignis-grpc.php:185</code>, <code>result()</code> — <code>preg_match('/code=(\d+)/', $m, $mm)</code>.</strong> Confirmed,
+and confirmed to be exactly what the item suspected: <strong>a plain defect, not a mechanism or a
+justified shape.</strong> <code>php/phpstan.neon</code>'s own <code>IgnisCompletion</code> type alias —
+<code>array{kind: 'error', message: string}|…</code> — shows the reactor's error completion carries free text
+and nothing else; this file recovers a gRPC status code by pattern-matching that text. Any change
+to how <code>reactor.rs</code> phrases an error message silently turns every status into <code>UNKNOWN</code>, with no
+compile-time or type-level signal. <strong>Action: the completion needs an integer <code>code</code> field
+alongside <code>message</code></strong> so this becomes a struct read instead of a regex — Rust-side, <code>main</code> lane,
+outside this slice's read-only scope, but the fix is now specified precisely enough to file as its
+own backlog item rather than live inside <code>A-ADAPTER-MECHANISMS</code>.</p>
+<p><strong>Net effect on <code>A-ADAPTER-MECHANISMS</code>:</strong> closes as "answered" — one item is a shape needing one
+ADR paragraph, one is a shape needing a narrower catch, one is a confirmed defect needing a
+Rust-side field. None of the three justifies deleting or narrowing <code>offload</code>, <code>temporal</code>, or <code>grpc</code>
+as packages; all three keep their KEEP verdict from §1.</p>
+<h2 id="3-classic-mode-the-minimum-that-keeps-its-one-real-guarantee">3. Classic mode — the minimum that keeps its one real guarantee<a class="headerlink" href="#3-classic-mode-the-minimum-that-keeps-its-one-real-guarantee" title="Permanent link">&para;</a></h2>
+<p><code>runtime/src/classic.php</code> (27) plus <code>Classic/{Finished.php (8), polyfills.php (36), functions.php
+(83), InputStream.php (96), Runner.php (348)}</code> — 598 lines total, inside the <code>runtime</code> package, not
+a separate one. It carries four open items: <code>R-GLOBALS</code>, <code>A-CLASSIC-FINISH</code>, <code>S0-FRANK</code>, and the
+Laravel plan split across <code>M3-5a</code> (shippable today) and <code>M3-5b</code> (needs an ADR and an <code>unsafe</code> FFI
+hook in <code>superglobals.rs</code>).</p>
+<p>The one guarantee classic mode exists for, per its own docblock and V-53/V-54, is real: <strong><code>listen()</code>
+is the only shape in which the entry script's top-level variables are actual PHP globals</strong> — the
+thing a legacy docroot needs and nothing else in Ignis gives it. <code>serve()</code> was retrofitted
+concurrent on 2026-09-18 (DECISIONS.md) by moving per-request state into <code>Ignis\Scope</code>, which fixed
+the superglobal-leak class of bug but left two things unresolved:</p>
+<ul>
+<li><strong><code>R-GLOBALS</code>'s harder half is still open</strong>: an unguarded top-level <code>function foo() {}</code> in a
+  script served twice is an uncatchable "Cannot redeclare" fatal that kills the worker. The only
+  real fix is per-request RINIT/RSHUTDOWN, which the worker model exists to avoid — so this is
+  correctly filed as "document the constraint" (<code>require_once</code>/<code>function_exists</code>), not "build the
+  fix." Nothing to delete; the open half of this item should be closed as <em>documented, not built</em>,
+  which the backlog entry already effectively says.</li>
+<li><strong><code>A-CLASSIC-FINISH</code> is a real, narrow bug</strong>: <code>finish()</code> throws <code>Finished</code>; <code>Runner::handle()</code>
+  (used by <code>serve()</code>) catches it, but the documented <code>listen()</code> shape in
+  <code>examples/classic_worker.php:116</code> — <code>while ($file = accept()) { include $file; respond(); }</code> — has
+  no catch, so the throw unwinds the whole accept loop and the thread stops serving. This is a
+  handful of lines to fix (catch <code>Finished</code> around the <code>include</code> in the documented <code>listen()</code> loop
+  or inside <code>Runner::accept()</code>/<code>end()</code>), not an argument for removing <code>listen()</code>.</li>
+</ul>
+<p><strong><code>M3-5b</code> is where "remove the path instead of guarding it" bites.</strong> <code>M3-5a</code> already ships Laravel
+in classic mode today by setting <code>budget.fibers = 1</code> — the runtime's existing admission control,
+zero new code — which serialises requests per thread exactly as Octane itself does. <code>M3-5b</code> proposes
+a <em>second</em>, independent way to get there: swap <code>Container::$instance</code> and the Facade cache on the
+fiber-switch observer, an ADR-scale decision plus a new <code>unsafe</code> hook in <code>crates/ignis/src/php/
+superglobals.rs</code>, to make Laravel safe under <em>concurrent</em> classic-mode requests. Nothing under
+<code>M3-5b</code> is built yet (<code>git log</code> on <code>superglobals.rs</code> shows no Laravel/Container work), so this is a
+zero-line, pre-emptive deletion: <strong>decline <code>M3-5b</code></strong>. <code>M3-5a</code>'s control run (budget=1 passes,
+budget=2 fails, per its own acceptance test) is already the proof that serialisation is sufficient
+for the case anyone has asked for; concurrent Laravel throughput is a new product ask with no
+evidence behind it yet, not a gap in what's shipped. If that evidence shows up later, <code>M3-5b</code> is a
+fresh decision with fresh numbers, not a backlog item that was always going to be built.</p>
+<p><strong>Recommendation: NARROW.</strong> Keep <code>listen()</code> and <code>serve()</code> (598 lines, no deletion — both entry
+points serve different real needs and neither is large). Fix <code>A-CLASSIC-FINISH</code> (small, in place).
+Close <code>R-GLOBALS</code>'s open half as <em>documented constraint, not built</em>. Decline <code>M3-5b</code> before it costs
+a single line of <code>unsafe</code> FFI code — this is the one recommendation in this note that prevents
+future growth rather than removing existing code. <code>S0-FRANK</code> is orthogonal (a test-bisect debt, not
+an architecture question) and is not resolved by any of the above; it stays open on its own.</p>
+<h2 id="4-ignisrevolt-154-lines-unlocking-an-ecosystem-with-two-cheap-real-defects">4. <code>ignis/revolt</code> — 154 lines unlocking an ecosystem, with two cheap real defects<a class="headerlink" href="#4-ignisrevolt-154-lines-unlocking-an-ecosystem-with-two-cheap-real-defects" title="Permanent link">&para;</a></h2>
+<p><code>IgnisDriver.php</code> is the entire package: 154 lines mapping Revolt's <code>Driver</code> interface onto
+<code>Ignis\Loop</code>. What it buys is disproportionate to its size: E7 is CONFIRMED (V-13, 7/8 AMPHP
+examples byte-identical) and <code>bench/e15-revolt.sh</code> runs AMPHP's own upstream <code>DriverTest</code> — not a
+ported subset, the real suite — against it in CI. This is the opposite of the question the owner is
+asking: nothing here is superfluous.</p>
+<p>Both open items are real but neither argues for touching the package's shape:</p>
+<ul>
+<li><strong><code>A-REVOLT-UNTESTED</code></strong>: <code>php/phpunit.xml</code> excludes <code>packages/revolt/tests</code> by design, with a
+  comment explaining why (<code>IgnisDriverTest</code> needs the real reactor, so it only means something run
+  through <code>bench/e15-revolt.sh</code> inside the actual binary). The cost named in the backlog is real:
+  the incompatibility between <code>IgnisDriver</code> and <code>Ignis\Loop</code> that produced V-93 could not have been
+  caught by a plain unit test because nowhere in the unit suite could host one. The callback
+  bookkeeping (<code>$pendingWatch</code>, <code>$watchOf</code>) is pure PHP state machinery with no reactor calls in the
+  read path — testable against a fake reactor without the binary. <strong>Recommend: add that suite</strong>
+  (a handful of methods against a fake), not touch the 154-line driver itself.</li>
+<li><strong><code>R-REVOLT-FLAKE</code></strong>: <code>bench/e15-revolt.sh</code> runs six arms and reports one number; measured
+  2026-09-18 as 79 on one local run, 80 on the next, 80 in CI with the failure in a <em>different</em> arm
+  each time — <code>testExecutionOrderGuarantees</code>, a timing race AMPHP's own <code>StreamSelectDriverTest</code>
+  also fails. The gate currently reads whichever arm happened to run, which cannot distinguish a
+  real regression from the coin flip. The item's own acceptance criterion is precise and cheap:
+  report the <strong>minimum across the arms</strong> (matching how the baseline of 80 was set in the first
+  place) or quarantine the one flaky test by name. Either is a same-size fix to
+  <code>bench/e15-revolt.sh</code>, not a code change to the package.</li>
+</ul>
+<p><strong>Recommendation: KEEP</strong>, unchanged in shape. Both fixes are cheap and belong to the test harness
+around the package, not the package.</p>
+<h2 id="5-ignisswoole-the-strongest-delete-case">5. <code>ignis/swoole</code> — the strongest delete case<a class="headerlink" href="#5-ignisswoole-the-strongest-delete-case" title="Permanent link">&para;</a></h2>
+<p><code>shim.php</code> is 503 lines, single file; <code>ShimTest.php</code> is 171 lines, 9 methods. <code>bench/e15-swoole.sh
+--all</code> runs in <code>ci.yml</code> with a <strong>30-minute timeout</strong>, the longest of any package-specific CI step in
+this inventory (<code>grep timeout .github/workflows/ci.yml</code> — <code>e15-swoole</code> is the only one at 1800s;
+<code>e15-revolt</code> is 900s, <code>e15-frankenphp</code> is 900s).</p>
+<p>Three independent findings, all confirmed by reading the code and the docs rather than the backlog
+description alone:</p>
+<ol>
+<li><strong>The package's own documentation disclaims real usage.</strong> <code>docs/packages/swoole.md</code>: "it exists
+   so code written against Swoole can be run — and its suite ported — <strong>not so anyone writes new
+   code against it</strong>." No file under <code>examples/</code> uses it. <code>grep -rl "ignis/swoole"</code> outside the
+   package's own directory finds only docs — no bench, no example, no other package depends on it.
+   <strong>I could not find a real application user for this package in this repository or its docs</strong> —
+   its only exercised role is the E15c compatibility measurement, which is already DONE and its
+   number (44/153) already recorded in <code>GOALS.md</code> and <code>docs/pain-map.md</code> (Swoole row 5). Continuing
+   to re-run the same already-answered question on every push is what costs the 30 minutes.</li>
+<li><strong><code>A-SWOOLE-TICKERS</code> is confirmed exactly as filed.</strong> <code>shim.php:225</code> and <code>:235</code>:
+   <code>\Ignis\Loop::spawn(static function () use ($stop): void { while (!$stop()) { \Ignis\sleep(5); }
+   });</code> (the outer driver) and <code>while (!$stop()) { \Ignis\sleep(1); }</code> (the nested-fiber path). Both
+   are polling loops standing in for a real wait point — up to 5 ms of latency per <code>Co\run</code>
+   completion — and a fourth wait shape the mechanism budget (CLAUDE.md, ADR-0037) does not list:
+   park, offload, and fiber-scoped context are the three; a <code>sleep</code>-loop ticker is none of them.</li>
+<li><strong>Coverage bought is modest even on its own terms.</strong> 44/153 upstream Swoole hook tests pass
+   (V-22/23) — about 29%. The package's own docs are explicit that this will not change: "the shim
+   changes nothing about what is hooked… if a suite needs more than the subset, the answer is the
+   runtime API, not a bigger shim."</li>
+</ol>
+<p><strong>What deleting would cost.</strong> The E15c number (44/153, already banked) would no longer be
+re-verified on every push — but it is a one-time inventory question ("how much of Swoole's surface
+would a shim need"), already answered and written into <code>GOALS.md</code> and the pain map, not a
+regression-prone product guarantee like E4's throughput or E11's cancellation latency. No other
+package, example, or bench depends on <code>swoole</code>. If a real user shows up later wanting a specific
+Swoole-shaped library to run unmodified, that is new evidence for a fresh, smaller shim built to
+that library's actual surface — not a reason to keep a 503-line general shim with a budget-violating
+polling loop alive against a hypothetical.</p>
+<p><strong>What narrowing would cost instead</strong>, if the owner wants to keep the E15 signal: replace the two
+<code>sleep()</code>-loop tickers with a <code>Future</code> the last coroutine resolves and the driver awaits once (the
+same primitive every other package in this tree already uses) — a same-order-of-magnitude rewrite
+of <code>Coroutine::drive()</code>/<code>Event::wait()</code>, not measured here because it is unwritten; and move
+<code>bench/e15-swoole.sh</code> from every push to <code>nightly.yml</code> to cut the recurring 30-minute cost while
+keeping the signal.</p>
+<p><strong>Recommendation: DELETE</strong>, with narrow as the fallback if the owner judges the E15c number worth
+continuously re-verifying. Either way, <code>A-SWOOLE-TICKERS</code> closes: by deletion, the mechanism is gone
+with the file; by the narrow fix, the mechanism is replaced with one already in budget.
+<strong>Kill criterion for the delete recommendation</strong>: a real, named consumer of <code>ignis/swoole</code> — an
+application or library, not a test suite — surfaces. None exists today.</p>
+<h2 id="6-ignistemporal-prototype-frozen-by-the-projects-own-admission">6. <code>ignis/temporal-prototype</code> — frozen by the project's own admission<a class="headerlink" href="#6-ignistemporal-prototype-frozen-by-the-projects-own-admission" title="Permanent link">&para;</a></h2>
+<p><code>composer.json</code>: <em>"The pre-ADR-0040 workflow runtime of our own (ADR-0013, V-19)… </em><em>Frozen</em><em> — kept
+because the replay test was built on it. New work uses <code>ignis/temporal</code> with the official SDK."</em>
+460 source lines, 409 test lines, 20 test methods. Superseded, by the project's own words, by
+<code>ignis/temporal</code> (197 lines) + <code>ignis/temporal-core-transport</code> (1381 lines) — E20, CONFIRMED,
+V-61/64/65/66, the shipped path.</p>
+<p>What keeps it in the tree today is <code>bench/e9-temporal.sh</code>, wired into <code>ci.yml</code> (<code>e9-temporal</code> job),
+which starts a real <code>temporal server start-dev</code>, runs <code>temporal-prototype/bin/worker.php</code>, and
+asserts a replay negative control: a mutated workflow history must fail replay.</p>
+<p>That assertion is the part worth reading closely before recommending deletion, and it does not hold
+up. <code>GOALS.md</code>'s E9 row still carries, as of this inventory (2026-09-19), the caveat dated
+2026-09-17: <em>"the CI negative control prints <code>REPLAY_OK</code> while sdk-core evicts the mutated history
+for nondeterminism, so V-19's 'mutated workflow FAILS' is not being re-verified by CI."</em>
+<code>BACKLOG-CLOSED.md</code>'s <code>R-MAIN-RED</code> (closed 2026-09-18, "green on all ten jobs") documents the same
+gap in detail: the harness greps for <code>REPLAY_FAILED</code>, the mutated run prints <code>REPLAY_OK
+activations=3 eviction_errors=0</code> in the same log line that carries sdk-core's own <code>evicted:
+reason=NONDETERMINISM</code>, and the counter that should have caught it does not. <code>R-MAIN-RED</code> closed
+because the surrounding <em>gate</em> went green (an unrelated <code>unzip</code>/composer fix and the frankenphp
+count), not because this specific assertion was corrected — its own "Acceptance" text ("assert on
+the eviction reason, not [REPLAY_FAILED]") describes a fix that is not evident in the current
+<code>replay.php</code>. So the CI job keeping <code>temporal-prototype</code> alive is not currently proving the one
+thing it exists to prove.</p>
+<p><strong>What deleting would cost.</strong> The E9 result itself — "workflows as fibers, deterministic replay is
+architecturally possible" — was already established (V-18, V-19) before ADR-0040 concluded that
+hosting the <em>official</em> SDK on sdk-core is the better path; VALIDATION.md's numbers stand regardless
+of whether this code still exists in the tree (CLAUDE.md: don't rewrite history — the note, not the
+prototype, is what the rule protects). Re-proving E9's specific claim forever, on an architecture
+the project has already moved past, buys diminishing value — especially while the proof itself is
+compromised. If the <em>product</em> still wants a continuously-verified replay-determinism guarantee, the
+680-line, host-agnostic <code>tests/conformance.php</code> in <code>temporal-core-transport</code> (needs no Temporal
+server, already used by <code>bench/e20-sdkphp.sh</code>) is the right place to add a mutated-history arm
+against the shipped path — new, small, and worth doing regardless of what happens to the prototype.</p>
+<p><strong>Recommendation: DELETE.</strong> <code>temporal-prototype</code> (869 lines total) and the <code>e9-temporal</code> CI job.
+<strong>Kill criterion</strong>: if <code>temporal-core-transport</code>'s conformance harness cannot be made to exercise an
+equivalent mutated-history negative control, that is new evidence the shipped path lacks a
+capability the prototype had, and the deletion should be reversed or the gap rebuilt there instead —
+not patched by keeping the frozen code and its already-broken assertion alive.</p>
+<h2 id="7-a-php-floor-verified-unrelated-to-deletion">7. <code>A-PHP-FLOOR</code> — verified, unrelated to deletion<a class="headerlink" href="#7-a-php-floor-verified-unrelated-to-deletion" title="Permanent link">&para;</a></h2>
+<p>Confirmed as filed: root <code>composer.json</code> requires <code>php: &gt;=8.4</code>; every package matches except
+<code>ignis/revolt</code> (<code>&gt;=8.1</code>, deliberate — it promises AMPHP users 8.1) and
+<code>ignis/temporal-core-transport</code> (<code>&gt;=8.2</code>, deliberate — written to be offered upstream).
+<code>php/phpstan.neon</code> sets <code>phpVersion.min: 80200</code>, matching the temporal-core-transport floor rather
+than the root's 8.4, with <code>packages/revolt/phpstan.neon</code> re-running the same config at <code>80100</code> for
+that one package. The two package-level exceptions are intentional and documented; the analyser
+config's drift is what the item flags. This is a one-line fix (derive the phpstan floor from the
+manifests, or a test asserting they match) with no bearing on any delete/narrow/keep verdict above —
+noted here because the task asked every open item on the list to be resolved to a decision, not
+silently dropped.</p>
+<h2 id="8-answering-the-owners-question-directly">8. Answering the owner's question directly<a class="headerlink" href="#8-answering-the-owners-question-directly" title="Permanent link">&para;</a></h2>
+<p><strong>Measured line delta if every recommended deletion is taken:</strong></p>
+<table>
+<thead>
+<tr>
+<th>deletion</th>
+<th style="text-align: right;">src</th>
+<th style="text-align: right;">test</th>
+<th style="text-align: right;">total</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>temporal-prototype</code></td>
+<td style="text-align: right;">460</td>
+<td style="text-align: right;">409</td>
+<td style="text-align: right;">869</td>
+</tr>
+<tr>
+<td><code>swoole</code> (if delete over narrow)</td>
+<td style="text-align: right;">503</td>
+<td style="text-align: right;">171</td>
+<td style="text-align: right;">674</td>
+</tr>
+<tr>
+<td><strong>total</strong></td>
+<td style="text-align: right;">963</td>
+<td style="text-align: right;">580</td>
+<td style="text-align: right;"><strong>1543</strong></td>
+</tr>
+</tbody>
+</table>
+<p>1543 of 13543 total package lines (7821 src + 5722 test), 11%, deleted rather than guarded — from
+two packages the project already, in its own words or its own CI evidence, does not stand behind:
+one explicitly "frozen," the other explicitly "not so anyone writes new code against it," with its
+CI job's central assertion independently shown not to hold.</p>
+<p><strong><code>M3-5b</code> declined pre-emptively</strong> adds no measured deletion (nothing was ever built), but removes a
+planned <code>unsafe</code> FFI hook and an ADR's worth of future work from the queue before it costs a line —
+the "remove the path instead of guarding it" move applied to a plan rather than to existing code.</p>
+<p><strong>Backlog items that close by removal, not by fixing:</strong>
+- <code>A-SWOOLE-TICKERS</code> — closes with the <code>swoole</code> package (mechanism deleted with the file), or is
+  answered in place if the owner takes the narrow fallback instead.
+- <code>M3-5b</code> — closes by decision not to build it; <code>M3-5a</code> already covers the shipped requirement.</p>
+<p><strong>Backlog items that stay open and need an actual code fix, not a deletion</strong> (found or sharpened
+while answering the owner's leads, not resolved by them): the <code>grpc</code> <code>preg_match</code> defect (needs an
+integer <code>code</code> field on the reactor's error completion — Rust side, out of this slice), the
+<code>temporal</code> <code>RuntimeException</code> catch (needs narrowing to the actual shutdown signal), <code>A-CLASSIC-
+FINISH</code> (catch <code>Finished</code> in <code>listen()</code>'s documented loop), <code>A-REVOLT-UNTESTED</code> (a fake-reactor unit
+suite for the driver's own bookkeeping), <code>R-REVOLT-FLAKE</code> (report the minimum across arms), <code>S0-
+FRANK</code> (name the regressed FrankenPHP test — unrelated to any package deletion), <code>A-PHP-FLOOR</code>
+(derive the phpstan floor from the manifests).</p>
+<p><strong>Packages with a real user, said plainly, not implied by size:</strong> <code>doctrine</code>'s user is any
+Symfony+Doctrine application under concurrency — and its bench is the thing that caught a request
+answering with another request's row at HTTP 200 (V-85), which is as real as a defect gets.
+<code>symfony-runtime</code>'s user is any Symfony kernel (E8, 7.2k–25.2k req/s). <code>grpc</code>'s user is anything
+calling or serving gRPC on the shared listener (E10, 16.7k req/s vs RoadRunner's 5.1k–11.4k).
+<code>revolt</code>'s user is the entire AMPHP ecosystem, unmodified (E7, byte-identical examples), in 154
+lines. <code>offload</code>'s user is <code>examples/app.php</code> itself, directly. <code>phpstan</code>'s user is this repository,
+on every gate run. <code>temporal</code> + <code>temporal-core-transport</code>'s user is anyone running Temporal
+workflows through the official SDK (E20) — and the latter's stated future user is
+<code>temporalio/sdk-php</code> itself, upstream.</p>
+<p><strong>Package I could not find a user for:</strong> <code>ignis/swoole</code>. Its own documentation says it is not meant
+to be used the way the other ten are; the only role I could find exercised anywhere in the tree is a
+compatibility measurement that already has its answer recorded elsewhere.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

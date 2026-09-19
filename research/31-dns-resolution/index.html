@@ -1,0 +1,2062 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>31 — DNS resolution: how name resolution stops blocking a PHP thread - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#31-dns-resolution-how-name-resolution-stops-blocking-a-php-thread" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              31 — DNS resolution: how name resolution stops blocking a PHP thread
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-who-calls-it-today-in-this-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Who calls it today, in this build
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-what-each-caller-needs-if-resolution-happened-elsewhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. What each caller needs if resolution happened elsewhere
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-options-cost-and-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Options, cost and risk
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Recommendation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="31-dns-resolution-how-name-resolution-stops-blocking-a-php-thread">31 — DNS resolution: how name resolution stops blocking a PHP thread<a class="headerlink" href="#31-dns-resolution-how-name-resolution-stops-blocking-a-php-thread" title="Permanent link">&para;</a></h1>
+<p>2026-09-16, research only (no code, no build, no git, no bench run — HARD LIMIT on this ticket).
+<code>getaddrinfo(3)</code> has no file descriptor: it is a function call that blocks somewhere inside libc's
+NSS machinery (files/dns/nis lookups), not a readiness wait on a socket. Universal park (ADR-0020)
+parks by watching an fd become ready (<code>Op::Watch</code>) and only then making the real call — there is no
+fd to watch here, so the park mechanism as ADR-0037 §2 defines it ("park... never buffers, never
+changes an fd's flags except <code>connect</code>'s temporary <code>O_NONBLOCK</code>") cannot cover this call by
+construction. The codebase has already half-said so in two places, both quoted verbatim below —
+this note pins the decision down with call sites and a recommendation, since ADR-0020 (accepted,
+2026-09-16) and <code>park.rs</code> (2026-09-17) currently disagree with each other in their wording.</p>
+<p><strong>The existing self-contradiction, for the record.</strong>
+- <code>crates/ignis/src/php/park.rs:55-56</code> (comment, current code): <em>"Anything libphp calls that is
+  not listed stays <code>block</code>; <code>getaddrinfo</code> has no fd and is offload's, not park's."</em>
+- <code>docs/adr/0020-universal-park.md:54</code> (decision text, item 4 of "How a call parks"):
+  <em>"<code>getaddrinfo</code>: a resolver <code>Op</code> (tokio <code>lookup_host</code>) with glibc-compatible <code>addrinfo</code>
+  allocation and <code>freeaddrinfo</code> interposed..."</em> — listed as a sub-case of <em>park</em>, not offload.
+- <code>docs/research/22-ext-sockets-and-transports.md:75</code> and
+  <code>docs/research/30-libphp-blocking-call-sites.md:46,67,97</code> both independently conclude "no fd —
+  offload, not park", and <code>docs/adr/0018-ext-sockets-and-missing-transports.md:26</code> called
+  <code>socket_addrinfo_lookup</code> "answerable only by ADR-0016 offload" back on 2026-09-16.</p>
+<p>So three research notes and the shipped code comment agree it is not <code>park</code> in ADR-0037's strict
+fd-readiness sense; only ADR-0020's prose (written on the same day as research 26-28, before the
+libphp audit existed) still calls it a park sub-case. §4 below resolves this: the mechanism is
+real (interposing the symbol, parking the <em>fiber</em>), the label "park" is wrong for it under
+ADR-0037 §2's definition, and it is not ADR-0016 "offload" either — it needs a name of its own.</p>
+<h2 id="method">Method<a class="headerlink" href="#method" title="Permanent link">&para;</a></h2>
+<p>Read-only: <code>grep</code> over <code>~/php-src</code> at tag <code>php-8.5.10</code> (the exact tag <code>scripts/build-php.sh</code>
+builds, confirmed by <code>git log -1</code> in that checkout: <code>34308a66 Update versions for PHP 8.5.10</code>,
+tag <code>php-8.5.10</code>), and the extension list from <code>docs/adr/0027-build-and-distribution.md:37</code>
+(<code>--disable-all</code> plus <code>sockets, pdo_pgsql, pgsql, curl, openssl, opcache</code>, <code>scripts/build-php.sh</code>).
+No source was cloned for libcurl/libpq/OpenSSL — research 26 and 27 already cloned the matching
+installed tags (<code>curl-8_18_0</code>, <code>REL_18_6</code>, <code>openssl-3.5.5</code>) and read them; their line citations
+are reused here verbatim, not re-derived, per this ticket's brief. Every php-src line number below
+was independently re-checked in this pass with <code>sed -n</code>/<code>grep</code> against the same checkout research
+26/30 used, and matches.</p>
+<h2 id="1-who-calls-it-today-in-this-build">1. Who calls it today, in this build<a class="headerlink" href="#1-who-calls-it-today-in-this-build" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>symbol</th>
+<th>file:line (php-8.5.10 / installed tag)</th>
+<th>caller</th>
+<th>compiled in?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>getaddrinfo</code></td>
+<td><code>main/network.c:190</code> (<code>if ((n = getaddrinfo(host, NULL, &amp;hints, &amp;res)))</code>)</td>
+<td><code>php_network_getaddresses()</code> — every <code>host:port</code> stream connect (<code>fsockopen</code>, <code>pfsockopen</code>, <code>stream_socket_client('tcp://…')</code>/<code>'ssl://…'</code>/<code>'udp://…'</code>, via <code>php_network_connect_socket_to_host</code>)</td>
+<td>yes, <code>HAVE_GETADDRINFO</code> (glibc)</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>freeaddrinfo</code></td>
+<td><code>main/network.c:242</code></td>
+<td>same function, paired — see §2</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>gethostbyname_r</code></td>
+<td><code>main/network.c:1352</code> (<code>gethostname_re</code>, <code>HAVE_FUNC_GETHOSTBYNAME_R_6</code> branch) ← <code>php_network_gethostbyname()</code> (<code>:1424</code>)</td>
+<td><code>ext/standard</code> <code>gethostbyname()</code>/<code>gethostbynamel()</code> (<code>ext/standard/dns.c:219,245</code>)</td>
+<td>yes — glibc defines <code>HAVE_GETHOSTBYNAME_R</code>, so plain <code>gethostbyname()</code> at <code>network.c:1412</code> is dead code (confirmed: <code>#if !defined(HAVE_GETHOSTBYNAME_R)</code> guards it)</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>getnameinfo</code></td>
+<td><code>ext/standard/dns.c:184</code> (AF_INET6), <code>:191</code> (AF_INET)</td>
+<td><code>gethostbyaddr()</code> → <code>php_gethostbyaddr()</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>getaddrinfo</code></td>
+<td><code>ext/sockets/sockets.c:2828</code></td>
+<td><code>socket_addrinfo_lookup()</code>; hints built from a caller-supplied <code>ai_flags</code>/<code>ai_socktype</code>/<code>ai_protocol</code>/<code>ai_family</code> array (<code>sockets.c:2770-2816</code>, read in this pass)</td>
+<td>yes, <code>--enable-sockets</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>freeaddrinfo</code></td>
+<td><code>ext/sockets/sockets.c:2856</code></td>
+<td>same function, paired</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>getaddrinfo</code></td>
+<td>libcurl <code>lib/curl_addrinfo.c:543</code>/<code>:546</code> ← <code>Curl_getaddrinfo_ex()</code> (<code>:217</code>) ← <code>getaddrinfo_thread()</code> (<code>lib/asyn-thrdd.c:203</code>), on a <code>pthread_create</code>d helper thread, not the fiber's OS thread</td>
+<td>any <code>curl_exec()</code>/<code>curl_multi_exec()</code> resolving a non-literal hostname</td>
+<td>yes — research 26: <code>AsynchDNS</code> feature, no <code>c-ares</code>, threaded resolver confirmed from source; <strong>cited, not re-derived</strong></td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>freeaddrinfo</code></td>
+<td>libcurl <code>lib/curl_addrinfo.c</code>, paired with #7, same helper thread</td>
+<td>same</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>getaddrinfo</code></td>
+<td>libpq <code>src/common/ip.c:65</code> (<code>pg_getaddrinfo_all</code>) ← <code>fe-connect.c:3056/3068/3093</code></td>
+<td><code>pg_connect()</code>/<code>pg_pconnect()</code> (ext/pgsql) and <code>PDO</code>'s <code>pgsql</code> driver (pdo_pgsql) — both link <code>libpq.so.5</code></td>
+<td>yes — research 26: <strong>synchronous, on the caller's own thread, no internal thread pool</strong>; <strong>cited, not re-derived</strong></td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>freeaddrinfo</code></td>
+<td>libpq <code>src/common/ip.c</code>, paired with #9, same (caller's) thread</td>
+<td>same</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>getaddrinfo</code></td>
+<td>libcrypto <code>crypto/bio/bio_addr.c:735</code> (<code>BIO_lookup_ex</code>'s <code>if (1) { #ifdef AI_PASSIVE … getaddrinfo() … }</code> branch — always compiled on this glibc, per research 27 row 6, which flagged the <em>lock</em> on the dead <code>#else</code> branch, not this call)</td>
+<td><code>BIO_s_connect</code>/<code>BIO_ADDR</code>-family helpers</td>
+<td>yes, in the .so, but <strong>not confirmed reachable from PHP userland in this build</strong> — <code>ext/openssl</code>'s <code>xp_ssl.c</code> wraps an already-connected fd from <code>main/network.c</code> (research 30 group (c)); curl and libpq resolve their own IPs before handing them to OpenSSL (research 26's "bottom line for the request path")</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Row count: 11</strong> (5 <code>getaddrinfo</code>/<code>freeaddrinfo</code> call-site pairs + <code>gethostbyname_r</code> +
+<code>getnameinfo</code>, across 5 distinct compiled-in libraries: libphp ×2 call paths, ext/sockets,
+libcurl, libpq, libcrypto).</p>
+<p><strong>Reachable from PHP userland today</strong>, i.e. an ordinary script can trigger it with no special
+build flag: rows 1–6 directly (<code>fsockopen</code>, <code>stream_socket_client</code>, <code>gethostbyname*</code>,
+<code>gethostbyaddr</code>, <code>socket_addrinfo_lookup</code>), row 7–8 via <code>curl_exec</code> (does <strong>not</strong> block the PHP
+thread today under <code>park</code> — see below), row 9–10 via <code>pg_connect</code>/<code>pg_pconnect</code>/PDO pgsql. Row 11
+is present in the linked <code>.so</code> but no PHP-facing call path to it was found in this pass.</p>
+<p><strong>What already doesn't block, and why it's out of scope here:</strong> rows 7–8 (libcurl). The resolver
+runs on curl's own helper pthread (<code>asyn-thrdd.c:447</code>); the <em>fiber's</em> OS thread only ever waits in
+<code>poll()</code> on a socketpair fd curl created for the wakeup (research 26/27/28, all cited above) — and
+<code>poll</code> is already one of the 20 symbols <code>park.rs</code> interposes (<code>park.rs:57</code>'s <code>SEED</code>, <code>libcurl</code>
+listed with no <code>:symbol</code> qualifier). Acceptance (3) for curl (H34, <code>docs/adr/0020…md:107</code>) is
+already met, today, with zero DNS-specific code — this note is entirely about rows 1–6 and 9–10.</p>
+<h2 id="2-what-each-caller-needs-if-resolution-happened-elsewhere">2. What each caller needs if resolution happened elsewhere<a class="headerlink" href="#2-what-each-caller-needs-if-resolution-happened-elsewhere" title="Permanent link">&para;</a></h2>
+<p>Every call site above hands <code>&amp;hints</code> in and reads <code>struct addrinfo *res</code> (or <code>struct hostent *</code>
+for row 3) out; here is exactly what each does with it, read from source in this pass:</p>
+<ul>
+<li><strong><code>hints</code> the replacement must honour.</strong> <code>main/network.c:164-186</code>: <code>ai_family</code> defaults to
+  <code>AF_INET</code>, widened to <code>AF_UNSPEC</code> if IPv6 probes as working (<code>ipv6_borked</code>, a lazily-cached
+  static int, <code>:152-163</code>); <code>ai_socktype</code> is passed straight from the caller
+  (<code>php_network_getaddresses(host, socktype, …)</code>, <code>socktype</code> from <code>stream_socket_client</code>'s
+  transport). <code>ext/sockets/sockets.c:2770-2816</code>: the <em>user</em> sets <code>ai_flags</code>/<code>ai_socktype</code>/
+  <code>ai_protocol</code>/<code>ai_family</code> from a PHP array (validated: <code>ai_family</code> restricted to <code>AF_INET</code>/
+  <code>AF_INET6</code>, everything else passed through as a raw int). A replacement that does its own
+  resolution (not a forward to the real <code>getaddrinfo</code>) must implement all four hint fields or
+  silently change behaviour for any script that sets them (e.g. <code>AI_PASSIVE</code>, <code>AI_NUMERICHOST</code>,
+  <code>AI_CANONNAME</code>).</li>
+<li><strong>What the caller reads afterwards.</strong> <code>struct addrinfo</code> fields <code>ai_next</code>, <code>ai_family</code>,
+  <code>ai_addr</code>, <code>ai_addrlen</code> (<code>network.c:225-235</code>, <code>sockets.c:2836-2854</code>) — <code>ai_canonname</code> is not
+  read by either PHP caller in this pass (no <code>AI_CANONNAME</code> hint set by default). Row 3
+  (<code>gethostbyname_r</code>) is a different ABI entirely: <code>struct hostent</code> with a caller-supplied scratch
+  buffer that grows on <code>ERANGE</code> (<code>network.c:1345-1358</code>) — a resolver replacement for row 3 cannot
+  reuse row 1's <code>addrinfo</code>-shaped design; it needs its own <code>hostent</code>-shaped translation, or (see
+  §3) never touch this call site and just relocate the underlying syscall.</li>
+<li><strong>Who frees it, and when.</strong> <strong>Every PHP-level caller frees the chain itself, synchronously, on
+  the same call stack, before returning</strong> — this was the one fact worth re-deriving carefully,
+  since it de-risks §3(b)/(c) a lot. <code>main/network.c</code>: <code>res</code> is walked once to count entries
+  (<code>:226-227</code>), walked again to <code>emalloc</code>+<code>memcpy</code> each <code>sockaddr</code> into PHP's own <code>*sal</code> array
+  (<code>:228-235</code>), then <code>freeaddrinfo(res)</code> at <code>:242</code> — all inside <code>php_network_getaddresses</code>, no
+  <code>addrinfo*</code> pointer survives past that function's return. <code>ext/sockets/sockets.c</code>: same
+  shape — the loop at <code>:2836</code> builds a PHP <code>AddressInfo</code> object per node (copying fields, not
+  storing the pointer) and <code>freeaddrinfo(result)</code> follows at <code>:2856</code>, still inside
+  <code>socket_addrinfo_lookup()</code>. Row 9 (libpq) is the one not fully re-verified in this pass — research
+  26 places <code>getaddrinfo</code>/<code>freeaddrinfo</code> both in <code>src/common/ip.c</code>, and libpq's connection setup
+  (<code>PQconnectPoll</code>'s state machine) never hands control to a different OS thread mid-connect
+  (research 26: "synchronous, on the caller's own thread"), so whatever <code>pg_getaddrinfo_all</code>
+  returns is consumed and freed within that same single-threaded state machine, not handed across
+  threads by libpq itself — <strong>not independently re-read line-by-line in <code>fe-connect.c</code> this pass</strong>,
+  flagged as inherited from research 26, not newly verified.</li>
+<li><strong>Thread-safety of the returned memory.</strong> <code>struct addrinfo</code> nodes are <code>malloc</code>'d by whichever
+  <code>getaddrinfo</code> implementation built them (glibc's own, if we forward to it); glibc's <code>malloc</code>/
+  <code>free</code> are thread-safe for a pointer allocated on one thread and freed on another — nothing here
+  is thread-local storage or a <code>alloca</code>. Since (per the point above) <strong>no caller today frees a
+  chain from a different thread than the one that called <code>getaddrinfo</code></strong>, this only becomes a live
+  question if <em>our own</em> replacement introduces a cross-thread hand-off, which §4's recommendation
+  addresses directly by not fabricating a chain at all.</li>
+</ul>
+<h2 id="3-options-cost-and-risk">3. Options, cost and risk<a class="headerlink" href="#3-options-cost-and-risk" title="Permanent link">&para;</a></h2>
+<p><strong>(a) Route the resolving PHP functions through ADR-0016 offload.</strong> <code>gethostbyname()</code>,
+<code>gethostbynamel()</code>, <code>gethostbyaddr()</code>, <code>socket_addrinfo_lookup()</code> are ordinary <code>zif_*</code> functions
+with PHP call frames — exactly what <code>route.rs</code>'s function-swap-at-MINIT mechanism already hooks
+for <code>curl_*</code> (<code>route.rs:32</code>, <code>DEFAULT_FUNCTIONS</code>). Adding these four names to
+<code>IGNIS_OFFLOAD_FUNCTIONS</code> (or a new default list) costs nothing new in Rust: the router copies the
+hostname string in, runs the real function on an offload worker (its own TSRM context, V-24:
+13-67 µs/call), copies the <code>array</code>/<code>string</code>/<code>false</code> result back. <strong>What it cannot cover: row 1
+(<code>main/network.c:190</code>, <code>fsockopen</code>/<code>stream_socket_client</code>) and rows 9-10 (libpq, reached from
+<code>pg_connect</code>/PDO pgsql)</strong> — neither has a PHP-level call frame at the resolving line; the
+resolution happens <em>inside</em> a C function (<code>php_network_connect_socket_to_host</code>,
+<code>pg_getaddrinfo_all</code>) that itself is many frames below any <code>zif_*</code> entry point ADR-0016 can swap.
+<code>PDO</code>'s <code>pgsql</code> driver is already in <code>route.rs</code>'s <code>DEFAULT_CLASSES</code> (<code>"PDO,SQLite3"</code>, <code>route.rs:33</code>)
+and so already runs its <em>whole</em> <code>connect()</code> — including the internal <code>getaddrinfo</code> — on an offload
+worker today; the gap is <code>pg_connect()</code>/<code>pg_pconnect()</code> (ext/pgsql, not PDO — used by
+<code>bench/php/e18_dns.php</code>), which is not in the routed list, and every <code>tcp://</code>/<code>ssl://</code> stream
+wrapper, which ADR-0016 was never designed to reach (it routes whole PHP function/class calls, not
+one C call three frames inside <code>stream_socket_client</code>).</p>
+<p><strong>(b) Interpose <code>getaddrinfo</code> itself, run it on an offload worker, return a glibc-compatible
+<code>addrinfo</code> chain plus an interposed <code>freeaddrinfo</code>.</strong> This is what ADR-0020's prose describes.
+The ownership contract, stated exactly: the interposer's <code>getaddrinfo</code> must return a pointer the
+caller can walk with <code>ai_next</code>/<code>ai_addr</code>/<code>ai_addrlen</code> exactly like glibc's own, and whatever
+<code>freeaddrinfo</code> symbol the caller later calls (also interposed, since it's already on ADR-0020 §1's
+export list) must recognise "did we build this chain" vs "did glibc build this chain" and free
+accordingly — ADR-0020's own words: <em>"a list glibc did not build must not reach glibc's free
+path."</em> That sentence is the risk: it presupposes we <strong>fabricate</strong> our own chain (e.g., from a
+<code>hickory-dns</code> answer with different node/string layout than glibc's resolver would allocate), which
+means every one of the eleven call-site rows in §1 that reads <code>ai_canonname</code>, calls <code>inet_ntop</code> on
+<code>ai_addr</code>, or is compiled with an ABI assumption about the allocator (fortified <code>_FORTIFY_SOURCE</code>
+bounds on <code>ai_addrlen</code>, glibc's own <code>freeaddrinfo</code> walking a linked list it allocated with its own
+bookkeeping) is now trusting memory <em>we</em> built. A single call site anywhere in the elven-row list
+(or a future one, e.g. a PHP extension not in <code>--disable-all</code>'s list that calls the real
+<code>freeaddrinfo</code> directly without going through our interposed one — possible via a statically-linked
+alias, or the same <code>fread</code>-style "stays inside glibc" limitation ADR-0020's addendum already flags
+for other symbols, research 26 §"glibc-internal-alias limitation") corrupts the heap. <strong>This risk
+disappears if the "offload worker" never fabricates a chain and instead forwards to the <em>real</em>
+<code>getaddrinfo</code>/<code>freeaddrinfo</code></strong> (dlsym(<code>RTLD_NEXT</code>), exactly the pattern research 28's interposer
+already uses and proved works for the other libc-level symbols) <strong>on a different thread</strong> — see §4.
+Cost: one thread (or tokio's blocking pool, see (c)) per concurrent lookup, same shape as
+ADR-0016's worker-per-call bound (<code>docs/adr/0016-offload.md</code>'s addendum: "Pool size is the
+concurrency bound").</p>
+<p><strong>(c) A runtime resolver on the tokio side</strong> (<code>hickory-dns</code>, or tokio's own blocking-pool
+<code>getaddrinfo</code> via <code>tokio::net::lookup_host</code>/<code>ToSocketAddrs</code>, dispatched with
+<code>tokio::task::spawn_blocking</code>). <code>crates/ignis/Cargo.toml:10</code> already has <code>tokio</code> with the <code>net</code>
+feature; no <code>hickory-dns</code> dependency exists today (<code>grep -n hickory\|trust-dns</code> over
+<code>crates/ignis/Cargo.toml</code>/<code>crates/ignis-sys/Cargo.toml</code>/the workspace <code>Cargo.toml</code> found nothing).
+<code>tokio::net::lookup_host</code> itself is not a "true async" resolver — it wraps <code>std::net::ToSocketAddrs</code>
+inside <code>spawn_blocking</code>, i.e. it <em>is</em> glibc's <code>getaddrinfo</code> run on tokio's own bounded blocking
+thread pool, not a hand-rolled DNS client. Structurally this is exactly <code>pg.rs</code>'s and <code>grpc.rs</code>'s
+existing shape: a new <code>Op::Custom</code> future (<code>reactor.rs:29</code>, "any tokio future producing a
+PHP-facing outcome... plain data in, plain data out") plus a thin <code>module.rs</code> function — the
+"normal recipe" CLAUDE.md names for a new capability, already proven at V-24/pg.rs's numbers. Two
+sub-variants: <strong>(c-i)</strong> a real DNS client (<code>hickory-dns</code>) that returns <code>SocketAddr</code>s we then
+translate into a fabricated <code>addrinfo</code> — inherits (b)'s exact fabrication risk, <em>plus</em> a new
+dependency, <em>plus</em> behaviour drift from glibc (NSS <code>/etc/hosts</code>, <code>/etc/nsswitch.conf</code>, mDNS,
+<code>AI_ADDRCONFIG</code> heuristics are glibc-specific and <code>hickory-dns</code> does not replicate them). <strong>(c-ii)</strong>
+call the <em>real</em> <code>getaddrinfo</code> inside the <code>spawn_blocking</code> task and hand the <em>real</em> pointer back —
+no fabrication, no new dependency, glibc's NSS behaviour preserved exactly. (c-ii) is the
+recommendation in §4.</p>
+<p><strong>(d) Do nothing, document it.</strong> What breaks: rows 1, 3-6, 9-10 (six of eleven call sites) keep
+blocking the calling PHP OS thread for the lifetime of the DNS lookup — under today's shipped
+default (<code>IGNIS_PARK</code>'s seed already lists <code>libpq</code> and <code>libphp:connect</code> etc., <code>park.rs:57</code>, so
+<code>connect()</code> itself already parks for these callers) the <em>connect</em> half is non-blocking but the
+<em>resolve</em> half in front of it is not, so a slow-resolving hostname still stalls the fiber's thread
+before <code>connect()</code> is ever reached — negating H33/H34's promised concurrency for any workload that
+resolves a real (non-cached, non-<code>localhost</code>) hostname. <strong>How often this fires today</strong>: every
+<code>fsockopen</code>/<code>stream_socket_client</code> to a hostname (not a literal IP), every <code>pg_connect</code>/
+<code>pg_pconnect</code> to a hostname, every <code>gethostbyname*</code>/<code>gethostbyaddr</code> call — i.e. it is the common
+case for any application-level DNS name, not an edge case; <code>bench/php/e18_dns.php</code> (already in the
+tree, <code>bench/php/e18_dns.php:1-11</code>'s own comment) documents that it currently measures
+<code>localhost</code> (resolved instantly, no real lookup) precisely because this gap is open — its own
+header says <em>"H34's real target is <code>slow.ignis.test</code>... getaddrinfo(3) only sees that stub once
+the runtime resolver is pointed at it... H34 needs a knob the implementation doesn't have yet"</em>.</p>
+<h2 id="4-recommendation">4. Recommendation<a class="headerlink" href="#4-recommendation" title="Permanent link">&para;</a></h2>
+<p><strong>(b)+(c-ii), not (a), not (c-i), not (d):</strong> interpose <code>getaddrinfo</code>/<code>freeaddrinfo</code> (both already
+named in ADR-0020 §1's 20-symbol export list — no new symbol to add) exactly like the other
+interposed calls (research 28's pattern: a 3-line C shim capturing the return address, <code>dlsym</code>
+<code>RTLD_NEXT</code> once, cached), but instead of an <code>Op::Watch(fd)</code> (there is no fd), the fiber-active
+path submits an <code>Op::Custom</code> future that runs the <strong>real</strong> <code>getaddrinfo</code> (forwarded, not
+reimplemented) inside <code>tokio::task::spawn_blocking</code>, and suspends the fiber on it exactly as
+<code>pg.rs</code>'s <code>acquire()</code>/<code>query()</code> already do. The result pointer — real glibc heap memory — crosses
+the <code>Op::Custom</code> boundary as a plain <code>usize</code> (one <code>unsafe impl Send</code> on a newtype wrapper, with a
+one-line safety comment: "glibc heap memory has no thread affinity; <code>malloc</code>/<code>free</code> are
+thread-safe" — this is the new <code>unsafe</code> surface, and per CLAUDE.md only the main agent may write
+it) and is handed back to the C caller completely unmodified. The interposed <code>freeaddrinfo</code> is a
+pure pass-through to the real <code>freeaddrinfo</code> (also <code>dlsym</code>'d once) — no bookkeeping table, no
+"did we build this chain" branch, because we never build one. This sidesteps (b)'s entire stated
+risk (§3(b)'s "a list glibc did not build must not reach glibc's free path" simply never arises)
+and (c-i)'s NSS-behaviour drift and new dependency, while covering <strong>all eleven rows in §1</strong>
+uniformly — including rows 9-10 (libpq) and row 1 (the stream wrapper), which (a) structurally
+cannot reach. It costs one <code>spawn_blocking</code> task per concurrent lookup (tokio's blocking pool,
+bounded, already part of the runtime <code>crates/ignis/Cargo.toml:10</code> builds today) instead of one
+offload-worker thread with a TSRM context per lookup — cheaper to build (no TSRM context needed:
+this is a plain C call, not PHP code) and reuses a mechanism (<code>Op::Custom</code> + tokio actor) already
+proven at V-24/H33's numbers, rather than growing ADR-0016's PHP-worker pool for a job shape
+(<code>(function name, serialized args)</code>, <code>offload.rs:17-19</code>) that doesn't fit a raw libc call with no
+PHP frame at all.</p>
+<p><strong>Classification note for ADR-0037 §2/§7.</strong> This is not <code>park</code> (no fd, contradicts ADR-0020's
+prose per the opening section — that sentence should be corrected) and it is not ADR-0016
+<code>offload</code> either (no TSRM worker, no serialized PHP args, the "share objects" prohibition doesn't
+apply since <code>addrinfo</code> is transparent C memory, not a Zend value). It is the same <code>Op::Custom</code> +
+tokio-actor shape already used for gRPC and Postgres — CLAUDE.md's stated normal recipe for a new
+capability, sitting one level below the three-mechanism budget's "wait mechanisms for existing
+blocking calls" scope. Recorded here so ADR-0037 §7's "outside the three" table
+(<code>docs/adr/0037-three-mechanisms.md:114-116</code>, currently empty) has its first candidate row, or so
+the two-line contradiction at the top of this note gets fixed in ADR-0020's own text.</p>
+<p><strong>Kill criterion.</strong> Either of: (i) a <code>freeaddrinfo</code> call on a chain this design returned crashes,
+double-frees, or is flagged by a <code>valgrind</code>/ASan run across a soak of concurrent lookups — would
+mean glibc's cross-thread malloc/free assumption doesn't hold on this toolchain, and the design
+reverts to (a) (function-level ADR-0016 routing for <code>gethostbyname*</code>/<code>gethostbyaddr</code>/
+<code>socket_addrinfo_lookup</code>, plus adding <code>pg_connect</code>/<code>pg_pconnect</code> to <code>route.rs</code>'s routed-function
+list) for whichever caller broke, since (a) never touches the pointer at all; (ii) <code>spawn_blocking</code>
+dispatch cost at realistic concurrency (50-100, H34's shape) exceeds ADR-0016's measured per-call
+offload cost (V-24: 13-67 µs) by more than an order of magnitude — would mean tokio's blocking
+pool is a worse fit than a dedicated worker pool here, and offload (a) becomes the fallback for
+cost, not correctness, reasons.</p>
+<p><strong>Smallest test that proves it.</strong> <code>bench/php/e18_dns.php</code> already exists
+(<code>bench/php/e18_dns.php</code>) and is already H34's bench — its own header explains exactly why it
+currently can't prove anything: it needs <code>IGNIS_RESOLVER=127.0.0.1:5353</code> (a knob <code>park.rs</code>/the
+new resolver actor doesn't have yet) pointed at <code>bench/e18/resolver.py</code>, a local stub that answers
+<code>slow.ignis.test</code> after a 200 ms delay, so that a real (non-instant) resolution is exercised
+instead of <code>localhost</code>. Do not run it — per this ticket's constraints — but the file to change is
+this one, not a new one: replace its <code>note=stub_not_wired</code> line with real numbers once (i) this
+design lands and (ii) the <code>IGNIS_RESOLVER</code> knob exists. Expected numbers, from H34's own table
+(<code>docs/adr/0020-universal-park.md:107</code>, unchanged by this note): <strong>park/resolver-actor on</strong> — 50
+concurrent <code>pg_connect</code> calls to <code>slow.ignis.test</code>, wall ≈ 200 ms (the 200 ms delay paid once,
+concurrently, matching H32/H33's already-measured shape: 279-337 ms / 296-333 ms at N=100 for the
+fd-based calls, V-45); <strong>off</strong> (<code>IGNIS_NO_UNIVERSAL_PARK=1</code>, today's shipped behaviour) — wall
+≈ 10,000 ms (50 × 200 ms serialized on one thread, matching the control-arm shape already recorded
+for H32/H33's controls, ≈20,000 ms at N=100). A second, smaller correctness check worth adding
+alongside it (not a new file — a second assertion in the same script): after the timed section,
+assert every one of the 50 calls that reached a real connection attempt did not crash the process
+and <code>ok</code>/error counts are consistent across three repeated runs — a <code>valgrind</code>/ASan run of this
+same script is the kill-criterion (i) check, not a separate bench file.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

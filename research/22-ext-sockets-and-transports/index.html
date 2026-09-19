@@ -1,0 +1,2108 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 22 — ext/sockets blocking surface, and the transports Ignis still hasn't hooked - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-22-extsockets-blocking-surface-and-the-transports-ignis-still-hasnt-hooked" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 22 — ext/sockets blocking surface, and the transports Ignis still hasn't hooked
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-every-socket_-function-that-can-block-from-the-actual-syscalls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Every socket_* function that can block, from the actual syscalls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-three-buckets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The three buckets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. The three buckets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-park-then-delegate-works-verbatim-8-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        (a) park then delegate works verbatim — 8 functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-needs-the-select-treatment-1-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        (b) needs the select treatment — 1 function
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-needs-a-different-shape-4-functions-3-distinct-reasons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        (c) needs a different shape — 4 functions, 3 distinct reasons
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-correctness-traps-with-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Correctness traps, with evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-transports-ignis-does-not-replace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Transports Ignis does not replace
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-surprises" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Surprises
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-what-this-rules-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. What this rules out
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-what-i-could-not-determine-from-source-alone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. What I could not determine from source alone
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-22-extsockets-blocking-surface-and-the-transports-ignis-still-hasnt-hooked">Research 22 — ext/sockets blocking surface, and the transports Ignis still hasn't hooked<a class="headerlink" href="#research-22-extsockets-blocking-surface-and-the-transports-ignis-still-hasnt-hooked" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-09-16. Sources: <code>/home/koe/php-src</code> (tag php-8.5.10) <code>ext/sockets/sockets.c</code>,
+<code>ext/sockets/sockaddr_conv.c</code>, <code>ext/sockets/sendrecvmsg.c</code>, <code>ext/sockets/php_sockets.h</code>;
+<code>main/streams/streams.c</code> (<code>php_init_stream_wrappers</code>), <code>main/streams/xp_socket.c</code>
+(<code>php_stream_generic_socket_factory</code>, <code>php_tcp_sockop_set_option</code>); <code>main/network.c</code>
+(<code>php_network_gethostbyname</code>); <code>/opt/php85-zts/include/php/ext/sockets/php_sockets.h</code>
+(installed headers, same struct); <code>crates/ignis/src/php/accept.rs</code> (the park-then-delegate
+template, <code>stream_socket_accept</code>/<code>stream_select</code>); <code>crates/ignis/src/php/stream.rs</code> (<code>install()</code>,
+the <code>Sock.blocking</code> field, <code>op_read</code>/<code>op_write</code>); <code>crates/ignis/src/reactor.rs</code> (<code>Op</code>/<code>Outcome</code>);
+<code>docs/research/06-stream-transport-hook.md</code>, <code>docs/research/15-swoole-hooks.md</code> (read as a
+starting point, not truth — its SSL/TCP-server rows predate ADR-0017/E6'').</p>
+<p>This is read-only research: no code was written except this note.</p>
+<h2 id="1-every-socket_-function-that-can-block-from-the-actual-syscalls">1. Every <code>socket_*</code> function that can block, from the actual syscalls<a class="headerlink" href="#1-every-socket_-function-that-can-block-from-the-actual-syscalls" title="Permanent link">&para;</a></h2>
+<p>All line numbers are <code>ext/sockets/sockets.c</code> unless noted. "Readiness" means: watching the fd
+with <code>Op::Watch{fd, write}</code> and then re-running the original handler makes it return at once,
+exactly like <code>accept.rs</code> does for <code>stream_socket_accept</code>.</p>
+<table>
+<thead>
+<tr>
+<th>PHP function</th>
+<th>Blocking syscall (file:line)</th>
+<th>Blocks on</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>socket_read($type=PHP_NORMAL_READ)</code></td>
+<td><code>php_read()</code> → <code>recv()</code> sockets.c:381 (called from :967)</td>
+<td>READ</td>
+</tr>
+<tr>
+<td><code>socket_read($type=PHP_BINARY_READ)</code></td>
+<td><code>recv()</code> sockets.c:969</td>
+<td>READ</td>
+</tr>
+<tr>
+<td><code>socket_recv</code></td>
+<td><code>recv()</code> sockets.c:1461</td>
+<td>READ (see trap on <code>MSG_WAITALL</code>, §3)</td>
+</tr>
+<tr>
+<td><code>socket_recvfrom</code></td>
+<td><code>recvfrom()</code> sockets.c:1562/1586/1613 (AF_UNIX/AF_INET/AF_INET6)</td>
+<td>READ</td>
+</tr>
+<tr>
+<td><code>socket_recvmsg</code></td>
+<td><code>recvmsg()</code> <code>sendrecvmsg.c:248</code></td>
+<td>READ</td>
+</tr>
+<tr>
+<td><code>socket_write</code></td>
+<td><code>write()</code>/<code>send()</code> sockets.c:926</td>
+<td>WRITE</td>
+</tr>
+<tr>
+<td><code>socket_send</code></td>
+<td><code>send()</code> sockets.c:1503</td>
+<td>WRITE</td>
+</tr>
+<tr>
+<td><code>socket_sendto</code></td>
+<td><code>sendto()</code> sockets.c:1728/1745/1762</td>
+<td>WRITE (+ blocking DNS, see below)</td>
+</tr>
+<tr>
+<td><code>socket_sendmsg</code></td>
+<td><code>sendmsg()</code> <code>sendrecvmsg.c:207</code></td>
+<td>WRITE</td>
+</tr>
+<tr>
+<td><code>socket_accept</code></td>
+<td><code>accept4()</code>/<code>accept()</code> sockets.c:294/301 (<code>php_accept_connect</code>, called from <code>socket_accept</code> at :756)</td>
+<td>READ (listening socket)</td>
+</tr>
+<tr>
+<td><code>socket_select</code></td>
+<td><code>select()</code> sockets.c:692</td>
+<td>READ/WRITE/exceptfds, multiplexed</td>
+</tr>
+<tr>
+<td><code>socket_connect</code></td>
+<td><code>connect()</code> sockets.c:1260 (AF_INET6) / :1279 (AF_INET) / :1293 (AF_UNIX)</td>
+<td>WRITE, but <strong>only after</strong> the connect call itself returns (see §2c)</td>
+</tr>
+<tr>
+<td><code>socket_addrinfo_connect</code></td>
+<td><code>connect()</code> sockets.c:2935 — builds its <strong>own</strong> fresh socket inline, then connects it</td>
+<td>same shape as <code>socket_connect</code>, harder</td>
+</tr>
+<tr>
+<td><code>socket_addrinfo_lookup</code></td>
+<td><code>getaddrinfo()</code> sockets.c:2829</td>
+<td>DNS — no fd exists yet</td>
+</tr>
+<tr>
+<td><code>socket_create_listen</code></td>
+<td><code>php_network_gethostbyname("0.0.0.0"/"localhost")</code> sockets.c:249/251 (via <code>php_open_listen_sock</code> sockets.c:243)</td>
+<td>DNS, then non-blocking <code>socket()</code>/<code>bind()</code>/<code>listen()</code></td>
+</tr>
+<tr>
+<td><code>socket_connect</code>/<code>socket_sendto</code> with a hostname (not a literal IP)</td>
+<td><code>php_network_gethostbyname()</code> inside <code>php_set_inet_addr</code>/<code>php_set_inet6_addr</code>, <code>sockaddr_conv.c:95</code> (called from sockets.c:1256/1275/1741/1758)</td>
+<td>DNS, ahead of the connect/sendto syscall</td>
+</tr>
+</tbody>
+</table>
+<p>Not blocking on I/O readiness (excluded): <code>socket_create</code>, <code>socket_bind</code>, <code>socket_listen</code>,
+<code>socket_close</code>, <code>socket_shutdown</code>, <code>socket_set_block</code>/<code>socket_set_nonblock</code>,
+<code>socket_get_option</code>/<code>socket_set_option</code>, <code>socket_getsockname</code>/<code>socket_getpeername</code>,
+<code>socket_create_pair</code> (<code>socketpair()</code> sockets.c:2407 is a kernel-local pair creation, not an I/O
+wait), <code>socket_import_stream</code>/<code>socket_export_stream</code>, <code>socket_last_error</code>/<code>socket_strerror</code>,
+<code>socket_addrinfo_bind</code>/<code>socket_addrinfo_explain</code>, <code>socket_cmsg_space</code>, the WSA* Windows-only
+functions (not applicable, this build is Linux).</p>
+<h2 id="2-the-three-buckets">2. The three buckets<a class="headerlink" href="#2-the-three-buckets" title="Permanent link">&para;</a></h2>
+<h3 id="a-park-then-delegate-works-verbatim-8-functions">(a) park then delegate works verbatim — 8 functions<a class="headerlink" href="#a-park-then-delegate-works-verbatim-8-functions" title="Permanent link">&para;</a></h3>
+<p><code>socket_read</code>, <code>socket_recv</code>, <code>socket_recvfrom</code>, <code>socket_recvmsg</code> (watch READ, then delegate),
+<code>socket_write</code>, <code>socket_send</code>, <code>socket_sendto</code>, <code>socket_sendmsg</code> (watch WRITE, then delegate),
+and <code>socket_accept</code> (watch READ on the <em>listening</em> socket, then delegate — this is functionally
+identical to <code>stream_socket_accept</code> in <code>accept.rs</code>, down to reusing <code>php_accept_connect</code>'s own
+<code>accept4()</code>/<code>fcntl()</code> cloexec dance once the listener is readable). All eight take an already-open
+<code>Socket</code> object with a live <code>bsd_socket</code> fd (<code>Z_SOCKET_P</code> / <code>socket_from_obj</code>, <code>php_sockets.h:75</code>),
+so the fd needed for <code>Op::Watch</code> is already there before the call — exactly the precondition the
+template requires.</p>
+<h3 id="b-needs-the-select-treatment-1-function">(b) needs the select treatment — 1 function<a class="headerlink" href="#b-needs-the-select-treatment-1-function" title="Permanent link">&para;</a></h3>
+<p><code>socket_select</code>. Same shape as <code>stream_select</code> in <code>accept.rs</code>: three arrays of <code>Socket</code> objects
+(<code>php_sock_array_to_fd_set</code>, sockets.c:553) instead of one array of streams; would need the same
+copy-probe-park-reprobe dance <code>hooked_select</code> already does, reading <code>bsd_socket</code> directly instead
+of going through <code>_php_stream_cast</code>.</p>
+<h3 id="c-needs-a-different-shape-4-functions-3-distinct-reasons">(c) needs a different shape — 4 functions, 3 distinct reasons<a class="headerlink" href="#c-needs-a-different-shape-4-functions-3-distinct-reasons" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Why park-then-delegate fails</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>socket_connect</code></td>
+<td>Same as the documented <code>socket_connect</code>-class problem: there is nothing to watch <em>before</em> calling <code>connect()</code> — the watchable event (the fd becoming writable) only exists <em>after</em> the nonblocking <code>connect()</code> call has been issued and returned <code>EINPROGRESS</code>. A verbatim park-then-delegate would just call the original, which blocks in <code>connect()</code> itself (sockets.c:1260/1279/1293) before any fd is watchable. Needs: set <code>O_NONBLOCK</code> on the fd first (or trust it's already there — but then the <em>whole point</em> of the hook is to make a <strong>blocking</strong> socket non-blocking under the hood), call <code>connect()</code>, on <code>EINPROGRESS</code> watch WRITE, then read <code>SO_ERROR</code> via <code>getsockopt()</code> to learn whether it actually connected — and, on success, restore the fd's original blocking mode the caller expects (<code>php_sock-&gt;blocking</code> is untouched by <code>socket_connect</code>; the caller's own <code>socket_set_nonblock</code> calls are what set it, and stock PHP leaves a <code>socket_connect()</code>'d blocking socket blocking afterward — a hook that leaves <code>O_NONBLOCK</code> set would silently change the semantics of every future <code>socket_send</code>/<code>socket_recv</code> on that socket unless it clears the flag again after the handshake settles).</td>
+</tr>
+<tr>
+<td><code>socket_addrinfo_connect</code></td>
+<td>The same problem as <code>socket_connect</code>, but worse: the function creates the <code>socket()</code> <strong>inside itself</strong> (sockets.c:2922) and immediately <code>connect()</code>s it (sockets.c:2935) with no separate "open" step a hook could intercept first. A hook would have to reimplement the whole function body (build the fd, set <code>O_NONBLOCK</code>, connect, watch, <code>SO_ERROR</code>, populate the <code>Socket</code> object) rather than wrap the original handler at all.</td>
+</tr>
+<tr>
+<td><code>socket_addrinfo_lookup</code></td>
+<td><code>getaddrinfo()</code> (sockets.c:2829) blocks on DNS resolution and there is no socket object and no fd anywhere in scope — nothing to <code>Op::Watch</code>. This needs the offload pattern (ADR/E16 thread-pool offload — run the blocking call on a worker thread, complete the op when it returns), not a park-then-delegate hook, structurally identical to what research 06 already found for PDO sqlite.</td>
+</tr>
+<tr>
+<td><code>socket_connect</code> / <code>socket_sendto</code> with a hostname argument</td>
+<td>Before the <code>connect()</code>/<code>sendto()</code> syscall even runs, <code>php_set_inet_addr</code>/<code>php_set_inet6_addr</code> (<code>sockaddr_conv.c:87-121</code>) call <code>php_network_gethostbyname()</code> (<code>sockaddr_conv.c:95</code>, defined <code>main/network.c:1410</code>) whenever the address string isn't a literal IP (<code>inet_pton</code> fails first, <code>sockaddr_conv.c:92</code>). This is a second, independent blocking point <em>inside</em> what looks like a single PHP call — a hook that only watches the fd after entering the syscall never even gets there if DNS is slow. Same offload shape as the <code>socket_addrinfo_lookup</code> case, stacked in front of the connect-specific problem above.</td>
+</tr>
+</tbody>
+</table>
+<p><code>socket_create_listen</code>'s <code>gethostbyname("0.0.0.0")</code>/<code>"localhost")</code> call (sockets.c:249/251) is
+the same DNS shape in principle, but resolves a literal/loopback name that never leaves
+<code>/etc/hosts</code> in practice — noted for completeness, not treated as a priority case.</p>
+<h2 id="3-correctness-traps-with-evidence">3. Correctness traps, with evidence<a class="headerlink" href="#3-correctness-traps-with-evidence" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>The <code>blocking</code> field must gate parking, and the field can lag the fd.</strong> <code>php_socket.blocking</code>
+  (<code>php_sockets.h:75</code>) is bookkeeping PHP updates on <code>socket_set_block</code>/<code>socket_set_nonblock</code>
+  (sockets.c:783/790/821/828), at creation (sockets.c:261,332,734,1217,2430-2431,2891,2933,3108),
+  and when importing an fd (<code>socket_import_file_descriptor</code>, sockets.c:2579, reads it back via
+  <code>fcntl(F_GETFL)</code>). But <code>php_read()</code> — the function <code>socket_read($type=PHP_NORMAL_READ)</code> actually
+  calls — does <strong>not</strong> trust <code>php_sock-&gt;blocking</code> at all: it re-derives non-blocking state itself
+  with its own <code>fcntl(sock-&gt;bsd_socket, F_GETFL)</code> call (sockets.c:349-353) and returns after one
+  pass if that flag is set, without ever calling <code>recv()</code> a second time. A hook that parks based on
+  the <code>Socket</code> object's <code>-&gt;blocking</code> field alone, without also checking the live fd flag, can
+  diverge from <code>php_read</code>'s own logic if something changed <code>O_NONBLOCK</code> on the fd directly (e.g.
+  through <code>socket_import_stream</code>/<code>socket_export_stream</code>, sockets.c:2587/2633, which share the fd
+  with a <code>php_stream</code>). Ignis's own <code>stream.rs</code> already tracks a parallel <code>blocking: bool</code> field on
+  its <code>Sock</code> (<code>stream.rs:51</code>, checked at <code>stream.rs:307</code> before choosing <code>Op::Read</code> vs
+  <code>Op::TryRead</code>) — an ext/sockets hook needs the equivalent check (<code>fcntl(F_GETFL) &amp; O_NONBLOCK</code>,
+  matching <code>php_read</code>'s own source of truth) before ever parking, or a socket that was explicitly
+  set non-blocking would incorrectly block a fiber waiting for readiness the caller never asked to
+  wait for.</li>
+<li><strong><code>SO_RCVTIMEO</code>/<code>SO_SNDTIMEO</code> live only in the kernel, never in <code>php_socket</code>.</strong>
+  <code>socket_get_option</code>/<code>socket_set_option</code> pass these straight to <code>getsockopt()</code>/<code>setsockopt()</code>
+  (sockets.c:1910-1930 get, sockets.c:2188-2214 set) with <strong>no</strong> mirroring into any Ignis-visible
+  struct field the way <code>default_socket_timeout</code> is mirrored into <code>FG()</code> for streams (<code>accept.rs:36</code>
+  reads <code>(*fg()).default_socket_timeout</code> for exactly this reason). A stock blocking <code>recv()</code>/<code>send()</code>
+  on a socket with <code>SO_RCVTIMEO</code> set returns <code>EAGAIN</code>/<code>EWOULDBLOCK</code> after that many seconds — a
+  park-then-delegate hook that just does <code>Op::Watch{fd, write:false}</code> with no timer races nothing
+  against it and can park the fiber <strong>forever</strong> past where stock PHP would have returned. To match
+  stock behaviour the hook would have to <code>getsockopt(SO_RCVTIMEO/SO_SNDTIMEO)</code> itself before parking
+  and race an <code>Op::Sleep</code> against the watch, the same pattern <code>hooked_accept</code>/<code>hooked_select</code> already
+  use for PHP-level timeout arguments (<code>accept.rs:126</code>, <code>:297</code>) — except here the timeout is not a
+  call argument, it is ambient socket state that has to be read out explicitly.</li>
+<li><strong><code>MSG_WAITALL</code> breaks the "one readiness event ⇒ the delegate call returns at once" assumption.</strong>
+  <code>socket_recv</code>/<code>socket_recvfrom</code>/<code>socket_recvmsg</code> pass the caller's <code>$flags</code> straight to
+  <code>recv()</code>/<code>recvfrom()</code>/<code>recvmsg()</code> (sockets.c:1461, :1562 etc., <code>sendrecvmsg.c:248</code>) with no
+  filtering. <code>MSG_WAITALL</code> tells the kernel to block until the <strong>entire</strong> requested length has
+  arrived (or EOF/error/signal) — POLLIN readiness only guarantees "at least one byte is available."
+  A hook that watches READ once and then delegates can still have that delegate call block the OS
+  thread for an arbitrarily long time if the peer trickles data in slowly, exactly defeating the
+  hook's purpose. <code>accept.rs</code>'s template never hits this because <code>stream_socket_accept</code> has no
+  analogous flag — this is new to ext/sockets.</li>
+<li><strong>No EINTR retry anywhere in ext/sockets.</strong> Grepped <code>EINTR</code> across <code>sockets.c</code>/<code>sendrecvmsg.c</code>:
+  zero hits (the only <code>EINTR</code> handling in this area is <code>main/network.c:401</code>, in the generic
+  connect-with-timeout helper <code>ext/sockets</code> does not use). A signal that interrupts a blocking
+  <code>recv()</code>/<code>send()</code>/<code>accept()</code>/<code>connect()</code>/<code>select()</code> surfaces as <code>-1</code>/<code>errno=EINTR</code> straight to
+  userland (<code>PHP_SOCKET_ERROR</code>, <code>PHP_IS_TRANSIENT_ERROR</code> at sockets.c:975). This is not a trap for
+  the hook to fix — it means a park-then-delegate hook does not need to add retry logic that stock
+  PHP itself doesn't have; parking and then calling the original once matches stock semantics
+  exactly here.</li>
+<li><strong><code>socket_connect</code>'s post-connect state must be restored.</strong> Stock PHP never sets <code>O_NONBLOCK</code>
+  during <code>socket_connect</code> (sockets.c:1260 etc. call <code>connect()</code> on the fd exactly as the caller left
+  it — <code>php_sock-&gt;blocking</code> is untouched by the function, sockets.c:1222-1310 has no <code>blocking</code>
+  write at all). A hook implementing the nonblocking-connect/watch-writable/<code>SO_ERROR</code> dance (§2c)
+  must flip <code>O_NONBLOCK</code> off again after the connect settles if the socket was blocking before,
+  or every subsequent <code>socket_recv</code>/<code>socket_send</code> on that <code>Socket</code> silently becomes non-blocking —
+  a regression <code>php_read</code>'s own <code>fcntl(F_GETFL)</code> check (trap 1) would then also propagate into.</li>
+</ul>
+<h2 id="4-transports-ignis-does-not-replace">4. Transports Ignis does not replace<a class="headerlink" href="#4-transports-ignis-does-not-replace" title="Permanent link">&para;</a></h2>
+<p>From <code>crates/ignis/src/php/stream.rs::install()</code> (:546-572): it reads the stock <code>tcp</code> factory out
+of the process-wide transport hash (<code>php_stream_xport_get_hash()</code>), replaces <code>tcp</code> with
+<code>ignis_tcp_factory</code>, then (ADR-0017, guarded by <code>IGNIS_NO_SSL_HOOK</code>) replaces <code>ssl</code>, <code>tls</code>,
+<code>tlsv1.2</code>, <code>tlsv1.3</code> with the <strong>same</strong> <code>ignis_tcp_factory</code> (the <code>tls: Option&lt;TlsOpts&gt;</code> branch
+inside it does the handshake). Nothing else is touched.</p>
+<p><code>main/streams/streams.c:1908-1930</code> (<code>php_init_stream_wrappers</code>) registers four protocols against
+the <strong>same</strong> stock factory, <code>php_stream_generic_socket_factory</code> (<code>main/streams/xp_socket.c:935</code>):
+<code>tcp</code>, <code>udp</code>, <code>unix</code>, <code>udg</code> — dispatching internally on the protocol string
+(<code>xp_socket.c:946-957</code>) to one of four <code>php_stream_ops</code> tables (<code>php_stream_socket_ops</code>,
+<code>php_stream_udp_socket_ops</code>, <code>php_stream_unix_socket_ops</code>, <code>php_stream_unixdg_socket_ops</code>).
+Ignis intercepts the factory only for <code>tcp</code> (+ TLS aliases); <code>udp://</code>, <code>unix://</code>, <code>udg://</code> still
+resolve to the stock factory and block the thread — this matches what research 15 flagged as
+missing and is still current.</p>
+<p>What each would need beyond copying the <code>tcp</code> pattern:</p>
+<ul>
+<li><strong><code>unix://</code></strong> is the closest to <code>tcp</code>: <code>AF_UNIX</code>/<code>SOCK_STREAM</code>, connection-oriented, same
+  connect/read/write/close shape. The only structural difference is the address: a filesystem
+  path instead of host:port, so <code>Op::Connect</code> (<code>reactor.rs:33</code>) would need a path-based variant (or
+  a <code>tokio::net::UnixStream::connect(path)</code> branch alongside the existing
+  <code>tokio::net::TcpStream::connect((host, port))</code> at <code>reactor.rs:410</code>) — the connection-actor
+  (<code>conn_actor</code>, <code>reactor.rs:274</code>) and read/write/close ops are otherwise reusable verbatim since
+  it already boxes the stream as <code>dyn AsyncRead + AsyncWrite</code> (<code>BoxStream</code>, <code>reactor.rs:88</code>).
+  Server-side <code>unix://</code> (<code>stream_socket_server</code>) and <code>stream_socket_pair</code> (<code>socketpair(2)</code> +
+  stock socket ops, flagged as a hang in research 15) are separate work reusing the accept.rs
+  pattern once a unix listener op exists.</li>
+<li><strong><code>udp://</code></strong> is structurally different, not just a new address family: it is connectionless.
+  <code>xp_socket.c</code>'s <code>php_stream_udp_socket_ops</code> reads/writes via <code>recvfrom</code>/<code>sendto</code> with a peer
+  address attached to <em>each</em> packet, not a persistent per-connection byte stream. Ignis's
+  <code>Op</code>/<code>Outcome</code> model is built entirely around a <code>conn: u64</code> that names one actor owning one
+  <code>AsyncStream</code> (<code>reactor.rs:76-88</code>, <code>ConnMap</code>, <code>conn_actor</code>); there is no "connection" to open for
+  UDP before the first send, and a single bound UDP socket can legitimately talk to many peers.
+  A UDP hook needs new <code>Op</code> variants shaped like <code>RecvFrom{sock, max}</code>/<code>SendTo{sock, peer, data}</code>
+  over a <code>tokio::net::UdpSocket</code> (one actor per <em>socket</em>, not per <em>peer</em>), plus readiness watching
+  for the common "connected" UDP usage the same way <code>Op::Watch</code> already works for reads.</li>
+<li><strong><code>udg://</code></strong> is the AF_UNIX analogue of <code>udp://</code> — <code>tokio::net::UnixDatagram</code> in place of
+  <code>UdpSocket</code>, same <code>RecvFrom</code>/<code>SendTo</code>-shaped op split, same "no persistent connection actor"
+  structural break from the <code>tcp</code>/<code>unix</code> model.</li>
+</ul>
+<h2 id="5-surprises">5. Surprises<a class="headerlink" href="#5-surprises" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>php_read()</code> re-deriving non-blocking state via its own <code>fcntl()</code> call instead of trusting
+  <code>php_sock-&gt;blocking</code> was not obvious going in — it means the struct field name is misleading for
+  exactly one of the eight bucket-(a) functions (<code>socket_read($type=PHP_NORMAL_READ)</code>), and any
+  hook that only checks the struct field would be technically wrong there even though it would be
+  right for the other seven.</li>
+<li><code>socket_addrinfo_connect</code> builds and connects its own socket in one call with no separable
+  "create" step — this is worse than <code>socket_connect</code> for a hook, not just "the same problem
+  again." Worth flagging separately rather than lumping it with <code>socket_connect</code> in a table cell,
+  which is why §2c gives it its own row.</li>
+<li>The DNS-blocks-inside-connect trap (<code>php_set_inet_addr</code> calling <code>php_network_gethostbyname</code>)
+  applies to <code>socket_sendto</code> too, which was not expected — <code>sendto()</code> for <code>AF_INET</code>/<code>AF_INET6</code>
+  re-resolves the address on <strong>every call</strong> (sockets.c:1741/1758 are inside the per-call address
+  family switch, not a one-time connect step), so a UDP script calling <code>socket_sendto()</code> in a loop
+  with a hostname argument pays a blocking DNS lookup on every iteration, not just once.</li>
+</ul>
+<h2 id="6-what-this-rules-out">6. What this rules out<a class="headerlink" href="#6-what-this-rules-out" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A single "watch fd, delegate" wrapper cannot cover ext/sockets the way <code>accept.rs</code> covers
+  <code>stream_socket_accept</code>/<code>stream_select</code>: 4 of the ~13 blocking functions structurally need either
+  the nonblocking-connect dance (<code>socket_connect</code>, <code>socket_addrinfo_connect</code>) or a thread-pool
+  offload for DNS (<code>socket_addrinfo_lookup</code>, and the hostname path through <code>socket_connect</code>/
+  <code>socket_sendto</code>). Confirms the "needs a different shape" bucket the task asked to look for is
+  real and larger than just the known <code>socket_connect</code> case.</li>
+<li>Extending <code>stream.rs</code>'s <code>install()</code> to <code>udp://</code>/<code>udg://</code> is not a copy of the <code>tcp://</code>/<code>unix://</code>
+  pattern — it needs new <code>Op</code> variants and a different actor shape (per-socket, not
+  per-connection) before any hooking work starts. <code>unix://</code> and <code>stream_socket_pair</code>, by contrast,
+  are a straightforward extension of the existing <code>tcp</code> machinery.</li>
+<li>A park-then-delegate hook for <code>socket_recv</code>/<code>socket_recvfrom</code>/<code>socket_recvmsg</code> cannot ignore the
+  <code>$flags</code> argument: <code>MSG_WAITALL</code> (and, by the same logic, any other flag that changes how much
+  the kernel waits for) means "watch once, delegate once" does not always give "the delegate call
+  returns immediately" — that assumption, true for <code>stream_socket_accept</code>, is not universally true
+  in ext/sockets.</li>
+</ul>
+<h2 id="7-what-i-could-not-determine-from-source-alone">7. What I could not determine from source alone<a class="headerlink" href="#7-what-i-could-not-determine-from-source-alone" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Whether stock PHP's <code>MSG_WAITALL</code> behavior actually matters in practice for any real Ignis
+  workload (I did not find or run a reproducer; this is a structural read of the flag's kernel
+  semantics via <code>recv(2)</code>, not an observed hang).</li>
+<li>The exact <code>SO_RCVTIMEO</code>/<code>SO_SNDTIMEO</code> default on a freshly created <code>Socket</code> object — sockets.c
+  never sets these at creation (no <code>setsockopt(SO_RCVTIMEO...)</code> call found in <code>socket_create</code>,
+  sockets.c:1163-1222), so the effective default is whatever the kernel's socket default is
+  (unset = block forever), but I did not verify this against a running kernel.</li>
+<li>Whether <code>EINTR</code> can actually reach a PHP userland <code>socket_recv</code> call in Ignis's threading model
+  (worker threads with signals largely masked/handled elsewhere in <code>embed.rs</code>) — the trap is real
+  at the ext/sockets source level regardless, but I did not check what signal delivery looks like
+  on an Ignis worker thread specifically.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

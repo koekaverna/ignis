@@ -1,0 +1,2081 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 39 — keeping an exclusive resource exclusive under fibers - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-39-keeping-an-exclusive-resource-exclusive-under-fibers" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 39 — keeping an exclusive resource exclusive under fibers
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The three mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/doctrine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctrine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/offload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/swoole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Swoole shim
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-actually-went-wrong-stated-precisely" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What actually went wrong, stated precisely
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-what-php-gives-us-to-work-with" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. What PHP gives us to work with
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. The options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#o1-fiber-affinity-on-the-wrapper-enforcement-5-lines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O1 — fiber affinity on the wrapper (enforcement, ~5 lines)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o2-real-ignismutex-and-ignissemaphore-primitive-no-new-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O2 — real Ignis\Mutex and Ignis\Semaphore (primitive, no new mechanism)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o3-scoped-access-instead-of-a-returned-handle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O3 — scoped access instead of a returned handle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o4-the-rules-that-catch-misuse-without-any-new-machinery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O4 — the rules that catch misuse without any new machinery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o5-held-across-a-suspension-detector-the-generic-answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O5 — "held across a suspension" detector (the generic answer)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o6-a-guarded-proxy-for-classes-we-do-not-wrap-create_object" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O6 — a guarded proxy for classes we do not wrap (create_object)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o7-attributes-plus-a-static-rule-this-is-what-syntax-looks-like-in-php" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O7 — attributes plus a static rule (this is what "syntax" looks like in PHP)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o8-actual-language-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O8 — actual language syntax
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-what-each-option-is-worth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. What each option is worth
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Recommendation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-what-this-does-not-solve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. What this does not solve
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-39-keeping-an-exclusive-resource-exclusive-under-fibers">Research 39 — keeping an exclusive resource exclusive under fibers<a class="headerlink" href="#research-39-keeping-an-exclusive-resource-exclusive-under-fibers" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-09-18. Question from the owner, after V-85: how do we stop two fibers from using the same
+database connection — at the language level or in our packages — and can locks or semaphores be made
+part of the syntax? The answer has to generalise: a connection is one instance of <em>a resource that
+tolerates exactly one user at a time</em>.</p>
+<h2 id="1-what-actually-went-wrong-stated-precisely">1. What actually went wrong, stated precisely<a class="headerlink" href="#1-what-actually-went-wrong-stated-precisely" title="Permanent link">&para;</a></h2>
+<p>A <code>Doctrine\DBAL\Connection</code> reached two fibers because a container service was shared and nobody
+noticed. The failure was not a missing lock — it was <strong>a reference that should not have existed</strong>.
+Once two fibers can name the same object, everything else is damage control.</p>
+<p>That distinction decides the whole design space:</p>
+<ul>
+<li><strong>Ownership</strong> makes sharing impossible. Right for anything non-reentrant: a libpq connection, a
+  <code>PDOStatement</code>, a stateful stream, a file handle mid-read.</li>
+<li><strong>Mutual exclusion</strong> makes sharing safe but serial. Right for things that genuinely must be one —
+  a process-wide cache warm-up, a rate limiter, an in-memory table.</li>
+</ul>
+<p>We have neither as a primitive today. What we have is <em>discipline</em>: <code>ConnectionPool::acquire()</code> pops
+the connection out of its idle list, so while it is leased it exists in one place; <code>Ignis\Scope</code> is
+keyed by the fiber; <code>Loop</code> clears the scope in a <code>finally</code>. All of that is correct and none of it is
+enforced — one <code>$this-&gt;connection = $connection</code> in an application service defeats it silently
+(<code>S-DBAL-DIRECT</code>).</p>
+<h2 id="2-what-php-gives-us-to-work-with">2. What PHP gives us to work with<a class="headerlink" href="#2-what-php-gives-us-to-work-with" title="Permanent link">&para;</a></h2>
+<p>Nothing at the type level. Rust refuses this program at compile time because <code>!Sync</code> is a type
+property and the borrow checker is not optional; Go does not refuse it but ships a race detector
+that finds it; Java's virtual threads pin on <code>synchronized</code> so the runtime at least knows. PHP has
+no ownership types, no race detector, and its concurrency here is cooperative — which is the one
+advantage we have: <strong>a fiber can only lose the resource at a suspension point, and we own the
+suspension point.</strong></p>
+<p>Three enforcement surfaces exist, and every option below sits on one of them:</p>
+<table>
+<thead>
+<tr>
+<th>surface</th>
+<th>what it can see</th>
+<th>cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>the object boundary (a wrapper's methods)</td>
+<td>every call into the resource</td>
+<td>one comparison per call</td>
+</tr>
+<tr>
+<td>the fiber switch (<code>zend_observer_fiber_switch</code>, already ours)</td>
+<td>every suspension, with the fiber identity</td>
+<td>must not move E2's 3.83 µs warm switch</td>
+</tr>
+<tr>
+<td>before runtime (PHPStan, already at level 9)</td>
+<td>the <em>shape</em> of the code: a shared service storing a resource</td>
+<td>zero at runtime</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-the-options">3. The options<a class="headerlink" href="#3-the-options" title="Permanent link">&para;</a></h2>
+<h3 id="o1-fiber-affinity-on-the-wrapper-enforcement-5-lines">O1 — fiber affinity on the wrapper (enforcement, ~5 lines)<a class="headerlink" href="#o1-fiber-affinity-on-the-wrapper-enforcement-5-lines" title="Permanent link">&para;</a></h3>
+<p><code>PooledConnection</code> already wraps every driver call. Record the owning fiber at <code>acquire()</code> and check
+it on each method:</p>
+<div class="highlight"><pre><span></span><code><span class="x">private function guard(): void</span>
+<span class="x">{</span>
+<span class="x">    if (Fiber::getCurrent() !== $this-&gt;owner) {</span>
+<span class="x">        throw new ExclusiveResourceException('this connection belongs to another fiber; it was leased at …');</span>
+<span class="x">    }</span>
+<span class="x">}</span>
+</code></pre></div>
+<p>Turns V-85's failure mode — another request's rows, HTTP 200 — into an exception naming the bug, at
+the first misuse rather than at the corrupted result. <strong>Cannot see</strong> a resource used outside the
+wrapper (a raw <code>new PDO</code> an application shares itself).</p>
+<h3 id="o2-real-ignismutex-and-ignissemaphore-primitive-no-new-mechanism">O2 — real <code>Ignis\Mutex</code> and <code>Ignis\Semaphore</code> (primitive, no new mechanism)<a class="headerlink" href="#o2-real-ignismutex-and-ignissemaphore-primitive-no-new-mechanism" title="Permanent link">&para;</a></h3>
+<p>The Doctrine pool already contains a hand-rolled semaphore: a permit count, a queue of <code>Future</code>s, a
+bounded wait, a timeout exception. That belongs in <code>ignis/runtime</code> as a primitive both it and
+everything else can use:</p>
+<div class="highlight"><pre><span></span><code><span class="x">$mutex = new Ignis\Mutex();</span>
+<span class="x">$mutex-&gt;withLock(function () use ($table) { $table-&gt;rebuild(); });   // parks, never blocks the thread</span>
+<span class="x">$permit = $semaphore-&gt;acquire(timeoutMs: 500);                      // or PoolTimeoutException</span>
+</code></pre></div>
+<p>No new mechanism (ADR-0037): it is <code>Future</code> plus the loop, the same way the pool's queue already is.
+Deduplicates code we have written twice and gives applications the tool for <em>their</em> shared state,
+which today they have to invent.</p>
+<h3 id="o3-scoped-access-instead-of-a-returned-handle">O3 — scoped access instead of a returned handle<a class="headerlink" href="#o3-scoped-access-instead-of-a-returned-handle" title="Permanent link">&para;</a></h3>
+<p><code>$pool-&gt;with(fn (Connection $c) =&gt; …)</code> hands the resource in and releases it in a <code>finally</code>. PHP
+cannot stop the callback from storing <code>$c</code>, so this is a convention — but paired with O1 the escape
+is caught on first use. Cheap, readable, and it makes the lifetime visible at the call site, which
+review can check and a returned handle cannot.</p>
+<h3 id="o4-the-rules-that-catch-misuse-without-any-new-machinery">O4 — the rules that catch misuse without any new machinery<a class="headerlink" href="#o4-the-rules-that-catch-misuse-without-any-new-machinery" title="Permanent link">&para;</a></h3>
+<p>Two pieces of bookkeeping in <code>Scope</code>, both of which we have had and lost:</p>
+<ul>
+<li><strong>One lease per fiber per resource.</strong> A second <code>acquire()</code> from a pool this fiber already holds is
+  a bug, not a wait — the old <code>Ignis\Pg</code> threw <code>LeaseError</code> in 36–39 µs with zero ops submitted.</li>
+<li><strong>Lock ordering.</strong> Record the set a fiber holds; acquiring B while holding A when some other fiber
+  did the reverse is the deadlock we cannot otherwise see. Detect and log; refusing is a later
+  decision.</li>
+</ul>
+<h3 id="o5-held-across-a-suspension-detector-the-generic-answer">O5 — "held across a suspension" detector (the generic answer)<a class="headerlink" href="#o5-held-across-a-suspension-detector-the-generic-answer" title="Permanent link">&para;</a></h3>
+<p>ADR-0038 already states the rule — <em>a lock that can be held across a yield must live on a socket or
+in the runtime, never on a file</em> — and nothing enforces it. The fiber-switch observer can: mark a
+resource <code>mustNotCrossSuspension</code>, and when a fiber suspends while holding one, log it (or throw
+under a strict flag).</p>
+<p>This is the one option that covers <strong>any</strong> resource rather than the ones we wrapped, and it is
+exactly the shape the context mechanism already has: a slot per fiber, read at the switch. Its price
+is the switch path, which E2 pins at 3.83 µs warm — any implementation that moves that number is
+refused.</p>
+<p>It is a <em>detector</em>, not a preventer: it tells you the fiber is holding a file lock across an
+<code>await</code> before that becomes a thread-wide deadlock (<code>R-SESS</code>), which is the difference between a bug
+report and a hang.</p>
+<h3 id="o6-a-guarded-proxy-for-classes-we-do-not-wrap-create_object">O6 — a guarded proxy for classes we do not wrap (<code>create_object</code>)<a class="headerlink" href="#o6-a-guarded-proxy-for-classes-we-do-not-wrap-create_object" title="Permanent link">&para;</a></h3>
+<p><code>route.rs</code> already swaps a class's <code>create_object</code> to hand a fiber a proxy (that is how offload
+routing works). The same hook can hand out a proxy that carries the owner fiber and checks it in
+<code>__call</code>, for a configured list — <code>PDO</code>, <code>Redis</code>, <code>SQLite3</code>, anything an application shares by
+accident. Enforcement without the application using our API at all.</p>
+<p>Costs an object per instance and a check per call, and it is per class, not per driver — the same
+limitation <code>R-PDO-SQLITE</code> documents. Opt-in, off by default.</p>
+<h3 id="o7-attributes-plus-a-static-rule-this-is-what-syntax-looks-like-in-php">O7 — attributes plus a static rule (this is what "syntax" looks like in PHP)<a class="headerlink" href="#o7-attributes-plus-a-static-rule-this-is-what-syntax-looks-like-in-php" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="x">#[Ignis\Exclusive]                 // one fiber at a time, enforced by O1/O6</span>
+<span class="x">final class Connection { … }</span>
+
+<span class="x">#[Ignis\FiberBound]                // must not outlive the request</span>
+<span class="x">final class UnitOfWork { … }</span>
+</code></pre></div>
+<p>An attribute is metadata; something has to enforce it. Two things can, and together they are most of
+the value:</p>
+<ul>
+<li><strong>PHPStan</strong>, at build time: a service that is shared and stores a property typed <code>#[Exclusive]</code> is
+  the <code>S-DBAL-DIRECT</code> shape, and it is mechanically detectable. Zero runtime cost, and it fails the
+  build rather than the request.</li>
+<li><strong>The runtime</strong>, via O1/O6, for what analysis cannot see.</li>
+</ul>
+<h3 id="o8-actual-language-syntax">O8 — actual language syntax<a class="headerlink" href="#o8-actual-language-syntax" title="Permanent link">&para;</a></h3>
+<p><code>synchronized</code> blocks, <code>lock ($m) { … }</code>, <code>defer</code> — none exist in PHP 8.5, and adding them is an RFC
+against php-src, not something a host can do. The nearest idiom is what <code>FiberManager</code> already does:
+a guard object whose destructor releases, which is RAII with the scope being "the last reference".
+Worth naming so nobody re-proposes it: <strong>we are not going to grow syntax; we are going to make the
+object boundary honest.</strong></p>
+<h2 id="4-what-each-option-is-worth">4. What each option is worth<a class="headerlink" href="#4-what-each-option-is-worth" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>option</th>
+<th>enforces or detects</th>
+<th>where</th>
+<th>cost</th>
+<th>catches the V-85 bug?</th>
+<th>catches a raw shared <code>PDO</code>?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>O1 affinity check</td>
+<td>enforces</td>
+<td>wrapper</td>
+<td>one comparison per call</td>
+<td><strong>yes</strong>, at first misuse</td>
+<td>no</td>
+</tr>
+<tr>
+<td>O2 mutex/semaphore</td>
+<td>enables safe sharing</td>
+<td>userland</td>
+<td>a park when contended</td>
+<td>not by itself</td>
+<td>if the code uses it</td>
+</tr>
+<tr>
+<td>O3 scoped access</td>
+<td>convention</td>
+<td>API shape</td>
+<td>none</td>
+<td>makes it visible</td>
+<td>no</td>
+</tr>
+<tr>
+<td>O4 lease/order rules</td>
+<td>enforces</td>
+<td><code>Scope</code></td>
+<td>negligible</td>
+<td>partly (double lease)</td>
+<td>no</td>
+</tr>
+<tr>
+<td>O5 suspension detector</td>
+<td><strong>detects</strong></td>
+<td>switch observer</td>
+<td>must not move 3.83 µs</td>
+<td>yes, and more</td>
+<td><strong>yes</strong></td>
+</tr>
+<tr>
+<td>O6 guarded proxy</td>
+<td>enforces</td>
+<td><code>create_object</code></td>
+<td>proxy + check per call</td>
+<td>yes</td>
+<td><strong>yes</strong></td>
+</tr>
+<tr>
+<td>O7 attributes + PHPStan</td>
+<td>enforces early</td>
+<td>build</td>
+<td>zero</td>
+<td>the shape of it</td>
+<td>the shape of it</td>
+</tr>
+<tr>
+<td>O8 syntax</td>
+<td>—</td>
+<td>php-src</td>
+<td>an RFC</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-recommendation">5. Recommendation<a class="headerlink" href="#5-recommendation" title="Permanent link">&para;</a></h2>
+<p>In order, cheapest first, each useful alone:</p>
+<ol>
+<li><strong>O1 + O4 now.</strong> Five lines in <code>PooledConnection</code> plus the double-lease rule turn a data leak into
+   an exception. This is the largest return per line in the whole list.</li>
+<li><strong>O2 next</strong>, because the code already exists twice and wants to be a primitive — and because
+   applications have shared state of their own and we currently offer them nothing.</li>
+<li><strong>O7's PHPStan rule</strong>, which catches the exact shape that bit us before the code ever runs.</li>
+<li><strong>O5 when the switch budget allows it</strong>, measured against E2 — it is the only one that covers
+   resources nobody wrapped, and it makes ADR-0038's rule enforceable instead of advisory.</li>
+<li><strong>O6 opt-in</strong>, for applications that share things we do not own.</li>
+</ol>
+<p>Not doing: O8.</p>
+<h2 id="6-what-this-does-not-solve">6. What this does not solve<a class="headerlink" href="#6-what-this-does-not-solve" title="Permanent link">&para;</a></h2>
+<p>A resource shared between <strong>threads</strong> is a different problem — these are all per-thread mechanisms,
+because a fiber never leaves its thread. Cross-thread sharing stays what it is today: the offload
+pool's worker-pinned handles, or the runtime owning the resource outright. And nothing here helps a
+fiber that hangs while holding something (<code>S-POOL-LEASE-AGE</code>): ownership says who has it, not how
+long they may keep it.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
