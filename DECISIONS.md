@@ -521,3 +521,34 @@ true for Ignis too").
 Kill criterion: a classic-mode request that answers the wrong body or nothing at all under
 concurrency, with `Scope` holding the right value at the time — that would mean the state is not
 where the fault is, and the serialising option comes back.
+
+---
+
+## 2026-09-19 — the planned items that close red ones are dispatched by the guard, not by the track label
+
+`BACKLOG.md` tracks an item `main` or `agent`; `.claude/hooks/guard-ffi.sh` decides what a Sonnet
+agent can actually edit — `crates/ignis/src/php/**`, `crates/ignis-sys/**`,
+`crates/ignis/src/backend/**` and any file containing `unsafe`. Reading the six planned→red links
+against that guard splits them in two, and the split is not the one the labels suggest.
+
+`offload.rs`, `main.rs`, `http.rs` and `watch.rs` contain **no** `unsafe` and sit outside the three
+guarded directories, so the whole offload failure path is agent territory — including the half of
+`A-LEAKS-RUST` that lives there, which the backlog tracks `main`. It is dispatched to an agent
+anyway: the guard is the safety boundary, the label is a routing hint, and the rule that protects
+the result is the one already in CLAUDE.md — every agent number is re-run by main before it enters
+`VALIDATION.md`. `A-SWALLOWED-RUST` and `A-LEAKS-RUST` (b)(c) are the same three functions in one
+215-line file; splitting them across two workers would have produced a conflict, not a review.
+
+Blocked from agents and therefore kept by main: the `park.rs` bundle (`A-PARK-ARITHMETIC`,
+`R-FOREIGN-FIBER`, the park half of `A-UNSAFE-CONTRACTS`, the `E18-I` stage-2 remainder),
+`A-RUST-DEAD` (`route.rs`, `php/locklib.rs`, `backend/temporal.rs`), the temporal half of
+`A-LEAKS-RUST`, and `M3-7` (`module.rs`).
+
+`A-RUST-TESTS` is **not** dispatched: ten of its eleven modules are guarded, so an agent could
+reach only `watch.rs`, and the red item it carries — `A-PARK-ARITHMETIC`'s missing test vehicle —
+is in `park.rs`, which it cannot touch. It stays with the park bundle.
+
+Kill criterion: an agent's change to `offload.rs` that needs a `reactor.rs` edit to release the
+caller's op. `Reactor::complete` is already reachable from `offload.rs` (`:77`, `:116`), so the
+fix should not need one; if it does, the boundary was drawn in the wrong place and the offload half
+comes back to main.

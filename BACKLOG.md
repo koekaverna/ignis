@@ -411,6 +411,26 @@ ours, not an application's.
 already does) and the destructor is a safety net that closes without talking to the server, or the
 reset is deferred to the next acquire. A test that destroys a leased connection inside
 `gc_collect_cycles()` must not park.
+**Amended 2026-09-19 (owner note): adopt upstream's shape, do not invent one.** In async mode the
+fork hands a collection to a **dedicated GC coroutine** rather than running it under whichever
+coroutine tripped the threshold, so scope teardown and cycle-collected destructors run on a service
+fiber and never from the loop's idle point. Take that shape — it is the same conclusion ADR-0034
+reaches from the other side, and adopting it makes ADR-0034's unresolved
+fiber-suspend-in-destructor policy a decision already made upstream rather than one we owe.
+**And inherit the trap that came with it,** because it is a long-running-server bug and we are a
+long-running server: php-async CHANGELOG #234, read verbatim — "The GC threshold grew by 10000 after
+every full root buffer in async mode and never came back down, so collections ran further and
+further apart and the memory amplitude grew with them until a long-running server reached
+`memory_limit`". The cause is the accounting, not the coroutine: "A collection in async mode is
+handed to the GC coroutine and reports **0 collected nodes to the caller that triggered it**, so the
+threshold is now adjusted inside that coroutine, from the count it actually collected." A service
+fiber that swallows the collected count silently disables PHP's own GC tuning. Note for the record
+that main's reading corrects the owner's summary here: the GC coroutine is the **pre-existing**
+async-mode shape that #234 works inside, not #234's fix.
+**Added acceptance.** Whatever runs the collection reports the count it actually collected to
+whoever adjusts the threshold; a soak that drives cycle creation shows the GC threshold and RSS
+amplitude flat rather than growing — `bench/a3-soak.sh` is the instrument, and `M4-10`
+(`IGNIS_LOOP_GC` measured, still unmeasured) is the arm this rides on.
 
 ### A-SWOOLE-TICKERS The Swoole shim polls instead of waiting `agent` `open — 2026-09-18`
 **What.** `swoole/src/shim.php:225` and `:235` are `while (!$stop()) { \Ignis\sleep(5); }` and
@@ -656,6 +676,176 @@ be told, at the moment of misuse, that it is holding another fiber's. Not silenc
 that refuses the correct shape.
 
 ---
+
+## Upstream true-async convergence (owner note, 2026-09-19)
+
+Filed from an owner research pass over `true-async/php-src` (branch `PHP-8.6-true-async`,
+`Zend/zend_async_API.h`) and `true-async/php-async`. **None of these may start before the current
+cycle's work is committed** (owner instruction in the note).
+
+**What main verified on 2026-09-19 before filing, and what it found instead.** There is no
+true-async checkout on this box — no `~/php-src-async`, no `/opt/php86-async-zts`, no installed
+`zend_async_API.h` (which is `A-BACKEND-B-CI` restated: nothing here has ever built backend (b)), so
+verification was done by reading the named sources directly. Confirmed verbatim: `zend_async_context_t`
+with an `offset` member and `find`/`set`/`unset`/`dispose` function pointers; `zend_async_internal_context_key_alloc(const char *key_name) -> uint32_t`,
+`_find(coroutine, key) -> zval *`, `_set(coroutine, key, zval *) -> bool`, `_unset(coroutine, key) -> bool`;
+a coroutine carrying **both** `zend_async_context_t *context` and `HashTable *internal_context`;
+`zend_coroutine_switch_handlers_vector_t` as `{length, capacity, data, in_execution}`; Context keys
+typed `string|object`; and the two lookup rules in the stub's own words — "find(), get() and has()
+read this Context first and then the Contexts of the Scopes above it" against "The *Local() forms
+read this Context alone". Five things came back **different from the note**, and each is filed with
+the item it affects:
+
+1. The dispose entry point is spelled `zend_async_coroutine_internal_context_dispose(zend_coroutine_t *)`,
+   not `zend_async_internal_context_dispose`.
+2. `ZEND_ASYNC_REQUEST_SCOPE` and `request_scope` are **absent** from `Zend/zend_async_API.h` on
+   branch `PHP-8.6-true-async`, while php-async's CHANGELOG #105 describes the field as living on
+   `zend_async_scope_t`. Either the branch predates it or it is declared elsewhere — and
+   `scripts/build-php-async.sh` pins a **third** name (`async-core`, PR #22561 head). Three branch
+   names are in play and no item may assume one. Settling this is `R-TA-REQUEST-SCOPE`'s first job.
+3. `current_context`, `coroutine_context`, `root_context` and `request_context` are in **neither**
+   `context.stub.php` nor `async.stub.php`; neither file declares the `Scope` class either. The
+   userland surface the note describes lives in some other stub. Locating it is `R-TA-CONTEXT`'s.
+4. `async.stub.php` declares `spawn_thread(\Closure $task, bool $inherit = true, ?\Closure $bootloader = null): Thread`.
+   Upstream has threads. `R-TA-SERVER` may not list "threads in one process" as an Ignis
+   differentiator without measuring against that.
+5. CHANGELOG #234's actual defect is a GC threshold that grew by 10000 after every full root buffer
+   in async mode and never came back down, so a long-running server walked into `memory_limit`. The
+   dedicated GC coroutine is the **pre-existing** async-mode shape the fix works inside, not the fix.
+   `A-DESTRUCTOR-IO` inherits both halves.
+
+Claims from the note that main could not check against a source are marked
+`owner report, unverified` on the item that carries them.
+
+### R-TA-CONTEXT Can our per-scope storage sit on upstream's `internal_context` `research` `severity: planned` `open — owner note 2026-09-19` — **blocks `S-SCOPED-CLASS` and `S-OWNERSHIP`**
+**What.** Read and write up `zend_async_context_t` (find/set/unset/dispose plus `offset`), the
+coroutine's two fields `context` and `internal_context` (HashTable, numeric keys) with the
+`zend_async_internal_context_key_alloc`/`_find`/`_set`/`_unset` and
+`zend_async_coroutine_internal_context_dispose` surface, `zend_coroutine_switch_handlers_vector_t`,
+and the userland surface — whose stub file main could not locate (finding 3 above), so **find it
+first and record where it is**: `current_context`, `coroutine_context`, `root_context`,
+`request_context`, Context keys `string|object`, the Scope-chain walk and the one-level `*Local`
+forms.
+**Three questions, each answered with a citation.** (1) Can our per-scope storage sit on
+`internal_context` under a key from `key_alloc`, so backend (b) inherits context for free?
+(2) Does their per-coroutine `context` cover what our superglobal slots do (`superglobals.rs`), or
+is it strictly a user-facing map? (3) What do their `switch_handlers` give that our
+`zend_observer_fiber_switch_register` observer does not?
+**Evidence.** The header symbols and both lookup rules are verified (see the section preamble); the
+`offset` member's purpose and the numeric-key discipline are `owner report, unverified`.
+**Acceptance.** `docs/research/NN-*.md` answering all three with file-and-line citations into the
+fork, **plus** an amendment to ADR-0003 stating what backend (b) would inherit and what it would
+still have to build. A question answered "probably" is not answered.
+**Constraints.** `research` lane; read-only. Needs a checkout — `scripts/build-php-async.sh` clones
+one, and which branch it should clone is `R-TA-REQUEST-SCOPE`'s finding, so do that item's branch
+question first or state the revision you read.
+
+### R-TA-REQUEST-SCOPE Upstream already specifies the embedder's role we occupy `research` `severity: planned` `open — owner note 2026-09-19`
+**What.** `Async\request_context(): ?Context` is assigned by the embedding C code — an HTTP server —
+and propagated to child coroutines, backed by a `request_scope` field on `zend_async_scope_t` with
+O(1) access via `ZEND_ASYNC_REQUEST_SCOPE` (php-async CHANGELOG #105, quoted verbatim and confirmed).
+That embedder is Ignis. Determine what an embedder must actually do to set it, and whether our
+dispatch maps onto it 1:1 or only resembles it.
+**Settle the branch question first.** Neither `ZEND_ASYNC_REQUEST_SCOPE` nor `request_scope` appears
+in `Zend/zend_async_API.h` on `PHP-8.6-true-async`, and `scripts/build-php-async.sh` builds
+`async-core` (PR #22561 head) — a third name. Name the revision where this field exists, and say
+whether backend (b)'s pinned branch has it.
+**Why it matters.** If our scope model and theirs converge, backend (b) stops being a compatibility
+exercise and becomes the same design reached twice. If they diverge, the reason is an architectural
+statement and belongs in writing before either side moves.
+**Acceptance.** `docs/research/NN-*.md` plus a note in ADR-0037 recording convergence or divergence
+**with the reason**, and the revision every claim was read at.
+**Constraints.** `research` lane; read-only.
+
+### R-TA-SERVER An async PHP server already exists next to the extension `research` `severity: n/a — scope question, not a defect` `priority: high` `open — owner note 2026-09-19`
+**What.** `true-async/server` describes itself as "High-performance HTTP/1.1, HTTP/2, and HTTP/3
+server as a native PHP extension, built on the TrueAsync event loop", covering WebSocket, SSE, gRPC
+and TLS 1.2/1.3 on one port with multi-worker scaling, and requires the fork **plus** `ext-async`
+**plus** its own extension, against OpenSSL 3.5+, libnghttp2, libngtcp2 and libnghttp3. Its README
+claims production readiness, 100 % protocol completion and a security audit — **that is the repo's
+own description and is recorded here as such, not as a verified fact.** Read its README,
+architecture and test layout and answer: what it does, what it requires, what it does **not** do,
+and which Ignis differentiators it lacks.
+**The honest list to test, not assert.** Threads in one process — **check before claiming it**:
+`async.stub.php` declares `spawn_thread(...): Thread` (finding 4). Then offload, park for unmodified
+blocking code, the Symfony worker-mode adapter, and the per-thread supervisor.
+**Why it matters.** This is a scope question. If that server covers the ground Ignis was built for,
+the answer may be to narrow or to fold, and the sooner that is on paper the cheaper it is.
+**Acceptance.** `docs/research/NN-*.md`: a one-page comparison, honest in both directions, ranked
+**keep / narrow / fold** — with the ranking stated as a recommendation and the reasoning shown.
+**No decision in the research: the owner decides.**
+**Constraints.** `research` lane; read-only. Severity is deliberately not set: severity here measures
+what breaks at runtime, and this item breaks nothing — its priority comes from what it could make
+unnecessary.
+
+### S-OWNERSHIP Every value a fiber-scoped service hands out carries its owner `main` `severity: planned — carries three open red items` `open — owner note 2026-09-19, owner report, unverified`
+**What.** A value handed out by a fiber-scoped service carries `owner_scope_id` in the object's GC
+bits; taint is transitive through property writes and array element writes. Violations: writing a
+tainted value into a longer-lived holder; a tainted object outliving its scope with a refcount above
+expected; entering a pinned object from a foreign fiber. Release is explicit and is exactly one of
+`Scope::escape` (untaint, caller takes responsibility), `Scope::share` (read-only cross-fiber),
+`Scope::pin` (owner-only, foreign entry throws). `#[Scoped(escape: 'never')]` forbids release
+outright for connections, EntityManager and Request. Dev and chaos modes throw, naming **both**
+holder and value; production counts and warns.
+**Why it matters.** Three open items are the same defect seen three times — `S-DBAL-DIRECT`,
+`S-EXCLUSIVE` and `S-RESET-ARRAYPOOL` — and the static rule shipped for `S-SINGLETON-CAPTURE` (V-96)
+catches only the property-assignment shape. This is the `context` mechanism (ADR-0006), not a fourth
+one.
+**Prior art to cite, not copy.** Upstream has no general ownership mechanism but hit this class
+per-resource: php-async CHANGELOG #200, verified verbatim — a `PDOStatement` outliving a pooled
+`PDO` "was keyed to a context that no longer matched", the destructor saw it as orphaned and
+returned it to the pool "while the coroutine binding still owned it and returned it a second time —
+the pool destroyed the same connection twice", fixed so that "every release path detaches the owning
+binding first". The lesson is the shape of the fix, not its scope.
+**Acceptance.** V-96's capture cases caught 6/6 **including the array-write and setter forms the
+static rule misses**; `S-DBAL-DIRECT`, `S-EXCLUSIVE` and `S-RESET-ARRAYPOOL` detected by this
+mechanism with no code of their own; per-property-write overhead measured, target within the
+observer's 100 ns.
+**Explicitly out of scope** (owner): non-object statics — those are context slots — and C-extension
+state, which is offload's.
+**Constraints.** `main` lane, FFI territory. Blocked by `R-TA-CONTEXT` question (1): if per-scope
+storage can sit on `internal_context`, backend (b) gets this for free and the design changes.
+**Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
+owner's design, not read from any source.
+
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned — closes the façade half of V-96 by construction` `open — owner note 2026-09-19, owner report, unverified` — **blocked by `R-TA-CONTEXT`**
+**What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
+`create_object` returns a façade with no properties table; `read_property`, `write_property`,
+`has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address
+`[scope_id][slot]`, with slots resolved from `ce->properties_info` **at class link time** into a
+dense array and never by name at runtime; a zero scope holds constructor defaults and copies on
+write into a new scope; scope death frees the row, destructors running on the service fiber per
+`A-DESTRUCTOR-IO`.
+**Why it matters.** A singleton holding the façade becomes safe by construction — this closes the
+façade half of V-96 **without proxies**. The value-capture half stays with `S-OWNERSHIP`; the two
+items are halves of one defect and neither closes it alone.
+**Open questions to answer in the ADR, not in code** (owner): inheritance — a scoped class's parent
+must be scoped too; instantiation outside a request; clone, serialize and reflection; and
+`get_property_ptr_ptr` correctness for `$this->arr[] =` and `$this->n++`.
+**Acceptance, in this order.** A prototype on a standalone class with two interleaved fibers
+**before any Symfony work**; then `FiberRequestStack` rewritten on it — **if that class disappears
+the mechanism is right, and if it does not, say what is missing**. Read cost measured against a
+plain property. **This module ships with its tests in the same commit** — `A-RUST-TESTS` is the
+reason that sentence is here.
+**Constraints.** `main` lane, FFI territory, needs an ADR before code.
+**Unverified.** The handler list and the slot-resolution scheme are the owner's design; what
+upstream offers instead is `R-TA-CONTEXT`'s question (1).
+
+### S-SCOPE-TERMINOLOGY Our "scope" and upstream's "Scope" mean different things `agent` `severity: planned` `open — owner note 2026-09-19`
+**What.** Upstream's `Scope` means task lifetime and structured concurrency — `spawn`, `cancel`,
+`awaitCompletion`, `dispose`. Ours means state isolation. Fix the collision **before it reaches an
+API**: ours becomes `state scope` / `scope_id`, task lifetime becomes `task scope`.
+**Why it matters, in the owner's arithmetic.** Ten lines now against a rename after publication.
+`S-OWNERSHIP` above already proposes `Scope::escape`/`share`/`pin` — that is the API this item
+exists to get right, so it lands first.
+**Acceptance.** One short ADR, then a pass over docs and identifiers; `Ignis\Scope`'s own doc block
+says which of the two it is.
+**Evidence.** The collision is confirmed in one direction only: `context.stub.php` documents the
+Scope **chain** for context lookup, and `async.stub.php` declares `spawn`/`await`/`spawn_thread` as
+free functions without declaring a `Scope` class at all (finding 3) — so upstream's `Scope` surface
+was not read at its source. Confirm it before writing the ADR; the method list above is
+`owner report, unverified`.
+**Constraints.** `agent` lane; docs and identifiers only, no behaviour change.
 
 ## Closed — index
 
