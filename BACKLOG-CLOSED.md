@@ -895,3 +895,354 @@ down from three, not to zero. The remaining change is an `AtomicUsize` bumped on
 on answer. It is a hot-path performance claim, and this box measures +/-6.7 % run to run on hello
 throughput (V-82), so its effect is under the instrument. Landing it here would be exactly the
 unmeasured optimisation the cycle's own rule forbids. **Needs a quiet box and E4/E10 before/after.**
+
+## Cycle 2026-09-20 — fiber-scoped objects, and what the round before it finished
+
+### R-SESS A file lock held across a yield DEADLOCKS the thread `main` `CLOSED 2026-09-19 — the deadlock was fixed by a6c1a56 and gated in smoke.sh; the residual (the retry loop's missing deadline) was discharged on its own terms in A-PARK-ARITHMETIC (d)`. Not a stall: a hang. `ext/session`'s files handler takes a blocking `flock(LOCK_EX)` (`mod_files.c:210`) and holds it from `session_start()` to `session_write_close()`. A regular file cannot be parked (epoll refuses it), so a second fiber's `flock` blocks the **OS thread**, so the loop can never resume the holder, so the lock is never released — measured: two fibers, killed at 12 s with no progress. Park makes it *more* likely, not less: `usleep`, `sleep` and stream I/O all yield now, so the holder is suspended far more often than a php-fpm developer would expect. **Symfony's cache lock is NOT affected** (V-58): `LockRegistry` uses non-blocking `flock` plus `usleep(100 ms)` polling, and `usleep` parks — measured 60/60 ticks during a 600 ms contended wait. **The rule:** a lock that can be held across a yield must live on a socket (Redis, PostgreSQL) or in the runtime, never on a file. Fixes to choose from, none built: (1) ship a PostgreSQL session handler on `Ignis\Pg` using `pg_advisory_xact_lock` — the wait is server-side and the client waits on a socket, which parks; (2) document Redis/PDO handlers and refuse to start with `session.save_handler=files` (cheapest, turns a mysterious hang into a message); (3) a runtime-owned session store with the lock as a reactor op — fastest and dependency-free, but new Rust and no durability across restarts (ADR-0024). Also unmeasured: whether an actual Symfony session reaches that `flock` under the embed SAPI at all — `session_start()` hit `headers already sent` in the probe.
+**Reconciled 2026-09-19.** This item says "fixes to choose from, **none built**". That is false and has been since the day after it was written: `ignis_park_flock` interposes the blocking `flock` so it parks instead of holding the OS thread — commit `a6c1a56`, "interpose flock so a blocking lock inside a fiber parks (S1-FLOCK, V-58)", +49 lines in `park.rs`, +5 in `csrc/park.c`, **+10 in `scripts/smoke.sh`, so it is gated**. The deadlock this item is named for is therefore closed by shipped code, not by one of its three proposals. **The residual, and the only reason this is not `CLOSED`:** that retry loop has no overall deadline, so a lock held by a crashed holder parks the fiber for the life of the process — filed as `A-PARK-ARITHMETIC` (d), where it belongs. Close this item when that lands.
+
+### A-BACKEND-B-CI Nothing anywhere builds backend (b) `main` `DONE 2026-09-20 — .github/workflows/backend-b.yml, scheduled plus workflow_dispatch (owner decision 2026-09-20, DECISIONS.md)`
+**What.** `crates/ignis/src/backend/async_core.rs` is behind `cfg(php_async_abi)`, which needs the
+true-async engine (`scripts/build-php-async.sh`). No CI job builds it and this box has no such engine,
+which is why it sat with a two-arm `match` against a nine-variant enum until V-91. The tripwire now in
+`reactor.rs` catches the *enum* growing; it cannot catch anything else in that file.
+**Built 2026-09-20.** A scheduled job, not a push job: building php-src takes minutes and this
+backend changes on the fork's schedule rather than ours. It is not in `nightly.yml` either, whose
+own header says correctness lives in `ci.yml` — so it is its own workflow. The fork prefix is
+cached and keyed on the branch, because a dispatch with a different branch must not silently reuse
+another one's build.
+**Compiling is the floor, not the gate.** The job runs `cargo check`, then `clippy -D warnings` —
+the same gate `ci.yml` uses, and the one that actually caught the last breakage in feature-gated
+code on 2026-09-19 — then a release build, then the unit suite against the fork, because a binary
+that links is not yet a binary that works.
+**And it answers a second question this item did not know it had.** `R-TA-CONTEXT` and
+`R-TA-REQUEST-SCOPE` both need to read the fork's headers, and on 2026-09-19 there was no checkout
+on this box, so an owner note had to be verified over the network against a branch nobody could
+name. The job uploads `zend_async_*.h` as an artifact, tagged with the branch it built, so the
+next person answering those reads a revision this job names.
+**Still open, deliberately:** which branch is the right one. Three names are in play — `async-core`
+(the script's default, PR #22561 head), `PHP-8.6-true-async`, and whatever revision php-async's
+CHANGELOG #105 requires for `request_scope`. The job takes the branch as a dispatch input rather
+than pretending to know; settling it is `R-TA-REQUEST-SCOPE`'s first job.
+
+**Acceptance.** A CI job that runs `scripts/build-php-async.sh` and
+`PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo check -p ignis`,
+on a schedule rather than per push if the engine build is too slow for the main gate. Or ADR-0003 is
+amended to say backend (b) is a recorded experiment that is not kept compiling, and the file says so
+at the top.
+
+### A-PARK-ARITHMETIC Overflow before the clamp, and two syscall shims that answer wrongly `main` `DONE 2026-09-19 — all four parts, with the seven tests park.rs never had`
+**What.** (a) `module.rs:110` does `(ms.max(0) as u64) * 1000` with no clamp, so
+`ignis_submit_sleep(PHP_INT_MAX)` wraps into a short sleep. (b) `park.rs:531` computes
+`ts.tv_sec * 1000 + …` and clamps *after* the multiply; same shape at `:320` (`SO_RCVTIMEO`) and
+`:725` (a caller-supplied `timespec`). (c) `ignis_park_sleep` (`park.rs:769`) always returns 0, while
+POSIX `sleep()` returns the unslept remainder when interrupted. (d) `ignis_park_flock`
+(`park.rs:863-879`) retries in a 20 ms loop with no overall deadline: a lock held by a crashed holder
+parks the fiber for the life of the process, and that ceiling carries no `ponytail:` marker.
+**Acceptance.** Saturating arithmetic before every clamp with a unit test per site (these are pure
+functions and `park.rs` has no tests at all today — see A-RUST-TESTS); `sleep` returns the remainder;
+`flock` either takes a deadline or says in a `ponytail:` line that it does not and why.
+**Done 2026-09-19, and the test was written before the fix so it could be watched failing** —
+`attempt to multiply with overflow` at `park.rs:536`, which is what the release build turns into a
+spin. (a) `module.rs`'s `ignis_submit_sleep` saturates. (b) the three clamp-after-multiply sites
+became one helper, `milliseconds_ceil`, used by both `ms_ceil` and `sock_timeout_ms`; the third,
+`ignis_park_nanosleep`, got a validator instead — `tv_sec as u64` turned a negative interval into a
+wait of roughly 584,000 years, and POSIX calls that `EINVAL`, so it is refused and the real syscall
+produces the error itself. (c) `sleep()` now answers with the unslept remainder, rounded up, via
+`unslept_seconds`; it returned a flat 0 on every path, telling a caller its sleep completed when a
+signal had cut it short. (d) the `flock` retry loop takes the second branch: a `ponytail:` line
+names the ceiling and says why a deadline would be wrong — a blocking `flock` has no timeout in
+POSIX, so returning `EWOULDBLOCK` after an interval of our choosing is an error no caller expects.
+The ceiling named there is real and its upgrade path is `S-POOL-LEASE-AGE` fix 3, one watchdog
+instead of a timeout per call site.
+**Seven tests**, `park.rs`'s first: saturation, round-up, zero and negative, seconds-plus-nanoseconds,
+the two `EINVAL` shapes, valid-interval saturation, and the interrupted-sleep remainder.
+
+### A-UNSAFE-CONTRACTS Four `// SAFETY:` notes that do not justify their code `main` `DONE 2026-09-19 for correctness — all five false notes (four filed, one found) now describe their code; the de-duplication half is folded into research 43's park_gate merge`
+**What.** The four-line paragraph "Nothing here dereferences the caller's buffer — it is handed
+straight back to the kernel" appears verbatim **17×** in `park.rs` (counted 2026-09-19; this entry said 14) and is **false** at **three** of them (this entry said two) — the third, `ignis_park_nanosleep`, dereferences `(*req).tv_sec` and `(*req).tv_nsec` at `park.rs:730` under that exact paragraph, and was missed both by the audit that filed this item and by main reading the same function aloud on 2026-09-19. The two the entry did name:
+`ignis_park_select` (`:604`) does `std::ptr::read`, `FD_ISSET` and `ptr::write` on the caller's fd
+sets, and `ignis_park_ppoll` (`:578`) dereferences `ts`. `locklib::install` (`:190`) says "the
+entries live for the process lifetime" while the code copies the array to the **stack** — it happens
+to be sound because `zend_register_functions` copies each entry, but that is not the stated reason.
+`worker_arg` (`temporal.rs:199`) is a **safe** fn whose body dereferences a raw pointer behind a
+`// SAFETY:` comment asserting a caller contract its signature does not require.
+**Why it matters.** ADR-0041 gates on every `unsafe` block having a note, and the gate counts notes,
+not whether they are true. A duplicated contract is one nobody re-reads, which is exactly how two of
+them came to sit over code they do not describe.
+**Acceptance.** The two `park.rs` sites get notes about what they actually touch; `locklib`'s states
+the real reason; `worker_arg` becomes an `unsafe fn`. The 14 copies are not a style problem to sweep —
+whatever is genuinely common goes in the module doc once, and each site keeps what is its own.
+**Two of four done 2026-09-19.** `locklib::install` now states the real reason it is sound: `fns` is
+a stack copy that does **not** need to outlive the call, because `zend_register_functions` copies
+each entry before returning — what must be `'static` is what the entries point at, every `fname`
+and arginfo being a literal. `worker_arg` (`backend/temporal.rs`) became an `unsafe fn` with a
+`# Safety` block, and its six call sites were wrapped; it was a safe function whose comment
+asserted a caller contract its signature did not require, so any caller could hand it a null.
+**All five done 2026-09-19.** `ignis_park_ppoll` says it dereferences the caller's `timespec` to
+compute the wait; `ignis_park_select` says it both reads **and writes** the caller's fd sets —
+`ptr::read`, `FD_ISSET`, `ptr::write` — which the shared paragraph flatly denied; `ignis_park_nanosleep`,
+the fifth site and not in this item's original count, says it reads `*req`. The paragraph now
+appears **14 times instead of 17, and every remaining copy is true** — each of those sits over a
+shim that really does hand the buffer straight to the kernel.
+**The de-duplication half stays open, deliberately, and moves to research 43.** This item's own
+acceptance asks that whatever is genuinely common go in the module doc once. Doing that now would
+be done twice: research 43 proposes collapsing 11 of the 14 io-shaped shims into one `park_gate`
+helper (≈−80 lines), which deletes those copies structurally rather than editing them. The correctness
+defect — notes that lie about their code — is what made this red, and it is closed.
+
+### A-LEAKS-RUST Three thread-local and process-wide maps that only grow `main` `DONE 2026-09-19 — all three, with the arm the acceptance asked for, falsified before it was trusted`
+**What.** (a) `temporal.rs:41,81` — `WORKERS` never removes an entry; `zif_shutdown` (`:333`) calls
+`initiate_shutdown()` and leaves it, while the module doc says "for the process lifetime (or until
+shutdown)". (b) `offload.rs:44` — `JOBS` entries are removed only in `done()`, so a worker that dies
+mid-job (a PHP fatal) leaks the entry *and* leaves `Reactor::inflight` permanently raised on the
+caller — which is the same failure `submit`'s own doc says was already fixed once for the rejection
+path. `CALLBACKS` (`:39`) leaks the same way when the calling thread dies, and `callback()` (`:126`)
+then blocks a worker on `rx.recv()` with no timeout. (c) The offload job queues are `unbounded()`
+(`:55-56`).
+**Acceptance.** A dead worker's job fails its caller and releases the op; `WORKERS` drops what it
+shuts down; the reply wait has a timeout. Bench: kill an offload worker mid-job under
+`bench/e16-offload.sh` and show `ignis_inflight()` returning to zero.
+**Landed 2026-09-19, re-run by main (fmt, clippy `-D warnings`, 60/60 workspace, 8/8 offload).**
+(b) `JOBS` values became `RunningJob { caller, op, worker }`, stamped by `next()`; `worker_gone(i)`
+fails whatever worker `i` still held through the same `caller.complete(op, Outcome::Failed(..))`
+path a rejected submit already used, and `main.rs` calls it after the worker loop returns for any
+reason. `CALLBACKS` entries are now removed win or lose and the reply wait is bounded
+(`recv_timeout`, 30 s). (c) both queues are `bounded(4096)` with `try_send`, and a full queue is
+refused as a distinct reason rather than blocking the submitter. `submit()`'s error text changed
+from `"worker gone"` to `"offload worker gone"` / `"offload queue is full"`; checked, nothing
+matches on it.
+**(a) done 2026-09-19:** `zif_shutdown` now calls `forget_worker(id)` after `initiate_shutdown()`,
+so the map keeps the promise its own module doc makes — entries live for the process lifetime *or
+until shutdown*, where only the first half was true.
+**The arm exists now, and it is the whole point of this entry.** `bench/php/offload_worker_dies.php`
+plus its prelude offloads a job that calls `exit()` — uncatchable, so `WorkerRuntime::run`'s own
+try/catch never sees it and the worker loop unwinds with the job still marked running, which is the
+shape a PHP fatal produces. Gated in `scripts/smoke.sh`. Measured with the fix:
+`inflight_before=0 inflight_after=0 failed=true`, `reason=offload: offload worker gone`.
+**Falsified before being trusted**, which is what the previous note on this item said was missing:
+with `offload::worker_gone(index)` deleted from `run_offload_worker` and the binary rebuilt, the
+probe does not fail — it **hangs**, `exit=124`, because the calling fiber waits on a completion
+nothing will ever send. That is the defect, reproduced on demand, so the timeout is part of the
+assertion rather than a safety net around it.
+
+### S-SAPI-REQUEST-INFO A form body on PUT/PATCH never reaches the framework `main` `DONE 2026-09-20 — V-102, gated as its own E21 arm`
+**What.** The embed SAPI's `SG(request_info)` is not filled from the request, so PHP's own
+`request_parse_body()` refuses: **`RequestParseBodyException: Request does not provide a content
+type`** — measured under `Ignis\serve()` for both POST and PUT. Symfony 8's
+`Request::createFromGlobals()` (`http-foundation/Request.php:338-352`) calls exactly that function
+for `PUT`, `DELETE`, `PATCH` and `QUERY` and falls back to `$_POST` when it throws; the runtime fills
+`$_POST` for `POST` alone, so `$request->request` is **empty** for a `PUT` with an
+`application/x-www-form-urlencoded` body. Measured: `{"method":"PUT","parsed":[],"content_length":7}`
+— the body is there, nothing parsed it.
+**Why it was invisible.** `IgnisWorkerRunner::toSymfony` used to build a Request and throw it away
+for any non-urlencoded body, which covered JSON. A **urlencoded** body on PUT matched the
+first branch, so it never got the raw body either — the one shape the workaround did not cover was
+the one it looked like it covered.
+**Not fixed by the 2026-09-20 `php://input` work, and that is the point.** `Loop::enterRequest()`
+now backs `php://input` for every method, so `$request->getContent()` returns the body where it used
+to return nothing. Symfony 8 does not read `php://input` for this any more — it asks the SAPI. The
+stream wrapper cannot reach that.
+**Fix, unbuilt.** Fill `SG(request_info).content_type` (and the post-data path) when a request enters
+a PHP thread, next to where the superglobals are set. `main` lane, `crates/ignis/src/php/`.
+**Acceptance.** `bench/e21`'s `/body` route: a `PUT` with `a=1&b=2` reports
+`parsed={"a":"1","b":"2"}`, and a control without the fix reports `parsed=[]` — it does today, so
+write the arm first and watch it fail.
+**Done 2026-09-20 (V-102).** `php/post.rs` holds the request's bytes and hands them to the engine
+when it asks — per fiber, because `createFromGlobals()` runs inside the request's fiber and a
+handler may await before it parses. PUT and PATCH form bodies now reach `$request->request`; POST
+and JSON are unchanged. Three sequential PUTs each parse their own, which is the check that matters
+when one `php_request_startup` covers the whole `serve()` script and `sapi_read_post_block` sets
+`SG(post_read) = 1` on a spent body.
+**The mistake kept for the next person:** filling `SG(request_info)` removed the exception but left
+`parsed=[]`, and the reader **was never called once** — `read_post` was installed at MINIT, after
+`sapi_startup` had copied the module struct. `embed.rs` sets `ub_write` and `flush` before
+`php_embed_init` for exactly that reason.
+
+### R-TA-CONTEXT Can our per-scope storage sit on upstream's `internal_context` `research` `DONE 2026-09-20 — docs/research/48, read at async-core@14af3cb2; ADR-0003 amended. Answered, not satisfied: the design does not change` — it no longer blocks `S-SCOPED-CLASS`
+**What.** Read and write up `zend_async_context_t` (find/set/unset/dispose plus `offset`), the
+coroutine's two fields `context` and `internal_context` (HashTable, numeric keys) with the
+`zend_async_internal_context_key_alloc`/`_find`/`_set`/`_unset` and
+`zend_async_coroutine_internal_context_dispose` surface, `zend_coroutine_switch_handlers_vector_t`,
+and the userland surface — whose stub file main could not locate (finding 3 above), so **find it
+first and record where it is**: `current_context`, `coroutine_context`, `root_context`,
+`request_context`, Context keys `string|object`, the Scope-chain walk and the one-level `*Local`
+forms.
+**Three questions, each answered with a citation.** (1) Can our per-scope storage sit on
+`internal_context` under a key from `key_alloc`, so backend (b) inherits context for free?
+(2) Does their per-coroutine `context` cover what our superglobal slots do (`superglobals.rs`), or
+is it strictly a user-facing map? (3) What do their `switch_handlers` give that our
+`zend_observer_fiber_switch_register` observer does not?
+**Evidence.** The header symbols and both lookup rules are verified (see the section preamble); the
+`offset` member's purpose and the numeric-key discipline are `owner report, unverified`.
+**Acceptance.** `docs/research/NN-*.md` answering all three with file-and-line citations into the
+fork, **plus** an amendment to ADR-0003 stating what backend (b) would inherit and what it would
+still have to build. A question answered "probably" is not answered.
+**Constraints.** `research` lane; read-only. Needs a checkout — `scripts/build-php-async.sh` clones
+one, and which branch it should clone is `R-TA-REQUEST-SCOPE`'s finding, so do that item's branch
+question first or state the revision you read.
+
+### S-OWNERSHIP Every value a fiber-scoped service hands out carries its owner `main` `KILLED 2026-09-20 (DECISIONS.md) — it is a fourth mechanism, which ADR-0037 forbids; the three reds it targeted stay open with their cheaper fixes`
+**What.** A value handed out by a fiber-scoped service carries `owner_scope_id` in the object's GC
+bits; taint is transitive through property writes and array element writes. Violations: writing a
+tainted value into a longer-lived holder; a tainted object outliving its scope with a refcount above
+expected; entering a pinned object from a foreign fiber. Release is explicit and is exactly one of
+`Scope::escape` (untaint, caller takes responsibility), `Scope::share` (read-only cross-fiber),
+`Scope::pin` (owner-only, foreign entry throws). `#[Scoped(escape: 'never')]` forbids release
+outright for connections, EntityManager and Request. Dev and chaos modes throw, naming **both**
+holder and value; production counts and warns.
+**Why it matters.** Three open items are the same defect seen three times — `S-DBAL-DIRECT`,
+`S-EXCLUSIVE` and `S-RESET-ARRAYPOOL` — and the static rule shipped for `S-SINGLETON-CAPTURE` (V-96)
+catches only the property-assignment shape. This is the `context` mechanism (ADR-0006), not a fourth
+one.
+**Prior art to cite, not copy.** Upstream has no general ownership mechanism but hit this class
+per-resource: php-async CHANGELOG #200, verified verbatim — a `PDOStatement` outliving a pooled
+`PDO` "was keyed to a context that no longer matched", the destructor saw it as orphaned and
+returned it to the pool "while the coroutine binding still owned it and returned it a second time —
+the pool destroyed the same connection twice", fixed so that "every release path detaches the owning
+binding first". The lesson is the shape of the fix, not its scope.
+**And we are already one enforcement short of it, checked 2026-09-19.** `PooledConnection` has the
+idempotence — `$returned` with a doc block naming exactly the case ("a caller may return the lease
+early, and the destructor still runs afterwards") — so we arrived at #200's fix independently. But
+ours guards the **wrapper** and theirs guards the **binding**: our safety holds only while exactly
+one `PooledConnection` exists per `DriverConnection`, and `ConnectionPool::release()` is public, so
+nothing enforces that. A service holding the raw connection and releasing it is `S-DBAL-DIRECT`'s
+shape reaching the pool. #200 is therefore evidence **for** this mechanism, not merely prior art
+beside it.
+**Acceptance.** V-96's capture cases caught 6/6 **including the array-write and setter forms the
+static rule misses**; `S-DBAL-DIRECT`, `S-EXCLUSIVE` and `S-RESET-ARRAYPOOL` detected by this
+mechanism with no code of their own; per-property-write overhead measured, target within the
+observer's 100 ns.
+**Explicitly out of scope** (owner): non-object statics — those are context slots — and C-extension
+state, which is offload's.
+**Constraints.** `main` lane, FFI territory. Blocked by `R-TA-CONTEXT` question (1): if per-scope
+storage can sit on `internal_context`, backend (b) gets this for free and the design changes.
+**Reentrancy, checked 2026-09-19 and currently free.** Upstream's
+`zend_coroutine_switch_handlers_vector_t` carries an `in_execution` flag; our two switch handlers
+(`superglobals.rs:180`, `park.rs:143`) have no such guard and do not need one today, because one
+swaps zvals and the other sets a thread-local and neither can itself cause a switch. A taint check
+on every property write is the first thing that puts real work on that path, so this item inherits
+the guard as a requirement, not as an optimisation — and it is cheaper to design in than to
+retrofit after a handler recurses.
+**Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
+owner's design, not read from any source.
+
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `DONE 2026-09-20 — ADR-0042 accepted; all three acceptance steps and all eight named tests pass (V-97, V-99, V-100, V-101); FiberRequestStack and FiberTokenStorage deleted. The per-switch cost stays unmeasured (V-98, owner decision) and the Doctrine pair is kept on V-85's measurement` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
+**What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
+`create_object` returns a façade with no properties table; `read_property`, `write_property`,
+`has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address
+`[scope_id][slot]`, with slots resolved from `ce->properties_info` **at class link time** into a
+dense array and never by name at runtime; a zero scope holds constructor defaults and copies on
+write into a new scope; scope death frees the row, destructors running on the service fiber per
+`A-DESTRUCTOR-IO`.
+**Why it matters.** A singleton holding the façade becomes safe by construction — this closes the
+façade half of V-96 **without proxies**. The value-capture half stays with `S-OWNERSHIP`; the two
+items are halves of one defect and neither closes it alone.
+**Settled by the owner 2026-09-20 (DECISIONS.md), replacing what this entry used to say.**
+*Inheritance:* a scoped class's **children are scoped**, and that is correct rather than a hazard.
+A hierarchy needing both shapes leaves the parent non-scoped and scopes a **branch of descendants**.
+This entry previously claimed the reverse — that a scoped class's parent must be scoped too — and
+that claim is why research 44 ruled `FiberRequestStack` (which extends Symfony's `RequestStack`)
+illegal and recommended killing the whole item. Under the real rule it is the sanctioned pattern,
+so the legal target set is all four façades, **447 lines**, not the 53 research 44 counted nor the
+358 main corrected it to. That is the set that may carry the attribute; it is **not** a deletion
+estimate, and no third guess is offered — `FiberEntityManager`'s ~30 interface forwarders are a
+decorator and stay regardless. The acceptance below settles it empirically instead.
+*Control level:* a class-level call before the first instance — `Ignis\Scope::scopeClass(X::class)`
+from a bootstrap or container factory. Not the attribute (cannot reach a vendor class, arrives only
+at autoload) and not MINIT, where `route.rs` already shows the failure mode: it looks the class up
+in the class table and `if zv.is_null() { continue; }`, so a userland name silently does nothing.
+Not from the constructor either — `create_proxy` shows `(*obj).handlers` is assigned inside
+`create_object`, so handlers are per object and a constructor runs too late; the class would convert
+from its second instance onward.
+*Layout:* keep the properties table as the zero scope's defaults and swap only the handlers, so the
+allocation size never changes. This entry's "a façade with no properties table" is withdrawn.
+**Still open for the ADR:** instantiation outside a request; clone, serialize and reflection;
+`get_property_ptr_ptr` correctness for `$this->arr[] =` and `$this->n++`; and the property-offset
+runtime cache, which is the kill criterion — `$this->x = 1` memoises an offset per class in the
+opcode's cache slot, and if scoping happens after code touching the class has compiled and run,
+those cached offsets may bypass `write_property`. That must be read in php-src, not assumed.
+**Acceptance, in this order.** A prototype on a standalone class with two interleaved fibers
+**before any Symfony work**; then `FiberRequestStack` rewritten on it — **if that class disappears
+the mechanism is right, and if it does not, say what is missing**. Read cost measured against a
+plain property. **This module ships with its tests in the same commit** — `A-RUST-TESTS` is the
+reason that sentence is here.
+**The tests, named (owner, 2026-09-20), because "ships with tests" is not a list.** Each must be
+able to fail, and the fourth is the one that decides whether the control level above survives.
+1. **Two interleaved fibers** on a standalone scoped class each see their own property values, and
+   neither sees the other's — the base claim, and worthless without chaos mode (`IGNIS_CHAOS`) on
+   a second arm.
+2. **Inheritance, both directions.** A scoped parent's child is scoped without asking for it. A
+   non-scoped parent with a scoped descendant branch: instances of the parent are unaffected and
+   instances of the descendant are per-scope, including the properties it inherited.
+3. **Scope death frees the row**, and the destructors run on the service fiber rather than from the
+   loop's idle point (`A-DESTRUCTOR-IO`); a fiber reused for the next request starts from the zero
+   scope's defaults, not from the previous request's values — this is V-67's shape and the reason
+   `Scope` is cleared at request end.
+4. **A class scoped *after* code has already touched it**, cold and with opcache warm. This is the
+   property-offset cache test and it is the kill criterion: if a write through a memoised offset
+   bypasses `write_property`, the class-level call must move to boot time and the control-level
+   decision is wrong.
+5. **`get_property_ptr_ptr`**: `$this->arr[] = x` and `$this->n++` land in the right scope's row —
+   these take a pointer to the slot and write through it, past `write_property`.
+6. **Outside a request**: instantiation and property access with no fiber, landing in `Scope`'s
+   `{main}` fallback bag rather than throwing.
+7. **`clone`, `serialize`, reflection**: each either behaves or refuses with a message naming the
+   class; silently copying another scope's row is the failure this catches.
+8. **Read cost** against a plain property, and the fiber-switch cost against E2's 3.83 µs warm —
+   the standing constraint that no `context` work may move.
+**Proven on a real application, 2026-09-20 (V-99).** `bench/e21` marks an ordinary service
+`ignis.scoped` in a real Symfony kernel — Framework, Security and Doctrine bundles, `APP_ENV=prod`,
+three pairs of overlapping requests. Control, unmarked: **leaks 3/3**. Marked: **0/3**. The rest of
+E21 stayed green, so the mechanism disturbs neither the token storage (V-68) nor the Doctrine
+identity map (V-69). The first attempt **segfaulted** on `request_stack`: the zif returned the object
+with `type_info = IS_OBJECT` where an object zval needs `IS_OBJECT_EX`, so it was marked neither
+refcounted nor collectable and was freed under the container holding it. Every unit test and both
+smoke arms passed while that was live — it took a real framework outliving a request to find it.
+**Where it stands, 2026-09-20.** ADR-0042 written; userland half in `c4f1f92`; engine half in
+`crates/ignis/src/php/scoped.rs` — `ignis_scope_allocate` and `ignis_scope_rows_clear`, four
+overridden handlers, and `get_property_ptr_ptr` returning null so `$this->list[] =` degrades to
+read-then-write rather than writing past the handlers. **Acceptance step 1 passes on the real
+binary and is gated in `scripts/smoke.sh`:** two interleaved fibers each read their own value back,
+and the arm was falsified before being trusted — removing the row-zero read-through makes it print
+`constructor_value_inside_a_fiber=NULL` and go red.
+**What building it found that the design had not.** Row zero was specified and not implemented, and
+without it a scoped service lost every constructor-injected dependency the moment a fiber touched
+it: `$service->shared` measured `'built-once'` outside a fiber and **`NULL`** inside one. The
+fallback now makes "what the constructor stores is process-wide, what a method reads is per-scope"
+mechanical rather than a rule to remember, and `rows_clear()` refuses to clear row zero because it
+outlives every request.
+**Acceptance step 2 met, 2026-09-20 (V-100): the façade disappeared.** Symfony's own `RequestStack`
+with nothing but the container's `ignis.scoped` mark measured identically to the 89-line
+`FiberRequestStack` — 0/3 leaks either way — so the class and its test were deleted. It existed for
+one reason, stated in its own doc block: `RequestStack` keeps a private array and an inherited
+method reads that one, which under fibers is always the wrong one (V-88). With the array itself
+per-scope there is nothing left to override. `resetRequestFormats()` is unaffected either way: it
+clears a **static**, which is `S-REQUEST-FORMATS` and exactly as open as before.
+**Two façades deleted, one kept with a measurement behind it.** `FiberRequestStack` (89) went with
+V-100. `FiberTokenStorage` (53) went the same day and needed no arm of its own: the pass marks
+`security.token_storage` **by id**, so Symfony's own `TokenStorage` is what the container builds,
+and E21's V-68 probe was already passing 0/3 through it — the class had no instantiator left.
+**`FiberEntityManager` (247) and `FiberManager` (58) stay, and this is a measured refusal rather
+than work not done.** `FiberManager` is not a scoping façade at all: it is a cycle-breaking release
+handle. Its own doc block records why — `EntityManager` and `UnitOfWork` hold each other, so
+dropping the last outside reference leaves a cycle that only a collection frees, and a collection is
+scheduled by root-buffer pressure rather than by the request boundary. **V-85 measured the cost of
+getting this wrong: with the manager stored directly, 30 sequential requests left 8 PostgreSQL
+backends open under the loop collector and 31 under PHP's own**, against a stock `max_connections`
+of 100. Per-scope storage does not change that — a cycle survives whichever reference is dropped —
+so scoping the manager would silently stop releasing pooled connections.
+What *could* still change is `FiberEntityManager`'s `Scope::get`/`set` plumbing becoming a per-scope
+property, which is worth roughly ten lines and leaves the holder and every release path exactly
+where they are. It is not done here: ten lines is not worth touching the pool without an E24 arm
+proving the release, and that arm is the price of the change rather than an afterthought.
+**Open, and each is a named ceiling rather than an omission.** Rows are keyed by property name, not
+by a dense slot array resolved at class link time — `ponytail:` in the module, to land with the
+read-cost measurement ADR-0042's kill criterion already demands. `get_properties` is still the
+standard handler, so `var_dump`, `foreach` over an instance and `get_object_vars` do not see scoped
+properties. `unset` on a property that row zero holds removes only this scope's shadow. And steps 2
+and 3 of the acceptance — `FiberRequestStack` rewritten on the mechanism, read cost against a plain
+property — are not started.
+**Constraints.** `main` lane, FFI territory, needs an ADR before code.
+**Unverified.** The handler list and the slot-resolution scheme are the owner's design; what
+upstream offers instead is `R-TA-CONTEXT`'s question (1).

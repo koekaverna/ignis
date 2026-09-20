@@ -187,7 +187,11 @@ if (!function_exists('ignis_clear_request_info')) {
 }
 
 if (!function_exists('ignis_scope_seal')) {
-    /** ignis_scope_seal(object $instance): void — the constructor's values become row zero. */
+    /**
+     * ignis_scope_seal(object $instance): void — what this fiber currently holds for $instance
+     * becomes row zero, the values every other scope inherits. Call it again after anything that
+     * configures the object past its constructor; sealing twice is sound.
+     */
     function ignis_scope_seal(object $instance): void
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);

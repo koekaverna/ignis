@@ -329,3 +329,32 @@ probe is `bench/php/session_shared.php`.
 
 The `Kernel::boot()` analysis in §2 stands and was the more useful half: it is why resetting cannot
 be the answer under concurrency, and it is quoted in `FiberScopePass`.
+
+## Addendum, 2026-09-20 — one of the two candidates was half wrong, and only an arm could tell
+
+§1 sorted the fifteen `kernel.reset` services and named two candidates. The first,
+`security.logout_url_generator`, was identified by reading the class: `reset()` clears
+`currentFirewallName`, and the firewall listener sets it per request. That reading is correct and the
+verdict drawn from it was still half wrong.
+
+Built as an arm — a second `admin` firewall beside `main`, so the two overlapping requests want
+different logout paths — the **authenticated** case does not leak at all: 0 of 3 in both directions,
+with timestamps proving B ran entirely inside A's 300 ms sleep. `LogoutUrlGenerator::getListener()`
+asks `$this->tokenStorage->getToken()?->getFirewallName()` **first** and only then falls back to its
+own property, and `security.token_storage` was already scoped. The service was correct by way of a
+service that was correct.
+
+The **anonymous** case is where the property is reached, and there it leaks: with no token the
+fallback runs, and a neighbour's `onKernelFinishRequest` sets the property back to `null` under a
+request that is still awaiting — `InvalidArgumentException: This request is not behind a firewall`,
+2 of 2 (V-105). Two firewalls *and* no credentials is the only shape in which the defect exists;
+neither half is visible from the class alone.
+
+What this says about the method of §1: reading each `reset()` is the right way to sort the list, and
+it is not sufficient to decide a row. Whether a per-request property is ever *read* can depend on the
+request, and an arm is the only thing that answers that. The second candidate,
+`doctrine.debug_data_holder`, is still unmeasured for the same reason it was then — it is registered
+in debug only, and E21 runs `APP_ENV=prod`.
+
+`FiberRequestStack`, named in the ground-truth note above, no longer exists: ADR-0042 replaced the
+façades with Symfony's own classes marked in the container (V-100).

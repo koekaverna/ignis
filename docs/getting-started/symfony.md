@@ -64,25 +64,55 @@ Ignis\Symfony\IgnisBundle::class => ['all' => true],
 It makes `request_stack` (ADR-0011, V-16) and `security.token_storage` (V-68) per fiber, so two
 interleaved requests never observe each other's `Request` or authenticated user even though both run
 on the same OS thread at the same time. This is the [context](../concept/mechanisms.md) mechanism
-applied to the framework's own state, on top of PHP's superglobals.
+applied to the framework's own state, on top of PHP's superglobals. Nothing is substituted for
+Symfony's classes: the bundle marks those definitions in the container, the way `lazy` is a mark, and
+a marked object's declared properties resolve per fiber (ADR-0042).
+
+To cover a service of your own, put `#[FiberScoped]` on the class:
+
+```php
+use Ignis\Symfony\Attribute\FiberScoped;
+
+#[FiberScoped]
+final class TenantContext
+{
+    private ?Tenant $tenant = null;          // this property is per request
+}
+```
+
+For a vendor service you own no class for, name it in the bundle's setting — what you list is added
+to the framework ids, never substituted for them:
+
+```yaml
+# config/packages/ignis.yaml
+ignis:
+    scoped_ids: ['acme.tenant_context']
+```
 
 !!! warning "Only the listed services are covered"
 
     An earlier version of this page said "`RequestStack` **and the request-scoped services
     Symfony's DI container hands out** are fiber-scoped". The second half was false and V-68
     measured it: every container singleton that keeps per-request state is shared by all fibers
-    until something scopes it. Symfony's own `kernel.reset` tag is the inventory of such services,
-    and resetting cannot help between *overlapping* requests — `Kernel::boot()` only resets when
-    nothing else is in flight, which under load is never (research 36).
+    until something scopes it, and resetting cannot help between *overlapping* requests —
+    `Kernel::boot()` only resets when nothing else is in flight, which under load is never
+    (research 36).
 
-    The services scoped today are `request_stack`, `security.token_storage` and
-    `security.untracked_token_storage`. `$_SESSION` is **not** one of the four superglobals the
-    runtime swaps per fiber — but that turns out not to matter in practice: `session_start()` fails
-    on every request under the embed SAPI (`php_embed_init()` marks headers as already sent) and
-    never actually starts a session, so nothing routed through `ext/session` — Symfony's native
-    storage included — can leak or deadlock a thread (V-67, V-80). Server-side sessions are a
-    non-goal here for that reason (ADR-0038). Doctrine's `EntityManager` is next and is not scoped
-    yet.
+    The framework services scoped today are `request_stack`, `security.token_storage`,
+    `security.untracked_token_storage` and `security.logout_url_generator`. That list is
+    hand-picked, and `kernel.reset` is deliberately **not** the criterion: nine of the fifteen
+    services carrying that tag are caches shared between requests on purpose, and scoping one of
+    those would give every request its own cache and destroy the thing it is for. Anything else of
+    yours needs the attribute or the setting above.
+
+    Doctrine is covered by [its own package](../packages/doctrine.md) — a manager and a connection
+    per fiber (V-69, V-85) — and not by this bundle.
+
+    `$_SESSION` is **not** one of the four superglobals the runtime swaps per fiber, but that turns
+    out not to matter in practice: `session_start()` fails on every request under the embed SAPI
+    (`php_embed_init()` marks headers as already sent) and never actually starts a session, so
+    nothing routed through `ext/session` — Symfony's native storage included — can leak or deadlock
+    a thread (V-67, V-80). Server-side sessions are a non-goal here for that reason (ADR-0038).
 
 ## Editing code
 
