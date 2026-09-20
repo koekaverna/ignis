@@ -603,3 +603,57 @@ own manifest) nor `ignis/temporal-prototype` (869 lines, its own manifest calls 
 deleted yet. Revisit after `R-TA-SERVER`, which may change the framing of what this product is for
 and therefore what its compatibility shims are worth. Recorded so the measurement in research 45 is
 not re-derived: 1543 lines, 11% of package code, and `A-SWOOLE-TICKERS` would close by removal.
+
+---
+
+## 2026-09-20 — S-SCOPED-CLASS: scoping is inherited, and the initiation is a class-level call
+
+Two owner decisions, and the first reverses what the item said about itself.
+
+**Inheritance: a scoped class's children are scoped, and that is correct, not a hazard.** If a
+hierarchy needs both shapes, the parent is left non-scoped and a **branch of descendants** is
+scoped. The item as filed said the opposite — "a scoped class's parent must be scoped too" — and
+that claim is what made research 44 rule `FiberRequestStack` an illegal target, since it extends
+Symfony's `RequestStack`; on that basis it recommended killing the whole item. Under the owner's
+rule that class is not an edge case, it is the sanctioned pattern: vendor parent left alone, our
+descendant scoped.
+
+Consequences, stated so the arithmetic is not re-derived a third time. The legal target set is no
+longer 53 lines (research 44), nor 358 (main's correction on 2026-09-19), but **all four façades,
+447 lines** — `FiberRequestStack` 89, `FiberTokenStorage` 53, `FiberEntityManager` 247,
+`FiberManager` 58. That is the set that *may* carry the attribute. It is **not** the number of
+lines deleted, and main is deliberately not guessing that a third time: `FiberEntityManager`'s
+~30 interface forwarders are a decorator, not scoping, and they stay whatever happens. The
+acceptance's own instruction settles it empirically instead — rewrite `FiberRequestStack` on the
+mechanism and see whether the class disappears.
+
+Also settled by this: the existing hazard in `route.rs`'s `create_proxy`, where "a userland
+subclass inherited this hook from the routed parent" needed a special case, is a *proxying*
+problem and not a scoping one. For proxies an inherited hook is wrong because the parent's
+`free_obj` expects an internal payload the subclass has not got. For scoping an inherited hook is
+the intended behaviour.
+
+**The control level: a class-level call before the first instance.** Not the attribute, which
+cannot reach a vendor class and arrives only at autoload; not MINIT, where `route.rs` already
+demonstrates the failure — it looks the class up in the class table and `if zv.is_null() { continue; }`,
+so a userland class name silently does nothing, which is why its only default is the internal
+`SQLite3`. Instead `Ignis\Scope::scopeClass(X::class)`, called by a bootstrap or a container
+factory: the class is linked by then (it had to be, to be named), so `properties_info` is complete
+and slots resolve; no instance exists yet, so there is no split population.
+
+Not from the constructor, and the reason is visible in `create_proxy`: `(*obj).handlers` is
+assigned inside `create_object`, so **handlers are per object**. A constructor runs after that, so
+the very object doing the initiating already holds the old handlers and an initialised properties
+table — the class would convert from its *second* instance onward.
+
+**And keep the properties table.** The item says the façade has none. Holding it as the zero scope's
+defaults and swapping only the handlers means the allocation size never changes, which removes a
+whole class of risk for nothing.
+
+Kill criterion: the property-offset runtime cache. `$this->x = 1` compiles to an opcode with a
+cache slot memoising the offset for a class, and if a class is scoped after code touching it has
+been compiled and run, those cached offsets may bypass `write_property` entirely. This must be
+read in php-src, not assumed, and a test must scope a class *after* exercising it — cold and with
+opcache warm. If the cache is guarded only by `ce` and not by the handler table, the class-level
+call has to happen before any code touches the class, which narrows it back toward a boot-time
+list and this decision is wrong.

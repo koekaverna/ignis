@@ -861,7 +861,7 @@ retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
-### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — kept 2026-09-20 against research 44's advice to kill it, because its arithmetic was wrong: the plausible target is 358 of 447 façade lines, not 53` — **blocked by `R-TA-CONTEXT`**
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — kept 2026-09-20 against research 44's advice to kill it; the owner then settled inheritance and the control level (DECISIONS.md), which makes all four façades legal targets` — **blocked by `R-TA-CONTEXT`**
 **What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
 `create_object` returns a façade with no properties table; `read_property`, `write_property`,
 `has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address
@@ -872,14 +872,59 @@ write into a new scope; scope death frees the row, destructors running on the se
 **Why it matters.** A singleton holding the façade becomes safe by construction — this closes the
 façade half of V-96 **without proxies**. The value-capture half stays with `S-OWNERSHIP`; the two
 items are halves of one defect and neither closes it alone.
-**Open questions to answer in the ADR, not in code** (owner): inheritance — a scoped class's parent
-must be scoped too; instantiation outside a request; clone, serialize and reflection; and
-`get_property_ptr_ptr` correctness for `$this->arr[] =` and `$this->n++`.
+**Settled by the owner 2026-09-20 (DECISIONS.md), replacing what this entry used to say.**
+*Inheritance:* a scoped class's **children are scoped**, and that is correct rather than a hazard.
+A hierarchy needing both shapes leaves the parent non-scoped and scopes a **branch of descendants**.
+This entry previously claimed the reverse — that a scoped class's parent must be scoped too — and
+that claim is why research 44 ruled `FiberRequestStack` (which extends Symfony's `RequestStack`)
+illegal and recommended killing the whole item. Under the real rule it is the sanctioned pattern,
+so the legal target set is all four façades, **447 lines**, not the 53 research 44 counted nor the
+358 main corrected it to. That is the set that may carry the attribute; it is **not** a deletion
+estimate, and no third guess is offered — `FiberEntityManager`'s ~30 interface forwarders are a
+decorator and stay regardless. The acceptance below settles it empirically instead.
+*Control level:* a class-level call before the first instance — `Ignis\Scope::scopeClass(X::class)`
+from a bootstrap or container factory. Not the attribute (cannot reach a vendor class, arrives only
+at autoload) and not MINIT, where `route.rs` already shows the failure mode: it looks the class up
+in the class table and `if zv.is_null() { continue; }`, so a userland name silently does nothing.
+Not from the constructor either — `create_proxy` shows `(*obj).handlers` is assigned inside
+`create_object`, so handlers are per object and a constructor runs too late; the class would convert
+from its second instance onward.
+*Layout:* keep the properties table as the zero scope's defaults and swap only the handlers, so the
+allocation size never changes. This entry's "a façade with no properties table" is withdrawn.
+**Still open for the ADR:** instantiation outside a request; clone, serialize and reflection;
+`get_property_ptr_ptr` correctness for `$this->arr[] =` and `$this->n++`; and the property-offset
+runtime cache, which is the kill criterion — `$this->x = 1` memoises an offset per class in the
+opcode's cache slot, and if scoping happens after code touching the class has compiled and run,
+those cached offsets may bypass `write_property`. That must be read in php-src, not assumed.
 **Acceptance, in this order.** A prototype on a standalone class with two interleaved fibers
 **before any Symfony work**; then `FiberRequestStack` rewritten on it — **if that class disappears
 the mechanism is right, and if it does not, say what is missing**. Read cost measured against a
 plain property. **This module ships with its tests in the same commit** — `A-RUST-TESTS` is the
 reason that sentence is here.
+**The tests, named (owner, 2026-09-20), because "ships with tests" is not a list.** Each must be
+able to fail, and the fourth is the one that decides whether the control level above survives.
+1. **Two interleaved fibers** on a standalone scoped class each see their own property values, and
+   neither sees the other's — the base claim, and worthless without chaos mode (`IGNIS_CHAOS`) on
+   a second arm.
+2. **Inheritance, both directions.** A scoped parent's child is scoped without asking for it. A
+   non-scoped parent with a scoped descendant branch: instances of the parent are unaffected and
+   instances of the descendant are per-scope, including the properties it inherited.
+3. **Scope death frees the row**, and the destructors run on the service fiber rather than from the
+   loop's idle point (`A-DESTRUCTOR-IO`); a fiber reused for the next request starts from the zero
+   scope's defaults, not from the previous request's values — this is V-67's shape and the reason
+   `Scope` is cleared at request end.
+4. **A class scoped *after* code has already touched it**, cold and with opcache warm. This is the
+   property-offset cache test and it is the kill criterion: if a write through a memoised offset
+   bypasses `write_property`, the class-level call must move to boot time and the control-level
+   decision is wrong.
+5. **`get_property_ptr_ptr`**: `$this->arr[] = x` and `$this->n++` land in the right scope's row —
+   these take a pointer to the slot and write through it, past `write_property`.
+6. **Outside a request**: instantiation and property access with no fiber, landing in `Scope`'s
+   `{main}` fallback bag rather than throwing.
+7. **`clone`, `serialize`, reflection**: each either behaves or refuses with a message naming the
+   class; silently copying another scope's row is the failure this catches.
+8. **Read cost** against a plain property, and the fiber-switch cost against E2's 3.83 µs warm —
+   the standing constraint that no `context` work may move.
 **Constraints.** `main` lane, FFI territory, needs an ADR before code.
 **Unverified.** The handler list and the slot-resolution scheme are the owner's design; what
 upstream offers instead is `R-TA-CONTEXT`'s question (1).
