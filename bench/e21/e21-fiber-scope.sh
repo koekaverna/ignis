@@ -84,6 +84,9 @@ echo "== a container service marked scoped (ADR-0042, S-SCOPED-CLASS)"
 probe "  control, not marked     " /scoped 1 /scoped IGNIS_NO_SCOPED_SERVICE=1
 probe "  marked ignis.scoped     " /scoped 0 /scoped
 
+echo "== lazy and scoped together (ADR-0042 open question: both change object creation)"
+probe "  lazy + scoped           " /scoped 0 /scoped IGNIS_SCOPED_LAZY=1
+
 echo "== service reset across requests (S-RESET-FIBER): A streams while B enters handle()"
 probe "  control, no IgnisBundle " /reset  1 /whoami IGNIS_NO_SCOPE=1
 probe "  with IgnisBundle        " /reset  0 /whoami

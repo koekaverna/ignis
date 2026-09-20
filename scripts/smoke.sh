@@ -179,6 +179,30 @@ grep -q "a='A' b='B'" <<<"$sc" || { echo "scoped FAILED: two fibers did not each
 grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sc" || { echo "scoped FAILED: row zero is not read through"; exit 1; }
 grep -q "instance_of=true" <<<"$sc" || { echo "scoped FAILED: the allocation is not an instance of its class"; exit 1; }
 
+# The same isolation under IGNIS_CHAOS, which switches fibers at every await point with a seeded
+# random. A mechanism that holds only at the switch points a quiet run happens to take is not a
+# mechanism, so this arm costs one extra run and answers that.
+echo "== a scoped object holds its isolation under chaos scheduling"
+sch=$(IGNIS_CHAOS=1 IGNIS_CHAOS_P=100 IGNIS_CHAOS_SEED=7 $T ./target/release/ignis bench/php/scoped_two_fibers.php | tail -1)
+echo "  $sch"
+grep -q "a='A' b='B'" <<<"$sch" || { echo "scoped chaos FAILED: isolation depends on the switch points a quiet run takes"; exit 1; }
+grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sch" || { echo "scoped chaos FAILED: row zero is not read through under chaos"; exit 1; }
+
+# ADR-0042's remaining named tests. The mechanism leaves every standard handler alone, so each of
+# these should be whatever PHP already does -- inherited properties scope with the class that owns
+# the instance, `$this->list[] =` and `$this->count++` go through get_property_ptr_ptr and still land
+# in the right scope, a plain instance of a scoped class is untouched, and clone/serialize/reflection
+# behave. reflection=0 is correct rather than a miss: the read happens back in {main}, whose scope
+# never wrote that property, so it sees row zero's default.
+echo "== a scoped class: inheritance, the pointer path, clone, serialize and reflection"
+sm=$($T ./target/release/ignis bench/php/scoped_semantics.php | tail -1)
+echo "  $sm"
+grep -q 'a_inherited=1 a_own=1 a_list=A a_count=1' <<<"$sm" || { echo "scoped_semantics FAILED: one fiber did not keep its own values, inherited or pointer-written"; exit 1; }
+grep -q 'b_list=B b_count=2' <<<"$sm" || { echo "scoped_semantics FAILED: the second fiber saw the first's writes"; exit 1; }
+grep -q 'plain_untouched=true' <<<"$sm" || { echo "scoped_semantics FAILED: a plain instance of a scoped class was affected"; exit 1; }
+grep -q 'clone_independent=true' <<<"$sm" || { echo "scoped_semantics FAILED: clone is not independent"; exit 1; }
+grep -q 'reflection=0 serialize_sees_props=true' <<<"$sm" || { echo "scoped_semantics FAILED: reflection or serialize does not see the current scope"; exit 1; }
+
 # ADR-0042: the container's normal path -- a scoped service built lazily inside the request that
 # first asks for it. Its constructor's values must reach every other scope, and one request's writes
 # must not. This arm found three defects: values trapped in the building fiber's scope, a zval/object

@@ -5224,3 +5224,39 @@ With the private array itself resolving per scope there is no method left to ove
 **What is not fixed by either, and was not claimed to be:** `resetRequestFormats()` clears
 `Request::$formats`, a **static** that is thread-wide and cannot be scoped from an instance. That is
 `S-REQUEST-FORMATS` and it is exactly as open as it was.
+
+## V-101 — ADR-0042's remaining named tests: inheritance, the pointer path, clone, chaos, lazy
+
+Date: 2026-09-20. Commands: `bench/php/scoped_semantics.php` under the release binary, the same
+probe under `IGNIS_CHAOS=1 IGNIS_CHAOS_P=100` with four seeds, and `bench/e21` with
+`IGNIS_SCOPED_LAZY=1`.
+
+```
+scoped_semantics: a_inherited=1 a_own=1 a_list=A a_count=1 b_list=B b_count=2
+                  plain_untouched=true clone_independent=true reflection=0 serialize_sees_props=true
+```
+
+Each of the four tests ADR-0042 still owed:
+
+- **Inheritance, both directions.** `Child extends Base`; the scoped instance isolates `Base`'s
+  declared property as well as its own (`a_inherited=1` against the other fiber's 2), and a
+  **plain** `new Child()` alongside it is untouched (`plain_untouched=true`). One class, both
+  shapes, which is what binding at creation rather than on the class entry buys.
+- **The pointer path.** `$this->list[] = 'A'` and `$this->count++` take
+  `get_property_ptr_ptr`/read-modify-write rather than a plain assignment, and still land in the
+  writing fiber's scope: `a_list=A a_count=1` against `b_list=B b_count=2`.
+- **clone, serialize, reflection.** All behave as PHP's own, because the standard handlers are
+  doing them. `reflection=0` is correct and worth stating: the read happens back in `{main}`, whose
+  scope never wrote that property, so it sees row zero's default.
+- **Chaos.** Four seeds under `IGNIS_CHAOS_P=100`, which switches at every await point: isolation
+  and the row-zero read-through both hold. A mechanism that only works at the switch points a quiet
+  run happens to take is not a mechanism.
+
+**Falsified.** With `on_switch` made a no-op the arm goes red and says why — `a_inherited=2 a_own=2
+a_list=A,B a_count=3`, the two fibers merged into one object.
+
+**`lazy` + `scoped`, the open question, composes.** Marking the same service both ways in the E21
+fixture leaks 0/3 with the constructor's value still readable, the same as scoped alone. Symfony's
+ghost calls the factory when it initialises, so `Scope::create()` runs inside the initialiser and
+the real object is the scoped one. **Not covered:** a ghost accessed by property rather than by
+method — services are used through methods, and that is the shape measured here.

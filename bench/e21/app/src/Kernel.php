@@ -109,6 +109,11 @@ final class Kernel extends BaseKernel
         if (!getenv('IGNIS_NO_SCOPED_SERVICE') && !getenv('IGNIS_NO_SCOPE')) {
             $s->get(\App\Service\ScopedCart::class)->tag('ignis.scoped');
         }
+        // ADR-0042 open question: `lazy` and `scoped` both change how the object is created, so
+        // combining them is the one composition that could fail by construction.
+        if (getenv('IGNIS_SCOPED_LAZY')) {
+            $s->get(\App\Service\ScopedCart::class)->lazy();
+        }
         // In services_resetter's list on purpose: that list is what Kernel::boot() empties.
         $s->get(\App\Service\ResetWitness::class)->tag('kernel.reset', ['method' => 'reset']);
     }
