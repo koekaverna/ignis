@@ -768,7 +768,7 @@ the item it affects:
 Claims from the note that main could not check against a source are marked
 `owner report, unverified` on the item that carries them.
 
-### R-TA-CONTEXT Can our per-scope storage sit on upstream's `internal_context` `research` `severity: planned` `open — owner note 2026-09-19` — **blocks `S-SCOPED-CLASS` and `S-OWNERSHIP`**
+### R-TA-CONTEXT Can our per-scope storage sit on upstream's `internal_context` `research` `DONE 2026-09-20 — docs/research/48, read at async-core@14af3cb2; ADR-0003 amended. Answered, not satisfied: the design does not change` — it no longer blocks `S-SCOPED-CLASS`
 **What.** Read and write up `zend_async_context_t` (find/set/unset/dispose plus `offset`), the
 coroutine's two fields `context` and `internal_context` (HashTable, numeric keys) with the
 `zend_async_internal_context_key_alloc`/`_find`/`_set`/`_unset` and
@@ -874,7 +874,7 @@ retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
-### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — kept 2026-09-20 against research 44's advice to kill it; the owner then settled inheritance and the control level (DECISIONS.md), which makes all four façades legal targets` — **blocked by `R-TA-CONTEXT`**
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — userland half landed 2026-09-20 (c4f1f92); engine half open` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
 **What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
 `create_object` returns a façade with no properties table; `read_property`, `write_property`,
 `has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address
