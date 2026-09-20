@@ -465,11 +465,30 @@ and `Ignis\Loop` (V-93) could not have been caught by a unit test because there 
 `$watchOf`) get a suite that runs with the fake reactor, or the exclusion is documented in
 `phpunit.xml` with what it costs — and `R-REVOLT-FLAKE` is the reason to prefer the first.
 
-### A-BACKEND-B-CI Nothing anywhere builds backend (b) `main` `open — 2026-09-18; a second instance of the same shape found 2026-09-19, see below`
+### A-BACKEND-B-CI Nothing anywhere builds backend (b) `main` `DONE 2026-09-20 — .github/workflows/backend-b.yml, scheduled plus workflow_dispatch (owner decision 2026-09-20, DECISIONS.md)`
 **What.** `crates/ignis/src/backend/async_core.rs` is behind `cfg(php_async_abi)`, which needs the
 true-async engine (`scripts/build-php-async.sh`). No CI job builds it and this box has no such engine,
 which is why it sat with a two-arm `match` against a nine-variant enum until V-91. The tripwire now in
 `reactor.rs` catches the *enum* growing; it cannot catch anything else in that file.
+**Built 2026-09-20.** A scheduled job, not a push job: building php-src takes minutes and this
+backend changes on the fork's schedule rather than ours. It is not in `nightly.yml` either, whose
+own header says correctness lives in `ci.yml` — so it is its own workflow. The fork prefix is
+cached and keyed on the branch, because a dispatch with a different branch must not silently reuse
+another one's build.
+**Compiling is the floor, not the gate.** The job runs `cargo check`, then `clippy -D warnings` —
+the same gate `ci.yml` uses, and the one that actually caught the last breakage in feature-gated
+code on 2026-09-19 — then a release build, then the unit suite against the fork, because a binary
+that links is not yet a binary that works.
+**And it answers a second question this item did not know it had.** `R-TA-CONTEXT` and
+`R-TA-REQUEST-SCOPE` both need to read the fork's headers, and on 2026-09-19 there was no checkout
+on this box, so an owner note had to be verified over the network against a branch nobody could
+name. The job uploads `zend_async_*.h` as an artifact, tagged with the branch it built, so the
+next person answering those reads a revision this job names.
+**Still open, deliberately:** which branch is the right one. Three names are in play — `async-core`
+(the script's default, PR #22561 head), `PHP-8.6-true-async`, and whatever revision php-async's
+CHANGELOG #105 requires for `request_scope`. The job takes the branch as a dispatch input rather
+than pretending to know; settling it is `R-TA-REQUEST-SCOPE`'s first job.
+
 **Acceptance.** A CI job that runs `scripts/build-php-async.sh` and
 `PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo check -p ignis`,
 on a schedule rather than per push if the engine build is too slow for the main gate. Or ADR-0003 is
