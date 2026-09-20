@@ -322,10 +322,9 @@ final class Loop
         self::gcInit();
         self::budgetInit();
         self::$canPublishStats = \function_exists('ignis_publish_stats');
-        $watch = \getenv('IGNIS_WATCH');
         // boot() runs on the first turn of every mode, including classic `listen()`, which never
         // calls serve() and would otherwise watch nothing at all.
-        self::$watching = $watch !== false && $watch !== '' && $watch !== '0' && \function_exists('ignis_watch_generation');
+        self::$watching = Env::flag('IGNIS_WATCH') && \function_exists('ignis_watch_generation');
         self::$watchGeneration = self::$watching ? \ignis_watch_generation() : 0;
         if (self::$watching) {
             \ignis_watch_end_reload();   // this incarnation is up; whoever is waiting to reload may go
@@ -586,18 +585,9 @@ final class Loop
     /** Reads the budget from the environment once; `IGNIS_FIBER_BUDGET=0` (default) means unlimited. */
     private static function budgetInit(): void
     {
-        $budget = getenv('IGNIS_FIBER_BUDGET');
-        if ($budget !== false && is_numeric($budget)) {
-            self::$fiberBudget = max(0, (int) $budget);
-        }
-        $depth = getenv('IGNIS_QUEUE_DEPTH');
-        if ($depth !== false && is_numeric($depth)) {
-            self::$queueDepth = max(0, (int) $depth);
-        }
-        $exempt = getenv('IGNIS_BUDGET_EXEMPT');
-        if ($exempt !== false && $exempt !== '') {
-            self::$budgetExempt = array_values(array_filter(array_map('trim', explode(',', $exempt))));
-        }
+        self::$fiberBudget = Env::integer('IGNIS_FIBER_BUDGET', self::$fiberBudget);
+        self::$queueDepth = Env::integer('IGNIS_QUEUE_DEPTH', self::$queueDepth);
+        self::$budgetExempt = Env::commaList('IGNIS_BUDGET_EXEMPT', self::$budgetExempt);
     }
 
     /**
@@ -623,12 +613,8 @@ final class Loop
 
     private static function gcInit(): void
     {
-        $env = getenv('IGNIS_LOOP_GC');
-        self::$loopGc = $env === false || ($env !== '' && $env !== '0');
-        $roots = getenv('IGNIS_LOOP_GC_ROOTS');
-        if ($roots !== false && is_numeric($roots)) {
-            self::$gcRoots = max(100, (int) $roots);
-        }
+        self::$loopGc = Env::flag('IGNIS_LOOP_GC', true);
+        self::$gcRoots = Env::integer('IGNIS_LOOP_GC_ROOTS', self::$gcRoots, 100);
         if (self::$loopGc) {
             gc_disable();
         }
@@ -636,17 +622,13 @@ final class Loop
 
     private static function chaosInit(): void
     {
-        $env = getenv('IGNIS_CHAOS');
-        self::$chaos = $env !== false && $env !== '' && $env !== '0';
+        self::$chaos = Env::flag('IGNIS_CHAOS');
         if (!self::$chaos) {
             return;
         }
-        $probability = getenv('IGNIS_CHAOS_P');
-        if ($probability !== false && is_numeric($probability)) {
-            self::$chaosP = max(0.0, min(1.0, (float) $probability));
-        }
-        $seed = getenv('IGNIS_CHAOS_SEED');
-        mt_srand($seed !== false && $seed !== '' ? (int) $seed : (int) (hrtime(true) % 2147483647));
+        self::$chaosP = Env::number('IGNIS_CHAOS_P', self::$chaosP, 0.0, 1.0);
+        $seed = Env::text('IGNIS_CHAOS_SEED');
+        mt_srand($seed !== '' ? (int) $seed : (int) (hrtime(true) % 2147483647));
     }
 
     /** @param callable(Http\Request):?Http\Response $handler */

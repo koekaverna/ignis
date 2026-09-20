@@ -727,3 +727,40 @@ runs after all method calls, so that is where the seal goes, and a definition th
 configurator is refused by name at compile time rather than silently losing one of the two. This was
 latent: the three ids scoped before this one have no method calls, and only a service that had some
 could expose it.
+
+## 2026-09-20 — `Loop` keeps its ten responsibilities; only the environment reading comes out
+
+The owner looked at `Ignis\Loop` and said it has a lot mixed into it, including test logic and
+environment reading. Measured rather than argued: 1,113 lines, 63 functions, 40 static properties,
+and ten distinct concerns — op wait and loop core 267 lines, request lifecycle 178, fiber pool 140,
+admission and budget 132, cancel and deadline 118, watch/reload 67, chaos 49, payload validation 45,
+GC scheduling 34, stats 23. The observation is correct.
+
+**Not splitting it.** Three of the ten *are* the one-wait-point invariant, and `CLAUDE.md` says
+plainly that adding a second wait point to a PHP thread breaks the design. The class is also all
+statics: a split either threads the state through new signatures or makes the new classes static as
+well, which moves the pile instead of shrinking it. There is no defect driving this — the three
+leaks an earlier plan named in `Loop` (`$queueCancelled` unbounded, `$children` never cleared,
+`deadline()` leaking its timer) are all fixed and were re-read to confirm it. Restructuring the
+scheduler for readability, with nothing failing, is the change most likely to trade a correctness bug
+for an aesthetic gain. Filed as `S-LOOP-SHAPE` with the two candidates that would pay first — chaos,
+and admission/budget — and with acceptance that includes E1, E2 and hello throughput, because those
+are the numbers such a change could silently move.
+
+**Splitting out the environment reading.** That part was not merely mixed in, it was inconsistent:
+five different spellings of "is this knob on" across nine `getenv` calls in one file —
+`$v !== false && $v !== '' && $v !== '0'` for chaos and for watching, the inverted
+`$v === false || (...)` for loop GC because it ships enabled, bare `is_numeric` with a floor for the
+budget, and a fourth shape for the exempt list. None of them was reachable by a test. They are now
+`Ignis\Env` with one rule each and eleven tests, `Loop` has no `getenv` left, and every rule was
+re-checked end to end through the real binary against its old behaviour: `-3` still floors to 0,
+`abc` still leaves the default, `IGNIS_CHAOS_P=9` still clamps to 1.0, `IGNIS_LOOP_GC` is still the
+one knob that ships on.
+
+Reading the environment at all is **not** a smell here and was not changed: `ignis.toml` is parsed on
+the Rust side and exported as environment variables (`config.rs`'s `default_env`), so the environment
+is the documented transport between the two halves. Worth noting for later, though: four knobs travel
+that way (`IGNIS_FIBER_BUDGET`, `IGNIS_QUEUE_DEPTH`, `IGNIS_BUDGET_EXEMPT`, `IGNIS_WATCH`) and five
+have no `ignis.toml` row at all (`IGNIS_LOOP_GC`, `IGNIS_LOOP_GC_ROOTS`, `IGNIS_CHAOS`,
+`IGNIS_CHAOS_P`, `IGNIS_CHAOS_SEED`) — an inconsistency that was invisible while the reads were
+scattered.

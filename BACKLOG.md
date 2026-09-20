@@ -409,6 +409,33 @@ could break the working one.
 **Constraints.** `main` for the decision, `agent` for the probe. Must not change `listen()`'s
 behaviour for a single caller.
 
+### S-LOOP-SHAPE `Ignis\Loop` is ten responsibilities in one class `main` `open — measured 2026-09-20, deliberately not split yet`
+**What.** 1,113 lines, 63 functions, 40 static properties, one class. Counted by grouping every
+method (2026-09-20): op wait + loop core 267, request lifecycle 178, fiber pool 140, admission and
+budget 132, cancel and deadline 118, watch/reload 67, chaos 49, payload validation 45, GC scheduling
+34, stats 23.
+**What was already fixed and is not the reason for this row.** The three leaks an earlier plan named
+here are gone: `$queueCancelled` is only written for an id that is actually queued (`:1011`) and
+`drainQueue` always drops it, `forgetChild` plus `releaseRequest` clear `$children`, and
+`disarmDeadline` cancels the deadline op. This entry is about shape, not correctness.
+**Why it is not split now.** Three of the ten are the one-wait-point invariant itself and moving them
+is how that invariant gets broken (`CLAUDE.md`: "adding a second wait point to a PHP thread breaks
+the design"). The class is also all statics, so a split either passes the state around or makes the
+new classes static too — which relocates the pile rather than reducing it. Splitting the heart of
+the scheduler for readability, with no defect driving it, is the change most likely to cost a
+correctness bug for an aesthetic gain.
+**What was done instead** (2026-09-20): the environment reading came out. `Loop` had five different
+spellings of "is this knob on" across nine `getenv` calls; they are now `Ignis\Env` with one rule
+each and eleven tests, and `Loop` contains no `getenv` at all.
+**The two candidates worth doing, in order, each on its own evidence.** (1) **chaos** — 49 lines plus
+three statics plus a branch in `awaitOp`, the hottest method in the project, for a tool only the gate
+uses. (2) **admission and budget** — 132 lines of policy (queue, depth, exempt list, rejection) that
+touch the loop only through `$inflightRequests`, the most nearly separable of the ten.
+**Acceptance.** Per candidate: the extraction, E1/E2 unmoved (they are the two numbers the project
+stands on), and `bench/wrk-hello.sh` within this box's ±6.7 % spread. No candidate is worth landing
+without those three numbers.
+**Constraints.** `main`. Never in the same commit as a behaviour change.
+
 ### A-CLASSIC-FINISH `Ignis\Classic\finish()` stops the `listen()` worker loop `agent` `open — 2026-09-18`
 **What.** `finish()` throws `Finished`. `Runner::handle()` catches it, so `Classic\serve()` is fine —
 but the documented `listen()` shape, `while ($file = accept()) { include $file; respond(); }`
