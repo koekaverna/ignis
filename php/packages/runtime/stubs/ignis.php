@@ -170,6 +170,22 @@ if (!function_exists('ignis_scope_allocate')) {
     }
 }
 
+if (!function_exists('ignis_scope_mode')) {
+    /** ignis_scope_mode(): string — "swap" or "handlers", whichever the runtime is actually using. */
+    function ignis_scope_mode(): string
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_scope_seal')) {
+    /** ignis_scope_seal(object $instance): void — the constructor's values become row zero. */
+    function ignis_scope_seal(object $instance): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
 if (!function_exists('ignis_scope_rows_clear')) {
     /** ignis_scope_rows_clear(): void — drops this fiber's Scope::create() property rows. */
     function ignis_scope_rows_clear(): void

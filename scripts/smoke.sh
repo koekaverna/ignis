@@ -179,6 +179,17 @@ grep -q "a='A' b='B'" <<<"$sc" || { echo "scoped FAILED: two fibers did not each
 grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sc" || { echo "scoped FAILED: row zero is not read through"; exit 1; }
 grep -q "instance_of=true" <<<"$sc" || { echo "scoped FAILED: the allocation is not an instance of its class"; exit 1; }
 
+# ADR-0042: the container's normal path -- a scoped service built lazily inside the request that
+# first asks for it. Its constructor's values must reach every other scope, and one request's writes
+# must not. This arm found three defects: values trapped in the building fiber's scope, a zval/object
+# type confusion in ignis_scope_seal, and the handlers variant discarding declared defaults.
+echo "== a scoped service built inside a request is still shared correctly with the next one"
+sl=$($T ./target/release/ignis bench/php/scoped_lazy_build.php | tail -1)
+echo "  $sl"
+grep -q "b_dependency='injected'" <<<"$sl" || { echo "scoped_lazy FAILED: the constructor's value did not reach another scope"; exit 1; }
+grep -q "b_seen=NULL" <<<"$sl" || { echo "scoped_lazy FAILED: one request saw another's write"; exit 1; }
+grep -q "a_seen='A'" <<<"$sl" || { echo "scoped_lazy FAILED: the building request lost its own write"; exit 1; }
+
 # A-LEAKS-RUST (b): a worker that dies mid-job used to leave its JOBS entry behind and the caller's
 # reserved op raised for ever, so the calling fiber waited on a completion nothing would ever send.
 # The job here calls exit(), which WorkerRuntime::run's own try/catch cannot see, so the whole

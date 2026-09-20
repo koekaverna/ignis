@@ -24,6 +24,11 @@ final class Scope
      * arm its property-offset cache before the handlers are ever in the picture, which nothing after
      * that point can undo.
      *
+     * Sealing afterwards is what makes "what the constructor stores is process-wide" true wherever the
+     * service was built. A container builds services lazily, inside the request that first asks for
+     * one, and without the seal that request's scope would keep the dependencies to itself: measured,
+     * a second fiber read a `readonly string` as `''`.
+     *
      * A class with no constructor is ordinary and must work: `ReflectionMethod` throws on one, so
      * the call is guarded. Arguments passed to such a class are an error rather than a silent
      * discard, because `new` would refuse them too and this must not be quieter than `new`.
@@ -36,6 +41,7 @@ final class Scope
         } elseif ($arguments !== []) {
             throw new \ArgumentCountError(\sprintf('Ignis\Scope::create(): %s has no constructor, so it takes no arguments, %d given', $class, \count($arguments)));
         }
+        \ignis_scope_seal($instance);
 
         return $instance;
     }

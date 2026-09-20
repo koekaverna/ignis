@@ -45,9 +45,17 @@ type Row = HashMap<String, sys::zval>;
 const ROW_ZERO: usize = 0;
 
 thread_local! {
-    /// `(object handle, scope) -> row`. Thread-local because an object never crosses threads here:
-    /// a ZTS `zend_object` belongs to the engine context that made it.
-    static ROWS: RefCell<HashMap<(u32, usize), Row>> = RefCell::new(HashMap::new());
+    /// `scope -> (object handle -> row)`. Thread-local because an object never crosses threads
+    /// here: a ZTS `zend_object` belongs to the engine context that made it.
+    ///
+    /// Scope first, not object first, and that is a decision rather than a detail. Upstream's
+    /// per-coroutine store is "engine-owned per-coroutine storage under process-unique numeric
+    /// keys" (`zend_async_API.h:473`), so a scope-keyed outer map is **one** `internal_context`
+    /// entry under one `zend_async_internal_context_key_alloc` when backend (b) becomes a real
+    /// target — the whole port, instead of a rewrite. It is also the better shape today: dropping a
+    /// scope is one removal rather than a scan of every key, and that scan sat on the fiber-switch
+    /// path, which is the one cost the swap variant pays.
+    static ROWS: RefCell<HashMap<usize, HashMap<u32, Row>>> = RefCell::new(HashMap::new());
 }
 
 /// This scope's value for `name`, or row zero's if this scope has not written one. The first write
@@ -60,10 +68,12 @@ unsafe fn find(handle: u32, name: &str) -> Option<sys::zval> {
     let scope = unsafe { current_scope() };
     ROWS.with(|rows| {
         let rows = rows.borrow();
-        rows.get(&(handle, scope))
-            .and_then(|row| row.get(name))
-            .or_else(|| if scope == ROW_ZERO { None } else { rows.get(&(handle, ROW_ZERO)).and_then(|row| row.get(name)) })
-            .copied()
+        let here = rows.get(&scope).and_then(|objects| objects.get(&handle)).and_then(|row| row.get(name));
+        match here {
+            Some(value) => Some(*value),
+            None if scope == ROW_ZERO => None,
+            None => rows.get(&ROW_ZERO).and_then(|objects| objects.get(&handle)).and_then(|row| row.get(name)).copied(),
+        }
     })
 }
 
@@ -80,9 +90,17 @@ static SWAP_HANDLERS: OnceLock<Handlers> = OnceLock::new();
 /// the slot holds a value (`zend_vm_def.h:2502`), so nothing of ours is guaranteed to run between a
 /// scope change and the next access. That is why this costs per switch rather than per access, and
 /// it is the whole trade this knob exists to measure.
+/// `swap` is the default since 2026-09-20 and `handlers` is kept only so V-97's comparison can be
+/// reproduced. `handlers` is **known to be wrong** in ways `swap` cannot be, because it replaces
+/// the engine's semantics instead of delegating to them: it performs no type verification, no
+/// `readonly` and no visibility checks, does not mangle private names, never falls back to
+/// `__get`/`__set`, and — measured — discards the class's declared defaults, so
+/// `private ?string $seen = null` comes back `IS_UNDEF` and PHP reports
+/// "Return value must be of type ?string, null returned". Do not reach for it outside that
+/// measurement.
 fn swapping() -> bool {
     static SWAP: OnceLock<bool> = OnceLock::new();
-    *SWAP.get_or_init(|| std::env::var("IGNIS_SCOPED_MODE").map(|mode| mode == "swap").unwrap_or(false))
+    *SWAP.get_or_init(|| std::env::var("IGNIS_SCOPED_MODE").map(|mode| mode != "handlers").unwrap_or(true))
 }
 
 thread_local! {
@@ -90,8 +108,9 @@ thread_local! {
     /// is the only reason either variant overrides a handler it otherwise would not: `zend_object`
     /// handles are **reused**, so without this a new object inherits a dead one's rows.
     static LIVE: RefCell<HashMap<u32, *mut sys::zend_object>> = RefCell::new(HashMap::new());
-    /// `(object handle, scope) -> that scope's copy of the declared slots`, swap variant only.
-    static TABLES: RefCell<HashMap<(u32, usize), Vec<sys::zval>>> = RefCell::new(HashMap::new());
+    /// `scope -> (object handle -> that scope's copy of the declared slots)`, swap variant only,
+    /// keyed the same way and for the same reasons as `ROWS` above.
+    static TABLES: RefCell<HashMap<usize, HashMap<u32, Vec<sys::zval>>>> = RefCell::new(HashMap::new());
 }
 
 /// `zend_object_handlers` is only ever read by the engine through a `*const`, and this one lives
@@ -164,21 +183,14 @@ unsafe extern "C" fn free_obj(object: *mut sys::zend_object) {
     unsafe {
         let handle = (*object).handle;
         LIVE.with(|live| live.borrow_mut().remove(&handle));
-        let rows = ROWS.with(|rows| {
-            let mut rows = rows.borrow_mut();
-            let keys: Vec<(u32, usize)> = rows.keys().filter(|(row_handle, _)| *row_handle == handle).copied().collect();
-            keys.into_iter().filter_map(|key| rows.remove(&key)).collect::<Vec<Row>>()
-        });
+        let rows = ROWS.with(|rows| rows.borrow_mut().values_mut().filter_map(|objects| objects.remove(&handle)).collect::<Vec<Row>>());
         for row in rows {
             for mut value in row.into_values() {
                 sys::zval_ptr_dtor(&raw mut value);
             }
         }
-        let tables = TABLES.with(|tables| {
-            let mut tables = tables.borrow_mut();
-            let keys: Vec<(u32, usize)> = tables.keys().filter(|(table_handle, _)| *table_handle == handle).copied().collect();
-            keys.into_iter().filter_map(|key| tables.remove(&key)).collect::<Vec<Vec<sys::zval>>>()
-        });
+        let tables = TABLES
+            .with(|tables| tables.borrow_mut().values_mut().filter_map(|objects| objects.remove(&handle)).collect::<Vec<Vec<sys::zval>>>());
         for table in tables {
             for mut value in table {
                 sys::zval_ptr_dtor(&raw mut value);
@@ -211,8 +223,9 @@ pub unsafe fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys::zend_f
             let count = (*(*object).ce).default_properties_count as usize;
             let slots = (&raw mut (*object).properties_table) as *mut sys::zval;
             let outgoing: Vec<sys::zval> = (0..count).map(|index| *slots.add(index)).collect();
-            TABLES.with(|tables| tables.borrow_mut().insert(((*object).handle, leaving), outgoing));
-            let incoming = TABLES.with(|tables| tables.borrow_mut().remove(&((*object).handle, entering)));
+            TABLES.with(|tables| tables.borrow_mut().entry(leaving).or_default().insert((*object).handle, outgoing));
+            let incoming =
+                TABLES.with(|tables| tables.borrow_mut().get_mut(&entering).and_then(|objects| objects.remove(&(*object).handle)));
             match incoming {
                 Some(values) => {
                     for (index, value) in values.into_iter().enumerate() {
@@ -222,7 +235,8 @@ pub unsafe fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys::zend_f
                 None => {
                     // A scope that has not touched this object yet starts from the constructor's
                     // table, copied rather than moved so row zero keeps its own reference.
-                    let defaults = TABLES.with(|tables| tables.borrow().get(&((*object).handle, ROW_ZERO)).cloned());
+                    let defaults =
+                        TABLES.with(|tables| tables.borrow().get(&ROW_ZERO).and_then(|objects| objects.get(&(*object).handle)).cloned());
                     for index in 0..count {
                         let mut value = defaults.as_ref().map_or_else(|| std::mem::zeroed(), |values| values[index]);
                         sys::zval_add_ref(&raw mut value);
@@ -317,6 +331,58 @@ unsafe fn undef_every_slot(object: *mut sys::zend_object) {
     }
 }
 
+/// Which shape is in effect, for anything that reports it. A probe that prints the mode it guessed
+/// from the environment lies the moment the default changes, which it did on 2026-09-20.
+pub fn mode() -> &'static str {
+    if swapping() { "swap" } else { "handlers" }
+}
+
+/// Promotes what the constructor just wrote into row zero, whatever scope it ran in.
+///
+/// Without this, row zero is only ever filled by a switch *away* from `{main}`, so a service the
+/// container builds lazily — inside a request, which is Symfony's normal path — traps its
+/// constructor's values in that one request's scope. Measured before it existed: fiber A creates
+/// the service, fiber B reads a `readonly string` and gets `''` under `handlers` and the engine's
+/// "must not be accessed before initialization" under `swap`. Sealing is explicit rather than a
+/// consequence of where `new` happened, because "what the constructor stores is process-wide" has
+/// to be a rule the mechanism enforces, not an accident of the caller's scope.
+///
+/// # Safety
+/// PHP thread with an initialised TSRM cache; `object` is a live scoped object whose constructor
+/// has just returned.
+pub unsafe fn seal(object: *mut sys::zend_object) {
+    // SAFETY: the caller upholds `# Safety`. Row zero takes its own reference to every value it
+    // keeps, and whatever it held before is released with no borrow outstanding.
+    unsafe {
+        let handle = (*object).handle;
+        if swapping() {
+            let count = (*(*object).ce).default_properties_count as usize;
+            let slots = (&raw mut (*object).properties_table) as *mut sys::zval;
+            let mut kept: Vec<sys::zval> = Vec::with_capacity(count);
+            for index in 0..count {
+                let mut value = *slots.add(index);
+                sys::zval_add_ref(&raw mut value);
+                kept.push(value);
+            }
+            let displaced = TABLES.with(|tables| tables.borrow_mut().entry(ROW_ZERO).or_default().insert(handle, kept));
+            for mut value in displaced.unwrap_or_default() {
+                sys::zval_ptr_dtor(&raw mut value);
+            }
+            return;
+        }
+        let scope = current_scope();
+        if scope == ROW_ZERO {
+            return; // the constructor already wrote row zero
+        }
+        let moved = ROWS.with(|rows| rows.borrow_mut().get_mut(&scope).and_then(|objects| objects.remove(&handle)));
+        let Some(moved) = moved else { return };
+        let displaced = ROWS.with(|rows| rows.borrow_mut().entry(ROW_ZERO).or_default().insert(handle, moved));
+        for mut value in displaced.map(|row| row.into_values().collect::<Vec<_>>()).unwrap_or_default() {
+            sys::zval_ptr_dtor(&raw mut value);
+        }
+    }
+}
+
 /// Drops the current scope's rows. Called at request end through `Ignis\Scope::clear()`, for the
 /// same reason the key-value bag is cleared there: a pooled fiber's next request must not read the
 /// previous one's values.
@@ -331,13 +397,15 @@ pub unsafe fn rows_clear() {
         if scope == ROW_ZERO {
             return; // row zero is the constructor's, and it outlives every request
         }
-        let dropped = ROWS.with(|rows| {
-            let mut rows = rows.borrow_mut();
-            let keys: Vec<(u32, usize)> = rows.keys().filter(|(_, row_scope)| *row_scope == scope).copied().collect();
-            keys.into_iter().filter_map(|key| rows.remove(&key)).collect::<Vec<Row>>()
-        });
-        for row in dropped {
+        let dropped = ROWS.with(|rows| rows.borrow_mut().remove(&scope));
+        let tables = TABLES.with(|tables| tables.borrow_mut().remove(&scope));
+        for row in dropped.map(|objects| objects.into_values().collect::<Vec<Row>>()).unwrap_or_default() {
             for mut value in row.into_values() {
+                sys::zval_ptr_dtor(&raw mut value);
+            }
+        }
+        for table in tables.map(|objects| objects.into_values().collect::<Vec<Vec<sys::zval>>>()).unwrap_or_default() {
+            for mut value in table {
                 sys::zval_ptr_dtor(&raw mut value);
             }
         }
@@ -359,7 +427,8 @@ unsafe extern "C" fn write_property(
         let key = property_name(name);
         let mut stored = *value;
         sys::zval_add_ref(&raw mut stored);
-        let displaced = ROWS.with(|rows| rows.borrow_mut().entry(((*object).handle, current_scope())).or_default().insert(key, stored));
+        let displaced = ROWS
+            .with(|rows| rows.borrow_mut().entry(current_scope()).or_default().entry((*object).handle).or_default().insert(key, stored));
         // The release happens with the borrow dropped, and that is not tidiness. Freeing the last
         // reference to an object runs its `__destruct`, which may touch a scoped property and
         // re-enter this handler; under a held `borrow_mut` that is a `RefCell` panic, and a panic
@@ -422,7 +491,12 @@ unsafe extern "C" fn unset_property(object: *mut sys::zend_object, name: *mut sy
     // SAFETY: the engine upholds `# Safety`. The removed value was addref'd when stored.
     unsafe {
         let key = property_name(name);
-        let removed = ROWS.with(|rows| rows.borrow_mut().get_mut(&((*object).handle, current_scope())).and_then(|row| row.remove(&key)));
+        let removed = ROWS.with(|rows| {
+            rows.borrow_mut()
+                .get_mut(&current_scope())
+                .and_then(|objects| objects.get_mut(&(*object).handle))
+                .and_then(|row| row.remove(&key))
+        });
         if let Some(mut value) = removed {
             sys::zval_ptr_dtor(&raw mut value);
         }
@@ -474,21 +548,24 @@ mod tests {
             super::super::zval::set_long(&mut shared, 10);
             super::super::zval::set_long(&mut own, 20);
         }
-        ROWS.with(|rows| rows.borrow_mut().entry((1, ROW_ZERO)).or_default().insert("dependency".into(), shared));
+        ROWS.with(|rows| rows.borrow_mut().entry(ROW_ZERO).or_default().entry(1).or_default().insert("dependency".into(), shared));
 
         let read_through = ROWS.with(|rows| {
             let rows = rows.borrow();
-            rows.get(&(1, 555))
+            rows.get(&555)
+                .and_then(|objects| objects.get(&1))
                 .and_then(|row| row.get("dependency"))
-                .or_else(|| rows.get(&(1, ROW_ZERO)).and_then(|row| row.get("dependency")))
+                .or_else(|| rows.get(&ROW_ZERO).and_then(|objects| objects.get(&1)).and_then(|row| row.get("dependency")))
                 .copied()
         });
         assert_eq!(long_of(read_through), Some(10), "an untouched scope sees the constructor's value");
 
-        ROWS.with(|rows| rows.borrow_mut().entry((1, 555)).or_default().insert("dependency".into(), own));
-        let after_write = ROWS.with(|rows| rows.borrow().get(&(1, 555)).and_then(|row| row.get("dependency")).copied());
+        ROWS.with(|rows| rows.borrow_mut().entry(555).or_default().entry(1).or_default().insert("dependency".into(), own));
+        let after_write =
+            ROWS.with(|rows| rows.borrow().get(&555).and_then(|objects| objects.get(&1)).and_then(|row| row.get("dependency")).copied());
         assert_eq!(long_of(after_write), Some(20), "its own write shadows row zero");
-        let row_zero = ROWS.with(|rows| rows.borrow().get(&(1, ROW_ZERO)).and_then(|row| row.get("dependency")).copied());
+        let row_zero = ROWS
+            .with(|rows| rows.borrow().get(&ROW_ZERO).and_then(|objects| objects.get(&1)).and_then(|row| row.get("dependency")).copied());
         assert_eq!(long_of(row_zero), Some(10), "and row zero is untouched by it");
     }
 
@@ -507,11 +584,11 @@ mod tests {
                 super::super::zval::set_long(&mut first, 1);
                 super::super::zval::set_long(&mut second, 2);
             }
-            rows.entry((7, 100)).or_default().insert("tag".into(), first);
-            rows.entry((7, 200)).or_default().insert("tag".into(), second);
+            rows.entry(100).or_default().entry(7).or_default().insert("tag".into(), first);
+            rows.entry(200).or_default().entry(7).or_default().insert("tag".into(), second);
 
-            assert_eq!(long_of(Some(rows[&(7, 100)]["tag"])), Some(1));
-            assert_eq!(long_of(Some(rows[&(7, 200)]["tag"])), Some(2), "the second scope has its own row");
+            assert_eq!(long_of(Some(rows[&100][&7]["tag"])), Some(1));
+            assert_eq!(long_of(Some(rows[&200][&7]["tag"])), Some(2), "the second scope has its own row");
             assert_eq!(rows.len(), 2, "one object, two scopes, two rows");
         });
     }

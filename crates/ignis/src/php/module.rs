@@ -152,6 +152,7 @@ arginfo!(ARGINFO_TEMPORAL_HEARTBEAT, 2, c"worker", c"json");
 #[cfg(php_async_abi)]
 arginfo!(ARGINFO_OP_ID, 1, c"id");
 arginfo!(ARGINFO_SCOPE_ALLOCATE, 1, c"class");
+arginfo!(ARGINFO_SCOPE_SEAL, 1, c"instance");
 static ARGINFO_NONE: SyncStatic<[sys::zend_internal_arg_info; 1]> = SyncStatic([arg_info_head(0)]);
 static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> =
     SyncStatic([arg_info_head(4), arg_info(c"server"), arg_info(c"get"), arg_info(c"post"), arg_info(c"cookie")]);
@@ -824,6 +825,31 @@ unsafe extern "C" fn zif_ignis_scope_allocate(ex: *mut sys::zend_execute_data, r
     }
 }
 
+/// `ignis_scope_seal(object $instance): void` — the constructor has returned; what it wrote becomes
+/// row zero, the values every other scope reads until it writes its own. Explicit, because a service
+/// built lazily inside a request would otherwise trap its dependencies in that request's scope.
+unsafe extern "C" fn zif_ignis_scope_seal(ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
+    // SAFETY: zend_parse_parameters is the documented way to read args; the object it yields is
+    // borrowed for this call, which is all `seal` needs.
+    unsafe {
+        // "o" writes a **zval***, not a zend_object*. Passing the latter is a type confusion that
+        // reads `handle` out of the zval's own memory: it sealed handle 8 while the object was 9,
+        // so the constructor's values went to a row nothing would ever look up.
+        let mut instance: *mut sys::zval = ptr::null_mut();
+        if sys::zend_parse_parameters(zval::num_args(ex), c"o".as_ptr(), &mut instance) != sys::SUCCESS {
+            return; // zend_parse_parameters already threw
+        }
+        super::scoped::seal((*instance).value.obj);
+    }
+}
+
+/// `ignis_scope_mode(): string` — `"swap"` or `"handlers"`, whichever is actually in effect.
+unsafe extern "C" fn zif_ignis_scope_mode(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: a zif frame inside a request on a PHP thread, which is what `string_zval` asks for;
+    // the string it builds carries the one reference the return slot takes ownership of.
+    unsafe { *rv = super::route::string_zval(super::scoped::mode().as_bytes()) };
+}
+
 /// `ignis_scope_rows_clear(): void` — drops this fiber's scoped property rows at request end, the
 /// same boundary `Ignis\\Scope::clear()` drops its key-value bag at (V-67).
 unsafe extern "C" fn zif_ignis_scope_rows_clear(_ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
@@ -962,9 +988,11 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 42]> = SyncStatic([
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
+    fe(c"ignis_scope_mode", zif_ignis_scope_mode, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
@@ -1007,9 +1035,11 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 40]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 48]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 50]> = SyncStatic([
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
+    fe(c"ignis_scope_mode", zif_ignis_scope_mode, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_temporal_connect", crate::backend::temporal::zif_connect, ARGINFO_TEMPORAL_CONNECT.0.as_ptr(), 3),
     fe(c"ignis_temporal_replay", crate::backend::temporal::zif_replay, ARGINFO_TEMPORAL_REPLAY.0.as_ptr(), 3),
     fe(c"ignis_temporal_poll", crate::backend::temporal::zif_poll_activation, ARGINFO_TEMPORAL_WORKER.0.as_ptr(), 1),
@@ -1058,9 +1088,11 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 48]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 42]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
+    fe(c"ignis_scope_mode", zif_ignis_scope_mode, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
