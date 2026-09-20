@@ -797,7 +797,7 @@ the answer may be to narrow or to fold, and the sooner that is on paper the chea
 what breaks at runtime, and this item breaks nothing — its priority comes from what it could make
 unnecessary.
 
-### S-OWNERSHIP Every value a fiber-scoped service hands out carries its owner `main` `severity: planned — carries three open red items` `open — owner note 2026-09-19, owner report, unverified`
+### S-OWNERSHIP Every value a fiber-scoped service hands out carries its owner `main` `KILLED 2026-09-20 (DECISIONS.md) — it is a fourth mechanism, which ADR-0037 forbids; the three reds it targeted stay open with their cheaper fixes`
 **What.** A value handed out by a fiber-scoped service carries `owner_scope_id` in the object's GC
 bits; taint is transitive through property writes and array element writes. Violations: writing a
 tainted value into a longer-lived holder; a tainted object outliving its scope with a refcount above
@@ -842,7 +842,7 @@ retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
-### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned — closes the façade half of V-96 by construction` `open — owner note 2026-09-19, owner report, unverified` — **blocked by `R-TA-CONTEXT`**
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — kept 2026-09-20 against research 44's advice to kill it, because its arithmetic was wrong: the plausible target is 358 of 447 façade lines, not 53` — **blocked by `R-TA-CONTEXT`**
 **What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
 `create_object` returns a façade with no properties table; `read_property`, `write_property`,
 `has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address

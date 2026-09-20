@@ -552,3 +552,54 @@ Kill criterion: an agent's change to `offload.rs` that needs a `reactor.rs` edit
 caller's op. `Reactor::complete` is already reachable from `offload.rs` (`:77`, `:116`), so the
 fix should not need one; if it does, the boundary was drawn in the wrong place and the offload half
 comes back to main.
+
+---
+
+## 2026-09-20 — S-OWNERSHIP is killed as filed; S-SCOPED-CLASS stays, blocked on evidence
+
+Owner direction 2026-09-19: settle the two proposed mechanisms before writing code for the four
+state-isolation reds. Research 44 recommended killing both. Main corrected one of its numbers and
+reached a split verdict.
+
+**S-OWNERSHIP: killed as filed.** Not on cost, and not because the defect it targets is unreal —
+it is very real and stays open as `S-DBAL-DIRECT`, `S-EXCLUSIVE` and `S-RESET-ARRAYPOOL`. It is
+killed because it claims to be the `context` mechanism and is not. ADR-0037's own table defines
+`context` by what it may not do: "**allocate per switch**: a slot swap is pointer moves; anything
+needing allocation happens at dispatch, not on the observer". A taint check firing on every
+property write and every array-element write, transitively, is not a slot swap on a switch — it is
+work on every write in the program. That makes it a **fourth mechanism**, which the budget forbids
+by construction, and the budget is an owner rule, not a preference. The item's own text also
+concedes the reentrancy risk, which main confirmed independently: our two switch handlers carry no
+`in_execution` guard because nothing in them can cause a switch, and this would be the first thing
+that changes that.
+
+What survives: the three reds it targeted each already have a cheaper, specified fix on file —
+research 39's fiber-affinity check plus the one-lease rule (~10–20 lines) for `S-EXCLUSIVE`, one
+more façade row for `S-DBAL-DIRECT`, a boot check for `S-RESET-ARRAYPOOL`. Research 39 ranked eight
+options and did not find a reason to prefer taint tracking over any of them.
+
+**S-SCOPED-CLASS: kept, blocked on `R-TA-CONTEXT`.** Research 44 recommended killing this one too,
+on the arithmetic that only `FiberTokenStorage` (53 lines) could legally be a target because
+`FiberRequestStack extends RequestStack` and the item's own unresolved question is that a scoped
+class's parent must be scoped too. That arithmetic is wrong and main checked it: `FiberEntityManager`
+(247 lines) and `FiberManager` (58) have no vendor parent either — they implement interfaces. The
+plausible target is **358 of 447 façade lines**, not 53, which makes this a real trade rather than
+an obvious loss: ~358 lines of plain userland PHP against six new `unsafe` object handlers.
+
+It is not decided on that trade, because the trade is not the question yet. `R-TA-CONTEXT` asks
+whether upstream's `internal_context` already provides the storage, and its answer changes the
+design. That research needed a fork checkout this box did not have — which the owner's other
+decision today (a CI job that builds backend (b)) is what unblocks.
+
+Kill criterion for this decision: if `R-TA-CONTEXT` finds that per-scope storage on
+`internal_context` costs nothing on the switch path and that the façades can be deleted rather than
+reimplemented, `S-SCOPED-CLASS` is built and this entry's caution was wrong. If it finds the
+opposite, `S-SCOPED-CLASS` is killed the way `S-OWNERSHIP` was, and the façades stay as they are.
+
+## 2026-09-20 — the two unused packages are kept for now
+
+Owner decision: neither `ignis/swoole` (674 lines, no user found anywhere in the tree outside its
+own manifest) nor `ignis/temporal-prototype` (869 lines, its own manifest calls it "Frozen") is
+deleted yet. Revisit after `R-TA-SERVER`, which may change the framing of what this product is for
+and therefore what its compatibility shims are worth. Recorded so the measurement in research 45 is
+not re-derived: 1543 lines, 11% of package code, and `A-SWOOLE-TICKERS` would close by removal.
