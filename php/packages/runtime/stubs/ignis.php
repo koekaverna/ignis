@@ -392,7 +392,7 @@ if (!function_exists('ignis_temporal_replay')) {
 }
 
 if (!function_exists('ignis_temporal_poll')) {
-    /** ignis_temporal_poll(int $worker): int — op; JSON WorkflowActivation (ADR-0013, V-18). */
+    /** ignis_temporal_poll(int $worker): int — op; JSON WorkflowActivation, or null at shutdown (ADR-0013, V-18, V-109). */
     function ignis_temporal_poll(int $worker): int
     {
         throw new \LogicException('stub: only the ignis binary (temporal feature) defines ' . __FUNCTION__);
@@ -408,7 +408,7 @@ if (!function_exists('ignis_temporal_complete')) {
 }
 
 if (!function_exists('ignis_temporal_poll_activity')) {
-    /** ignis_temporal_poll_activity(int $worker): int — op; JSON ActivityTask (ADR-0013, V-18). */
+    /** ignis_temporal_poll_activity(int $worker): int — op; JSON ActivityTask, or null at shutdown (ADR-0013, V-18, V-109). */
     function ignis_temporal_poll_activity(int $worker): int
     {
         throw new \LogicException('stub: only the ignis binary (temporal feature) defines ' . __FUNCTION__);

@@ -22,6 +22,32 @@ final class CoreSourceTest extends TestCase
         return new \ReflectionMethod(CoreSource::class, $method);
     }
 
+    // ---- activationOf: only end of stream is a shutdown ----
+
+    /**
+     * `poll()` used to catch every `RuntimeException` and report a clean shutdown, so a worker that
+     * lost its connection to the server exited as if it had been asked to. sdk-core names exactly
+     * two ways a poll stops and says of the second "lang should consider this fatal"; the runtime
+     * now sends `null` for the first and an error for the second (V-109).
+     */
+    public function testANullCompletionIsTheShutdownSignalAndOnlyThat(): void
+    {
+        self::assertNull(self::reflect('activationOf')->invoke(null, null));
+    }
+
+    public function testAnActivationIsPassedThrough(): void
+    {
+        self::assertSame('{"runId":"r"}', self::reflect('activationOf')->invoke(null, '{"runId":"r"}'));
+    }
+
+    public function testATransportFailureIsRaisedInsteadOfBeingReportedAsAShutdown(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('poll: status: Unavailable');
+
+        self::reflect('activationOf')->invoke(null, ['kind' => 'error', 'message' => 'poll: status: Unavailable']);
+    }
+
     // ---- resultOf: a reactor completion is a string result or {message: ...}, nothing else ----
 
     public function testAnErrorCompletionWithAStringMessageBecomesThatException(): void

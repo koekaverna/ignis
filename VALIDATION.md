@@ -5543,3 +5543,47 @@ now; and `$probability`/`$yields` were public because a bench read them — they
 **Gated** in `scripts/smoke.sh`: the application's draws with chaos on must equal the draws with
 chaos off, and five unit tests in `ChaosTest` cover the decision, the counting, the key-preserving
 shuffle and the never-initialised case.
+
+## V-109 — a Temporal worker that lost its server reported a clean shutdown
+
+Date: 2026-09-20. Found by reading, from the owner's pointer at `CoreSource.php:63`.
+
+```php
+try { return self::await(...); } catch (\RuntimeException) { return null; }
+```
+
+`null` is the shutdown signal sdk-php ends its loop on. That `catch` caught **every** way a poll can
+stop: a lost connection, an unknown worker id, a malformed completion, a JSON failure. All of them
+were reported to sdk-php as "the worker was asked to stop".
+
+sdk-core makes the distinction and is explicit about both halves
+(`sdk-core/crates/sdk-core/src/worker/mod.rs:1779-1790`):
+
+- `PollError::ShutDown` — "Core is shut down and there are no more tasks of this kind";
+- `PollError::TonicError` — "Core will attempt to retry any non-fatal errors, so **lang should
+  consider this fatal**."
+
+The runtime had the difference in hand and threw it away: both arms became
+`Outcome::Failed(format!("poll: {e}"))`, one string, and PHP could only have recovered the
+difference by matching on the text — the same flattening V-107 measured and `A-ADAPTER-MECHANISMS`
+files against the gRPC status.
+
+**The fix, in the layer that knows.** `poll_stopped()` in `backend/temporal.rs` maps `ShutDown` to
+`Outcome::Blob(None)` — the reactor's existing word for end of stream, which is exactly what a
+shutdown is — and leaves every other error an error. It reaches PHP as `null`. `CoreSource::poll()`
+no longer catches anything: `activationOf()` returns `null` for end of stream and hands everything
+else to `resultOf()`, which throws.
+
+**A consequence that had to be handled with it.** `Ignis\Temporal\serve()` kept only the workflow
+fiber's `Future` and discarded the activity ones, which was survivable while `poll()` never threw.
+With a fatal error now raised, eight of nine worker fibers would have failed into
+`Loop::$unobserved` and surfaced only at loop exit. `serve()` awaits every worker fiber now.
+
+**Tests.** One in Rust for the mapping, both arms (`ShutDown` → `Blob(None)`; a
+`tonic::Status::unavailable` → `Failed`, keeping what the server said). Three in PHP for
+`activationOf`: `null` is shutdown and only `null`, an activation passes through, an error payload
+is raised instead of being reported as a shutdown. The Rust one runs under `--features temporal`,
+which the gate builds.
+
+**Not measured end to end.** E9 needs the Temporal CLI, which is not on this box; CI's E9 job is the
+arm. Recorded as a reading-and-unit-test fix, not a measured one.

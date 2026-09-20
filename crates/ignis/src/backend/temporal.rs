@@ -31,7 +31,7 @@ use temporalio_protos::coresdk::{ActivityHeartbeat, ActivityTaskCompletion};
 use temporalio_protos::temporal::api::common::v1::WorkflowExecution;
 use temporalio_protos::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryRequest;
 use temporalio_sdk_core::replay::{HistoryForReplay, ReplayWorkerInput};
-use temporalio_sdk_core::{CoreRuntime, Worker, WorkerConfig, WorkerVersioningStrategy, init_replay_worker, init_worker};
+use temporalio_sdk_core::{CoreRuntime, PollError, Worker, WorkerConfig, WorkerVersioningStrategy, init_replay_worker, init_worker};
 
 use crate::lock::LockUnpoisoned;
 use crate::php::module::reactor;
@@ -233,7 +233,25 @@ unsafe fn worker_arg(ex: *mut sys::zend_execute_data) -> Option<(u64, Option<Str
     }
 }
 
-/// `ignis_temporal_poll(int $worker): int` → JSON `WorkflowActivation`, or error (shutdown).
+/// Why a poll stopped: end of stream, or a failure the caller has to see.
+///
+/// `PollError` has exactly two variants and sdk-core is explicit about both — `ShutDown` is
+/// "Core is shut down and there are no more tasks of this kind", and of `TonicError` it says "lang
+/// should consider this fatal". Flattening the two into one `Outcome::Failed` left PHP recovering
+/// the difference from the message text, and `CoreSource::poll()` did not even try: it caught every
+/// error and reported a clean shutdown, so a worker that lost the server exited as if it had been
+/// asked to (V-109).
+///
+/// Shutdown is delivered as `Outcome::Blob(None)` — the reactor's existing word for end of stream,
+/// which is exactly what it is — and reaches PHP as `null`.
+fn poll_stopped(error: PollError, what: &str) -> Outcome {
+    match error {
+        PollError::ShutDown => Outcome::Blob(None),
+        fatal => Outcome::Failed(format!("{what}: {fatal}")),
+    }
+}
+
+/// `ignis_temporal_poll(int $worker): int` → JSON `WorkflowActivation`, `null` at shutdown, or error.
 pub unsafe extern "C" fn zif_poll_activation(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: called by the VM through this module's function table, so `ex` is the live frame for
     // this call and `rv` is the return slot the VM owns for it. The body only reads arguments through
@@ -248,7 +266,7 @@ pub unsafe extern "C" fn zif_poll_activation(ex: *mut sys::zend_execute_data, rv
                     Ok(json) => Outcome::Json(json),
                     Err(e) => Outcome::Failed(format!("activation json: {e}")),
                 },
-                Err(e) => Outcome::Failed(format!("poll: {e}")),
+                Err(e) => poll_stopped(e, "poll"),
             }
         });
     }
@@ -292,7 +310,7 @@ pub unsafe extern "C" fn zif_poll_activity(ex: *mut sys::zend_execute_data, rv: 
                     Ok(json) => Outcome::Json(json),
                     Err(e) => Outcome::Failed(format!("activity task json: {e}")),
                 },
-                Err(e) => Outcome::Failed(format!("poll activity: {e}")),
+                Err(e) => poll_stopped(e, "poll activity"),
             }
         });
     }
@@ -361,5 +379,31 @@ pub unsafe extern "C" fn zif_shutdown(ex: *mut sys::zend_execute_data, rv: *mut 
             forget_worker(id);
             Outcome::Json("\"ok\"".into())
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two things a poll can stop for, and they must not look the same to PHP. `CoreSource`
+    /// read every stop as a shutdown, so a worker that lost the server reported a clean exit —
+    /// sdk-core's own comment on the other variant is "lang should consider this fatal".
+    #[test]
+    fn shutdown_ends_the_stream_and_a_transport_failure_is_still_a_failure() {
+        assert!(
+            matches!(poll_stopped(PollError::ShutDown, "poll"), Outcome::Blob(None)),
+            "shutdown is end of stream, which reaches PHP as null"
+        );
+
+        let fatal = poll_stopped(PollError::TonicError(tonic::Status::unavailable("server gone")), "poll activity");
+
+        match fatal {
+            Outcome::Failed(message) => {
+                assert!(message.starts_with("poll activity:"), "says which poll: {message}");
+                assert!(message.contains("server gone"), "and keeps what the server said: {message}");
+            }
+            other => panic!("a transport failure must stay a failure, got {other:?}"),
+        }
     }
 }

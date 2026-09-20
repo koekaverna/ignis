@@ -63,13 +63,25 @@ final class CoreSource implements ActivationSource, HeartbeatSink
     /** A null result means the worker is shutting down; sdk-php ends its loop on that signal. */
     public function poll(string $kind): ?string
     {
-        try {
-            return self::await($kind === self::ACTIVITY
-                ? \ignis_temporal_poll_activity($this->worker)
-                : \ignis_temporal_poll($this->worker));
-        } catch (\RuntimeException) {
-            return null;
-        }
+        return self::activationOf(Loop::awaitOp($kind === self::ACTIVITY
+            ? \ignis_temporal_poll_activity($this->worker)
+            : \ignis_temporal_poll($this->worker)));
+    }
+
+    /**
+     * End of stream, or a result — and a failure is neither, so it is thrown.
+     *
+     * This used to `catch (\RuntimeException) { return null; }`, which reported a clean shutdown for
+     * **every** way a poll could stop: a lost connection, an unknown worker id, a malformed
+     * completion. sdk-core distinguishes exactly two cases and is explicit about the second — of
+     * `PollError::TonicError` it says "lang should consider this fatal" — so a worker whose server
+     * went away exited as if it had been asked to, with nothing logged and nothing to find (V-109).
+     * The runtime now delivers shutdown as `null`, the reactor's own word for end of stream, and
+     * everything else arrives as the error it is.
+     */
+    private static function activationOf(mixed $completion): ?string
+    {
+        return $completion === null ? null : self::resultOf($completion);
     }
 
     public function complete(string $kind, string $json): void
@@ -145,13 +157,19 @@ function serve(CoreSource $source, callable $register, int $activityFibers = 8):
     };
 
     $workflows = $factory();
-    $main = \Ignis\async(static fn() => $workflows->run($workflows->host($source, ActivationSource::WORKFLOW)));
+    $workers = [\Ignis\async(static fn() => $workflows->run($workflows->host($source, ActivationSource::WORKFLOW)))];
 
     for ($i = 0; $i < \max(1, $activityFibers); $i++) {
         $activities = $factory();
-        \Ignis\async(static fn() => $activities->run($activities->host($source, ActivationSource::ACTIVITY)));
+        $workers[] = \Ignis\async(static fn() => $activities->run($activities->host($source, ActivationSource::ACTIVITY)));
     }
 
     Loop::run();
-    $main->await();
+    // Every worker fiber is awaited, not just the workflow one. The activity futures used to be
+    // discarded, so a fatal poll error in one of them surfaced — if at all — as an unobserved
+    // rejection at loop exit. That was survivable while `poll()` reported every failure as a clean
+    // shutdown and never threw; now that a lost server is an exception, it has to reach the caller.
+    foreach ($workers as $worker) {
+        $worker->await();
+    }
 }
