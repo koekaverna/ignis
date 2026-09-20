@@ -9,7 +9,7 @@ use Symfony\Component\HttpFoundation\RequestStack;
 /**
  * A singleton that holds fiber-scoped services, and one that holds values taken out of them.
  *
- * The two are not the same hazard and this exists to tell them apart. `FiberRequestStack` and
+ * The two are not the same hazard and this exists to tell them apart. A scoped `RequestStack` and
  * `FiberEntityManager` are singleton **façades**: every method reads `Ignis\Scope`, so a service
  * holding one resolves per fiber and that is the supported shape (V-16, V-68, V-69). What pins a
  * singleton to one request is taking a *value* out of such a façade and keeping it — here, the

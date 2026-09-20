@@ -5201,3 +5201,26 @@ took a reference for the container that stored it, and the object was freed unde
 A short script never noticed. Every unit test passed. Both smoke arms passed. It took a real
 framework holding the object past the end of a request to expose it, which is the argument for this
 bench existing at all.
+
+## V-100 — ADR-0042 acceptance step 2: the façade has nothing left to be
+
+Date: 2026-09-20. Command: the E21 fixture's `/whoami` arm, three pairs of overlapping requests, A
+sleeping 300 ms mid-handler while B runs — run twice, once with `request_stack` bound to our
+89-line `Ignis\Symfony\FiberRequestStack` and once bound to Symfony's own
+`Symfony\Component\HttpFoundation\RequestStack` with nothing but the container's `ignis.scoped`
+mark on it.
+
+```
+FiberRequestStack (facade)         leaks 0/3
+IGNIS_PLAIN_REQUEST_STACK=1        leaks 0/3
+```
+
+The acceptance in ADR-0042 reads: "then `FiberRequestStack` rewritten on it — **if that class
+disappears the mechanism is right, and if it does not, say what is missing**". It disappears. The
+class existed for one reason, stated in its own doc block: `RequestStack` keeps its own private
+array and an inherited method reads that one, which under fibers is always the wrong one (V-88).
+With the private array itself resolving per scope there is no method left to override.
+
+**What is not fixed by either, and was not claimed to be:** `resetRequestFormats()` clears
+`Request::$formats`, a **static** that is thread-wide and cannot be scoped from an instance. That is
+`S-REQUEST-FORMATS` and it is exactly as open as it was.

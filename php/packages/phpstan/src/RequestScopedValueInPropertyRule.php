@@ -20,7 +20,7 @@ use PHPStan\Type\ObjectType;
  * Keeping a request's value in an object that outlives the request.
  *
  * Under fibers the container's singletons are shared by every request on the thread, and the answer
- * to that is a per-fiber façade: `FiberRequestStack` and `FiberEntityManager` are single objects
+ * to that is a per-fiber façade: `RequestStack` marked scoped, and `FiberEntityManager`, are single objects
  * whose every method reads `Ignis\Scope`, so a service holding one resolves per request. Measured —
  * six interleaved requests, each saw its own (V-96).
  *

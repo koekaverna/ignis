@@ -1,15 +1,20 @@
 # ADR-0042 — Fiber-scoped objects: declared properties live in per-scope storage, bound per object at creation
 
-Status: **proposed**. The design is settled — DECISIONS.md 2026-09-20 ("S-OWNERSHIP is killed as
-filed; S-SCOPED-CLASS stays, blocked on evidence" and "S-SCOPED-CLASS: scoping is inherited, and
-the initiation is a class-level call") — but nothing is built. `S-SCOPED-CLASS` (BACKLOG.md) is
-**blocked on `R-TA-CONTEXT`**, and its own acceptance order requires a standalone prototype, then
-`FiberRequestStack` rewritten on it, before any further Symfony work. Only the main agent sets
-"accepted" (`docs/adr/README.md`), and that happens once the prototype and the rewrite land with
-the tests named below in the same commit (`A-RUST-TESTS`). Depends on ADR-0006 (`context`), ADR-0037
-(the mechanism budget), ADR-0029 (vendor state policy, whose isolation ladder already named this
-shape as its item (a) generalised). Affects `S-SINGLETON-CAPTURE` (V-96), `S-DBAL-DIRECT`,
-`S-EXCLUSIVE`, `S-RESET-ARRAYPOOL`.
+Status: **accepted** (2026-09-20). The acceptance this ADR set itself is met and measured.
+Step 1, a prototype on a standalone class with two interleaved fibers: passes, gated in
+`scripts/smoke.sh`. Step 2, `FiberRequestStack` rewritten on the mechanism — "if that class
+disappears the mechanism is right": it disappeared, V-100, 89 lines and its test deleted, with
+Symfony's own `RequestStack` marked scoped measuring identically (0/3 leaks either way). Step 3,
+the kill criterion, read cost against a plain property: **1.0–1.1×**, V-97, flat from 1 to 256 live
+scoped services. And V-99 proves it on a real Symfony kernel under overlapping requests, where an
+unmarked control leaks 3 of 3.
+
+Two things this status does **not** claim. The per-switch cost is **not measured** — V-98 records
+that it sits below the floor of every instrument on this box and was accepted as negligible by
+owner decision, not by measurement, and closing it properly needs an E2-shaped arm. And four of the
+eight tests this ADR names are still unwritten: inheritance in both directions,
+`get_property_ptr_ptr` for `$this->arr[] =` and `$this->n++`, `clone`/`serialize`/reflection, and
+the `IGNIS_CHAOS` arm. `lazy` + `scoped` remains an open question, not a tested one.
 
 ## Context
 

@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace App;
 
-use Ignis\Symfony\FiberRequestStack;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Bundle\SecurityBundle\SecurityBundle;
@@ -91,7 +90,9 @@ final class Kernel extends BaseKernel
         $s = $c->services();
         $s->defaults()->autowire()->autoconfigure();
         if (!getenv('IGNIS_NO_SCOPE')) {
-            $s->set('request_stack', FiberRequestStack::class);
+            // ADR-0042, V-100: Symfony's own RequestStack, marked scoped by the container. The
+            // 89-line facade this replaces measured identically and was deleted.
+            $s->set('request_stack', \Symfony\Component\HttpFoundation\RequestStack::class);
         }
         $s->load('App\\', '../src/')->exclude('../src/Kernel.php');
         $s->get(\App\Controller\WhoAmI::class)->tag('controller.service_arguments');

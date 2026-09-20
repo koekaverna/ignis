@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\Security\Core\Authentication\Token\NullToken;
 
 /**
- * ADR-0011 / V-68: the authenticated token is fiber-scoped storage, same as `FiberRequestStack`,
+ * ADR-0011 / V-68: the authenticated token is fiber-scoped storage, same as a scoped `RequestStack`,
  * for the same reason -- a shared `TokenStorage` service leaks whoever authenticated last into a
  * request that parked on I/O and resumed on the same thread.
  */

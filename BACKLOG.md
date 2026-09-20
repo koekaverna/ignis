@@ -874,7 +874,7 @@ retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
-### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — acceptance steps 1 and 3 pass 2026-09-20 (V-97, V-99): the mechanism works on a real Symfony app under concurrent requests, read cost measured at 1.0x. Step 2 (FiberRequestStack rewritten on it) open` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `PARTLY DONE 2026-09-20 — all three acceptance steps pass (V-97, V-99, V-100), ADR-0042 accepted, FiberRequestStack deleted. Open: four of the eight named tests, lazy+scoped, and the three remaining façades` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
 **What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
 `create_object` returns a façade with no properties table; `read_property`, `write_property`,
 `has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address
@@ -959,6 +959,16 @@ it: `$service->shared` measured `'built-once'` outside a fiber and **`NULL`** in
 fallback now makes "what the constructor stores is process-wide, what a method reads is per-scope"
 mechanical rather than a rule to remember, and `rows_clear()` refuses to clear row zero because it
 outlives every request.
+**Acceptance step 2 met, 2026-09-20 (V-100): the façade disappeared.** Symfony's own `RequestStack`
+with nothing but the container's `ignis.scoped` mark measured identically to the 89-line
+`FiberRequestStack` — 0/3 leaks either way — so the class and its test were deleted. It existed for
+one reason, stated in its own doc block: `RequestStack` keeps a private array and an inherited
+method reads that one, which under fibers is always the wrong one (V-88). With the array itself
+per-scope there is nothing left to override. `resetRequestFormats()` is unaffected either way: it
+clears a **static**, which is `S-REQUEST-FORMATS` and exactly as open as before.
+**Three façades remain and are not proven.** `FiberTokenStorage` (53), `FiberEntityManager` (247)
+and `FiberManager` (58) each need their own arm before anyone deletes them — `FiberEntityManager` in
+particular does real work beyond scoping, rebuilding a manager Doctrine has closed.
 **Open, and each is a named ceiling rather than an omission.** Rows are keyed by property name, not
 by a dense slot array resolved at class link time — `ponytail:` in the module, to land with the
 read-cost measurement ADR-0042's kill criterion already demands. `get_properties` is still the
