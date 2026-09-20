@@ -711,7 +711,7 @@ final class Loop
         $queued = \count(self::$requestQueue) - self::$queueHead;
         if (self::$queueDepth > 0 && $queued >= self::$queueDepth) {
             ++self::$rejected;
-            \ignis_respond($id, 503, ['retry-after' => '1'], "503 busy\n");
+            self::respondTo($id, 503, ['retry-after' => '1'], "503 busy\n");
             return;
         }
         self::$requestQueue[] = [$id, $raw];
@@ -790,10 +790,34 @@ final class Loop
     {
         self::logFailure('answering the request failed', $exception);
         try {
-            \ignis_respond($id, 500, ['content-type' => 'text/plain'], '500 ' . $exception::class . ': ' . $exception->getMessage() . "\n");
+            self::respondTo($id, 500, ['content-type' => 'text/plain'], '500 ' . $exception::class . ': ' . $exception->getMessage() . "\n");
         } catch (\Throwable $second) {
             self::logFailure('and so did answering it with a 500', $second);
         }
+    }
+
+    /**
+     * Answers $id and says so when the answer was refused, because a refused answer is a request
+     * nobody will ever answer — the client waits until it gives up.
+     *
+     * `ignis_respond()` returns false when the id is unknown, already answered, or in a state this
+     * shape of answer cannot satisfy. Every call site here used to discard that, and the cost was
+     * measured: a gRPC call rejected by admission control was "answered" with HTTP 503, the reactor
+     * refused it because a gRPC id is not a whole-body id, and three of five concurrent calls hung
+     * for ever with nothing logged (V-107). The transport now maps a refusal onto its own wire, so
+     * that particular false is gone; this is here so the next one is a line in the log and not a
+     * hang.
+     *
+     * @param array<string, string|list<string>> $headers
+     */
+    private static function respondTo(int $id, int $status, array $headers, string $body): bool
+    {
+        if (\ignis_respond($id, $status, $headers, $body)) {
+            return true;
+        }
+        error_log(\sprintf('Ignis\Loop: request %d refused a %d answer and is now unanswered', $id, $status));
+
+        return false;
     }
 
     /** Loop-level failures the client may never see. `error_log()` is stderr under the embed SAPI. */
@@ -870,9 +894,9 @@ final class Loop
         if ($answer instanceof Http\StreamedResponse) {
             self::produce($id, $answer);
         } elseif ($answer instanceof Http\Response) {
-            \ignis_respond($id, $answer->status, $answer->headers, $answer->body);
+            self::respondTo($id, $answer->status, $answer->headers, $answer->body);
         } elseif ($answer !== null) {
-            \ignis_respond($id, 500, ['content-type' => 'text/plain'], "handler must return Ignis\\Http\\Response or null\n");
+            self::respondTo($id, 500, ['content-type' => 'text/plain'], "handler must return Ignis\\Http\\Response or null\n");
         }
     }
 
@@ -910,7 +934,7 @@ final class Loop
         } catch (\Throwable $e) {
             [$tail, $started] = \ignis_stream_unbind();
             if (!$started && $tail === '') {
-                \ignis_respond($id, 500, ['content-type' => 'text/plain'], '500 ' . $e::class . ': ' . $e->getMessage() . "\n");
+                self::respondTo($id, 500, ['content-type' => 'text/plain'], '500 ' . $e::class . ': ' . $e->getMessage() . "\n");
 
                 return;
             }
@@ -931,7 +955,7 @@ final class Loop
     private static function endStream(int $id, string $tail, bool $started): void
     {
         if (!$started && $tail === '') {
-            \ignis_respond($id, 204, [], '');
+            self::respondTo($id, 204, [], '');
 
             return;
         }

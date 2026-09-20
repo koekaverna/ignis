@@ -434,7 +434,17 @@ by both. `Loop` 1,123 → 1,067 lines. E1 and E2 measured before and after on th
 moved (V-106).
 **Candidate 2, admission and budget** — 132 lines of policy (queue, depth, exempt list, rejection)
 that touch the loop only through `$inflightRequests`, the most nearly separable of the remaining
-nine. Unstarted.
+nine. Unstarted. Note that this is the concern V-107's defect lived in: rejection wrote an HTTP
+status from inside the scheduler, and a gRPC call rejected that way was never answered. The transport
+now maps the refusal, so the defect is closed, but the vocabulary is still the scheduler's.
+**A third, smaller one: two public statics used as a registration API.**
+`Loop::$rawRequestHandler` (set by `Classic\functions.php:26`) and `Loop::$offloadCallbackHandler`
+(set by `offload/src/ignis-offload.php:385`) are how two packages install themselves into the
+scheduler's dispatch. `docs/reference/php-api.md` already says they are not public API, but PHP says
+they are: there is no guard against a second registrant silently replacing the first, no way to
+unregister, and `isIdle()` reads one of them, so setting it changes the loop's idle behaviour for the
+rest of the process. A `Loop::onRawRequest()` / `onOffloadCallback()` pair with a guard is a small,
+self-contained fix. No defect is known to follow from it today.
 **Acceptance.** Per candidate: the extraction, E1/E2 unmoved (they are the two numbers the project
 stands on), and `bench/wrk-hello.sh` within this box's ±6.7 % spread. No candidate is worth landing
 without those three numbers.
@@ -502,6 +512,12 @@ stops spelling `code=N` silently becomes `Status::UNKNOWN`.
 **Deliverable.** A note saying, for each, whether it is a mechanism (and must go in the budget or the
 table) or a shape (and must be justified where it is). The gRPC one is probably just a defect: the
 status belongs in the completion, not in its message.
+**Evidence the third one is a defect, added 2026-09-20.** `grpc.rs:167` builds
+`format!("grpc {what}: code={} {}", s.code() as i32, s.message())` — the Rust side *has* the
+`tonic::Status` and flattens it to prose so PHP can pattern-match it back out. It happens to work,
+which is the problem: nothing fails if the wording changes, the status just becomes `UNKNOWN`. Filed
+alongside V-107, which is the same family of leak with a measured cost — HTTP vocabulary chosen in
+the scheduler, refused by the transport, and the refusal discarded.
 
 ### A-PHP-FLOOR The minimum PHP version is declared in three places and they disagree `agent` `open — 2026-09-18`
 **What.** Root `>=8.4`, every package `>=8.4` except `ignis/revolt` `>=8.1` and

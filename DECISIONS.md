@@ -795,3 +795,24 @@ reproducible. It does not: the loop is driven by real timers, so completions arr
 and the same seed lands its draws on a different schedule — five runs of one script at seed 1 gave
 3, 3, 3, 5, 3 extra yields, and did so on the code as it stood before any of this. The seed narrows a
 re-run; it does not pin one. Both the reference page and the new class now say so.
+
+## 2026-09-20 — the transport says what a refusal looks like; the scheduler does not
+
+`Ignis\Loop` answers a rejected request with HTTP 503 before anything knows what transport the call
+arrived on, and discarded the result. For a gRPC call the reactor refused that answer — correctly,
+a gRPC id is not a whole-body id — and the stream stayed open: three of five concurrent calls hung
+for ever, nothing logged (V-107).
+
+Two places could hold the fix and only one is right. Teaching `Loop` to notice gRPC and end the call
+with `Status::UNAVAILABLE` puts transport knowledge in the scheduler, which is the leak that caused
+this. Mapping the refusal in `Reactor::respond()` puts it where the transport already lives: the
+reactor is the layer that knows an id is `Answer::Grpc`, because it is the layer that made it one.
+So a failure status (`>= 400`) on a gRPC id ends the call with the mapped gRPC status, and the
+scheduler goes on saying "503" in ignorance, which is what it should be doing.
+
+A **success** status on a gRPC id stays refused. That is a caller using the wrong door — the router
+answers through `stream_send`/`stream_end` and returns null — and turning it into an empty OK would
+replace a loud nothing with a quiet wrong answer.
+
+Separately, `Loop` now answers through one `respondTo()` that logs a refused answer. The specific
+`false` is gone; the point of the helper is that the next one is a log line and not a hang.

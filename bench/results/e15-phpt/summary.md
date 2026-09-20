@@ -5,7 +5,7 @@
 | Zend/tests/fibers | stock | 110 | 108 | 0 | 2 | 0 | 0 | 2 |
 | Zend/tests/fibers | main | 110 | 108 | 0 | 2 | 0 | 0 | 13 |
 | Zend/tests/fibers | fiber | 110 | 77 | 31 | 2 | 0 | 0 | 13 |
-| ext/sockets/tests | stock | 118 | 91 | 1 | 26 | 0 | 0 | 4 |
+| ext/sockets/tests | stock | 118 | 91 | 1 | 26 | 0 | 0 | 5 |
 | ext/sockets/tests | main | 118 | 91 | 1 | 26 | 0 | 0 | 15 |
 | ext/sockets/tests | fiber | 118 | 85 | 7 | 26 | 0 | 0 | 15 |
 | ext/standard/tests/streams | stock | 160 | 140 | 0 | 20 | 0 | 0 | 6 |

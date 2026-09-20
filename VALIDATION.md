@@ -5450,3 +5450,51 @@ stood *before* this change, so the defect is in the claim, not in the move. The 
 real timers, so completions arrive in a varying order and the same seed lands its draws on a
 different schedule. `docs/reference/configuration.md` and `Ignis\Chaos` now say what it does buy:
 the sequence is known, so a re-run is narrowed, not pinned.
+
+## V-107 — a gRPC call refused by admission control was never answered at all
+
+Date: 2026-09-20. Found by looking for leaked responsibility, not by a failing test.
+
+`Ignis\Loop` answers a rejected request with `ignis_respond($id, 503, ['retry-after' => '1'],
+"503 busy\n")` — HTTP vocabulary chosen by a fiber scheduler, before anything knows what transport
+the call arrived on. A gRPC call is held by the reactor as `Answer::Grpc`, and `respond()` refuses a
+whole-body answer on it **on purpose** (`reactor.rs`: "a `respond()` on a streaming id … must be
+refused"). The refusal was correct and nobody looked at it: `Loop` discards the return of
+`ignis_respond`, so the stream stayed open with nobody owing it trailers.
+
+**Before.** `examples/grpc_server.php`, one thread, `IGNIS_FIBER_BUDGET=1 IGNIS_QUEUE_DEPTH=1`, five
+concurrent `/ignis.Greeter/Slow` calls from our own `Ignis\Grpc\Client`:
+
+```
+  call 0: STILL WAITING after 6000 ms — no answer of any kind
+  call 1: STILL WAITING after 6000 ms — no answer of any kind
+  call 2: OK        206ms  slow hello c2
+  call 3: STILL WAITING after 6000 ms — no answer of any kind
+  call 4: OK        408ms  slow hello c4
+```
+
+Narrowed to the rejection alone: budget 1 with `QUEUE_DEPTH=100` (queued, never rejected) answers
+5 of 5; no budget answers 5 of 5; budget 5 answers 5 of 5. Only a **full queue** hangs, which is the
+`503` line. The server logs `php threads busy for > 1 s without polling`; the client times out.
+
+**After**, same command:
+
+```
+  call 0: STATUS     21ms  code=14 grpc unary: code=14 unavailable: the server is at its request budget
+  call 2: OK        224ms  slow hello c2
+grpc_refused: answered=2 refused=3 hung=0
+```
+
+**The fix, in the layer that owns the knowledge.** `Reactor::respond()` maps a failure status
+(`>= 400`) on a gRPC id onto a gRPC status and ends the call — 503 → 14 `UNAVAILABLE`, 504 → 4, 500
+→ 13. The scheduler keeps saying "503" and stays transport-agnostic; the transport says what a
+refusal looks like on its own wire, which is the only layer that can. A **success** status on a gRPC
+id is still refused, because that is a caller using the wrong door and an empty OK would be a quiet
+wrong answer in place of a loud nothing.
+
+Second half: `Loop` now answers through `respondTo()`, which logs a refused answer instead of
+discarding it. That particular `false` is gone; the next one is a log line rather than a hang.
+
+**Gated** in `scripts/smoke.sh` — the client is ours, so it needs no grpcurl and does not wait for
+E10: `refused=3 hung=0`, and a hang fails the run. Plain HTTP under the same budget is unchanged
+(`503 200 200 200 200`). Two reactor unit tests pin both directions.

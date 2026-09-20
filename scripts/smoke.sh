@@ -283,6 +283,21 @@ varies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^vary:')
 kill $ck 2>/dev/null; wait $ck 2>/dev/null || true
 echo "  set-cookie=$cookies vary=$varies"
 [ "$cookies" = 3 ] && [ "$varies" = 2 ] || { echo "multi-valued headers FAILED (want 3 and 2)"; exit 1; }
+# V-107: a gRPC call the scheduler refuses must come back as a gRPC status. Admission control
+# answers HTTP 503 before it knows the transport; a gRPC id cannot take a whole-body answer, so the
+# reactor refused it and the stream stayed open -- three of five concurrent calls hung for ever.
+# The client here is ours, so this needs no grpcurl and belongs in smoke rather than E10.
+echo "== a gRPC call refused by the fiber budget gets a status, not a hang"
+GRPC_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 9 ))
+IGNIS_LISTEN="$GRPC_PORT" IGNIS_FIBER_BUDGET=1 IGNIS_QUEUE_DEPTH=1 \
+  ./target/release/ignis --threads 1 examples/grpc_server.php & gp=$!; HELPERS+=("$gp")
+for _ in $(seq 1 50); do curl -sf -m 2 "http://$GRPC_PORT/" >/dev/null 2>&1 && break; sleep 0.2; done
+grpc_refused=$(TARGET="$GRPC_PORT" N=5 WAIT_MS=3000 timeout 30 ./target/release/ignis bench/php/grpc_refused_call.php 2>&1 | tail -1)
+kill $gp 2>/dev/null; wait $gp 2>/dev/null || true
+echo "  $grpc_refused"
+grep -q 'hung=0' <<<"$grpc_refused" && grep -q 'refused=3' <<<"$grpc_refused" \
+  || { echo "gRPC refusal FAILED (want refused=3 hung=0; a hang here is the V-107 defect back)"; exit 1; }
+
 echo "== E13 (200 concurrent HTTP)"; timeout 120 bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 timeout 120 bench/e6-fetch.sh | tail -2
 if [ -d php/packages/revolt/vendor ]; then echo "== E7 (Revolt/AMPHP examples: IgnisDriver must match a stock event loop)"; timeout 180 bench/e7-revolt.sh > /tmp/ignis-e7.log 2>&1; e7rc=$?; grep -E "^(DIFFER|e7)" /tmp/ignis-e7.log || true; [ "$e7rc" = 0 ] || { echo "E7 FAILED (see /tmp/ignis-e7.log)"; exit 1; }; else echo "== E7 skipped (run: cd php/packages/revolt && composer install --prefer-source)"; fi

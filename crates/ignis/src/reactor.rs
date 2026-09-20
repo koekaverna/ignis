@@ -105,6 +105,19 @@ pub enum Outcome {
 /// One message of a gRPC response stream (E10): bytes, or a terminal `(code, message)` status.
 pub type GrpcMsg = Result<Bytes, (i32, String)>;
 
+/// How an HTTP failure status reads as a gRPC status, for the refusals the scheduler issues before
+/// it knows the transport. The three rows are the ones `Ignis\Loop` can actually produce; anything
+/// else a caller invents is `UNKNOWN`, which is what a gRPC client shows for a status it cannot
+/// place, rather than a guess dressed up as a mapping.
+fn grpc_refusal(status: u16) -> (i32, String) {
+    match status {
+        503 => (14, "unavailable: the server is at its request budget".to_string()),
+        504 => (4, "deadline exceeded".to_string()),
+        500 => (13, "internal".to_string()),
+        other => (2, format!("the server refused the call with HTTP {other}")),
+    }
+}
+
 #[derive(Debug)]
 pub struct Completion {
     pub id: u64,
@@ -393,11 +406,28 @@ impl Reactor {
     ///
     /// A whole-body answer on an id that has already started streaming is refused: that id's old
     /// state is gone, and the two shapes cannot both be the answer.
+    ///
+    /// A **failure** status on a gRPC id is the exception, and it is not a courtesy. The scheduler
+    /// refuses a request before it knows what transport it arrived on -- admission control answers
+    /// `503`, a deadline answers `504`, an unanswerable request answers `500` -- and a gRPC call is
+    /// delivered here as `Answer::Grpc`. Refusing those outright, which is what this did, left the
+    /// stream open with nobody owing it trailers: measured on `examples/grpc_server.php` at
+    /// `IGNIS_FIBER_BUDGET=1 IGNIS_QUEUE_DEPTH=1`, three of five concurrent calls hung for ever and
+    /// the client timed out with no answer of any kind (V-107). The transport knows what a refusal
+    /// looks like on its own wire, and it is the only layer that does.
     pub fn respond(&self, id: u64, resp: HttpResponse) -> bool {
+        if resp.status >= 400 && self.is_grpc(id) {
+            let (code, message) = grpc_refusal(resp.status);
+            return self.stream_end(id, code, message);
+        }
         match self.take_answer(id, |answer| matches!(answer, Answer::Whole(_))) {
             Some(Answer::Whole(tx)) => tx.send(resp).is_ok(),
             _ => false,
         }
+    }
+
+    fn is_grpc(&self, id: u64) -> bool {
+        self.answers.lock_unpoisoned().get(&id).is_some_and(|answer| matches!(answer, Answer::Grpc(_)))
     }
 
     /// PHP-thread side: begin a streamed answer. The status and headers go out now, the body
@@ -689,6 +719,44 @@ mod tests {
         assert_eq!(r.fail_pending(), 3, "one whole-body, one streamed, one gRPC");
         assert_eq!(r.pending_requests(), 0);
         assert!(!r.respond(whole, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
+    }
+
+    /// A refusal the scheduler issues before it knows the transport must still end a gRPC call.
+    /// `Ignis\Loop` answers admission-control rejection with HTTP 503 and does not look at the
+    /// return value, so a refused `respond()` was a stream nobody would ever close: three of five
+    /// concurrent calls hung for ever against a real server (V-107).
+    #[test]
+    fn a_failure_status_on_a_grpc_id_ends_the_call_instead_of_being_refused() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (id, mut messages) = r.deliver_stream_request(a_request());
+
+        let answered = r.respond(id, HttpResponse { status: 503, headers: vec![], body: ResponseBody::Full(Bytes::new()) });
+
+        assert!(answered, "the call is answered, not refused");
+        match messages.try_recv() {
+            Ok(Err((code, message))) => {
+                assert_eq!(code, 14, "503 is UNAVAILABLE on this wire");
+                assert!(message.contains("budget"), "and says why: {message}");
+            }
+            other => panic!("expected a gRPC status, got {other:?}"),
+        }
+        assert!(
+            !r.respond(id, HttpResponse { status: 503, headers: vec![], body: ResponseBody::Full(Bytes::new()) }),
+            "and the id is gone, so a second answer is refused"
+        );
+    }
+
+    /// The exception is for refusals only. A success on a gRPC id is a caller using the wrong door
+    /// -- the router answers a gRPC call through `stream_send`/`stream_end` and returns null -- and
+    /// turning that into an empty OK would trade a loud nothing for a quiet wrong answer.
+    #[test]
+    fn a_success_status_on_a_grpc_id_is_still_refused() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (id, _messages) = r.deliver_stream_request(a_request());
+
+        assert!(!r.respond(id, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
     }
 
     /// E15b: a cancelled watch leaked the descriptor the reactor had dup'd. Both ops must complete.
