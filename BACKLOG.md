@@ -874,7 +874,7 @@ retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
-### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `PARTLY DONE 2026-09-20 — all three acceptance steps pass (V-97, V-99, V-100), ADR-0042 accepted, FiberRequestStack deleted. Open: four of the eight named tests, lazy+scoped, and the three remaining façades` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `DONE 2026-09-20 — ADR-0042 accepted; all three acceptance steps and all eight named tests pass (V-97, V-99, V-100, V-101); FiberRequestStack and FiberTokenStorage deleted. The per-switch cost stays unmeasured (V-98, owner decision) and the Doctrine pair is kept on V-85's measurement` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
 **What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
 `create_object` returns a façade with no properties table; `read_property`, `write_property`,
 `has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address

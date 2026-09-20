@@ -9,12 +9,19 @@ the kill criterion, read cost against a plain property: **1.0–1.1×**, V-97, f
 scoped services. And V-99 proves it on a real Symfony kernel under overlapping requests, where an
 unmarked control leaks 3 of 3.
 
-Two things this status does **not** claim. The per-switch cost is **not measured** — V-98 records
-that it sits below the floor of every instrument on this box and was accepted as negligible by
-owner decision, not by measurement, and closing it properly needs an E2-shaped arm. And four of the
-eight tests this ADR names are still unwritten: inheritance in both directions,
-`get_property_ptr_ptr` for `$this->arr[] =` and `$this->n++`, `clone`/`serialize`/reflection, and
-the `IGNIS_CHAOS` arm. `lazy` + `scoped` remains an open question, not a tested one.
+**All eight named tests are written and gated** as of V-101: two interleaved fibers, inheritance in
+both directions, scope death and row-zero read-through, the `IS_UNDEF`-invariant question the engine
+basis answered by citation, `get_property_ptr_ptr` for `$this->arr[] =` and `$this->n++`,
+instantiation outside a request, `clone`/`serialize`/reflection, and read cost. The `IGNIS_CHAOS`
+arm runs four seeds at `P=100`. `lazy` + `scoped` — listed here as an open question because both
+change how an object is created — composes, measured on the E21 fixture.
+
+One thing this status still does **not** claim. The per-switch cost is **not measured**: V-98
+records that it sits below the floor of every instrument on this box and was accepted as negligible
+by owner decision rather than by measurement, and closing it properly needs an E2-shaped arm with
+live scoped objects. Two shapes are also untested and named rather than implied — a lazy ghost
+accessed by property instead of by method, and property hooks (`IS_HOOKED_PROPERTY_OFFSET` sits in
+the same VM switch as the guards this design rests on).
 
 ## Context
 
