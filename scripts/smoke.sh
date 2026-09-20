@@ -188,6 +188,17 @@ echo "  $sch"
 grep -q "a='A' b='B'" <<<"$sch" || { echo "scoped chaos FAILED: isolation depends on the switch points a quiet run takes"; exit 1; }
 grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sch" || { echo "scoped chaos FAILED: row zero is not read through under chaos"; exit 1; }
 
+# The rule every scoped service is written against, as a measurement. Holding the scoped *object* in
+# an ordinary singleton's property is the supported shape and each request reads its own state
+# through it. Holding a *value* taken out of it pins the holder to whichever request wrote last --
+# S-SINGLETON-CAPTURE, and it is silent, so a_captured='B' is asserted as the defect it is rather
+# than left for someone to discover.
+echo "== a plain singleton may hold a scoped object, but not a value out of one"
+hp=$($T ./target/release/ignis bench/php/scoped_held_by_plain.php | tail -1)
+echo "  $hp"
+grep -q "a_through_holder='A' b_through_holder='B'" <<<"$hp" || { echo "held-by-plain FAILED: reading through the holder did not give each request its own"; exit 1; }
+grep -q "a_captured='B'" <<<"$hp" || { echo "held-by-plain FAILED: the capture hazard changed shape -- S-SINGLETON-CAPTURE's premise moved, re-read it before touching this"; exit 1; }
+
 # ADR-0042's remaining named tests. The mechanism leaves every standard handler alone, so each of
 # these should be whatever PHP already does -- inherited properties scope with the class that owns
 # the instance, `$this->list[] =` and `$this->count++` go through get_property_ptr_ptr and still land

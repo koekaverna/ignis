@@ -669,6 +669,14 @@ pool in fiber mode and say why; or scope such a pool per fiber. The probe must f
 with a different victim: a parked request would lose entries it wrote itself.
 
 ### S-SINGLETON-CAPTURE A singleton that keeps a *value* from a fiber-scoped service is pinned to one request `main` `open — raised by the owner 2026-09-19; premise split and measured before building`
+**Measured again on the new mechanism, 2026-09-20 (V-103), and it is unchanged.** A plain singleton
+holding the scoped **object** is safe — two fibers read `'A'` and `'B'` through the same holder
+property, because one object's declared properties resolve per fiber. A plain singleton holding a
+**value** out of one is not: A wrote `'A'`, B overwrote it while A was parked, A read back `'B'`.
+ADR-0042 moved where state lives; it did not and could not change what a plain object's property
+is. Both halves are now gated in `scripts/smoke.sh`, with `a_captured='B'` asserted as the defect,
+so a change of shape here fails loudly instead of quietly invalidating this entry.
+
 **What the owner raised.** A singleton that receives a fiber-scoped service in its constructor, or
 stores a value read from one in a property, is pinned to the first request that instantiated it;
 fiber scope does not help and since `S-RESET-FIBER` there is no reset to save it. Proposed: (1) a

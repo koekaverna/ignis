@@ -5288,3 +5288,26 @@ has already copied that struct by then. `embed.rs` sets `ub_write` and `flush` *
 The body is kept **per fiber**, not per thread: `Request::createFromGlobals()` runs inside the
 request's fiber, and a handler may await before it parses, so a thread-wide body would be replaced
 by the next request's underneath it.
+
+## V-103 — a plain singleton holding a scoped object, and holding a value out of one
+
+Date: 2026-09-20. Command: `bench/php/scoped_held_by_plain.php` under the release binary. Two
+fibers; `PlainHolder` is built with a plain `new`, so it is one object for the process, and it both
+holds the scoped `ScopedCart` and copies `$cart->tag` into a property of its own.
+
+```
+scoped_held_by_plain: a_through_holder='A' b_through_holder='B' a_captured='B'
+```
+
+**Holding the object is safe.** A reads `'A'` and B reads `'B'` *through the same holder property*,
+because there is one object whose declared properties resolve per fiber. This is the shape every
+scoped service is injected in, and it is why nothing has to be a proxy.
+
+**Holding a value out of it is not.** A wrote `'A'` into `$holder->capturedValue`, B overwrote it
+while A was parked, and A read back **`'B'`**. The holder is an ordinary object: its property is
+process-wide, and what it copied out of a scoped object stops being per-request the moment it lands
+there. This is `S-SINGLETON-CAPTURE`, unchanged by ADR-0042 and never claimed to be closed by it.
+
+Both halves are gated in `scripts/smoke.sh`. `a_captured='B'` is asserted **as the defect**: if it
+ever reads `'A'`, the capture hazard has changed shape and `S-SINGLETON-CAPTURE`'s premise needs
+re-reading before anything is touched.
