@@ -63,13 +63,6 @@ final class Scope
      * cycle does not, which is why `ignis/doctrine` keeps its connection behind a handle that is in
      * none (V-85).
      *
-     * The guard is not style. This call sits in `releaseRequest()`'s `finally`, whose throw lands on a
-     * Future `spawn()` discards, and unobserved rejections are only reported when the loop ends —
-     * which on a server is never. So an absent function here is silent, and what it silently skips is
-     * `--$inflightRequests`: the budget fills and the server refuses every request after the
-     * `IGNIS_FIBER_BUDGET`-th one, for ever. Measured 2026-09-20 at budget 4: four 200s, then 503 to
-     * everything. It comes out when the engine half defines the function.
-     *
      * Also drops this fiber's `Scope::create()`-allocated property rows (`ignis_scope_rows_clear()`),
      * for the identical reason: a scoped object built through `create()` lives in the same per-fiber
      * storage the key-value bag above does, and without this a pooled fiber's next request would read
@@ -83,8 +76,6 @@ final class Scope
         } elseif (self::$map?->offsetExists($fiber)) {
             self::$map[$fiber] = [];
         }
-        if (\function_exists('ignis_scope_rows_clear')) {
-            \ignis_scope_rows_clear();
-        }
+        \ignis_scope_rows_clear();
     }
 }

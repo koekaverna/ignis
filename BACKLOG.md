@@ -874,7 +874,7 @@ retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
-### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — userland half landed 2026-09-20 (c4f1f92); engine half open` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — acceptance step 1 passes 2026-09-20: engine half prototyped and gated in smoke; steps 2 and 3 (FiberRequestStack rewritten on it, read cost measured) open` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
 **What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
 `create_object` returns a façade with no properties table; `read_property`, `write_property`,
 `has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address
@@ -938,6 +938,26 @@ able to fail, and the fourth is the one that decides whether the control level a
    class; silently copying another scope's row is the failure this catches.
 8. **Read cost** against a plain property, and the fiber-switch cost against E2's 3.83 µs warm —
    the standing constraint that no `context` work may move.
+**Where it stands, 2026-09-20.** ADR-0042 written; userland half in `c4f1f92`; engine half in
+`crates/ignis/src/php/scoped.rs` — `ignis_scope_allocate` and `ignis_scope_rows_clear`, four
+overridden handlers, and `get_property_ptr_ptr` returning null so `$this->list[] =` degrades to
+read-then-write rather than writing past the handlers. **Acceptance step 1 passes on the real
+binary and is gated in `scripts/smoke.sh`:** two interleaved fibers each read their own value back,
+and the arm was falsified before being trusted — removing the row-zero read-through makes it print
+`constructor_value_inside_a_fiber=NULL` and go red.
+**What building it found that the design had not.** Row zero was specified and not implemented, and
+without it a scoped service lost every constructor-injected dependency the moment a fiber touched
+it: `$service->shared` measured `'built-once'` outside a fiber and **`NULL`** inside one. The
+fallback now makes "what the constructor stores is process-wide, what a method reads is per-scope"
+mechanical rather than a rule to remember, and `rows_clear()` refuses to clear row zero because it
+outlives every request.
+**Open, and each is a named ceiling rather than an omission.** Rows are keyed by property name, not
+by a dense slot array resolved at class link time — `ponytail:` in the module, to land with the
+read-cost measurement ADR-0042's kill criterion already demands. `get_properties` is still the
+standard handler, so `var_dump`, `foreach` over an instance and `get_object_vars` do not see scoped
+properties. `unset` on a property that row zero holds removes only this scope's shadow. And steps 2
+and 3 of the acceptance — `FiberRequestStack` rewritten on the mechanism, read cost against a plain
+property — are not started.
 **Constraints.** `main` lane, FFI territory, needs an ADR before code.
 **Unverified.** The handler list and the slot-resolution scheme are the owner's design; what
 upstream offers instead is `R-TA-CONTEXT`'s question (1).

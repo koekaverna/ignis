@@ -245,6 +245,7 @@ pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi:
         super::route::install();
         super::locklib::install(); // H36 harness, only when IGNIS_LOCKLIB is set
         super::output::install(); // drops a dying fiber's buffers and binding, whatever this file does below
+        super::scoped::install(); // ADR-0042: the handler table scoped objects are created with
         super::embed::fix_php_binary(_module_number);
     }
     if std::env::var_os("IGNIS_NO_SUPERGLOBALS").is_none() {

@@ -167,6 +167,18 @@ ticks=$(sed -n 's/.*"ticks":\([0-9]*\).*/\1/p' <<<"$fl")
 grep -q '"waiter_acquired_ms":[0-9]' <<<"$fl" || { echo "flock FAILED: the waiter never got the lock"; exit 1; }
 [ "${ticks:-0}" -ge 30 ] || { echo "flock FAILED: the thread stopped serving (ticks=${ticks:-0})"; exit 1; }
 
+# ADR-0042 / S-SCOPED-CLASS: a scoped object's declared properties live per fiber. Two interleaved
+# fibers must each read their own value back, and a value the constructor wrote must still be
+# visible inside a fiber -- without row-zero read-through every scoped service loses its injected
+# dependencies on the first request that touches it, which is what this arm measured before it
+# existed (NULL inside a fiber, correct outside).
+echo "== a scoped object's properties are per fiber, and the constructor's values survive into one"
+sc=$($T ./target/release/ignis bench/php/scoped_two_fibers.php | tail -1)
+echo "  $sc"
+grep -q "a='A' b='B'" <<<"$sc" || { echo "scoped FAILED: two fibers did not each see their own value"; exit 1; }
+grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sc" || { echo "scoped FAILED: row zero is not read through"; exit 1; }
+grep -q "instance_of=true" <<<"$sc" || { echo "scoped FAILED: the allocation is not an instance of its class"; exit 1; }
+
 # A-LEAKS-RUST (b): a worker that dies mid-job used to leave its JOBS entry behind and the caller's
 # reserved op raised for ever, so the calling fiber waited on a completion nothing would ever send.
 # The job here calls exit(), which WorkerRuntime::run's own try/catch cannot see, so the whole
