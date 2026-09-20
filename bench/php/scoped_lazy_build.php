@@ -49,8 +49,7 @@ Ignis\all([$first, $second]);
 Ignis\Loop::run();
 
 printf(
-    "scoped_lazy_build: mode=%s a_dependency=%s b_dependency=%s b_seen=%s a_seen=%s\n",
-    \ignis_scope_mode(),
+    "scoped_lazy_build: a_dependency=%s b_dependency=%s b_seen=%s a_seen=%s\n",
     var_export($result['a_dependency'], true),
     var_export($result['b_dependency'], true),
     var_export($result['b_seen'], true),

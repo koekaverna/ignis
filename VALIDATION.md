@@ -5141,3 +5141,25 @@ immediately: the first run ended with `Typed property CartContext::$shared must 
 before initialization` — a real bug of mine (two different scope keys for `{main}`), reported by a
 check that the `handlers` variant does not have at all. `handlers` would have stored an `int` in a
 `?string` silently.
+
+## V-98 — the swap's per-switch cost is below what any instrument here can resolve
+
+Date: 2026-09-20. Machine: this box, release build. Command: two fibers ping-ponging 20,000
+`Ignis\sleep(0)` round trips each, with **0** and with **256** live scoped objects of four
+properties, five repetitions per arm.
+
+| live scoped objects | µs per switch, five runs |
+|---:|---|
+| 0 | 47.899 46.772 48.229 46.853 47.159 |
+| 256 | 42.164 40.903 41.166 41.215 41.503 |
+
+**256 objects measured *faster* than 0.** The sign is negative, which is not a result about the
+swap — it is proof the instrument cannot resolve it. The measured quantity is dominated by the
+reactor round trip, whose systematic difference between the two arms (≈6 µs) is larger than any
+plausible swap cost: 256 objects × 4 properties is 1,024 zval moves, on the order of 1 µs.
+
+**Owner decision, 2026-09-20:** where the cost is below the floor of the instruments available, it
+is recorded as negligible rather than left blocking. This entry exists so that decision is visible
+with its evidence and its limits, not so the cost can later be cited as "measured at zero". It is
+**not** measured. Closing it properly needs an E2-shaped instrument — the fiber switch itself,
+3.83 µs warm (V-45) — with live scoped objects, and that arm does not exist.

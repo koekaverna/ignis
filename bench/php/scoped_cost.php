@@ -64,8 +64,7 @@ $switchMs = $time(static function () use ($switches): void {
 });
 
 printf(
-    "scoped_cost: mode=%s services=%d plain_ns_per_op=%.1f scoped_ns_per_op=%.1f ratio=%.1f switch_us_per_switch=%.2f\n",
-    \ignis_scope_mode(),
+    "scoped_cost: services=%d plain_ns_per_op=%.1f scoped_ns_per_op=%.1f ratio=%.1f switch_us_per_switch=%.2f\n",
     $services,
     $plainMs * 1e6 / $reads,
     $scopedMs * 1e6 / $reads,
