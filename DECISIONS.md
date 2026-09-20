@@ -657,3 +657,43 @@ read in php-src, not assumed, and a test must scope a class *after* exercising i
 opcache warm. If the cache is guarded only by `ce` and not by the handler table, the class-level
 call has to happen before any code touches the class, which narrows it back toward a boot-time
 list and this decision is wrong.
+
+---
+
+## 2026-09-20 — the kill criterion above was malformed, and saying so is the point
+
+The 2026-09-20 entry on the control level ended with this criterion: *"if the cache is guarded only
+by `ce` and not by the handler table, the class-level call has to happen before any code touches
+the class, which narrows it back toward a boot-time list and this decision is wrong."*
+
+Read in `~/php-src` at `php-8.5.10`, the answer is **guarded by `ce` alone**
+(`Zend/zend_vm_def.h:2491`). By the wording above, the decision is therefore wrong. It is not, and
+the reason is a thing the question could not express: the fast path carries a **second** guard,
+`Z_TYPE_P(property_val) != IS_UNDEF` (`:2502`, mirrored at `:2111` on the read path), and that one
+reads the **object**, not the class. A scoped object whose declared slots are `IS_UNDEF` therefore
+never takes the fast path no matter what the `ce`-keyed cache holds.
+
+So the criterion fired and did not kill. That is a broken criterion, not a lucky escape, and it is
+recorded here rather than quietly rewritten, because a criterion that can be satisfied and then
+explained away is worth less than none — it teaches the next person that these are decoration. The
+fault is in how it was framed: it asked about one guard when the fast path has two, and it assumed
+the answer "class-keyed" implied "cannot distinguish instances".
+
+What replaces it is in ADR-0042, chosen after the cache question was answered by citation rather
+than left open: the measured read and write cost against a plain property. Every access on a scoped
+object now provably takes the slow path, by construction, so that cost is the mechanism's baseline
+price rather than a tail case — and unlike the cache question it cannot be settled by reading.
+
+## 2026-09-20 — ADR-0042 and the userland half were built in parallel, against the item's own rule
+
+`S-SCOPED-CLASS` says "**needs an ADR before code**". Main launched the ADR and the userland
+scaffolding as two agents at the same time, so code existed before the ADR did. Recorded because
+the ADR's own author found the uncommitted files mid-task, could not account for them, and reported
+them as a possible process violation — which was the right call from where it stood, and the answer
+is that they were a sibling agent's work, not that nothing was wrong.
+
+Mitigating, and not an excuse: the parallel half is userland PHP against a two-function ABI fixed in
+advance, it touched no engine code, it was uncommitted, and the ADR landed minutes later. The
+engine half — the part the rule exists to protect — had not been started. Next time the ADR goes
+first and the scaffolding waits, because "needs an ADR before code" is worth nothing if the person
+enforcing it is the one who decides when it is inconvenient.
