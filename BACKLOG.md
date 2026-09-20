@@ -384,6 +384,31 @@ comparison is the point.
 Each was read and confirmed; none was changed, because the change is larger than the finding or the
 right answer needs a decision. Filed so the reading is not lost.
 
+### S-CLASSIC-CURRENT Two request-identity statics in `Classic\Runner` never moved to `Scope` `agent` `open — found 2026-09-20 answering "is the request fiber-scoped yet"`
+**What.** `Runner::$current` and `Runner::$currentSessionId` (`Classic/Runner.php:75-76`) are plain
+per-thread statics. `accept()` writes both (`:114-115`), the script runs, `end()` reads them
+(`:122-124`) to decide which request id to answer and which session to close.
+**Why it is filed and not fixed.** It is **not reachable in shipped code**: that pair belongs to the
+`Classic\listen()` path, whose own contract is one request at a time, and no example or test creates
+a second concurrent `accept()`. What makes it worth a row is that it is the same defect class this
+exact file has already been bitten by twice — `Runner::SENT` and `InputStream`'s body were both
+per-thread statics and both had to move into `Ignis\Scope` when a request parked mid-include, the
+second one costing a client its response. Three pieces of per-request identity now live in `Scope`
+(`ignis.request`, `SENT`, the input body) and two live beside them in a static, and nothing marks
+the difference except this entry.
+**The honest risk.** `accept()` calls `Loop::runUntil()`, so other fibers do run inside it; only the
+absence of a second `accept()` caller keeps the pair safe. An application that mixes `Ignis\async()`
+with `listen()` and calls `accept()` from the spawned fiber gets request A answered with B's id.
+**Acceptance.** A probe that makes it reachable — two fibers calling `accept()`, the first parking
+inside its include — failing before and passing after, exactly as the `SENT` fix was gated. Then
+either both move to `Scope` (which falls back to the `{main}` bag outside a fiber, so `listen()`
+behaves as it does today) or `accept()` refuses a second concurrent caller with a `LogicException`
+and the contract stops being a docblock. **Do not move them without the probe**: `Scope::clear()`
+runs on the serve path and not on this one, so the two paths' lifetimes differ and a blind move
+could break the working one.
+**Constraints.** `main` for the decision, `agent` for the probe. Must not change `listen()`'s
+behaviour for a single caller.
+
 ### A-CLASSIC-FINISH `Ignis\Classic\finish()` stops the `listen()` worker loop `agent` `open — 2026-09-18`
 **What.** `finish()` throws `Finished`. `Runner::handle()` catches it, so `Classic\serve()` is fine —
 but the documented `listen()` shape, `while ($file = accept()) { include $file; respond(); }`
