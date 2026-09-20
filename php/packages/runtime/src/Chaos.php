@@ -4,15 +4,17 @@ declare(strict_types=1);
 
 namespace Ignis;
 
+use Random\Engine\Mt19937;
+use Random\Randomizer;
+
 /**
  * Deliberate non-determinism for the test suites: an extra fiber switch after a completion, and a
- * shuffled dispatch order when more than one op is ready. It finds the bugs that only appear when
+ * shuffled order when more than one thing is ready at once. It finds the bugs that only appear when
  * two fibers interleave in an order the box does not normally produce (research 20, V-33).
  *
  * It lives here rather than in `Loop` because it is the one thing in that file the product never
- * runs: `IGNIS_CHAOS` is a gate tool. `Loop` keeps three lines that ask this class a question —
- * `init()` at boot, `fires()` at the await point, `shuffled()` before dispatch — and none of them
- * needs the scheduler to know how chaos is configured or seeded.
+ * runs: `IGNIS_CHAOS` is a gate tool. `Loop` keeps four call sites that ask this class a question
+ * and knows nothing about how it is configured, seeded or counted.
  *
  * A separate loop class was considered and rejected (DECISIONS.md 2026-09-20): `Loop` is entirely
  * static and every call site names it literally, so a `DebugLoop` subclass would share the parent's
@@ -21,10 +23,27 @@ namespace Ignis;
  */
 final class Chaos
 {
-    /** Read by `bench/e15-chaos.sh`, which reports them beside the suite's own counters. */
+    /**
+     * The probability is compared as a scaled integer rather than with `Randomizer::nextFloat()`,
+     * which needs a newer PHP than the analyser's declared floor (`A-PHP-FLOOR`). A millionth is
+     * finer than any chaos probability anyone sets.
+     */
+    private const RESOLUTION = 1_000_000;
+
+    /** Read on the hot path by `Loop`, which short-circuits on it before calling anything here. */
     public static bool $on = false;
-    public static float $probability = 0.5;
-    public static int $yields = 0;
+
+    private static float $probability = 0.5;
+    private static int $yields = 0;
+
+    /**
+     * Its own generator, never the process-wide one. `mt_srand()` here used to reseed the RNG the
+     * **application under test** draws from: measured, a script that seeded `mt_srand(42)` and read
+     * two values, ran the loop, then read two more got a different continuation under every chaos
+     * seed (V-108). A test instrument that silently changes its subject's random values is worse
+     * than no instrument, and `shuffle()` drew from the same global.
+     */
+    private static ?Randomizer $randomizer = null;
 
     /**
      * `IGNIS_CHAOS_SEED` fixes the sequence the decisions are drawn from. It does **not** make a run
@@ -42,11 +61,12 @@ final class Chaos
         }
         self::$probability = Env::number('IGNIS_CHAOS_P', self::$probability, 0.0, 1.0);
         $seed = Env::text('IGNIS_CHAOS_SEED');
-        mt_srand($seed !== '' ? (int) $seed : (int) (hrtime(true) % 2147483647));
+        self::$randomizer = new Randomizer(new Mt19937($seed !== '' ? (int) $seed : (int) (hrtime(true) % 2147483647)));
     }
 
     /**
-     * Whether this await point should yield once more.
+     * Whether this await point should yield once more, counting itself when it says yes so that no
+     * caller has to remember to.
      *
      * `Loop` guards the call with `Chaos::$on &&`, so chaos being off costs a property read rather
      * than a function call, and the duplicated check in here is deliberate. That guard is kept by
@@ -58,25 +78,44 @@ final class Chaos
      */
     public static function fires(): bool
     {
-        return self::$on && mt_rand() / mt_getrandmax() < self::$probability;
+        if (!self::$on || self::$randomizer === null
+            || self::$randomizer->getInt(0, self::RESOLUTION - 1) >= self::$probability * self::RESOLUTION) {
+            return false;
+        }
+        ++self::$yields;
+
+        return true;
     }
 
     /**
-     * Ready ops in an order the reactor would not have produced. Keys are preserved because the
-     * caller dispatches by op id.
+     * The same entries in an order the runtime would not have produced. Keys are preserved because
+     * one caller dispatches completions by op id.
      *
-     * @param  array<int, mixed> $events
-     * @return array<int, mixed>
+     * @template TEntry
+     * @param  array<int, TEntry> $entries
+     * @return array<int, TEntry>
      */
-    public static function shuffled(array $events): array
+    public static function shuffled(array $entries): array
     {
-        $keys = array_keys($events);
-        shuffle($keys);
+        if (self::$randomizer === null) {
+            return $entries;
+        }
         $shuffled = [];
-        foreach ($keys as $key) {
-            $shuffled[$key] = $events[$key];
+        foreach (self::$randomizer->shuffleArray(array_keys($entries)) as $key) {
+            $shuffled[$key] = $entries[$key];
         }
 
         return $shuffled;
+    }
+
+    /**
+     * What a run did, for `bench/e15-chaos.sh` to print beside the suite's own counters. A reader
+     * rather than public properties, because `$yields` is this class's to count.
+     *
+     * @return array{on: bool, probability: float, yields: int}
+     */
+    public static function report(): array
+    {
+        return ['on' => self::$on, 'probability' => self::$probability, 'yields' => self::$yields];
     }
 }

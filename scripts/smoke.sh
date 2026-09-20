@@ -283,6 +283,17 @@ varies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^vary:')
 kill $ck 2>/dev/null; wait $ck 2>/dev/null || true
 echo "  set-cookie=$cookies vary=$varies"
 [ "$cookies" = 3 ] && [ "$varies" = 2 ] || { echo "multi-valued headers FAILED (want 3 and 2)"; exit 1; }
+# V-108: chaos is a test instrument and must not change its subject. `Chaos::init()` called
+# `mt_srand()`, so the application's own seeded sequence continued differently under every chaos
+# seed. Chaos draws from its own Randomizer now; this compares the application's draws across the
+# two modes and they must be identical.
+echo "== chaos does not reseed the application's RNG"
+chaos_off=$($T ./target/release/ignis bench/php/chaos_owns_its_randomness.php | tail -1)
+chaos_on=$(IGNIS_CHAOS=1 IGNIS_CHAOS_SEED=7 $T ./target/release/ignis bench/php/chaos_owns_its_randomness.php | tail -1)
+echo "  off $chaos_off"
+echo "  on  $chaos_on"
+[ "$chaos_off" = "$chaos_on" ] || { echo "chaos FAILED: it moved the application's RNG (V-108 defect is back)"; exit 1; }
+
 # V-107: a gRPC call the scheduler refuses must come back as a gRPC status. Admission control
 # answers HTTP 503 before it knows the transport; a gRPC id cannot take a whole-body answer, so the
 # reactor refused it and the stream stayed open -- three of five concurrent calls hung for ever.

@@ -427,7 +427,12 @@ correctness bug for an aesthetic gain.
 **What was done first** (2026-09-20): the environment reading came out. `Loop` had five different
 spellings of "is this knob on" across nine `getenv` calls; they are now `Ignis\Env` with one rule
 each and eleven tests, and `Loop` contains no `getenv` at all.
-**Candidate 1, chaos, is done** (2026-09-20): `Ignis\Chaos` holds the state, the env reading, the
+**Candidate 1, chaos, is done** (2026-09-20), and auditing the extracted class against the
+principles it was meant to serve found a defect in it: `Chaos::init()` called `mt_srand()` and `Loop`
+called `shuffle()`, both on the process-wide generator the application draws from, so a suite run
+under chaos got different random values than the same suite without it (V-108). Fixed with an owned
+`Random\Randomizer`; `fires()` counts its own yields instead of `Loop` doing it; `$probability` and
+`$yields` are private behind `report()`. The extraction itself: `Ignis\Chaos` holds the state, the env reading, the
 decision and the shuffle; `Loop` keeps four call sites and no idea how chaos is configured. Extracting
 it also exposed that `chaosYield()` was a copy of `awaitOp()`'s park block, now one `parkOn()` shared
 by both. `Loop` 1,123 → 1,067 lines. E1 and E2 measured before and after on the same box, neither

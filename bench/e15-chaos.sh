@@ -79,10 +79,11 @@ $rc = Ignis\async(static function () use ($run): int {
     return $run();
 })->await();
 $stop->v = true;
+$chaos = Ignis\Chaos::report();
 fwrite(STDERR, sprintf(
     "IGNIS chaos=%s chaosP=%s chaosSeed=%s noise=%d noiseTicks=%d chaosYields=%d resumes=%d fibers=%d pollMs=%d\n",
-    Ignis\Chaos::$on ? '1' : '0', Ignis\Chaos::$probability, getenv('IGNIS_CHAOS_SEED') ?: '-',
-    $noise, $noiseTicks, Ignis\Chaos::$yields, Ignis\Loop::$resumes,
+    $chaos['on'] ? '1' : '0', $chaos['probability'], getenv('IGNIS_CHAOS_SEED') ?: '-',
+    $noise, $noiseTicks, $chaos['yields'], Ignis\Loop::$resumes,
     Ignis\Loop::$fibersCreated, (int) (Ignis\Loop::$phaseNs['poll'] / 1e6)
 ));
 exit($rc);

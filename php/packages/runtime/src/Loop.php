@@ -78,7 +78,6 @@ final class Loop
         self::boot();
         $payload = self::parkOn($fiber, $id);
         if (Chaos::$on && Chaos::fires()) {
-            ++Chaos::$yields;
             self::parkOn($fiber, \ignis_submit_sleep(0));
         }
         return $payload;
@@ -348,7 +347,7 @@ final class Loop
             $batch = self::$ready;
             self::$ready = [];
             if (Chaos::$on) {
-                shuffle($batch);
+                $batch = Chaos::shuffled($batch);
             }
             $phaseStart = hrtime(true);
             foreach ($batch as [$fiber, $value]) {

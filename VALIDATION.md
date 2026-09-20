@@ -5498,3 +5498,48 @@ discarding it. That particular `false` is gone; the next one is a log line rathe
 **Gated** in `scripts/smoke.sh` — the client is ours, so it needs no grpcurl and does not wait for
 E10: `refused=3 hung=0`, and a hang fails the run. Plain HTTP under the same budget is unchanged
 (`503 200 200 200 200`). Two reactor unit tests pin both directions.
+
+## V-108 — chaos was reseeding the RNG of the application it was measuring
+
+Date: 2026-09-20. Found by auditing `Ignis\Chaos` against the principles it was supposed to follow,
+immediately after writing it — the class I had just extracted carried the defect in.
+
+`Chaos::init()` called `mt_srand()`, and `Loop` shuffled its ready batch with `shuffle()`. Both draw
+from the process-wide generator, which is the one **application code** draws from. So a test suite
+run under `IGNIS_CHAOS` got different random values than the same suite without it: the instrument
+changed its subject, silently, and any test whose fixtures depend on a seeded sequence would differ
+between the two modes for a reason no one would look for.
+
+Command: `bench/php/chaos_owns_its_randomness.php` — seed `mt_srand(42)`, draw twice, run the loop,
+draw twice more on the same sequence.
+
+**Before:**
+
+```
+chaos off      : 804318771,1710563033 | 2041643438,393923207
+chaos on seed 7: 804318771,1710563033 | 488206946,1674862860
+chaos on seed 99: 804318771,1710563033 | 1551642129,1048140380
+```
+
+The first two draws match because they happen before the loop boots. The continuation does not.
+
+**After** — `Chaos` owns a `Random\Randomizer` over its own `Mt19937`, and nothing in the runtime
+calls `mt_srand()` or `shuffle()`:
+
+```
+chaos off      : 804318771,1710563033,2041643438,393923207
+chaos on seed 7: 804318771,1710563033,2041643438,393923207
+```
+
+Chaos still fires: probability 1.0 yields 6 times for 6 fibers, 0.0 yields none, 0.5 yielded 4.
+The probability is compared as a scaled integer rather than through `Randomizer::nextFloat()`,
+which needs a newer PHP than the analyser's declared floor (`A-PHP-FLOOR`).
+
+Two other things came out with it, and both are the same complaint: `Loop` was doing
+`++Chaos::$yields`, so the scheduler maintained another class's counter — `fires()` counts itself
+now; and `$probability`/`$yields` were public because a bench read them — they are private behind
+`Chaos::report()`.
+
+**Gated** in `scripts/smoke.sh`: the application's draws with chaos on must equal the draws with
+chaos off, and five unit tests in `ChaosTest` cover the decision, the counting, the key-preserving
+shuffle and the never-initialised case.
