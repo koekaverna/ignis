@@ -104,7 +104,7 @@ final class ScopeTest extends TestCase
      * storage — that half is engine territory this package does not own — so this only proves the
      * call order `Scope::create()` itself is responsible for, via the two fakes' shared event log.
      */
-    public function testCreateAllocatesBeforeConstructing(): void
+    public function testCreateAllocatesThenConstructsThenSeals(): void
     {
         $class = ScopeCreateOrderSubject::class;
 
@@ -112,7 +112,11 @@ final class ScopeTest extends TestCase
 
         self::assertInstanceOf($class, $instance);
         self::assertSame('seed', $instance->value);
-        self::assertSame(['allocate:' . $class, 'construct:' . $class . ':seed'], FakeReactor::scopeEvents());
+        self::assertSame(
+            ['allocate:' . $class, 'construct:' . $class . ':seed', 'seal:' . $class],
+            FakeReactor::scopeEvents(),
+            'allocate, then construct, then seal: a `new` first would arm the VM fast path, and sealing first would promote nothing',
+        );
     }
 
     public function testClearAlsoClearsTheScopedObjectRows(): void

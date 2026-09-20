@@ -128,7 +128,17 @@ namespace Ignis\Tests {
             return self::$responses;
         }
 
-        public static function allocateScope(string $class): object
+        /**
+     * The real one promotes what the constructor wrote into row zero, wherever it ran. A pure-PHP
+     * fake has no per-scope storage to promote into, so it records the call: what userland tests
+     * can observe is that `Scope::create()` seals **after** constructing, never before.
+     */
+    public static function sealScope(object $instance): void
+    {
+        self::$scopeEvents[] = 'seal:' . $instance::class;
+    }
+
+    public static function allocateScope(string $class): object
         {
             self::$scopeEvents[] = 'allocate:' . $class;
 
@@ -242,6 +252,13 @@ namespace {
         function ignis_scope_allocate(string $class): object
         {
             return Ignis\Tests\FakeReactor::allocateScope($class);
+        }
+    }
+
+    if (!function_exists('ignis_scope_seal')) {
+        function ignis_scope_seal(object $instance): void
+        {
+            Ignis\Tests\FakeReactor::sealScope($instance);
         }
     }
 
