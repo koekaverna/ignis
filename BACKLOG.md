@@ -424,13 +424,17 @@ the design"). The class is also all statics, so a split either passes the state 
 new classes static too — which relocates the pile rather than reducing it. Splitting the heart of
 the scheduler for readability, with no defect driving it, is the change most likely to cost a
 correctness bug for an aesthetic gain.
-**What was done instead** (2026-09-20): the environment reading came out. `Loop` had five different
+**What was done first** (2026-09-20): the environment reading came out. `Loop` had five different
 spellings of "is this knob on" across nine `getenv` calls; they are now `Ignis\Env` with one rule
 each and eleven tests, and `Loop` contains no `getenv` at all.
-**The two candidates worth doing, in order, each on its own evidence.** (1) **chaos** — 49 lines plus
-three statics plus a branch in `awaitOp`, the hottest method in the project, for a tool only the gate
-uses. (2) **admission and budget** — 132 lines of policy (queue, depth, exempt list, rejection) that
-touch the loop only through `$inflightRequests`, the most nearly separable of the ten.
+**Candidate 1, chaos, is done** (2026-09-20): `Ignis\Chaos` holds the state, the env reading, the
+decision and the shuffle; `Loop` keeps four call sites and no idea how chaos is configured. Extracting
+it also exposed that `chaosYield()` was a copy of `awaitOp()`'s park block, now one `parkOn()` shared
+by both. `Loop` 1,123 → 1,067 lines. E1 and E2 measured before and after on the same box, neither
+moved (V-106).
+**Candidate 2, admission and budget** — 132 lines of policy (queue, depth, exempt list, rejection)
+that touch the loop only through `$inflightRequests`, the most nearly separable of the remaining
+nine. Unstarted.
 **Acceptance.** Per candidate: the extraction, E1/E2 unmoved (they are the two numbers the project
 stands on), and `bench/wrk-hello.sh` within this box's ±6.7 % spread. No candidate is worth landing
 without those three numbers.

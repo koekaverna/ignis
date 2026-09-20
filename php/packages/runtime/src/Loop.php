@@ -76,17 +76,29 @@ final class Loop
             return self::awaitOpFromMain($id);
         }
         self::boot();
-        self::$waiting[$id] = $fiber;
-        self::$parkedOn[\spl_object_id($fiber)] = $id;
+        $payload = self::parkOn($fiber, $id);
+        if (Chaos::$on && Chaos::fires()) {
+            ++Chaos::$yields;
+            self::parkOn($fiber, \ignis_submit_sleep(0));
+        }
+        return $payload;
+    }
+
+    /**
+     * Registers $fiber against $op, hands the thread back to the loop, and unregisters on the way
+     * out however that happens — a resume, or a cancellation thrown into the parked fiber.
+     *
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function parkOn(\Fiber $fiber, int $op): mixed
+    {
+        self::$waiting[$op] = $fiber;
+        self::$parkedOn[\spl_object_id($fiber)] = $op;
         try {
-            $payload = \Fiber::suspend();
+            return \Fiber::suspend();
         } finally {
             unset(self::$parkedOn[\spl_object_id($fiber)]);
         }
-        if (self::$chaos && mt_rand() / mt_getrandmax() < self::$chaosP) {
-            self::chaosYield($fiber);
-        }
-        return $payload;
     }
 
     /** {main} has no fiber to park, so park a throwaway one on the op and drive the loop. */
@@ -102,24 +114,6 @@ final class Loop
         self::$waiting[$id] = $fiber;
         self::runUntil(static fn(): bool => $done);
         return $result;
-    }
-
-    /**
-     * An extra switch point after a completion: park on a 0 ms timer so other fibers run before
-     * this one continues. The op itself is already consumed, so nothing is lost.
-     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
-     */
-    private static function chaosYield(\Fiber $fiber): void
-    {
-        ++self::$chaosYields;
-        $yieldId = \ignis_submit_sleep(0);
-        self::$waiting[$yieldId] = $fiber;
-        self::$parkedOn[\spl_object_id($fiber)] = $yieldId;
-        try {
-            \Fiber::suspend();
-        } finally {
-            unset(self::$parkedOn[\spl_object_id($fiber)]);
-        }
     }
 
     /**
@@ -318,7 +312,7 @@ final class Loop
             return;
         }
         self::$booted = true;
-        self::chaosInit();
+        Chaos::init();
         self::gcInit();
         self::budgetInit();
         self::$canPublishStats = \function_exists('ignis_publish_stats');
@@ -353,7 +347,7 @@ final class Loop
         while (self::$ready !== []) {
             $batch = self::$ready;
             self::$ready = [];
-            if (self::$chaos) {
+            if (Chaos::$on) {
                 shuffle($batch);
             }
             $phaseStart = hrtime(true);
@@ -438,8 +432,8 @@ final class Loop
     private static function dispatchEvents(array $events): void
     {
         $phaseStart = hrtime(true);
-        if (self::$chaos && \count($events) > 1) {
-            $events = self::shuffled($events);
+        if (Chaos::$on && \count($events) > 1) {
+            $events = Chaos::shuffled($events);
         }
         foreach ($events as $id => $payload) {
             if (\is_array($payload) && !isset(self::$waiting[$id])) {
@@ -532,20 +526,6 @@ final class Loop
         );
     }
 
-    /**
-     * @param  array<int, mixed> $events
-     * @return array<int, mixed>
-     */
-    private static function shuffled(array $events): array
-    {
-        $keys = array_keys($events);
-        shuffle($keys);
-        $out = [];
-        foreach ($keys as $key) {
-            $out[$key] = $events[$key];
-        }
-        return $out;
-    }
 
     /**
      * A fiber failed and nobody awaited its Future: surface it instead of losing it (E15c fix).
@@ -570,10 +550,6 @@ final class Loop
     /** @var null|callable(array<string, mixed>):void set by Ignis\Offload\Client (E16) */
     public static $offloadCallbackHandler = null;
 
-    /** Chaos mode (E15e): see IGNIS_CHAOS / IGNIS_CHAOS_P / IGNIS_CHAOS_SEED in docs/reference/configuration.md. */
-    public static bool $chaos = false;
-    public static float $chaosP = 0.5;
-    public static int $chaosYields = 0;
     private static bool $booted = false;
 
     /** Loop-scheduled GC (E2'/E13', ADR-0034): see IGNIS_LOOP_GC in docs/reference/configuration.md. */
@@ -618,17 +594,6 @@ final class Loop
         if (self::$loopGc) {
             gc_disable();
         }
-    }
-
-    private static function chaosInit(): void
-    {
-        self::$chaos = Env::flag('IGNIS_CHAOS');
-        if (!self::$chaos) {
-            return;
-        }
-        self::$chaosP = Env::number('IGNIS_CHAOS_P', self::$chaosP, 0.0, 1.0);
-        $seed = Env::text('IGNIS_CHAOS_SEED');
-        mt_srand($seed !== '' ? (int) $seed : (int) (hrtime(true) % 2147483647));
     }
 
     /** @param callable(Http\Request):?Http\Response $handler */

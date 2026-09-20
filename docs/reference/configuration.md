@@ -171,9 +171,9 @@ mechanism itself:
 | `IGNIS_PARK_TRACE` | `crates/ignis/src/php/park.rs` | unset (silent) | See above. |
 | `IGNIS_NO_SUPERGLOBALS` | `crates/ignis/src/php/superglobals.rs` | unset (fiber-scoped `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` installed) | Any value skips installing the ADR-0006 fiber-switch observer that swaps superglobals per fiber. Exists to measure the swap's cost, not to run production traffic without per-request superglobals. |
 | `IGNIS_LOCKLIB` | `crates/ignis/src/php/locklib.rs` | unset | See above (H36 harness only). |
-| `IGNIS_CHAOS` | `php/packages/runtime/src/ignis.php` (`Loop::chaosInit`) | off | Any non-empty, non-`"0"` value shuffles the order ready fibers/completed ops resume in, and adds an extra yield point before every awaited op with probability `IGNIS_CHAOS_P`. For finding order-dependent bugs (E15e), never for production. |
+| `IGNIS_CHAOS` | `php/packages/runtime/src/ignis.php` (`Ignis\Chaos::init`) | off | Any non-empty, non-`"0"` value shuffles the order ready fibers/completed ops resume in, and adds an extra yield point before every awaited op with probability `IGNIS_CHAOS_P`. For finding order-dependent bugs (E15e), never for production. |
 | `IGNIS_CHAOS_P` | `php/packages/runtime/src/ignis.php` | `0.5` | Probability of the extra yield when `IGNIS_CHAOS` is on. Clamped to `[0.0, 1.0]`. |
-| `IGNIS_CHAOS_SEED` | `php/packages/runtime/src/ignis.php` | current `hrtime()` (non-reproducible) | Seeds `mt_srand()` so a chaos run is reproducible. |
+| `IGNIS_CHAOS_SEED` | `php/packages/runtime/src/ignis.php` | current `hrtime()` | Seeds `mt_srand()`, so the chaos decisions are drawn from a known sequence. It does **not** make a run reproducible, and used to say it did: the loop is driven by real timers, so the order completions arrive in still varies and the same seed maps its draws onto a different schedule. Measured 2026-09-20 — five runs of one script at seed 1 gave 3, 3, 3, 5, 3 extra yields. It narrows a re-run; it does not pin one. |
 
 `crates/ignis/src/php/` currently has `embed.rs`, `locklib.rs`, `mod.rs`, `module.rs`, `output.rs`,
 `park.rs`, `route.rs`, `superglobals.rs`, `tsrm.rs`, `wait.rs`, `zval.rs` — the old per-mechanism

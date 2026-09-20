@@ -11,7 +11,7 @@
 #   ignis          target/release/ignis, the whole PHPUnit Application inside ONE Ignis fiber
 #   chaos-seed-N   same + IGNIS_CHAOS=1 IGNIS_CHAOS_SEED=N and IGNIS_NOISE background fibers
 #
-# Chaos (php/packages/runtime/src/ignis.php, Loop::$chaos) shuffles the ready-fiber batch and the completed-op batch
+# Chaos (php/packages/runtime/src/Chaos.php) shuffles the ready-fiber batch and the completed-op batch
 # and inserts an extra 0 ms yield after every awaited op. It can only act where PHP running inside
 # an Ignis fiber awaits an Ignis op (Ignis\sleep, hooked sleep()/usleep(), hooked tcp:// streams).
 # IGNIS_NOISE=N spawns N fibers looping on Ignis\sleep(1) so those batches have >1 entry and the
@@ -75,14 +75,14 @@ for ($i = 0; $i < $noise; $i++) {
     });
 }
 $rc = Ignis\async(static function () use ($run): int {
-    Ignis\sleep(0);          // Loop::chaosInit() is lazy: it runs on the first Loop::awaitOp()
+    Ignis\sleep(0);          // Chaos::init() is lazy: it runs on the first Loop::awaitOp()
     return $run();
 })->await();
 $stop->v = true;
 fwrite(STDERR, sprintf(
     "IGNIS chaos=%s chaosP=%s chaosSeed=%s noise=%d noiseTicks=%d chaosYields=%d resumes=%d fibers=%d pollMs=%d\n",
-    Ignis\Loop::$chaos ? '1' : '0', Ignis\Loop::$chaosP, getenv('IGNIS_CHAOS_SEED') ?: '-',
-    $noise, $noiseTicks, Ignis\Loop::$chaosYields, Ignis\Loop::$resumes,
+    Ignis\Chaos::$on ? '1' : '0', Ignis\Chaos::$probability, getenv('IGNIS_CHAOS_SEED') ?: '-',
+    $noise, $noiseTicks, Ignis\Chaos::$yields, Ignis\Loop::$resumes,
     Ignis\Loop::$fibersCreated, (int) (Ignis\Loop::$phaseNs['poll'] / 1e6)
 ));
 exit($rc);

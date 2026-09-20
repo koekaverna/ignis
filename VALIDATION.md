@@ -5414,3 +5414,39 @@ E21: GREEN
 The harness changed with it. It counted a leak only on `"leaked":true`, so a 500 in a *fixed* arm
 read as zero leaks — the first version of this arm would have passed while throwing. It now counts
 anything that is not the probe's own `"leaked":false` answer, a 500 included.
+
+## V-106 — moving chaos out of the scheduler, measured on the hot path it touches
+
+Date: 2026-09-20. Commands: `./target/release/ignis bench/php/e2_all.php` and
+`N=10000 ./target/release/ignis bench/php/e1_sleep_10k.php`, alternating between the old and new
+`Loop.php` on the same box within the same minutes (`git stash push` on that one file), because this
+box measures ±6.7 % run to run on throughput (V-82) and a comparison against a recorded band would
+not have been one.
+
+`Ignis\Chaos` takes the flag, probability, seed, yield decision and shuffle out of `Loop`; `Loop`
+keeps four call sites. `chaosYield()` turned out to be a copy of `awaitOp()`'s
+register/suspend/unregister block, so both now share one `parkOn()`. `Loop`: 1,123 → 1,067 lines.
+
+**E2, warm per-fiber µs, six runs each:**
+
+| | runs | range | mean |
+|---|---|---|---|
+| old | 4.24 4.35 4.83 4.65 4.70 4.12 | 4.12–4.83 | 4.48 |
+| new | 4.59 4.73 4.69 4.38 4.61 4.26 | 4.26–4.73 | 4.54 |
+
+1.3 % apart, inside a 16 % spread. Not distinguishable.
+
+**E1, wall ms:** new 1139.3 / 1145.9, old 1146.9 / 1148.1. Not distinguishable.
+
+**What the first reading looked like, and why it is recorded.** Three runs of an earlier shape —
+`Chaos::fires()` called unguarded on every await — read 4.37–4.90 against 4.09–4.60, which is what
+one PHP function call per await would look like. `Loop` now short-circuits on `Chaos::$on` before
+calling, and at six runs neither shape is distinguishable from the original. The guard is kept
+because it is free, not because the measurement earned it; three runs was not a measurement.
+
+**A false guarantee found on the way.** `IGNIS_CHAOS_SEED` was documented as making a chaos run
+reproducible. Five runs of one script at seed 1: **3, 3, 3, 5, 3** extra yields — on the code as it
+stood *before* this change, so the defect is in the claim, not in the move. The loop is driven by
+real timers, so completions arrive in a varying order and the same seed lands its draws on a
+different schedule. `docs/reference/configuration.md` and `Ignis\Chaos` now say what it does buy:
+the sequence is known, so a re-run is narrowed, not pinned.

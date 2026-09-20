@@ -764,3 +764,34 @@ that way (`IGNIS_FIBER_BUDGET`, `IGNIS_QUEUE_DEPTH`, `IGNIS_BUDGET_EXEMPT`, `IGN
 have no `ignis.toml` row at all (`IGNIS_LOOP_GC`, `IGNIS_LOOP_GC_ROOTS`, `IGNIS_CHAOS`,
 `IGNIS_CHAOS_P`, `IGNIS_CHAOS_SEED`) — an inconsistency that was invisible while the reads were
 scattered.
+
+## 2026-09-20 — no `DebugLoop`; chaos becomes a class the loop asks, not a mode the loop is in
+
+The owner proposed splitting `Ignis\Loop` into a production loop and a `DebugLoop` carrying the
+chaos machinery. Rejected as a subclass, taken as a class.
+
+**Why not a subclass.** `Loop` is entirely static, and PHP's static properties are *shared* with the
+parent unless a subclass redeclares them — so `DebugLoop extends Loop` would not be a second loop, it
+would be the same 40 statics under a second name. Making one actually replace the other means either
+every call site becomes a dynamic static call (`(self::$loop)::awaitOp(...)`), paid on every await
+forever, or `Loop` goes `static::` throughout and the application picks its loop class at boot. Both
+put a dispatch decision on the hottest path in the runtime in order to remove one short-circuited
+property read, and both leave two classes that must stay behaviourally identical.
+
+**What was done instead.** `Ignis\Chaos` owns the flag, the probability, the seed, the yield decision
+and the shuffle. `Loop` keeps four call sites that ask it a question and knows nothing about how it is
+configured. The extraction also collapsed a duplication it had been hiding: `chaosYield()` was a copy
+of `awaitOp()`'s register/suspend/unregister block, and both are now one `parkOn()`.
+
+**The hot-path guard is by construction, not by measurement.** `Loop` calls `Chaos::$on &&
+Chaos::fires()` rather than `Chaos::fires()` alone, so chaos being off is a property read. Three runs
+suggested the bare call cost something (4.37–4.90 µs warm per fiber against 4.09–4.60 for the inline
+code); six runs each could not tell them apart (4.26–4.73 against 4.12–4.83, means 1.3 % apart inside
+a 16 % spread). The instrument on this box does not resolve one PHP call per await, so the cheap
+shape is kept and no win is claimed for it. E1 did not move either.
+
+**And a documented guarantee that was false.** `IGNIS_CHAOS_SEED` was described as making a chaos run
+reproducible. It does not: the loop is driven by real timers, so completions arrive in a varying order
+and the same seed lands its draws on a different schedule — five runs of one script at seed 1 gave
+3, 3, 3, 5, 3 extra yields, and did so on the code as it stood before any of this. The seed narrows a
+re-run; it does not pin one. Both the reference page and the new class now say so.
