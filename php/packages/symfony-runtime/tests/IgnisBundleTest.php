@@ -27,14 +27,37 @@ final class IgnisBundleTest extends TestCase
         );
     }
 
-    public function testBuildLeavesAnApplicationsOwnVendorIdsParameterAlone(): void
+    /**
+     * What the application lists is **added** to the framework services, never substituted for them.
+     * This used to be the other way round -- the bundle set its defaults only when the parameter was
+     * absent -- so an application scoping one service of its own silently lost `request_stack` and
+     * the token storages, and the loss showed up as another request's user.
+     */
+    public function testAnApplicationsOwnIdsAreAddedToTheFrameworksNotSubstitutedForThem(): void
     {
         $container = new ContainerBuilder();
         $container->setParameter(FiberScopePass::VENDOR_IDS_PARAMETER, ['app.only']);
 
         (new IgnisBundle())->build($container);
 
-        self::assertSame(['app.only'], $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER));
+        $ids = $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER);
+        self::assertIsArray($ids);
+        self::assertContains('app.only', $ids, "the application's own id survives");
+        self::assertContains('request_stack', $ids, 'and so does every framework one');
+        self::assertContains('security.token_storage', $ids);
+        self::assertContains('security.untracked_token_storage', $ids);
+    }
+
+    public function testAnApplicationThatConfiguresNothingStillGetsTheFrameworkIds(): void
+    {
+        $container = new ContainerBuilder();
+
+        (new IgnisBundle())->build($container);
+
+        self::assertSame(
+            ['request_stack', 'security.token_storage', 'security.untracked_token_storage'],
+            $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER),
+        );
     }
 
     /**
