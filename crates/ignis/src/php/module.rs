@@ -815,7 +815,11 @@ unsafe extern "C" fn zif_ignis_scope_allocate(ex: *mut sys::zend_execute_data, r
         match super::scoped::allocate(&name) {
             Ok(object) => {
                 (*rv).value.obj = object;
-                (*rv).u1.type_info = sys::IS_OBJECT;
+                // IS_OBJECT_EX, not IS_OBJECT: the difference is the type *flags*, and dropping them
+                // marks an object zval as neither refcounted nor collectable, so PHP never addrefs
+                // it and the object is freed under whoever still holds it. It survived a short
+                // script and segfaulted a real Symfony container, which is where it was found.
+                (*rv).u1.type_info = sys::IS_OBJECT_EX;
             }
             Err(message) => {
                 let message = std::ffi::CString::new(message).unwrap_or_else(|_| c"ignis: scoped allocation failed".into());

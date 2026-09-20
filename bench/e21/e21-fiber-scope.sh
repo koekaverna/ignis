@@ -80,6 +80,10 @@ probe "  control, no bundle      " /em     1 /em     IGNIS_NO_DOCTRINE_SCOPE=1
 probe "  with IgnisDoctrineBundle" /em     0 /em
 echo "== a singleton holding fiber-scoped services (S-SINGLETON-CAPTURE)"
 probe "  facade answers per request" /singleton 0 /singleton
+echo "== a container service marked scoped (ADR-0042, S-SCOPED-CLASS)"
+probe "  control, not marked     " /scoped 1 /scoped IGNIS_NO_SCOPED_SERVICE=1
+probe "  marked ignis.scoped     " /scoped 0 /scoped
+
 echo "== service reset across requests (S-RESET-FIBER): A streams while B enters handle()"
 probe "  control, no IgnisBundle " /reset  1 /whoami IGNIS_NO_SCOPE=1
 probe "  with IgnisBundle        " /reset  0 /whoami

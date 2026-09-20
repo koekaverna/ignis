@@ -874,7 +874,7 @@ retrofit after a handler recurses.
 **Unverified.** The GC-bits carrier, the transitivity rule and the three release verbs are the
 owner's design, not read from any source.
 
-### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — acceptance step 1 passes 2026-09-20: engine half prototyped and gated in smoke; steps 2 and 3 (FiberRequestStack rewritten on it, read cost measured) open` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
+### S-SCOPED-CLASS `#[FiberScoped]` moves instance properties into per-scope storage `main` `severity: planned` `open — acceptance steps 1 and 3 pass 2026-09-20 (V-97, V-99): the mechanism works on a real Symfony app under concurrent requests, read cost measured at 1.0x. Step 2 (FiberRequestStack rewritten on it) open` — **unblocked 2026-09-20**: `R-TA-CONTEXT` is answered (research 48) and the answer does not change the design — upstream's `internal_context` is a future substrate for our storage under backend (b), not an alternative to building it, so the engine half is written against our own storage either way
 **What.** A class-level `#[FiberScoped]` moves all instance properties into per-scope storage:
 `create_object` returns a façade with no properties table; `read_property`, `write_property`,
 `has_property`, `unset_property`, `get_property_ptr_ptr` and `get_properties` address
@@ -938,6 +938,14 @@ able to fail, and the fourth is the one that decides whether the control level a
    class; silently copying another scope's row is the failure this catches.
 8. **Read cost** against a plain property, and the fiber-switch cost against E2's 3.83 µs warm —
    the standing constraint that no `context` work may move.
+**Proven on a real application, 2026-09-20 (V-99).** `bench/e21` marks an ordinary service
+`ignis.scoped` in a real Symfony kernel — Framework, Security and Doctrine bundles, `APP_ENV=prod`,
+three pairs of overlapping requests. Control, unmarked: **leaks 3/3**. Marked: **0/3**. The rest of
+E21 stayed green, so the mechanism disturbs neither the token storage (V-68) nor the Doctrine
+identity map (V-69). The first attempt **segfaulted** on `request_stack`: the zif returned the object
+with `type_info = IS_OBJECT` where an object zval needs `IS_OBJECT_EX`, so it was marked neither
+refcounted nor collectable and was freed under the container holding it. Every unit test and both
+smoke arms passed while that was live — it took a real framework outliving a request to find it.
 **Where it stands, 2026-09-20.** ADR-0042 written; userland half in `c4f1f92`; engine half in
 `crates/ignis/src/php/scoped.rs` — `ignis_scope_allocate` and `ignis_scope_rows_clear`, four
 overridden handlers, and `get_property_ptr_ptr` returning null so `$this->list[] =` degrades to

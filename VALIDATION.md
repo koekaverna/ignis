@@ -5163,3 +5163,41 @@ is recorded as negligible rather than left blocking. This entry exists so that d
 with its evidence and its limits, not so the cost can later be cited as "measured at zero". It is
 **not** measured. Closing it properly needs an E2-shaped instrument — the fiber switch itself,
 3.83 µs warm (V-45) — with live scoped objects, and that arm does not exist.
+
+## V-99 — a container service marked `scoped: true` on a real Symfony app (ADR-0042)
+
+Date: 2026-09-20. Command: `bench/e21/e21-fiber-scope.sh` — the E21 fixture, a real Symfony kernel
+with FrameworkBundle, SecurityBundle and DoctrineBundle, `APP_ENV=prod`, one PHP thread, three pairs
+of overlapping requests per arm (A sleeps 300 ms mid-handler while B runs).
+
+`App\Service\ScopedCart` is an ordinary class that knows nothing about scoping: a `?string $tag`
+written at the top of the request and read back after the sleep. The container decides, the way
+`lazy` is decided — `$s->get(ScopedCart::class)->tag('ignis.scoped')`.
+
+```
+== a container service marked scoped (ADR-0042, S-SCOPED-CLASS)
+  control, not marked     : leaks 3/3  (control: the defect is real)
+  marked ignis.scoped     : leaks 0/3  ok
+```
+
+The control is not decoration: unmarked, `ScopedCart` is a container singleton, so B's write lands
+in the object A is holding and A reads B's tag back — 3 of 3, every time. Marked, 0 of 3. The whole
+suite stayed green with it, so the mechanism did not disturb the token storage (V-68), the Doctrine
+identity map (V-69), the façade probe or the service-reset arm.
+
+Also confirmed through the container rather than a probe: `built_with='built-at-boot'`, the
+constructor's value, read from a request's scope. That is row zero working through Symfony's own
+service construction.
+
+**What this run cost to get, and it is the point of running it.** The first attempt **segfaulted**
+the moment Symfony built `request_stack` through `Ignis\Scope::create()`. Bisecting the module
+(seal, the switch hook, `free_obj`, `rows_clear` — each disabled in turn, then all four) left the
+crash in place, and step-by-step instrumentation showed `allocate()` completing all eight of its
+steps before the process died. The fault was one line in the zif that returns the object:
+`type_info = IS_OBJECT` (8) instead of `IS_OBJECT_EX` (776). The 768 difference is
+`IS_TYPE_REFCOUNTED | IS_TYPE_COLLECTABLE`, so the object zval was marked not refcounted, PHP never
+took a reference for the container that stored it, and the object was freed under its holder.
+
+A short script never noticed. Every unit test passed. Both smoke arms passed. It took a real
+framework holding the object past the end of a request to expose it, which is the argument for this
+bench existing at all.

@@ -82,6 +82,12 @@ final class Kernel extends BaseKernel
             ]);
         }
 
+        // Narrowing knob: with it set, no vendor id is routed through Ignis\Scope::create(), so a
+        // failure that survives it is not the scoped-object path's.
+        if (getenv('IGNIS_NO_SCOPED_VENDOR')) {
+            $c->parameters()->set('ignis.scoped_vendor_ids', []);
+        }
+
         $s = $c->services();
         $s->defaults()->autowire()->autoconfigure();
         if (!getenv('IGNIS_NO_SCOPE')) {
@@ -94,6 +100,14 @@ final class Kernel extends BaseKernel
         $s->get(\App\Controller\ResetProbe::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\CacheGrowth::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\SingletonProbe::class)->tag('controller.service_arguments');
+        $s->get(\App\Controller\ScopedProbe::class)->tag('controller.service_arguments');
+        // ADR-0042. The class knows nothing about this; the container decides, the way `lazy` is
+        // decided. Unmarked, ScopedCart is a container singleton and two overlapping requests share
+        // its state -- which is what IGNIS_NO_SCOPED_SERVICE turns this probe into: its control.
+        $s->get(\App\Service\ScopedCart::class)->arg(0, 'built-at-boot');
+        if (!getenv('IGNIS_NO_SCOPED_SERVICE') && !getenv('IGNIS_NO_SCOPE')) {
+            $s->get(\App\Service\ScopedCart::class)->tag('ignis.scoped');
+        }
         // In services_resetter's list on purpose: that list is what Kernel::boot() empties.
         $s->get(\App\Service\ResetWitness::class)->tag('kernel.reset', ['method' => 'reset']);
     }
@@ -106,6 +120,7 @@ final class Kernel extends BaseKernel
         $routes->add('reset', '/reset')->controller([\App\Controller\ResetProbe::class, '__invoke']);
         $routes->add('cachegrowth', '/cachegrowth')->controller([\App\Controller\CacheGrowth::class, '__invoke']);
         $routes->add('singleton', '/singleton')->controller([\App\Controller\SingletonProbe::class, '__invoke']);
+        $routes->add('scoped', '/scoped')->controller([\App\Controller\ScopedProbe::class, '__invoke']);
     }
 
     public function getCacheDir(): string
