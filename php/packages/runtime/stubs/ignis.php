@@ -157,6 +157,27 @@ if (!function_exists('ignis_set_superglobals')) {
     }
 }
 
+// --- fiber-scoped objects (BACKLOG.md S-SCOPED-CLASS, DECISIONS.md 2026-09-20) ---
+
+if (!function_exists('ignis_scope_allocate')) {
+    /**
+     * ignis_scope_allocate(string $class): object — an $class instance with IS_UNDEF property
+     * slots and handlers addressing this fiber's row. Never runs the constructor.
+     */
+    function ignis_scope_allocate(string $class): object
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_scope_rows_clear')) {
+    /** ignis_scope_rows_clear(): void — drops this fiber's Scope::create() property rows. */
+    function ignis_scope_rows_clear(): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
 // --- gRPC (ADR-0014, V-20) ---
 
 if (!function_exists('ignis_grpc_send')) {

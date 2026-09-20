@@ -19,6 +19,16 @@ declare(strict_types=1);
  * the runtime calls them behind function_exists(), the stub makes that guard true, and the stub
  * body then throws inside a request fiber — where Loop::poolBody() rejects a Future nobody reads,
  * so the request just disappears. Any stub function the runtime guards on has to be faked here.
+ *
+ * ignis_scope_allocate() and ignis_scope_rows_clear() are faked too, but for the opposite reason:
+ * Ignis\Scope::create() and Ignis\Scope::clear() call them with no function_exists() guard at all
+ * (S-SCOPED-CLASS, BACKLOG.md), because under the real binary they always exist. Loop::releaseRequest()
+ * calls Scope::clear() at the end of every request LoopTest.php drives, so without a fake here every
+ * Loop test would hit the throwing stub in packages/runtime/stubs/ignis.php, not just ScopeTest.
+ * The fake cannot reproduce per-scope property storage — that is engine territory — so it only
+ * approximates the one behaviour userland tests can observe from outside: ignis_scope_allocate()
+ * never runs $class's constructor, which ReflectionClass::newInstanceWithoutConstructor() gives for
+ * free, and it records call order so a test can prove allocate happens before construct.
  */
 
 namespace Ignis\Tests {
@@ -39,6 +49,10 @@ namespace Ignis\Tests {
         /** @var list<array{id: int, status: int, headers: array<string, string>, body: string}> */
         private static array $responses = [];
 
+        /** @var list<string> 'allocate:'/'construct:' markers, in call order, for scope tests */
+        private static array $scopeEvents = [];
+        private static int $scopeRowsCleared = 0;
+
         public static function reset(): void
         {
             self::$nextOperationId = 1;
@@ -46,6 +60,8 @@ namespace Ignis\Tests {
             self::$timers = [];
             self::$injected = [];
             self::$responses = [];
+            self::$scopeEvents = [];
+            self::$scopeRowsCleared = 0;
         }
 
         public static function clockMilliseconds(): int
@@ -110,6 +126,35 @@ namespace Ignis\Tests {
         public static function responses(): array
         {
             return self::$responses;
+        }
+
+        public static function allocateScope(string $class): object
+        {
+            self::$scopeEvents[] = 'allocate:' . $class;
+
+            return (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+        }
+
+        /** A test's own subject class records its own 'construct:...' marker; this is that hook. */
+        public static function recordScopeEvent(string $event): void
+        {
+            self::$scopeEvents[] = $event;
+        }
+
+        /** @return list<string> */
+        public static function scopeEvents(): array
+        {
+            return self::$scopeEvents;
+        }
+
+        public static function clearScopeRows(): void
+        {
+            ++self::$scopeRowsCleared;
+        }
+
+        public static function scopeRowsCleared(): int
+        {
+            return self::$scopeRowsCleared;
         }
 
         /** @return array<int, null> */
@@ -190,6 +235,20 @@ namespace {
             Ignis\Tests\FakeReactor::recordResponse($id, $status, $headers, $body);
 
             return true;
+        }
+    }
+
+    if (!function_exists('ignis_scope_allocate')) {
+        function ignis_scope_allocate(string $class): object
+        {
+            return Ignis\Tests\FakeReactor::allocateScope($class);
+        }
+    }
+
+    if (!function_exists('ignis_scope_rows_clear')) {
+        function ignis_scope_rows_clear(): void
+        {
+            Ignis\Tests\FakeReactor::clearScopeRows();
         }
     }
 }

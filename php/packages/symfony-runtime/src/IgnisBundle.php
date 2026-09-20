@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Ignis\Symfony;
 
+use Ignis\Symfony\Attribute\FiberScoped;
 use Ignis\Symfony\DependencyInjection\FiberScopePass;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\Compiler\PassConfig;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\HttpKernel\Bundle\Bundle;
@@ -23,6 +25,19 @@ final class IgnisBundle extends Bundle
 {
     public function build(ContainerBuilder $container): void
     {
+        $container->registerAttributeForAutoconfiguration(
+            FiberScoped::class,
+            static function (ChildDefinition $definition): void {
+                $definition->addTag(FiberScopePass::SCOPED_TAG);
+            },
+        );
+        if (!$container->hasParameter(FiberScopePass::VENDOR_IDS_PARAMETER)) {
+            $container->setParameter(FiberScopePass::VENDOR_IDS_PARAMETER, [
+                'request_stack',
+                'security.token_storage',
+                'security.untracked_token_storage',
+            ]);
+        }
         $container->addCompilerPass(new FiberScopePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -256);
     }
 }

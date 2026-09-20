@@ -17,6 +17,7 @@ final class ScopeTest extends TestCase
 {
     protected function setUp(): void
     {
+        FakeReactor::reset();
         Scope::clear();
     }
 
@@ -94,5 +95,41 @@ final class ScopeTest extends TestCase
 
         $other->resume();
         self::assertSame('keep', $other->getReturn());
+    }
+
+    /**
+     * The S-SCOPED-CLASS invariant (DECISIONS.md 2026-09-20): allocate must run before construct,
+     * not the other way round. `ignis_scope_allocate()` is faked by `tests/fake-reactor.php`
+     * (`ReflectionClass::newInstanceWithoutConstructor()`), which cannot reproduce per-scope property
+     * storage — that half is engine territory this package does not own — so this only proves the
+     * call order `Scope::create()` itself is responsible for, via the two fakes' shared event log.
+     */
+    public function testCreateAllocatesBeforeConstructing(): void
+    {
+        $class = ScopeCreateOrderSubject::class;
+
+        $instance = Scope::create($class, 'seed');
+
+        self::assertInstanceOf($class, $instance);
+        self::assertSame('seed', $instance->value);
+        self::assertSame(['allocate:' . $class, 'construct:' . $class . ':seed'], FakeReactor::scopeEvents());
+    }
+
+    public function testClearAlsoClearsTheScopedObjectRows(): void
+    {
+        $before = FakeReactor::scopeRowsCleared();
+
+        Scope::clear();
+
+        self::assertSame($before + 1, FakeReactor::scopeRowsCleared());
+    }
+}
+
+/** Records its own construction into the shared fake event log, so a test can order it against allocate. */
+final class ScopeCreateOrderSubject
+{
+    public function __construct(public readonly string $value)
+    {
+        FakeReactor::recordScopeEvent('construct:' . self::class . ':' . $value);
     }
 }

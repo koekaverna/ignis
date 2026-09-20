@@ -715,6 +715,19 @@ that refuses the correct shape.
 
 ---
 
+## Found on 2026-09-20, building S-SCOPED-CLASS
+
+### A-E12-PRINTS-ONLY E12 measures a wedged server as healthy `main` `open — measured 2026-09-20`
+**What.** `scripts/smoke.sh:215` runs E12 as `timeout 120 bench/e12-isolation.sh | grep -E "^after \(a\)|^after hello|server"`. Three things make it unable to fail. The pipe means the step's status is **grep's**, and `grep` matches `server` in both `server alive` and `server DIED`. `bench/e12-isolation.sh:25` captures `Requests/sec` from `wrk`, prints it next to a baseline — `after hello rps=... (baseline ...)` — and **compares them to nothing**. And `wrk`'s `Non-2xx` line is printed twice by that script and read by **zero** places in `smoke.sh`.
+**Why it matters, measured rather than argued.** On 2026-09-20 the tree was left in a state where every request threw during cleanup, so with `IGNIS_FIBER_BUDGET=4` the server answered **four requests 200 and then 503 to everything, for ever** — and `smoke.sh` printed `GREEN`. It scored *well*, because `wrk` counts a 503 as a request served: a server refusing everything has excellent throughput.
+**Acceptance.** E12 fails when the server returns any non-2xx during the recovery arm, and fails when it dies; the rps line is compared with the baseline it already prints beside; `smoke.sh` stops piping the step into `grep`, so the script's own exit status is what decides. A control that proves it: re-break `Scope::clear()` (drop the `function_exists` guard while the engine half is absent) and E12 must go red.
+
+### S-CLEANUP-SILENT A throw while releasing a request is invisible on a server `main` `open — measured 2026-09-20`
+**What.** `Loop.php:826-834` runs the handler in a `try`/`catch`/`finally` and calls `releaseRequest($id)` from the `finally`. A throw there propagates into the Future that `spawn()` returns and **discards** — its own doc block says so — so it becomes an unobserved rejection, and `reportUnobserved()` runs only after the loop ends. A server's loop never ends. The failure is therefore completely silent: measured, a server whose cleanup threw on every request wrote **zero** lines to its log and answered 200.
+**Why it matters.** `releaseRequest()` is ordered `disarmDeadline` → forget the fiber → `Scope::clear()` → `Output::reset()` → `watchLoadedFiles()` → `--$inflightRequests` → `++$handled`. Anything that throws part-way leaves the rest undone, and two of the undone things are counters that gate admission and feed `/_ignis/metrics`. Measured: `ignis_requests_handled_total` read **0** after twenty served requests, and with a budget the server wedged permanently.
+**Fix, unbuilt.** Cleanup must not be able to take the request path down silently: either `releaseRequest` catches and logs at `warn` naming what it could not release — the counters then still run — or unobserved rejections are reported as they happen rather than at loop exit. The second is the better fix and the larger one; the first is three lines and would have turned today's hour of probing into one log line.
+**Acceptance.** A handler whose cleanup throws: the request still answers, the thread keeps serving, `--$inflightRequests` still runs, and exactly one `warn` names the failure. `A-E12-PRINTS-ONLY` is what would catch a regression of it.
+
 ## Upstream true-async convergence (owner note, 2026-09-19)
 
 Filed from an owner research pass over `true-async/php-src` (branch `PHP-8.6-true-async`,
