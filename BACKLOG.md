@@ -715,6 +715,29 @@ that refuses the correct shape.
 
 ---
 
+### S-SCOPED-UNKNOWNS The three things ADR-0042 does not claim `main` `open — 2026-09-20, filed so they outlive the ADR's status line`
+**Why this exists.** `S-SCOPED-CLASS` is closed and ADR-0042 is accepted, so the only place these
+were written down was that ADR's status paragraph — which nobody reads as a work queue. Each is a
+named unknown, not a suspicion.
+**1. The per-switch cost is unmeasured.** V-98: two fibers ping-ponging 20,000 round trips with 0
+and with 256 live scoped objects measured the 256 arm *faster* — 41.2 µs against 47.4 — because the
+reactor round trip dominates and its systematic difference between arms (~6 µs) is larger than the
+~1 µs that 1,024 zval moves could cost. Accepted as negligible by owner decision, **not** by
+measurement. **What would close it:** an E2-shaped arm — the fiber switch itself, 3.83 µs warm
+(V-45) — with live scoped objects, so the delta is read against something that can resolve it.
+**2. A lazy ghost accessed by property, not by method.** V-101 measured `lazy` + `scoped` composing
+on the E21 fixture, 0/3 leaks: Symfony's ghost calls the factory when it initialises, so
+`Scope::create()` runs inside the initialiser. Services are used through methods and that is the
+shape measured. A ghost whose *property* is read before initialisation is a different path and was
+not tried.
+**3. Property hooks (PHP 8.4).** `IS_HOOKED_PROPERTY_OFFSET` sits in the same VM switch as the two
+guards this whole design rests on — `zend_vm_def.h:2120-2157` and `:2572-2582`, where a simple hook
+passes through the `IS_UNDEF` guard and a hook with a body bypasses it entirely. A scoped class with
+a hooked property is therefore the one shape that could reach `OBJ_PROP` without the table being
+this scope's. Untested, and the most likely of the three to be a real defect.
+**Acceptance.** One arm each; (1) and (3) fail today if the thing they describe is wrong, so write
+them as controls rather than as confirmations.
+
 ## Found on 2026-09-20, building S-SCOPED-CLASS
 
 ### A-E12-PRINTS-ONLY E12 measures a wedged server as healthy `main` `open — measured 2026-09-20`
