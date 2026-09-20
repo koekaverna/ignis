@@ -33,6 +33,53 @@ final class FiberScopePassTest extends TestCase
         self::assertSame(['Vendor\\RequestStack', 'original-argument'], $definition->getArguments());
     }
 
+    /**
+     * The seal has to happen after the container has finished configuring the object, not after its
+     * constructor, because the compiled container emits `$instance->someCall(...)` *after* the
+     * factory returned — and Symfony's configurator is the one hook that runs later still.
+     *
+     * Without this, `security.logout_url_generator` reached its `registerListener()` calls already
+     * sealed and filed both firewalls into the scope of whichever request happened to build it; every
+     * other request read an empty `$listeners` and Symfony threw `Unable to find logout in the current
+     * firewall`, measured 6 of 6 rounds on the E21 fixture.
+     */
+    public function testTheSealIsTheConfiguratorSoItRunsAfterTheDefinitionsMethodCalls(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setDefinition(
+            'app.configured_after_construction',
+            (new Definition('Vendor\\ConfiguredService'))
+                ->addTag(FiberScopePass::SCOPED_TAG)
+                ->addMethodCall('registerSomething', ['a-value']),
+        );
+
+        (new FiberScopePass())->process($container);
+
+        $definition = $container->getDefinition('app.configured_after_construction');
+        self::assertSame([Scope::class, 'seal'], $definition->getConfigurator());
+        self::assertSame([['registerSomething', ['a-value']]], $definition->getMethodCalls(), 'the calls themselves are untouched');
+    }
+
+    /**
+     * A definition that already has a configurator cannot also have the seal, and scoping it would
+     * drop one of the two silently. It is refused by name instead.
+     */
+    public function testADefinitionThatAlreadyHasAConfiguratorIsRefusedByName(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setDefinition(
+            'app.already_configured',
+            (new Definition('Vendor\\AlreadyConfigured'))
+                ->addTag(FiberScopePass::SCOPED_TAG)
+                ->setConfigurator('Vendor\\Configurator::configure'),
+        );
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('app.already_configured');
+
+        (new FiberScopePass())->process($container);
+    }
+
     public function testAServiceTaggedIgnisScopedIsMarkedTheSameWay(): void
     {
         $container = new ContainerBuilder();

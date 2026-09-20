@@ -5350,3 +5350,67 @@ It does **not** follow that every `kernel.reset` service should be scoped. Resea
 found 15 tagged services of which 9 are caches shared between requests **on purpose** — scoping one
 of those would give every request its own cache and quietly destroy the thing it exists for. The
 rule is the one this mechanism has always had: scope what is per-request, leave what is shared.
+
+## V-105 — `security.logout_url_generator`: the arm said no, then said yes, and found a general defect
+
+Date: 2026-09-20. Fixture: `bench/e21/app`, a second `admin` firewall added beside `main` so the two
+requests want different logout paths; `App\Controller\LogoutProbe` reads `getLogoutPath()` after
+sleeping, wired by id. Command: `PORT=8241 bench/e21/e21-fiber-scope.sh`. One thread, `APP_ENV=prod`.
+
+Research 36 named this service a candidate on a reading of its per-request `$currentFirewallName`.
+The arm was built before the id was added to the list, and the **authenticated** run refused the
+candidacy: 0 of 3 leaks in both directions, with timestamps proving B ran entirely inside A's 300 ms
+sleep (B .047→.216, A ending .517). `LogoutUrlGenerator::getListener()`
+(`vendor/symfony/security-http/Logout/LogoutUrlGenerator.php:130-155`) asks
+`$this->tokenStorage->getToken()?->getFirewallName()` **first** and only then falls back to its own
+property — and `security.token_storage` is scoped already, so an authenticated request is correct by
+way of a service that is correct.
+
+The **anonymous** run is the other half, and it leaked:
+
+```
+anonymous, A on /logoutprobe sleeps 300ms, B on /admin/logoutprobe runs inside it
+  run 1: InvalidArgumentException: This request is not behind a firewall …
+  run 2: InvalidArgumentException: This request is not behind a firewall …
+```
+
+With no token the fallback is reached, and B's `onKernelFinishRequest` sets `currentFirewallName`
+back to `null` under a request that is still awaiting. 2 of 2.
+
+**Adding the id then broke it differently**, which is the part worth keeping:
+
+```
+  run 1: InvalidArgumentException: Unable to find logout in the current firewall …   (6 of 6)
+```
+
+Now the firewall name was this request's, and `$this->listeners` was empty. The compiled container
+builds this service as
+
+```php
+$instance = \Ignis\Scope::create('Symfony\…\LogoutUrlGenerator', …);
+$instance->registerListener('admin', 'admin_logout', …);
+$instance->registerListener('main', 'main_logout', …);
+```
+
+— `addMethodCall`, emitted **after** the factory. `Scope::create()` seals when the constructor
+returns, so both listeners were filed into the scope of whichever request happened to build the
+service, and every other request inherited an empty row zero. The defect is general: any scoped
+definition configured after construction had it, and the three ids scoped before this one simply had
+no method calls. The fix is `setConfigurator([Scope::class, 'seal'])` — the one hook Symfony runs
+after all method calls — plus a compile-time refusal for a definition that already has a configurator
+of its own.
+
+**After**, all four arms of the gate, with a control that undoes the marking for this id alone:
+
+```
+== the logout url generator on an anonymous request (two firewalls, no credentials)
+  control, id not scoped  : leaks 3/3  (control: the defect is real)
+  main sleeps, admin runs : leaks 0/3  ok
+  admin sleeps, main runs : leaks 0/3  ok
+  and authenticated too   : leaks 0/3  ok
+E21: GREEN
+```
+
+The harness changed with it. It counted a leak only on `"leaked":true`, so a 500 in a *fixed* arm
+read as zero leaks — the first version of this arm would have passed while throwing. It now counts
+anything that is not the probe's own `"leaked":false` answer, a 500 included.

@@ -37,6 +37,12 @@ $db->exec("CREATE TABLE IF NOT EXISTS thing (id INTEGER PRIMARY KEY, name VARCHA
 $db->exec("INSERT OR REPLACE INTO thing (id,name) VALUES (1,\"seed\")");'
 
 fail=0
+# Credentials for the two overlapping requests. Two different users is what makes a token leak
+# visible; the logout arms override both to none, because the property they measure is only read
+# when there is no token to resolve the firewall from.
+AUTH_A=(-u alice:alicepw)
+AUTH_B=(-u bob:bobpw)
+
 # $1 label, $2 route for A, $3 "leaks expected"(1) or "must not leak"(0), $4 route for B (default: A's),
 # rest: env for the server. B needs a route of its own when the probe measures whether *another*
 # request disturbs A -- sending both to the same route measures a shared singleton instead, which is
@@ -50,16 +56,19 @@ probe() {
     exec "$BIN" --threads 1 "$APP/public/index.php" ) > /tmp/ignis-e21.log 2>&1 &
   local S=$!
   local up=0
-  for _ in $(seq 1 100); do curl -sf -u alice:alicepw "http://127.0.0.1:$PORT$route?tag=warm&ms=0" >/dev/null && { up=1; break; }; sleep 0.2; done
+  for _ in $(seq 1 100); do curl -sf "${AUTH_A[@]}" "http://127.0.0.1:$PORT$route?tag=warm&ms=0" >/dev/null && { up=1; break; }; sleep 0.2; done
   if [ "$up" != 1 ]; then echo "$label: app never answered"; head -3 /tmp/ignis-e21.log; kill $S 2>/dev/null; fail=1; return; fi
 
   local leaks=0
   for i in $(seq 1 "$N"); do
-    curl -s -m 10 -u alice:alicepw "http://127.0.0.1:$PORT$route?tag=A$i&ms=300" > /tmp/e21-a.json & local PA=$!
+    curl -s -m 10 "${AUTH_A[@]}" "http://127.0.0.1:$PORT$route?tag=A$i&ms=300" > /tmp/e21-a.json & local PA=$!
     sleep 0.1
-    curl -s -m 10 -u bob:bobpw "http://127.0.0.1:$PORT$routeb?tag=B$i&ms=0" > /tmp/e21-b.json & local PB=$!
+    curl -s -m 10 "${AUTH_B[@]}" "http://127.0.0.1:$PORT$routeb?tag=B$i&ms=0" > /tmp/e21-b.json & local PB=$!
     wait $PA; wait $PB
-    case "$(cat /tmp/e21-a.json)" in *'"leaked":true'*) leaks=$((leaks+1));; esac
+    # Anything that is not the probe's own "no leak" answer counts as one, a 500 included: a service
+    # that throws because it lost its state has lost its state, and reading only for "leaked":true
+    # let an exception in the *fixed* arm pass as zero leaks.
+    case "$(cat /tmp/e21-a.json)" in *'"leaked":false'*) ;; *) leaks=$((leaks+1));; esac
   done
   kill $S 2>/dev/null; wait $S 2>/dev/null
 
@@ -109,6 +118,18 @@ probe "  lazy + scoped           " /scoped 0 /scoped IGNIS_SCOPED_LAZY=1
 echo "== service reset across requests (S-RESET-FIBER): A streams while B enters handle()"
 probe "  control, no IgnisBundle " /reset  1 /whoami IGNIS_NO_SCOPE=1
 probe "  with IgnisBundle        " /reset  0 /whoami
+
+# The one framework service whose per-request property is read only when there is NO token: with one,
+# LogoutUrlGenerator::getListener() resolves the firewall through security.token_storage, which is
+# scoped already, and the arm measures nothing. Two firewalls are the other half -- with one, every
+# request writes the same value and the leak is invisible.
+echo "== the logout url generator on an anonymous request (two firewalls, no credentials)"
+AUTH_A=(); AUTH_B=()
+probe "  control, id not scoped  " /logoutprobe       1 /admin/logoutprobe IGNIS_NO_LOGOUT_SCOPE=1
+probe "  main sleeps, admin runs " /logoutprobe       0 /admin/logoutprobe
+probe "  admin sleeps, main runs " /admin/logoutprobe 0 /logoutprobe
+AUTH_A=(-u alice:alicepw); AUTH_B=(-u bob:bobpw)
+probe "  and authenticated too   " /logoutprobe       0 /admin/logoutprobe
 
 [ "$fail" = 0 ] && echo "E21: GREEN" || echo "E21: FAILED"
 exit $fail

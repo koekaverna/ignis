@@ -24,11 +24,11 @@ use Symfony\Component\DependencyInjection\Definition;
  * prepended with the class itself, and `Scope::create()` becomes the factory — nothing here replaces
  * the definition, so whatever else it already carries (visibility, tags, decorators) is untouched.
  *
- * Ids come from two sources, combined: the `%ignis.scoped_vendor_ids%` container parameter, which
- * `IgnisBundle` defaults to the three framework services this used to replace outright
- * (`request_stack` and the two token-storage ids), and every service tagged `ignis.scoped` — which
- * `IgnisBundle` also arranges for `#[FiberScoped]` to produce on application code. Adding a row is a
- * parameter entry or a tag, and it needs a test that fails without it.
+ * Ids come from two sources, combined: the `%ignis.scoped_vendor_ids%` container parameter, and every
+ * service tagged `ignis.scoped`. Neither is the application's door — the parameter is how
+ * `IgnisBundle` hands this pass the framework ids plus whatever the application put in the bundle's
+ * `scoped_ids` setting, and the tag is what `#[FiberScoped]` produces on application code. An
+ * application writes one of those two, and either way the row needs a test that fails without it.
  */
 final class FiberScopePass implements CompilerPassInterface
 {
@@ -79,8 +79,31 @@ final class FiberScopePass implements CompilerPassInterface
             return;
         }
         $definition = $container->getDefinition($id);
+        $this->refuseAnAlreadyConfiguredDefinition($definition, $id);
         $definition->setArguments([$definition->getClass(), ...$definition->getArguments()]);
         $definition->setFactory([Scope::class, 'create']);
+        $definition->setConfigurator([Scope::class, 'seal']);
+    }
+
+    /**
+     * The configurator is the only hook Symfony runs after a definition's method calls and property
+     * assignments, and the seal has to be there rather than in the factory: the compiled container
+     * emits `$instance->someCall(...)` *after* `Scope::create()` returned, so anything configured
+     * that way would otherwise belong to the one request that built the service. This is not a corner
+     * case — `security.logout_url_generator` registers one listener per firewall exactly like that.
+     *
+     * A definition that already carries a configurator of its own cannot have both, so it is refused
+     * by name at compile time instead of being scoped with its configuration silently dropped. None
+     * of the framework ids is such a definition; an application that hits this should scope the state
+     * rather than the service, and the message says so.
+     */
+    private function refuseAnAlreadyConfiguredDefinition(Definition $definition, string $id): void
+    {
+        if ($definition->getConfigurator() === null) {
+            return;
+        }
+
+        throw new \LogicException(\sprintf('the service "%s" cannot be fiber-scoped: it already has a configurator, and Ignis needs that slot to seal the object once the container has finished configuring it. Scope the per-request state it holds instead of the service.', $id));
     }
 
     /**

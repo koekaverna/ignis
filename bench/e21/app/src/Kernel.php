@@ -7,10 +7,15 @@ use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Bundle\SecurityBundle\SecurityBundle;
 use Symfony\Component\Config\Loader\LoaderInterface;
+use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
+use Symfony\Component\DependencyInjection\Compiler\PassConfig;
+use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\HttpKernel\Kernel as BaseKernel;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 use Symfony\Component\Security\Core\User\InMemoryUser;
+
+use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
 
 final class Kernel extends BaseKernel
 {
@@ -27,6 +32,33 @@ final class Kernel extends BaseKernel
         if (!getenv('IGNIS_NO_DOCTRINE_SCOPE')) {
             yield new \Ignis\Doctrine\IgnisDoctrineBundle();
         }
+    }
+
+    /**
+     * The control arm for the logout probe. IgnisBundle scopes `security.logout_url_generator` by
+     * name and an application cannot subtract from that list, so the control undoes the marking the
+     * pass made -- which is exactly what "this id is not scoped" means -- rather than pretending to
+     * be a different application.
+     */
+    protected function build(ContainerBuilder $container): void
+    {
+        if (!getenv('IGNIS_NO_LOGOUT_SCOPE')) {
+            return;
+        }
+        $container->addCompilerPass(new class implements CompilerPassInterface {
+            public function process(ContainerBuilder $container): void
+            {
+                if (!$container->hasDefinition('security.logout_url_generator')) {
+                    return;
+                }
+                $definition = $container->getDefinition('security.logout_url_generator');
+                $arguments = $definition->getArguments();
+                array_shift($arguments);
+                $definition->setArguments($arguments);
+                $definition->setFactory(null);
+                $definition->setConfigurator(null);
+            }
+        }, PassConfig::TYPE_BEFORE_OPTIMIZATION, -512);
     }
 
     protected function configureContainer(ContainerConfigurator $c, LoaderInterface $loader): void
@@ -46,12 +78,25 @@ final class Kernel extends BaseKernel
                 'alice' => ['password' => 'alicepw', 'roles' => ['ROLE_USER']],
                 'bob'   => ['password' => 'bobpw',   'roles' => ['ROLE_USER', 'ROLE_ADMIN']],
             ]]]],
-            'firewalls' => ['main' => [
-                'pattern'    => '^/',
-                'stateless'  => true,
-                'provider'   => 'inmem',
-                'http_basic' => true,
-            ]],
+            // Two firewalls, because `security.logout_url_generator` keeps *which firewall this
+            // request is on* in a property, and with one firewall every request writes the same
+            // value and no leak is observable. This is the arm S-RESET-AUTOSCOPE needs.
+            'firewalls' => [
+                'admin' => [
+                    'pattern'    => '^/admin',
+                    'stateless'  => true,
+                    'provider'   => 'inmem',
+                    'http_basic' => true,
+                    'logout'     => ['path' => 'admin_logout'],
+                ],
+                'main' => [
+                    'pattern'    => '^/',
+                    'stateless'  => true,
+                    'provider'   => 'inmem',
+                    'http_basic' => true,
+                    'logout'     => ['path' => 'main_logout'],
+                ],
+            ],
             'access_control' => [['path' => '^/whoami', 'roles' => 'ROLE_USER']],
         ]);
 
@@ -81,12 +126,6 @@ final class Kernel extends BaseKernel
             ]);
         }
 
-        // Narrowing knob: with it set, no vendor id is routed through Ignis\Scope::create(), so a
-        // failure that survives it is not the scoped-object path's.
-        if (getenv('IGNIS_NO_SCOPED_VENDOR')) {
-            $c->parameters()->set('ignis.scoped_vendor_ids', []);
-        }
-
         $s = $c->services();
         $s->defaults()->autowire()->autoconfigure();
         if (!getenv('IGNIS_NO_SCOPE')) {
@@ -103,6 +142,10 @@ final class Kernel extends BaseKernel
         $s->get(\App\Controller\SingletonProbe::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\ScopedProbe::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\BodyProbe::class)->tag('controller.service_arguments');
+        // By id: the generator is not registered under its class name.
+        $s->get(\App\Controller\LogoutProbe::class)
+            ->arg(0, service('security.logout_url_generator'))
+            ->tag('controller.service_arguments');
         // ADR-0042. The class knows nothing about this; the container decides, the way `lazy` is
         // decided. Unmarked, ScopedCart is a container singleton and two overlapping requests share
         // its state -- which is what IGNIS_NO_SCOPED_SERVICE turns this probe into: its control.
@@ -129,6 +172,10 @@ final class Kernel extends BaseKernel
         $routes->add('singleton', '/singleton')->controller([\App\Controller\SingletonProbe::class, '__invoke']);
         $routes->add('scoped', '/scoped')->controller([\App\Controller\ScopedProbe::class, '__invoke']);
         $routes->add('body', '/body')->controller([\App\Controller\BodyProbe::class, '__invoke']);
+        $routes->add('main_logout', '/logout');
+        $routes->add('admin_logout', '/admin/logout');
+        $routes->add('logout_probe', '/logoutprobe')->controller([\App\Controller\LogoutProbe::class, '__invoke']);
+        $routes->add('admin_logout_probe', '/admin/logoutprobe')->controller([\App\Controller\LogoutProbe::class, '__invoke']);
     }
 
     public function getCacheDir(): string

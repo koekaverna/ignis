@@ -6,10 +6,12 @@ namespace Ignis\Symfony;
 
 use Ignis\Symfony\Attribute\FiberScoped;
 use Ignis\Symfony\DependencyInjection\FiberScopePass;
+use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\Compiler\PassConfig;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-use Symfony\Component\HttpKernel\Bundle\Bundle;
+use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
+use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
 /**
  * Register in `config/bundles.php` — without it the container's request-scoped singletons are
@@ -18,30 +20,68 @@ use Symfony\Component\HttpKernel\Bundle\Bundle;
  *
  *     Ignis\Symfony\IgnisBundle::class => ['all' => true],
  *
+ * An application scopes a vendor service it owns no class for through the bundle's own setting,
+ * which is added to the framework defaults below rather than replacing them:
+ *
+ *     # config/packages/ignis.yaml
+ *     ignis:
+ *         scoped_ids: ['acme.tenant_context']
+ *
+ * For a class the application owns, the `#[FiberScoped]` attribute says the same thing at the class
+ * and needs no configuration at all.
+ *
  * The pass runs at `BEFORE_OPTIMIZATION` with a low priority so it sees the definitions the
  * security bundle has finished creating, and before optimisation inlines any of them.
  */
-final class IgnisBundle extends Bundle
+final class IgnisBundle extends AbstractBundle
 {
     /**
-     * Framework services whose state belongs to one request. An application adds its own through the
-     * same parameter — `parameters: { ignis.scoped_vendor_ids: [...] }` in `services.yaml`, or the
-     * `#[FiberScoped]` attribute for a class it owns — and what it lists is **added** to these
-     * rather than replacing them. It used to replace them: the bundle set the defaults only when
-     * the parameter was absent, so an application scoping one service of its own silently lost
-     * `request_stack` and the token storages, and the loss showed up as another request's user.
+     * Framework services whose state belongs to one request.
      *
      * The list is deliberately short. `kernel.reset` is not the criterion — research 36 read all
      * fifteen services carrying that tag and found **nine are caches shared between requests on
      * purpose**, where scoping would give each request its own cache and quietly destroy what it is
      * for. The criterion is "this state belongs to one request", which no container tag expresses
      * and a person has to decide.
+     *
+     * `security.logout_url_generator` is here for the anonymous request alone. Its `getListener()`
+     * asks `security.token_storage` for the firewall name first and only falls back to its own
+     * `currentFirewallName`, so an authenticated request is already correct through a service that
+     * is already scoped — measured, 0/3 leaks with the id unscoped. Without a token the fallback is
+     * reached, and a neighbour's `onKernelFinishRequest` nulls that property under a request that is
+     * still awaiting: measured as `InvalidArgumentException: This request is not behind a firewall`,
+     * 2 of 2 rounds.
+     *
+     * @var list<string>
      */
     private const FRAMEWORK_SCOPED_IDS = [
         'request_stack',
         'security.token_storage',
         'security.untracked_token_storage',
+        'security.logout_url_generator',
     ];
+
+    public function configure(DefinitionConfigurator $definition): void
+    {
+        $definition->rootNode()
+            ->children()
+                ->arrayNode('scoped_ids')
+                    ->info('Service ids whose state belongs to one request, added to the framework ids the bundle already scopes.')
+                    ->scalarPrototype()->end()
+                ->end()
+            ->end();
+    }
+
+    /**
+     * @param array{scoped_ids?: list<string>} $config
+     */
+    public function loadExtension(array $config, ContainerConfigurator $configurator, ContainerBuilder $container): void
+    {
+        $container->setParameter(
+            FiberScopePass::VENDOR_IDS_PARAMETER,
+            [...self::FRAMEWORK_SCOPED_IDS, ...($config['scoped_ids'] ?? [])],
+        );
+    }
 
     public function build(ContainerBuilder $container): void
     {
@@ -51,28 +91,6 @@ final class IgnisBundle extends Bundle
                 $definition->addTag(FiberScopePass::SCOPED_TAG);
             },
         );
-        $container->setParameter(
-            FiberScopePass::VENDOR_IDS_PARAMETER,
-            [...self::FRAMEWORK_SCOPED_IDS, ...self::configured($container)],
-        );
         $container->addCompilerPass(new FiberScopePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -256);
-    }
-
-    /**
-     * What the application put in the parameter before the bundle was built, if anything.
-     *
-     * @return list<string>
-     */
-    private static function configured(ContainerBuilder $container): array
-    {
-        if (!$container->hasParameter(FiberScopePass::VENDOR_IDS_PARAMETER)) {
-            return [];
-        }
-        $configured = $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER);
-        if (!is_array($configured)) {
-            throw new \LogicException('the "' . FiberScopePass::VENDOR_IDS_PARAMETER . '" container parameter must be an array of service ids');
-        }
-
-        return array_values(array_filter($configured, 'is_string'));
     }
 }

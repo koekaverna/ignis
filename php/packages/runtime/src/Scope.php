@@ -41,9 +41,31 @@ final class Scope
         } elseif ($arguments !== []) {
             throw new \ArgumentCountError(\sprintf('Ignis\Scope::create(): %s has no constructor, so it takes no arguments, %d given', $class, \count($arguments)));
         }
-        \ignis_scope_seal($instance);
+        self::seal($instance);
 
         return $instance;
+    }
+
+    /**
+     * Promotes what this fiber currently holds for $instance into the process-wide row every other
+     * fiber inherits from. `create()` calls it once, for the constructor; anything that configures an
+     * object *after* its constructor has to call it again, because the seal captures a moment and not
+     * a phase.
+     *
+     * That second call is not theoretical: Symfony configures services with `addMethodCall`, which
+     * the compiled container emits after the factory, so `security.logout_url_generator` reached its
+     * `registerListener()` calls already sealed and filed both firewalls into the scope of whichever
+     * request happened to build it. Every other request then read an empty `$listeners` and Symfony
+     * threw `Unable to find logout in the current firewall` — measured 6/6 on the E21 fixture before
+     * `FiberScopePass` started setting this as the definition's configurator.
+     *
+     * Sealing twice is sound rather than merely tolerated: the seal reads the object's own slots,
+     * which hold the current scope's values, takes its own reference to each, and releases what row
+     * zero held before.
+     */
+    public static function seal(object $instance): void
+    {
+        \ignis_scope_seal($instance);
     }
 
     public static function set(string $key, mixed $value): void

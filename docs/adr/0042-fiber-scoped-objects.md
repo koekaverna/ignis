@@ -245,6 +245,15 @@ has built or run it.
   a plain class — that `Request` is a value taken out of a scoped service, stored in an unscoped
   one, and V-96's second half shows it pinned 6 of 6. `S-EXCLUSIVE`'s foreign-fiber check is the
   mechanism aimed at that half; this ADR is silent on it deliberately.
+- **The seal is a moment, not a phase.** "What the constructor stores is process-wide" is true
+  because `Scope::create()` seals the object's slots into row zero the instant the constructor
+  returns. Anything that configures the object *after* that — a container's `addMethodCall`, a
+  setter run by a factory, an `init()` called by whoever built it — writes into the scope of the
+  fiber doing the building, and every other scope inherits row zero without it. Such a builder seals
+  again (`Scope::seal($instance)`) once it has finished; sealing twice is sound, because the seal
+  reads the object's own slots, takes its own reference to each value and releases what row zero held
+  before. This is not hypothetical — it is exactly how Symfony configures services, and it cost a
+  measured 6-of-6 failure before `FiberScopePass` started sealing from the configurator (V-105).
 - **A scoped class's constructor must have no side effects.** Whatever it writes becomes the zero
   scope's defaults for every request that follows, forever, because the constructor runs exactly
   once for the object application code is holding. A side effect performed there — opening a
@@ -262,17 +271,27 @@ has built or run it.
 
 ## The Symfony integration
 
-`Definition::setFactory()` and nothing else — no dumper patch, no container-internals reach-in. A
-service definition for a class marked scoped calls `Ignis\Scope::scopeClass($class)` from its
-factory before returning the instance, the same way `lazy: true` already sits beside a definition
-without the compiler needing to understand what "lazy" means at the object-graph level. `scoped:
-true` is a boolean next to `lazy: true` in the same definition, resolved by `FiberScopePass` (the
-existing compiler pass that already marks `doctrine.connections` non-shared, V-85) into exactly one
-call per scoped service id, which is the shape `FiberScopePass`'s own doc block already commits to:
-"only rows that are measured are listed; adding one is a line here plus a decorator, and it needs a
-test that fails without it" (quoted at V-95). No change to `FiberScopePass`'s existing façade rows is
-implied by this ADR; it is a second row shape the pass can emit, evaluated service by service exactly
-as the façade rows are today.
+Public `Definition` API and nothing else — no dumper patch, no container-internals reach-in. As
+built, `FiberScopePass` marks a definition with two calls, the same way `lazy: true` sits beside a
+definition without the compiler understanding what "lazy" means at the object-graph level:
+
+- `setFactory([Scope::class, 'create'])`, with the class prepended to the definition's own arguments,
+  so the container's `new` becomes allocate → construct → seal;
+- `setConfigurator([Scope::class, 'seal'])`, because **the constructor is not the end of
+  construction**. The compiled container emits `$instance->someCall(...)` *after* the factory
+  returned, and Symfony's configurator is the one hook that runs after all of them. Without it,
+  everything a definition configures by `addMethodCall` belongs to the single request that happened
+  to build the service: measured on `security.logout_url_generator`, whose two `registerListener()`
+  calls landed in one fiber's scope and left every other request throwing `Unable to find logout in
+  the current firewall`, 6 of 6 rounds (V-105). A definition that already carries a configurator of
+  its own is refused by name at compile time rather than scoped with one of the two dropped.
+
+Which services are marked comes from two places and neither is a boolean in the definition:
+`IgnisBundle`'s own `scoped_ids` setting, which is added to a short hand-picked list of framework
+ids, and the `ignis.scoped` tag that `#[FiberScoped]` produces through
+`registerAttributeForAutoconfiguration`. `kernel.reset` is explicitly not the criterion (research 36:
+nine of its fifteen services are caches shared between requests on purpose), so adding a row is a
+person's decision and it needs a test that fails without it.
 
 ## The eight tests (BACKLOG.md, owner-named 2026-09-20)
 

@@ -697,3 +697,33 @@ advance, it touched no engine code, it was uncommitted, and the ADR landed minut
 engine half — the part the rule exists to protect — had not been started. Next time the ADR goes
 first and the scaffolding waits, because "needs an ADR before code" is worth nothing if the person
 enforcing it is the one who decides when it is inconvenient.
+
+## 2026-09-20 — the scoped-services list is a bundle setting, and the seal moved to the configurator
+
+Two decisions from the same arm, because the arm produced both.
+
+**`security.logout_url_generator` is scoped.** Research 36 listed it as a candidate on a reading of
+its per-request property, and the arm's first answer was that it does not need scoping at all: with
+a token, `getListener()` resolves the firewall through `security.token_storage`, which is scoped
+already, and the property is never reached — 0 of 3 both directions. The anonymous request is what
+reaches it, and there a neighbour's `onKernelFinishRequest` nulls it under a request that is still
+awaiting, 2 of 2 (V-105). Two firewalls and no credentials is the only shape in which the defect
+exists; neither half of that is obvious from the class. Filed as the reason the entry carries the
+control it does.
+
+**The list is configured as `ignis.scoped_ids` on the bundle, not as a container parameter.** The
+parameter route could not do what its own doc block claimed. `IgnisBundle::build()` set the defaults
+and an application's `parameters:` in `services.yaml` is loaded *after* `build()`, so an application
+listing one id of its own replaced `request_stack` and the token storages rather than adding to them
+— the exact failure the additive merge was written to prevent, still present in the case that
+matters. A bundle extension is merged during compilation, after all configuration is loaded, which
+is the only place both halves are visible at once. `%ignis.scoped_vendor_ids%` survives as the
+internal channel from the extension to `FiberScopePass` and is no longer an application-facing door.
+
+**And the seal is the definition's configurator.** `Scope::create()` seals when the constructor
+returns; Symfony configures services with `addMethodCall`, emitted after the factory. Anything set
+that way belonged to the one request that built the service. The configurator is the one hook that
+runs after all method calls, so that is where the seal goes, and a definition that already has a
+configurator is refused by name at compile time rather than silently losing one of the two. This was
+latent: the three ids scoped before this one have no method calls, and only a service that had some
+could expose it.

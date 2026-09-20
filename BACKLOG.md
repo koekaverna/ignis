@@ -617,7 +617,7 @@ are the wrong eleven: `park.rs` (1,051 lines, the largest file in the crate), `w
 number: ADR-0041 already says the percentage cannot mean much here (V-78).
 
 
-### S-RESET-AUTOSCOPE A `kernel.reset` service should become fiber-scoped, not merely un-reset `main` `open — raised by the owner 2026-09-19, deferred with a reason`
+### S-RESET-AUTOSCOPE A `kernel.reset` service should become fiber-scoped, not merely un-reset `main` `open — one candidate left, the other measured and scoped (V-105)`
 **What.** The owner's specification for `S-RESET-FIBER` had a second half: a `ResetInterface` tag
 auto-registers the service as fiber-scoped and takes it out of the resetter. V-95 built the first half
 — the resetter is a no-op in fiber mode — and left this on purpose.
@@ -635,12 +635,15 @@ the tag on the E21 fixture and **two** are candidates:
 | nothing to scope — 1 | `controller.cache_attribute_listener` | its `reset()` body is empty (`http-kernel/EventListener/CacheAttributeListener.php:131`) |
 | already handled — 2 | `security.untracked_token_storage`, `doctrine` | `FiberScopePass` replaces the first (V-68); `ignis/doctrine` gives the second a manager per fiber (V-69, V-85) |
 | a test double — 1 | `App\Service\ResetWitness` | exists only to make the reset observable (V-95) |
-| **candidates — 2** | **`security.logout_url_generator`** — `reset()` clears `currentFirewallName`/`currentFirewallContext` (`security-http/Logout/LogoutUrlGenerator.php:159`), which the firewall sets **per request**; **`doctrine.debug_data_holder`** — `reset()` clears `$data`, every query of every request, and it is registered in debug only | the first can hand one request's firewall context to another and nothing covers it today; the second mixes requests' queries in the profiler and grows without bound now that the reset is gone |
+| **done — 1** | **`security.logout_url_generator`** — `reset()` clears `currentFirewallName`/`currentFirewallContext` (`security-http/Logout/LogoutUrlGenerator.php:159`), which the firewall sets **per request** | scoped 2026-09-20, but only after the arm said the opposite: authenticated it does **not** leak, because `getListener()` resolves through the already-scoped `security.token_storage` first. The anonymous request reaches the property and throws, 2 of 2 — and scoping it then exposed a general defect in the seal (V-105) |
+| **candidates — 1** | **`doctrine.debug_data_holder`** — `reset()` clears `$data`, every query of every request, and it is registered in debug only | mixes requests' queries in the profiler and grows without bound now that the reset is gone. No arm yet: E21 runs `APP_ENV=prod`, so measuring it needs a debug arm first |
 
 That table is the argument against auto-scoping by tag: it would put a proxy in front of nine services
 that must stay shared in order to reach two, and one of those two is debug-only. The tag means
 "stateful between requests", not "state belongs to one request", and only reading each `reset()` tells
-them apart.
+them apart. Reading is also not enough on its own: research 36 read `LogoutUrlGenerator` correctly and
+still got the verdict half wrong, because the leak depends on whether the request carries a token —
+which no amount of reading the class alone reveals (V-105).
 **Acceptance.** Per service, in the order of that list: a probe that shows two overlapping requests
 disturbing each other through it, then a fiber-scoped replacement, then the probe green with the
 control still failing. A service whose probe cannot be made to fail is not scoped, and the reason is

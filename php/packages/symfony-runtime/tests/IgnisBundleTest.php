@@ -15,49 +15,60 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 #[CoversClass(IgnisBundle::class)]
 final class IgnisBundleTest extends TestCase
 {
-    public function testBuildDefaultsTheVendorIdsParameterWhenTheApplicationHasNotSetOne(): void
+    /**
+     * Through the bundle's own extension rather than a direct `loadExtension()` call, because that is
+     * the path a kernel takes: it is what runs `configure()`'s schema over the application's yaml
+     * before the bundle ever sees an array.
+     *
+     * @param array<string, mixed> $configuration
+     */
+    private static function scopedIds(array $configuration): mixed
     {
         $container = new ContainerBuilder();
+        $extension = (new IgnisBundle())->getContainerExtension();
+        self::assertNotNull($extension);
+        $extension->load([$configuration], $container);
 
-        (new IgnisBundle())->build($container);
+        return $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER);
+    }
 
+    public function testAnApplicationThatConfiguresNothingGetsTheFrameworkIds(): void
+    {
         self::assertSame(
-            ['request_stack', 'security.token_storage', 'security.untracked_token_storage'],
-            $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER),
+            ['request_stack', 'security.token_storage', 'security.untracked_token_storage', 'security.logout_url_generator'],
+            self::scopedIds([]),
         );
     }
 
     /**
      * What the application lists is **added** to the framework services, never substituted for them.
-     * This used to be the other way round -- the bundle set its defaults only when the parameter was
-     * absent -- so an application scoping one service of its own silently lost `request_stack` and
-     * the token storages, and the loss showed up as another request's user.
+     * This used to be the other way round — the bundle set its defaults only when a container
+     * parameter was absent — so an application scoping one service of its own silently lost
+     * `request_stack` and the token storages, and the loss showed up as another request's user.
      */
     public function testAnApplicationsOwnIdsAreAddedToTheFrameworksNotSubstitutedForThem(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter(FiberScopePass::VENDOR_IDS_PARAMETER, ['app.only']);
+        $ids = self::scopedIds(['scoped_ids' => ['acme.tenant_context']]);
 
-        (new IgnisBundle())->build($container);
-
-        $ids = $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER);
         self::assertIsArray($ids);
-        self::assertContains('app.only', $ids, "the application's own id survives");
+        self::assertContains('acme.tenant_context', $ids, "the application's own id survives");
         self::assertContains('request_stack', $ids, 'and so does every framework one');
         self::assertContains('security.token_storage', $ids);
         self::assertContains('security.untracked_token_storage', $ids);
+        self::assertContains('security.logout_url_generator', $ids);
     }
 
-    public function testAnApplicationThatConfiguresNothingStillGetsTheFrameworkIds(): void
+    /**
+     * The setting is a bundle setting and not a container parameter, which is what makes the line
+     * above true in an application rather than only in this test: a parameter written in
+     * `services.yaml` is set while the kernel loads its configuration, and the bundle's defaults are
+     * merged in later, during compilation — so a parameter could only ever have overwritten them.
+     */
+    public function testTheSettingIsRejectedWhenItIsNotAListOfIds(): void
     {
-        $container = new ContainerBuilder();
+        $this->expectException(\Exception::class);
 
-        (new IgnisBundle())->build($container);
-
-        self::assertSame(
-            ['request_stack', 'security.token_storage', 'security.untracked_token_storage'],
-            $container->getParameter(FiberScopePass::VENDOR_IDS_PARAMETER),
-        );
+        self::scopedIds(['scoped_ids' => 'acme.tenant_context']);
     }
 
     /**
