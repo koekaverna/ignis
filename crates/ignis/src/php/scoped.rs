@@ -211,13 +211,15 @@ unsafe extern "C" fn write_property(
         let key = property_name(name);
         let mut stored = *value;
         sys::zval_add_ref(&raw mut stored);
-        ROWS.with(|rows| {
-            let mut rows = rows.borrow_mut();
-            let row = rows.entry(((*object).handle, current_scope())).or_default();
-            if let Some(mut previous) = row.insert(key, stored) {
-                sys::zval_ptr_dtor(&raw mut previous);
-            }
-        });
+        let displaced = ROWS.with(|rows| rows.borrow_mut().entry(((*object).handle, current_scope())).or_default().insert(key, stored));
+        // The release happens with the borrow dropped, and that is not tidiness. Freeing the last
+        // reference to an object runs its `__destruct`, which may touch a scoped property and
+        // re-enter this handler; under a held `borrow_mut` that is a `RefCell` panic, and a panic
+        // across `extern "C"` aborts the process. Every mutation in this module drops its borrow
+        // before it can run PHP code.
+        if let Some(mut previous) = displaced {
+            sys::zval_ptr_dtor(&raw mut previous);
+        }
         value
     }
 }
