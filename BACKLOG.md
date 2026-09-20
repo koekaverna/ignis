@@ -966,9 +966,23 @@ one reason, stated in its own doc block: `RequestStack` keeps a private array an
 method reads that one, which under fibers is always the wrong one (V-88). With the array itself
 per-scope there is nothing left to override. `resetRequestFormats()` is unaffected either way: it
 clears a **static**, which is `S-REQUEST-FORMATS` and exactly as open as before.
-**Three façades remain and are not proven.** `FiberTokenStorage` (53), `FiberEntityManager` (247)
-and `FiberManager` (58) each need their own arm before anyone deletes them — `FiberEntityManager` in
-particular does real work beyond scoping, rebuilding a manager Doctrine has closed.
+**Two façades deleted, one kept with a measurement behind it.** `FiberRequestStack` (89) went with
+V-100. `FiberTokenStorage` (53) went the same day and needed no arm of its own: the pass marks
+`security.token_storage` **by id**, so Symfony's own `TokenStorage` is what the container builds,
+and E21's V-68 probe was already passing 0/3 through it — the class had no instantiator left.
+**`FiberEntityManager` (247) and `FiberManager` (58) stay, and this is a measured refusal rather
+than work not done.** `FiberManager` is not a scoping façade at all: it is a cycle-breaking release
+handle. Its own doc block records why — `EntityManager` and `UnitOfWork` hold each other, so
+dropping the last outside reference leaves a cycle that only a collection frees, and a collection is
+scheduled by root-buffer pressure rather than by the request boundary. **V-85 measured the cost of
+getting this wrong: with the manager stored directly, 30 sequential requests left 8 PostgreSQL
+backends open under the loop collector and 31 under PHP's own**, against a stock `max_connections`
+of 100. Per-scope storage does not change that — a cycle survives whichever reference is dropped —
+so scoping the manager would silently stop releasing pooled connections.
+What *could* still change is `FiberEntityManager`'s `Scope::get`/`set` plumbing becoming a per-scope
+property, which is worth roughly ten lines and leaves the holder and every release path exactly
+where they are. It is not done here: ten lines is not worth touching the pool without an E24 arm
+proving the release, and that arm is the price of the change rather than an afterthought.
 **Open, and each is a named ceiling rather than an omission.** Rows are keyed by property name, not
 by a dense slot array resolved at class link time — `ponytail:` in the module, to land with the
 read-cost measurement ADR-0042's kill criterion already demands. `get_properties` is still the
