@@ -5311,3 +5311,42 @@ there. This is `S-SINGLETON-CAPTURE`, unchanged by ADR-0042 and never claimed to
 Both halves are gated in `scripts/smoke.sh`. `a_captured='B'` is asserted **as the defect**: if it
 ever reads `'A'`, the capture hazard has changed shape and `S-SINGLETON-CAPTURE`'s premise needs
 re-reading before anything is touched.
+
+## V-104 — a pooled fiber and the reset question: scoping replaces `ResetInterface`, once a hole was closed
+
+Date: 2026-09-20. Command: `bench/php/scoped_pooled_fiber.php` — one scoped service, requests served
+one after another on one thread, each reporting what it found on entry.
+
+**Before**, and this is the defect the question found:
+
+```
+req 1: on_entry {"seen":[],"token":null}
+req 2: on_entry {"seen":["R1"],"token":"R1"}
+req 3: on_entry {"seen":["R1","R2"],"token":"R2"}
+```
+
+**After:**
+
+```
+req 1: on_entry {"seen":[],"token":null}
+req 2: on_entry {"seen":[],"token":null}
+req 3: on_entry {"seen":[],"token":null}
+```
+
+`rows_clear()` dropped the scope's stored table but left the **object's own slots** holding the
+dying request's values, and the next `on_switch` out of that fiber saved them straight back under
+the same key. Every scoped arm until now used **concurrent** requests on different fibers, where
+that path never arises; sequential reuse of one pooled fiber is where `Scope::clear()` has to
+actually undo something. `rows_clear()` now returns the slots to row zero — what the next request
+would have inherited had this fiber never run — and the path is gated.
+
+**What it means for `kernel.reset`.** `ResetInterface::reset()` means "return to the state you had
+at construction". For a scoped service that is not a method anyone calls: it is the request boundary,
+mechanically, because a new scope inherits row zero and row zero is exactly the constructor's
+values. This is what `S-RESET-AUTOSCOPE` proposed when the only way to make a service fiber-scoped
+was a hand-written façade of 50 to 250 lines; it is now one container tag.
+
+It does **not** follow that every `kernel.reset` service should be scoped. Research 36's inventory
+found 15 tagged services of which 9 are caches shared between requests **on purpose** — scoping one
+of those would give every request its own cache and quietly destroy the thing it exists for. The
+rule is the one this mechanism has always had: scope what is per-request, leave what is shared.

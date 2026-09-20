@@ -238,6 +238,27 @@ pub unsafe fn rows_clear() {
         if scope == ROW_ZERO {
             return;
         }
+        // Dropping the stored table is not enough, and measuring a **pooled fiber serving two
+        // sequential requests** is what showed it: the object's own slots still hold the dying
+        // request's values, and the next `on_switch` out of this fiber saves them straight back
+        // under the same key, so the next request on this fiber read the previous one's state.
+        // Every arm until then used concurrent requests on different fibers, where the path never
+        // arises. So the slots are returned to row zero here, which is what the next request would
+        // have inherited had this fiber never run.
+        let objects: Vec<*mut sys::zend_object> = LIVE.with(|live| live.borrow().values().copied().collect());
+        for object in objects {
+            let handle = (*object).handle;
+            let count = (*(*object).ce).default_properties_count as usize;
+            let slots = (&raw mut (*object).properties_table) as *mut sys::zval;
+            let defaults = TABLES.with(|tables| tables.borrow().get(&ROW_ZERO).and_then(|objects| objects.get(&handle)).cloned());
+            for index in 0..count {
+                let mut value = defaults.as_ref().map_or_else(|| std::mem::zeroed(), |values| values[index]);
+                sys::zval_add_ref(&raw mut value);
+                let previous = std::ptr::replace(slots.add(index), value);
+                let mut previous = previous;
+                sys::zval_ptr_dtor(&raw mut previous);
+            }
+        }
         let dropped = TABLES.with(|tables| tables.borrow_mut().remove(&scope));
         for table in dropped.map(|objects| objects.into_values().collect::<Vec<Vec<sys::zval>>>()).unwrap_or_default() {
             for mut value in table {

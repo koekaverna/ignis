@@ -188,6 +188,23 @@ echo "  $sch"
 grep -q "a='A' b='B'" <<<"$sch" || { echo "scoped chaos FAILED: isolation depends on the switch points a quiet run takes"; exit 1; }
 grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sch" || { echo "scoped chaos FAILED: row zero is not read through under chaos"; exit 1; }
 
+# A pooled fiber serving requests one after another -- the path every other scoped arm misses,
+# because they all use concurrent requests on different fibers. This is where Scope::clear() has to
+# undo something, and it is what lets a scoped service replace ResetInterface: every request must
+# start from the constructor's state. Measured before the fix: request 2 read request 1's.
+echo "== a pooled fiber starts each request from the constructor's state, with no reset"
+PORT_PF=8226
+( IGNIS_LISTEN=127.0.0.1:$PORT_PF $T ./target/release/ignis --threads 1 bench/php/scoped_pooled_fiber.php > /dev/null 2>&1 & )
+for _ in $(seq 1 60); do curl -sf -m 1 "http://127.0.0.1:$PORT_PF/?tag=warm" >/dev/null 2>&1 && break; sleep 0.2; done
+pf_dirty=0
+for i in 1 2 3; do
+  answer=$(curl -s -m 5 "http://127.0.0.1:$PORT_PF/?tag=R$i")
+  echo "  $answer"
+  grep -q '"on_entry":{"seen":\[\],"token":null}' <<<"$answer" || pf_dirty=$((pf_dirty+1))
+done
+pkill -x ignis 2>/dev/null || true
+[ "$pf_dirty" = 0 ] || { echo "pooled fiber FAILED: $pf_dirty of 3 requests inherited the previous one's state"; exit 1; }
+
 # The rule every scoped service is written against, as a measurement. Holding the scoped *object* in
 # an ordinary singleton's property is the supported shape and each request reads its own state
 # through it. Holding a *value* taken out of it pins the holder to whichever request wrote last --
