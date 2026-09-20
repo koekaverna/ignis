@@ -170,6 +170,22 @@ if (!function_exists('ignis_scope_allocate')) {
     }
 }
 
+if (!function_exists('ignis_set_request_info')) {
+    /** ignis_set_request_info(string $method, string $contentType, string $body): void — SG(request_info) for this fiber. */
+    function ignis_set_request_info(string $method, string $contentType, string $body): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_clear_request_info')) {
+    /** ignis_clear_request_info(): void — drops this fiber's body and unhooks SG(request_info). */
+    function ignis_clear_request_info(): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
 if (!function_exists('ignis_scope_seal')) {
     /** ignis_scope_seal(object $instance): void — the constructor's values become row zero. */
     function ignis_scope_seal(object $instance): void

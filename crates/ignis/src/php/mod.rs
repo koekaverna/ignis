@@ -18,6 +18,7 @@ pub mod embed;
 pub mod locklib;
 pub mod module;
 pub mod output;
+pub mod post;
 pub mod route;
 pub mod scoped;
 pub mod superglobals;

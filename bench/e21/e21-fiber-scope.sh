@@ -84,6 +84,25 @@ echo "== a container service marked scoped (ADR-0042, S-SCOPED-CLASS)"
 probe "  control, not marked     " /scoped 1 /scoped IGNIS_NO_SCOPED_SERVICE=1
 probe "  marked ignis.scoped     " /scoped 0 /scoped
 
+# S-SAPI-REQUEST-INFO: a form body on PUT/PATCH reaches the framework only if the SAPI carries it.
+# Symfony 8's createFromGlobals() calls PHP 8.4's request_parse_body() for those methods, which asks
+# SG(request_info) -- php://input is a different door and does not open this one.
+echo "== a form body on PUT and PATCH is parsed, not just delivered"
+rm -rf "$APP/var/cache"
+( export IGNIS_THREADS=1 IGNIS_LISTEN=127.0.0.1:$PORT APP_ENV=prod APP_DEBUG=0 IGNIS_PHP_INI="$PWD/$APP/php.ini"
+  exec "$BIN" --threads 1 "$APP/public/index.php" ) > /tmp/ignis-e21-body.log 2>&1 &
+BODY_PID=$!
+for _ in $(seq 1 100); do curl -sf -u alice:alicepw "http://127.0.0.1:$PORT/body" >/dev/null && break; sleep 0.2; done
+for method in PUT PATCH POST; do
+  answer=$(curl -s -m 8 -u alice:alicepw -X $method -d 'a=1&b=2' "http://127.0.0.1:$PORT/body")
+  echo "  $method $answer"
+  case "$answer" in
+    *'"parsed":{"a":"1","b":"2"}'*) ;;
+    *) echo "  $method FAILED: the form body did not reach \$request->request"; fail=1;;
+  esac
+done
+kill $BODY_PID 2>/dev/null; wait $BODY_PID 2>/dev/null
+
 echo "== lazy and scoped together (ADR-0042 open question: both change object creation)"
 probe "  lazy + scoped           " /scoped 0 /scoped IGNIS_SCOPED_LAZY=1
 

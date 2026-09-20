@@ -5260,3 +5260,31 @@ fixture leaks 0/3 with the constructor's value still readable, the same as scope
 ghost calls the factory when it initialises, so `Scope::create()` runs inside the initialiser and
 the real object is the scoped one. **Not covered:** a ghost accessed by property rather than by
 method — services are used through methods, and that is the shape measured here.
+
+## V-102 — a form body on PUT/PATCH now reaches the framework (S-SAPI-REQUEST-INFO)
+
+Date: 2026-09-20. Command: `bench/e21`'s `/body` route on the real Symfony kernel, `APP_ENV=prod`.
+
+| | before | after |
+|---|---|---|
+| `POST` form | `parsed={"a":"1","b":"2"}` | unchanged |
+| `PUT` form | **`parsed=[]`**, `content_length=7` | `parsed={"a":"1","b":"2"}` |
+| `PATCH` form | **`parsed=[]`** | `parsed={"p":"1"}` |
+| JSON | `parsed=[]`, `content_length=9` | unchanged (JSON is not form data) |
+
+Three sequential `PUT`s each parse their own body, which is the check that matters for a
+long-running engine request: `sapi_read_post_block` sets `SG(post_read) = 1` when a body is spent
+(`main/SAPI.c`), and one `php_request_startup` covers the whole `serve()` script, so a reader that
+did not reset per request would have answered the first request only.
+
+**What it took, and the mistake worth recording.** `request_parse_body()` needs three things in
+order (`ext/standard/http.c:342-364`): `SG(request_info).content_type`, then a post entry from
+`sapi_read_post_data()`, then bytes from `sapi_module.read_post`. Filling `request_info` removed the
+`RequestParseBodyException` but left `parsed=[]`, and instrumentation showed the reader **was never
+called once** — because `install()` wrote `php_embed_module.read_post` at MINIT, and `sapi_startup`
+has already copied that struct by then. `embed.rs` sets `ub_write` and `flush` **before**
+`php_embed_init` for exactly this reason; the reader now goes in beside them.
+
+The body is kept **per fiber**, not per thread: `Request::createFromGlobals()` runs inside the
+request's fiber, and a handler may await before it parses, so a thread-wide body would be replaced
+by the next request's underneath it.

@@ -153,6 +153,7 @@ arginfo!(ARGINFO_TEMPORAL_HEARTBEAT, 2, c"worker", c"json");
 arginfo!(ARGINFO_OP_ID, 1, c"id");
 arginfo!(ARGINFO_SCOPE_ALLOCATE, 1, c"class");
 arginfo!(ARGINFO_SCOPE_SEAL, 1, c"instance");
+arginfo!(ARGINFO_REQUEST_INFO, 3, c"method", c"content_type", c"body");
 static ARGINFO_NONE: SyncStatic<[sys::zend_internal_arg_info; 1]> = SyncStatic([arg_info_head(0)]);
 static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> =
     SyncStatic([arg_info_head(4), arg_info(c"server"), arg_info(c"get"), arg_info(c"post"), arg_info(c"cookie")]);
@@ -847,6 +848,46 @@ unsafe extern "C" fn zif_ignis_scope_seal(ex: *mut sys::zend_execute_data, _rv: 
     }
 }
 
+/// `ignis_set_request_info(string $method, string $contentType, string $body): void` — installs this
+/// fiber's request line where the **SAPI** keeps it, which is where `request_parse_body()` looks
+/// (`ext/standard/http.c:342`). `php://input` is a different question and `Ignis\\InputStream`
+/// answers that one; since PHP 8.4 a framework parsing a form body on `PUT` asks here instead.
+unsafe extern "C" fn zif_ignis_set_request_info(ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
+    // SAFETY: zend_parse_parameters is the documented way to read args; the char* it yields is
+    // VM-owned and valid for this call, and the bytes are copied before it returns.
+    unsafe {
+        let (mut method, mut method_len) = (ptr::null_mut::<c_char>(), 0usize);
+        let (mut content_type, mut content_type_len) = (ptr::null_mut::<c_char>(), 0usize);
+        let (mut body, mut body_len) = (ptr::null_mut::<c_char>(), 0usize);
+        let parsed = sys::zend_parse_parameters(
+            zval::num_args(ex),
+            c"sss".as_ptr(),
+            &mut method,
+            &mut method_len,
+            &mut content_type,
+            &mut content_type_len,
+            &mut body,
+            &mut body_len,
+        );
+        if parsed != sys::SUCCESS {
+            return; // zend_parse_parameters already threw
+        }
+        let as_str = |p: *const c_char, n: usize| String::from_utf8_lossy(std::slice::from_raw_parts(p as *const u8, n)).into_owned();
+        super::post::enter(
+            &as_str(method, method_len),
+            &as_str(content_type, content_type_len),
+            std::slice::from_raw_parts(body as *const u8, body_len).to_vec(),
+        );
+    }
+}
+
+/// `ignis_clear_request_info(): void` — drops this fiber's body and unhooks `SG(request_info)` from
+/// storage that is about to go.
+unsafe extern "C" fn zif_ignis_clear_request_info(_ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
+    // SAFETY: a zif frame on a PHP thread, which is what `leave` asks for.
+    unsafe { super::post::leave() }
+}
+
 /// `ignis_scope_rows_clear(): void` — drops this fiber's scoped property rows at request end, the
 /// same boundary `Ignis\\Scope::clear()` drops its key-value bag at (V-67).
 unsafe extern "C" fn zif_ignis_scope_rows_clear(_ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
@@ -985,7 +1026,9 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 41]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
+    fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
+    fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
@@ -1031,7 +1074,9 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 41]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 49]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 51]> = SyncStatic([
+    fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
+    fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
@@ -1083,7 +1128,9 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 49]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 45]> = SyncStatic([
+    fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
+    fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),

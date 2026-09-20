@@ -909,6 +909,9 @@ final class Loop
         }
         InputStream::register();
         InputStream::setBody($request->body);
+        // And where the SAPI keeps it, which is a different place and the one PHP 8.4's
+        // request_parse_body() reads -- Symfony 8 calls that for PUT/PATCH/DELETE form bodies.
+        \ignis_set_request_info($request->method, $request->header('content-type') ?? '', $request->body);
     }
 
     /**
@@ -937,6 +940,7 @@ final class Loop
         self::disarmDeadline($id);
         unset(self::$requestFibers[$id], self::$children[$id]);
         Scope::clear();
+        \ignis_clear_request_info();
         Output::reset();
         self::watchLoadedFiles();
         --self::$inflightRequests;

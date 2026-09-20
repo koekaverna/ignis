@@ -70,6 +70,10 @@ impl Engine {
             // `flush()` must be able to push a frame out of a streaming handler; without it a
             // response built from small echoes batches until the frame threshold (V-76).
             sys::php_embed_module.flush = Some(super::output::flush);
+            // The request body, where the SAPI keeps it. It has to be installed here rather than at
+            // MINIT: `sapi_startup` copies this struct, so a write after it lands on a copy nobody
+            // reads -- measured, the reader was never called once (S-SAPI-REQUEST-INFO).
+            sys::php_embed_module.read_post = Some(super::post::read_post);
             if let Some(exe) = exe {
                 let leaked: &'static CString = Box::leak(Box::new(exe));
                 sys::php_embed_module.executable_location = leaked.as_ptr() as *mut c_char;

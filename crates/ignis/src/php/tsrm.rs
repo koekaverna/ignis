@@ -17,6 +17,15 @@ pub(super) unsafe fn executor_globals() -> *mut sys::zend_executor_globals {
     unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals }
 }
 
+/// This thread's `SG`.
+///
+/// # Safety
+/// As [`executor_globals`].
+pub(super) unsafe fn sapi_globals() -> *mut sys::sapi_globals_struct {
+    // SAFETY: as `executor_globals`, with the SAPI globals' own offset.
+    unsafe { (sys::tsrm_get_ls_cache() as *mut u8).add(sys::sapi_globals_offset) as *mut sys::sapi_globals_struct }
+}
+
 /// This thread's `CG`.
 ///
 /// # Safety
