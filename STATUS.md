@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-18, branch `main`, CI green on all ten jobs of a `ci.yml` run — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
+# STATUS — Ignis (updated 2026-09-20, branch `main`, CI green on all ten jobs of a `ci.yml` run — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
 
 Read top down: what the product can do, what is open, what to do next, how to run it. The evidence is underneath — every number links a VALIDATION.md entry, and anything without one says "not measured".
 
@@ -11,13 +11,14 @@ Read top down: what the product can do, what is open, what to do next, how to ru
 | M1 Run — `ignis serve`, `ignis.toml`, `/_ignis/health` | **DONE** (V-38) |
 | M2 Install — image, serving in <2 min, no PHP build | **DONE** (V-39 + addendum; `image.yml` green on `574b231`) |
 | M3 Symfony — untouched skeleton through `ignis/runtime` | **DONE** (V-40 + addendum; V-41 for the package-route bench, dev-mode 404 — not V-16's prod 200, that caveat is the point of V-41) |
+| M3 Symfony — per-request state | **DONE 2026-09-20** (ADR-0042, V-97/V-99/V-100/V-101): a container service marked `scoped` resolves its declared properties per fiber. The class needs no attribute and no interface; the container marks the definition the way it marks `lazy`. Measured on a real Symfony kernel under overlapping requests — unmarked control **leaks 3/3**, marked **0/3** — and at **1.0–1.1×** a plain property's read cost. `FiberRequestStack` (89 lines) and `FiberTokenStorage` (53) deleted: Symfony's own classes do it now. **Not claimed**: the per-switch cost is below every instrument here and was accepted as negligible by owner decision, not measurement (V-98, `S-SCOPED-UNKNOWNS`) |
 | M3 Laravel | re-scoped (research 25): M3-5a classic mode with `budget.fibers = 1` (Octane's own one-request-per-worker model, guaranteed by ADR-0019), M3-5b fiber-scoped `Container::$instance`/Facade caches (needs an ADR) — both open |
 | M4 Operate — `/_ignis/metrics`, graceful drain, bulkhead, connection cap | **partly done**: metrics (M4-4, V-55: 22 metric families then, **19 now** — the PostgreSQL ones went with the pool, V-87 — promtool clean, 1.9–5.5 ms under `wrk -c200`), lease hold-time (M4-1, V-44), and V-56's front-door limits + two-phase `SIGTERM`/`SIGINT` drain (M4-5's drain half). **Open**: delayed-accept connection cap (M4-3). The bulkhead + breaker (M4-2) was built and removed the same day with the pool it guarded (ADR-0015 closed, V-87); `SIGHUP` reload landed with development reload (V-90) |
 | M5 Ship — release + nightly workflows | **release exercised by a real tag** (V-57): `v0.1.0-rc.1` published — image 62 MB at the time + 29,795,977 B tarball, both verified by pulling and running `--version` — **the published image is 84,030,879 B today (V-83)**, and the 64 MB every other page still quotes is that stale figure; the first tag failed on the tarball step and was fixed. The **nightly schedule dispatch has still not run** (M5-4, no V-n) |
 
 ## Still open
 
-**M4 Operate:** the delayed-accept connection cap (M4-3/B8/`S1-CAP` — the RSS half of B1's acceptance a fiber budget alone cannot meet, V-37; `IGNIS_MAX_CONNECTIONS` exists and is measured, V-56, but it accepts-then-refuses rather than delaying accept), offload cancellation on disconnect (M4-9), `IGNIS_LOOP_GC` measured (M4-10), the watchdog naming the fiber (M4-7), the held-resource audit (M4-6).
+**M4 Operate:** the connection cap (M4-3; `S1-CAP` was the same defect filed twice and is merged into it) — **the mechanism is already built** and this line used to say otherwise: `http.rs:230` creates `Semaphore::new(max_connections())`, `IGNIS_MAX_CONNECTIONS` defaults to 8192, `ignis.toml`'s `[limits] connections` is wired at `config.rs:169`. What is missing is the count in `/_ignis/stats` and `bench/b1-budget.sh` part (3) extended. Also open: offload cancellation on disconnect (M4-9), `IGNIS_LOOP_GC` measured (M4-10), the watchdog naming the fiber (M4-7 — research 42 found there are **two** parking registries, `Loop::$waiting` and `wait.rs::PARKED`, disjoint and both untimestamped, so a watchdog taught to read one is silent for everything in the other). The held-resource audit (M4-6) is **done**: research 42, 13 waits, 12 visible in neither `/_ignis/metrics` nor a log line, five proposed metrics closing 11 of them.
 
 **M3:** Laravel (M3-5a/M3-5b), Packagist publication (M3-6), `/stats` moved into the runtime (M3-7), the prod-mode Symfony bench leg (M3-8). **M5:** the nightly schedule dispatch is still unrun (M5-4), the static binary is research only (M5-5/B6).
 
@@ -88,6 +89,14 @@ bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP wor
 - **E10 absolute p99 < 5 ms at c=64**: INCONCLUSIVE on this box — the Rust-only tonic ceiling is p99 6.3 ms under the same ghz load (V-20). Ignis is 1.23× the ceiling.
 - **ext-grpc as a comparison server**: it **does** build and load on 8.5.10 ZTS (`grpc 1.85.0dev`; C-core 77 min at `nice -j2`, `grpc.so` 47.6 MiB, three linker workarounds, `pecl.php.net` blocked) but has **no supported server runtime or PHP server codegen**, so it cannot serve E10's handlers (V-20 + corrections).
 - **Full Rust scheduler provider for backend (b)**: deferred, not refuted — the reference provider's coroutine entry uses `zend_first_try` (setjmp) and needs a C shim; the idle hook proved the architectural claim (V-8).
+
+## Closed 2026-09-19 and 2026-09-20
+
+Four red items: `R-SESS` (the deadlock was fixed and gated on 2026-09-17 and the entry never noticed), `A-PARK-ARITHMETIC` (four parts, with `park.rs`'s first seven tests), `A-UNSAFE-CONTRACTS` (five false `// SAFETY:` notes, not the four filed — `ignis_park_nanosleep` was carrying the copied "nothing here dereferences the caller's buffer" paragraph over code that does), `A-LEAKS-RUST` (with the arm its acceptance asked for: a job that calls `exit()` unwinds its worker, and without the fix the probe **hangs** rather than failing). Plus `A-DUPES`, `A-SWALLOWED-RUST`, `M4-6`, `A-RUST-DEAD`, `A-BACKEND-B-CI`, `R-TA-CONTEXT` and `S-SCOPED-CLASS`.
+
+Seven backlog entries were describing code that had changed under them, found by reading rather than assumed; two pairs turned out to be one defect filed twice. The count moved 66 → 69 open, which is not a regression: six items came from the owner's true-async note and one, `S-SCOPED-UNKNOWNS`, exists so three named unknowns outlive an ADR's status paragraph.
+
+**Two gates that could not fail, both found by a defect walking through them.** `scripts/gate.sh` ran no step that compiled `backend/temporal.rs` — a syntax error there left clippy and all 60 tests green, and only `cargo fmt` noticed. And `smoke.sh` printed GREEN while every request threw during cleanup: E12 pipes into `grep`, so the step's status is grep's and `server DIED` matches as happily as `server alive`, while `wrk` counts a 503 as served, so a server refusing everything scores *well* (`A-E12-PRINTS-ONLY`, `S-CLEANUP-SILENT`).
 
 ## Key finding of the night
 

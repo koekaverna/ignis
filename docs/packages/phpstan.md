@@ -5,7 +5,7 @@ A PHPStan rule for the one defect fiber scope cannot fix by itself.
 ## What it catches
 
 Under fibers the container's singletons are shared by every request on the thread. The answer to that
-is a per-fiber **façade**: `FiberRequestStack` and `FiberEntityManager` are single objects whose every
+is a per-fiber **façade**: a `scoped`-marked `RequestStack` and `FiberEntityManager` are single objects whose every
 method reads `Ignis\Scope`, so a service that holds one resolves per request. That shape is correct
 and measured — six interleaved requests, each saw its own, with a different database connection each
 time (V-96).
