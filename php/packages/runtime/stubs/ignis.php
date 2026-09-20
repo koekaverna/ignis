@@ -171,8 +171,8 @@ if (!function_exists('ignis_scope_allocate')) {
 }
 
 if (!function_exists('ignis_set_request_info')) {
-    /** ignis_set_request_info(string $method, string $contentType, string $body): void — SG(request_info) for this fiber. */
-    function ignis_set_request_info(string $method, string $contentType, string $body): void
+    /** ignis_set_request_info(string $method, string $content_type, string $body): void — SG(request_info) for this fiber. */
+    function ignis_set_request_info(string $method, string $content_type, string $body): void
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
     }

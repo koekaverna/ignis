@@ -256,7 +256,7 @@ namespace {
     }
 
     if (!function_exists('ignis_set_request_info')) {
-        function ignis_set_request_info(string $method, string $contentType, string $body): void {}
+        function ignis_set_request_info(string $method, string $content_type, string $body): void {}
     }
 
     if (!function_exists('ignis_clear_request_info')) {

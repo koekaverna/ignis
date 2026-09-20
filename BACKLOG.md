@@ -738,7 +738,7 @@ this scope's. Untested, and the most likely of the three to be a real defect.
 **Acceptance.** One arm each; (1) and (3) fail today if the thing they describe is wrong, so write
 them as controls rather than as confirmations.
 
-### S-SAPI-REQUEST-INFO A form body on PUT/PATCH never reaches the framework `main` `open — measured 2026-09-20`
+### S-SAPI-REQUEST-INFO A form body on PUT/PATCH never reaches the framework `main` `DONE 2026-09-20 — V-102, gated as its own E21 arm`
 **What.** The embed SAPI's `SG(request_info)` is not filled from the request, so PHP's own
 `request_parse_body()` refuses: **`RequestParseBodyException: Request does not provide a content
 type`** — measured under `Ignis\serve()` for both POST and PUT. Symfony 8's
@@ -760,6 +760,16 @@ a PHP thread, next to where the superglobals are set. `main` lane, `crates/ignis
 **Acceptance.** `bench/e21`'s `/body` route: a `PUT` with `a=1&b=2` reports
 `parsed={"a":"1","b":"2"}`, and a control without the fix reports `parsed=[]` — it does today, so
 write the arm first and watch it fail.
+**Done 2026-09-20 (V-102).** `php/post.rs` holds the request's bytes and hands them to the engine
+when it asks — per fiber, because `createFromGlobals()` runs inside the request's fiber and a
+handler may await before it parses. PUT and PATCH form bodies now reach `$request->request`; POST
+and JSON are unchanged. Three sequential PUTs each parse their own, which is the check that matters
+when one `php_request_startup` covers the whole `serve()` script and `sapi_read_post_block` sets
+`SG(post_read) = 1` on a spent body.
+**The mistake kept for the next person:** filling `SG(request_info)` removed the exception but left
+`parsed=[]`, and the reader **was never called once** — `read_post` was installed at MINIT, after
+`sapi_startup` had copied the module struct. `embed.rs` sets `ub_write` and `flush` before
+`php_embed_init` for exactly that reason.
 
 ## Found on 2026-09-20, building S-SCOPED-CLASS
 
