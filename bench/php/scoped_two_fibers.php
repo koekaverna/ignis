@@ -1,4 +1,5 @@
 <?php
+
 // ADR-0042 acceptance step 1: a standalone class, two interleaved fibers, each sees its own value.
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
 
@@ -6,8 +7,14 @@ final class CartContext
 {
     private ?string $tag = null;
     public function __construct(public readonly string $shared) {}
-    public function tag(): ?string { return $this->tag; }
-    public function setTag(string $tag): void { $this->tag = $tag; }
+    public function tag(): ?string
+    {
+        return $this->tag;
+    }
+    public function setTag(string $tag): void
+    {
+        $this->tag = $tag;
+    }
 }
 
 $service = Ignis\Scope::create(CartContext::class, 'built-once');
@@ -25,7 +32,9 @@ $b = Ignis\async(static function () use ($service, &$out): void {
 });
 Ignis\all([$a, $b]);
 $inside = null;
-Ignis\async(static function () use ($service, &$inside): void { $inside = $service->shared; });
+Ignis\async(static function () use ($service, &$inside): void {
+    $inside = $service->shared;
+});
 Ignis\Loop::run();
 
 printf(
