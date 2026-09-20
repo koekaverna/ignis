@@ -455,6 +455,35 @@ stands on), and `bench/wrk-hello.sh` within this box's ±6.7 % spread. No candid
 without those three numbers.
 **Constraints.** `main`. Never in the same commit as a behaviour change.
 
+### S-PARK-PROBE-COVERAGE The park self-check covers two of the policy's four libraries and reports `ok` `main` `open — measured 2026-09-20 (V-110)`
+**What.** `park::selfcheck()` proves that a third-party library's own code reaches the interposed libc
+symbols, because universal park's failure mode is a hang and not an exception — if `libcurl` does not
+bind, `curl_exec` blocks the whole OS thread and nothing anywhere says so. The check is right to
+exist. It probes `libcurl` and `libpq`; the default policy names `libcurl, libpq, libssl, libcrypto`
+(`park.rs:64`), and the probe list is hardcoded in code while the policy is data — so a library added
+to `IGNIS_PARK`, the documented way to extend it, is silently never probed. The success line says
+`park self-check ok probed=["libcurl", "libpq"]`, which is absence of evidence presented as success:
+the exact mistake (research 28's "0 hits") the check was written to prevent.
+**What was done instead, and why it is not enough.** V-110 gated `bench/e6-ssl.sh`, which proves
+behaviourally that TLS parks — 209 ms for three concurrent 200 ms fetches against a 618 ms control,
+falsified with `IGNIS_NO_UNIVERSAL_PARK=1`. That covers `libssl` in CI, on the built binary, which is
+the owner's stated preference (2026-09-20) and a stronger proof than a `dlsym` probe. It does not
+cover `libcrypto`, and it says nothing at boot on a machine we never built for.
+**The division of labour to settle first.** CI (and later a build matrix) proves the binary **we
+ship** binds in the environments we support, and can afford a real handshake per library. The boot
+check is the last-mile assertion against an environment we do not control — a customer's
+`LD_PRELOAD`, a different `libcurl.so.4`, another interposer. They are complementary, and if the
+matrix carries the thorough half then the boot check can shrink rather than grow: "did anything bind
+at all" instead of 150 lines of `dlsym`/`transmute` in production.
+**Acceptance.** (a) Every third-party library in the policy has either a probe or a gated
+behavioural arm, and the boot check **names** the ones it did not probe instead of printing an
+unqualified `ok` — with a control that fails when a library is in the policy and unproven.
+(b) The matrix question answered in an ADR: which environments, and what the boot check keeps once
+CI covers them.
+**Constraints.** `main` (touches `crates/ignis/src/php/park.rs`, which is `unsafe`). A probe must
+cost nothing at boot — the first version of the curl probe cost 1.3 s per process start because it
+connected to a closed loopback port.
+
 ### A-CLASSIC-FINISH `Ignis\Classic\finish()` stops the `listen()` worker loop `agent` `open — 2026-09-18`
 **What.** `finish()` throws `Finished`. `Runner::handle()` catches it, so `Classic\serve()` is fine —
 but the documented `listen()` shape, `while ($file = accept()) { include $file; respond(); }`

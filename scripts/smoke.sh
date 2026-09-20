@@ -311,6 +311,17 @@ grep -q 'hung=0' <<<"$grpc_refused" && grep -q 'refused=3' <<<"$grpc_refused" \
 
 echo "== E13 (200 concurrent HTTP)"; timeout 120 bench/e13-http.sh | tail -1
 echo "== E6 (3 x 200 ms unmodified file_get_contents on 1 thread, 100 concurrent)"; N=50 timeout 120 bench/e6-fetch.sh | tail -2
+# E6-SSL: libssl and libcrypto are in the park policy and every outbound TLS byte goes through them
+# since rustls was deleted (V-49), yet this bench was in neither smoke.sh nor ci.yml -- it printed
+# its findings and exited 0 either way, so it could not be a gate. It has a verdict now.
+if command -v openssl >/dev/null; then
+  echo "== E6-SSL (three concurrent https fetches park; verification does what each case must)"
+  timeout 180 bench/e6-ssl.sh > /tmp/ignis-e6ssl.log 2>&1; e6ssl_rc=$?
+  grep -E "^e6_ssl:|^E6-SSL|FAILED" /tmp/ignis-e6ssl.log | head -4
+  [ "$e6ssl_rc" = 0 ] || { echo "E6-SSL FAILED (see /tmp/ignis-e6ssl.log)"; exit 1; }
+else
+  echo "== E6-SSL skipped (no openssl to build the test PKI)"
+fi
 if [ -d php/packages/revolt/vendor ]; then echo "== E7 (Revolt/AMPHP examples: IgnisDriver must match a stock event loop)"; timeout 180 bench/e7-revolt.sh > /tmp/ignis-e7.log 2>&1; e7rc=$?; grep -E "^(DIFFER|e7)" /tmp/ignis-e7.log || true; [ "$e7rc" = 0 ] || { echo "E7 FAILED (see /tmp/ignis-e7.log)"; exit 1; }; else echo "== E7 skipped (run: cd php/packages/revolt && composer install --prefer-source)"; fi
 echo "== E11 (cancellation + deadline)"; timeout 120 bench/e11-cancel.sh | grep -E "cancelled|status=" | head -2
 echo "== E12 (supervisor: fatal + spin)"; timeout 120 bench/e12-isolation.sh | grep -E "^after \(a\)|^after hello|server"

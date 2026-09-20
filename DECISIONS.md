@@ -816,3 +816,31 @@ replace a loud nothing with a quiet wrong answer.
 
 Separately, `Loop` now answers through one `respondTo()` that logs a refused answer. The specific
 `false` is gone; the point of the helper is that the next one is a log line and not a hang.
+
+## 2026-09-20 — where the park binding is proved: CI on the built binary, not only a boot probe
+
+The owner, on `park::selfcheck()`: "я бы всё таки тестил это против сборки уже в ci и в будущем на
+матрице". Taken, with the division of labour written down rather than assumed, because the two
+places prove different things.
+
+**CI, on the built artifact, is where the thorough half belongs.** It can afford a real TLS
+handshake, a real PostgreSQL socket, a real curl transfer, and it tests the binary that will ship in
+the container it will ship in. A build matrix extends that to the variations we support. This is
+strictly stronger than a `dlsym` probe: it proves the call *parked*, not merely that a symbol bound.
+
+**The boot check is the last mile and should shrink, not grow.** It is the only thing that speaks
+about an environment we did not build — a customer's `LD_PRELOAD`, a different `libcurl.so.4`,
+another interposer in the image. That is worth keeping, because universal park fails by hanging and
+there is no exception to catch. But once the matrix carries the thorough half, the boot check has no
+reason to hold 150 lines of `dlsym`/`transmute`: "did anything bind at all" would do.
+
+**What was done now.** `bench/e6-ssl.sh` proved TLS parks and was in neither `smoke.sh` nor
+`ci.yml`, because it exited 0 whatever it found and labelled three correct refusals as `FAIL`. It has
+a verdict now, its fixture regenerates on expiry rather than only on absence, and it is in smoke —
+so `libssl` is proved in CI on the built binary, falsified with `IGNIS_NO_UNIVERSAL_PARK=1`.
+
+**What was deliberately not done.** The `selfcheck()` edit I had started — naming the unprobed
+libraries in its report — is not in this commit. The owner stopped it to be answered first, and on
+the answer it is the smaller half of a question that wants an ADR: `S-PARK-PROBE-COVERAGE` carries
+both, and the boot check keeps over-claiming `ok` until that is settled. Recorded here so the
+over-claim is a known open defect and not an oversight.

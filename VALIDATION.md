@@ -5587,3 +5587,59 @@ which the gate builds.
 
 **Not measured end to end.** E9 needs the Temporal CLI, which is not on this box; CI's E9 job is the
 arm. Recorded as a reading-and-unit-test fix, not a measured one.
+
+## V-110 — libssl is in the park policy and nothing proved it parked; the bench that could was ungateable
+
+Date: 2026-09-20. Owner's direction: test the binding against the built binary in CI, on a matrix
+later. Checking what already existed turned up three defects rather than a missing capability.
+
+**1. The boot self-check covers half its own policy and says "ok".** The default policy names four
+third-party libraries (`park.rs:64`: `libcurl, libpq, libssl, libcrypto`); `selfcheck()` has probes
+for two, hardcoded in code while the policy is data. On this box:
+
+```
+INFO ignis::php::park: park self-check ok probed=["libcurl", "libpq"] hits=3
+```
+
+`libssl` and `libcrypto` are loaded, are in the policy, and are verified by nothing — and the line
+says `ok`. That is research 28's "0 hits looked like success" reproduced inside the very check
+written to make it impossible. A library added to `IGNIS_PARK` — the documented way to extend the
+policy — is silently not probed either.
+
+**2. `bench/e6-ssl.sh` exists, proves the thing, and was in neither `smoke.sh` nor `ci.yml`.** It
+printed its findings and exited 0 whatever they were, so it could not be a gate. Its verification
+section labelled three **correct refusals** as `FAIL` — a private CA is not in the system store, a
+wrong `peer_name` must be refused, and `allow_self_signed` cannot rescue a CA-signed leaf whose CA
+is unknown — so its output could not be read as a verdict by a person either.
+
+**3. Its fixture expires after two days and is regenerated only when absent.** Certificates issued
+on the 16th, run on the 20th: five of five verification cases failed, for no reason but the date.
+
+**After.** Each case declares which way it must go, the script asserts the timing against the
+control, and the certificates are regenerated when absent **or within an hour of expiry**:
+
+```
+verify [default (verify_peer on)]: refuse (expected refuse)
+verify [cafile]: accept (expected accept)
+verify [cafile + wrong peer_name]: refuse (expected refuse)
+verify [cafile + verify_peer_name=false]: accept (expected accept)
+verify [allow_self_signed]: refuse (expected refuse)
+e6_ssl_verify: cases=5 wrong=0
+starttls on a tcp_socket/ssl stream: enable_crypto=true
+e6_ssl: parked_ms=209 serialized_ms=618 verify_rc=0
+E6-SSL: GREEN
+```
+
+**Falsified before being trusted**, both arms:
+
+| control | result |
+|---|---|
+| `IGNIS_NO_UNIVERSAL_PARK=1` (nothing can park) | `parked_ms=619` → *"libssl is not parking"*, `E6-SSL: FAILED`, exit **1** |
+| fixture aged to expire yesterday | regenerated in place (`notAfter` Sep 19 → Sep 22), run green |
+| unchanged | exit **0** |
+
+The exit codes were read from the process, not from a pipeline: `tail` in the pipe reported 0 for
+the failing run, the same trap that produced two false greens earlier in this cycle.
+
+Now in `smoke.sh`, so CI runs it. `libcrypto` still has no behavioural arm of its own, and the boot
+self-check still names no gap — both filed as `S-PARK-PROBE-COVERAGE`.

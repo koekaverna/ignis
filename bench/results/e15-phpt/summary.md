@@ -2,9 +2,9 @@
 
 | suite | mode | total | passed | failed | skipped | warned | borked | wall s |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| Zend/tests/fibers | stock | 110 | 108 | 0 | 2 | 0 | 0 | 3 |
-| Zend/tests/fibers | main | 110 | 108 | 0 | 2 | 0 | 0 | 15 |
-| Zend/tests/fibers | fiber | 110 | 77 | 31 | 2 | 0 | 0 | 14 |
+| Zend/tests/fibers | stock | 110 | 108 | 0 | 2 | 0 | 0 | 2 |
+| Zend/tests/fibers | main | 110 | 108 | 0 | 2 | 0 | 0 | 13 |
+| Zend/tests/fibers | fiber | 110 | 77 | 31 | 2 | 0 | 0 | 13 |
 | ext/sockets/tests | stock | 118 | 91 | 1 | 26 | 0 | 0 | 5 |
 | ext/sockets/tests | main | 118 | 91 | 1 | 26 | 0 | 0 | 16 |
 | ext/sockets/tests | fiber | 118 | 85 | 7 | 26 | 0 | 0 | 16 |
