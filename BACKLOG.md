@@ -738,6 +738,29 @@ this scope's. Untested, and the most likely of the three to be a real defect.
 **Acceptance.** One arm each; (1) and (3) fail today if the thing they describe is wrong, so write
 them as controls rather than as confirmations.
 
+### S-SAPI-REQUEST-INFO A form body on PUT/PATCH never reaches the framework `main` `open — measured 2026-09-20`
+**What.** The embed SAPI's `SG(request_info)` is not filled from the request, so PHP's own
+`request_parse_body()` refuses: **`RequestParseBodyException: Request does not provide a content
+type`** — measured under `Ignis\serve()` for both POST and PUT. Symfony 8's
+`Request::createFromGlobals()` (`http-foundation/Request.php:338-352`) calls exactly that function
+for `PUT`, `DELETE`, `PATCH` and `QUERY` and falls back to `$_POST` when it throws; the runtime fills
+`$_POST` for `POST` alone, so `$request->request` is **empty** for a `PUT` with an
+`application/x-www-form-urlencoded` body. Measured: `{"method":"PUT","parsed":[],"content_length":7}`
+— the body is there, nothing parsed it.
+**Why it was invisible.** `IgnisWorkerRunner::toSymfony` used to build a Request and throw it away
+for any non-urlencoded body, which covered JSON. A **urlencoded** body on PUT matched the
+first branch, so it never got the raw body either — the one shape the workaround did not cover was
+the one it looked like it covered.
+**Not fixed by the 2026-09-20 `php://input` work, and that is the point.** `Loop::enterRequest()`
+now backs `php://input` for every method, so `$request->getContent()` returns the body where it used
+to return nothing. Symfony 8 does not read `php://input` for this any more — it asks the SAPI. The
+stream wrapper cannot reach that.
+**Fix, unbuilt.** Fill `SG(request_info).content_type` (and the post-data path) when a request enters
+a PHP thread, next to where the superglobals are set. `main` lane, `crates/ignis/src/php/`.
+**Acceptance.** `bench/e21`'s `/body` route: a `PUT` with `a=1&b=2` reports
+`parsed={"a":"1","b":"2"}`, and a control without the fix reports `parsed=[]` — it does today, so
+write the arm first and watch it fail.
+
 ## Found on 2026-09-20, building S-SCOPED-CLASS
 
 ### A-E12-PRINTS-ONLY E12 measures a wedged server as healthy `main` `open — measured 2026-09-20`

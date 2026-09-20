@@ -890,7 +890,16 @@ final class Loop
         Scope::set('ignis.request', null);
     }
 
-    /** Gives this fiber the request id and its own $_SERVER/$_GET/$_POST/$_COOKIE (E13, ADR-0006). */
+    /**
+     * Gives this fiber the request id, its own $_SERVER/$_GET/$_POST/$_COOKIE (E13, ADR-0006) and
+     * its own `php://input`.
+     *
+     * The body belongs here for the same reason the superglobals do: the embed SAPI has no
+     * `read_post`, so unmodified code reading `php://input` gets nothing unless the runtime backs
+     * it. Leaving that to classic mode alone cost a measured defect — the runtime fills `$_POST`
+     * for `POST` only, and a framework re-parsing `php://input` for `PUT`/`PATCH` therefore saw an
+     * empty body.
+     */
     private static function enterRequest(Http\Request $request, int $id): void
     {
         self::$requestFibers[$id] = self::currentFiber();
@@ -898,6 +907,8 @@ final class Loop
         if (\function_exists('ignis_set_superglobals')) {
             \ignis_set_superglobals(...$request->superglobals());
         }
+        InputStream::register();
+        InputStream::setBody($request->body);
     }
 
     /**

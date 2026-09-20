@@ -43,8 +43,7 @@ function configureRunner(string $docroot, ?string $index, array $server, ?callab
     Runner::$run = $run ?? static function (string $file): void {
         include $file;
     };
-    stream_wrapper_unregister('php');
-    stream_wrapper_register('php', InputStream::class);
+    \Ignis\InputStream::register();
 }
 
 /**

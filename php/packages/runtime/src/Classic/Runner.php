@@ -67,7 +67,7 @@ final class Runner
     {
         $_SERVER = self::server($request, $file, $script, $pathInfo) + $_SERVER;
         $_REQUEST = array_merge($_GET, $_POST, $_COOKIE);
-        InputStream::setBody($request->body);
+        \Ignis\InputStream::setBody($request->body);
     }
 
     /** @var list<array{0: int, 1: array<string, mixed>}> requests handed over by the loop, one at a time */

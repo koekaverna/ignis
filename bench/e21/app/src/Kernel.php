@@ -102,6 +102,7 @@ final class Kernel extends BaseKernel
         $s->get(\App\Controller\CacheGrowth::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\SingletonProbe::class)->tag('controller.service_arguments');
         $s->get(\App\Controller\ScopedProbe::class)->tag('controller.service_arguments');
+        $s->get(\App\Controller\BodyProbe::class)->tag('controller.service_arguments');
         // ADR-0042. The class knows nothing about this; the container decides, the way `lazy` is
         // decided. Unmarked, ScopedCart is a container singleton and two overlapping requests share
         // its state -- which is what IGNIS_NO_SCOPED_SERVICE turns this probe into: its control.
@@ -127,6 +128,7 @@ final class Kernel extends BaseKernel
         $routes->add('cachegrowth', '/cachegrowth')->controller([\App\Controller\CacheGrowth::class, '__invoke']);
         $routes->add('singleton', '/singleton')->controller([\App\Controller\SingletonProbe::class, '__invoke']);
         $routes->add('scoped', '/scoped')->controller([\App\Controller\ScopedProbe::class, '__invoke']);
+        $routes->add('body', '/body')->controller([\App\Controller\BodyProbe::class, '__invoke']);
     }
 
     public function getCacheDir(): string

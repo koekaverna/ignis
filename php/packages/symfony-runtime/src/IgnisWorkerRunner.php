@@ -77,14 +77,13 @@ final class IgnisWorkerRunner implements RunnerInterface
         $_SERVER['SERVER_PORT'] = $serverPort;
         $_SERVER['PATH_INFO'] = $ignisRequest->path();
 
-        $request = Request::createFromGlobals();
-        // A body the runtime did not parse into $_POST (anything but urlencoded) has to be handed
-        // over as the raw body instead, or Symfony sees an empty request.
-        if ($ignisRequest->body !== '' && !str_starts_with($ignisRequest->header('content-type') ?? '', 'application/x-www-form-urlencoded')) {
-            $request = new Request($_GET, $_POST, [], $_COOKIE, [], $_SERVER, $ignisRequest->body);
-        }
-
-        return $request;
+        // One construction, and Symfony's own. This used to build a Request and then throw it away
+        // for any body the runtime had not parsed into `$_POST`, because `php://input` was empty
+        // outside classic mode. `Loop::enterRequest()` backs it now, so `createFromGlobals()` is
+        // correct for every method and content type -- including the `PUT` with a urlencoded body
+        // that the discarded-and-rebuilt path silently delivered empty, since the runtime fills
+        // `$_POST` for `POST` alone and Symfony re-parses `php://input` for PUT/PATCH/DELETE.
+        return Request::createFromGlobals();
     }
 
     /**
