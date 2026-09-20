@@ -183,7 +183,7 @@ unsafe extern "C" fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys:
     // contexts' reserved slots and freed in on_destroy.
     unsafe {
         SWITCHES.with(|c| c.set(c.get() + 1));
-        let _ = from;
+        super::scoped::on_switch(from, to); // ADR-0042 swap variant; a no-op unless IGNIS_SCOPED_MODE=swap
         let Some(to_slot) = slot_of(to) else {
             return;
         };

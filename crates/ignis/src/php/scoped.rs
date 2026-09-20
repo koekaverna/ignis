@@ -68,6 +68,31 @@ unsafe fn find(handle: u32, name: &str) -> Option<sys::zval> {
 }
 
 static HANDLERS: OnceLock<Handlers> = OnceLock::new();
+static SWAP_HANDLERS: OnceLock<Handlers> = OnceLock::new();
+
+/// Which shape a scoped object takes. `handlers` keeps the declared slots `IS_UNDEF` so our own
+/// handlers always run, and reimplements what it needs. `swap` leaves the slots holding real values
+/// so **every** standard handler works untouched — visibility, typed properties, `readonly`, magic
+/// methods, name mangling, `get_properties`, `clone`, references, `var_dump` — and pays for it by
+/// moving each scoped object's table on every fiber switch.
+///
+/// The swap cannot be made lazy: `ZEND_ASSIGN_OBJ`'s fast path writes straight to `OBJ_PROP` when
+/// the slot holds a value (`zend_vm_def.h:2502`), so nothing of ours is guaranteed to run between a
+/// scope change and the next access. That is why this costs per switch rather than per access, and
+/// it is the whole trade this knob exists to measure.
+fn swapping() -> bool {
+    static SWAP: OnceLock<bool> = OnceLock::new();
+    *SWAP.get_or_init(|| std::env::var("IGNIS_SCOPED_MODE").map(|mode| mode == "swap").unwrap_or(false))
+}
+
+thread_local! {
+    /// Live scoped objects in the swap variant, by handle. Entries are dropped by `free_obj`, which
+    /// is the only reason either variant overrides a handler it otherwise would not: `zend_object`
+    /// handles are **reused**, so without this a new object inherits a dead one's rows.
+    static LIVE: RefCell<HashMap<u32, *mut sys::zend_object>> = RefCell::new(HashMap::new());
+    /// `(object handle, scope) -> that scope's copy of the declared slots`, swap variant only.
+    static TABLES: RefCell<HashMap<(u32, usize), Vec<sys::zval>>> = RefCell::new(HashMap::new());
+}
 
 /// `zend_object_handlers` is only ever read by the engine through a `*const`, and this one lives
 /// for the process, so sharing it across threads is sound even though the raw struct is not `Sync`.
@@ -114,8 +139,123 @@ pub unsafe fn install() {
         // of taking a pointer past `write_property`. Correct, and slower than a dense slot would
         // be. ponytail: revisit with the read-cost measurement ADR-0042 gates on.
         handlers.get_property_ptr_ptr = Some(no_direct_slot);
+        handlers.free_obj = Some(free_obj);
         Handlers(handlers)
     });
+    SWAP_HANDLERS.get_or_init(|| {
+        // SAFETY: as above -- a copy of engine-owned immutable data at MINIT.
+        let mut handlers = unsafe { sys::std_object_handlers };
+        handlers.free_obj = Some(free_obj);
+        Handlers(handlers)
+    });
+}
+
+/// Drops everything this module holds for a dying object, then hands over to the standard free.
+///
+/// `zend_object` handles are reused by the engine, so an object's rows must die with it or the next
+/// object to take that handle inherits them. Both variants override this and nothing else in
+/// common.
+///
+/// # Safety
+/// Called by the engine as the object is freed.
+unsafe extern "C" fn free_obj(object: *mut sys::zend_object) {
+    // SAFETY: the engine upholds `# Safety`. Borrows are dropped before any release, because a
+    // release can run PHP code that re-enters this module.
+    unsafe {
+        let handle = (*object).handle;
+        LIVE.with(|live| live.borrow_mut().remove(&handle));
+        let rows = ROWS.with(|rows| {
+            let mut rows = rows.borrow_mut();
+            let keys: Vec<(u32, usize)> = rows.keys().filter(|(row_handle, _)| *row_handle == handle).copied().collect();
+            keys.into_iter().filter_map(|key| rows.remove(&key)).collect::<Vec<Row>>()
+        });
+        for row in rows {
+            for mut value in row.into_values() {
+                sys::zval_ptr_dtor(&raw mut value);
+            }
+        }
+        let tables = TABLES.with(|tables| {
+            let mut tables = tables.borrow_mut();
+            let keys: Vec<(u32, usize)> = tables.keys().filter(|(table_handle, _)| *table_handle == handle).copied().collect();
+            keys.into_iter().filter_map(|key| tables.remove(&key)).collect::<Vec<Vec<sys::zval>>>()
+        });
+        for table in tables {
+            for mut value in table {
+                sys::zval_ptr_dtor(&raw mut value);
+            }
+        }
+        if let Some(free) = sys::std_object_handlers.free_obj {
+            free(object);
+        }
+    }
+}
+
+/// Moves every live scoped object's declared slots from the outgoing scope's copy to the incoming
+/// one. Swap variant only; a no-op otherwise.
+///
+/// # Safety
+/// Called from the fiber-switch observer on a PHP thread, with both contexts live.
+pub unsafe fn on_switch(from: *mut sys::zend_fiber_context, to: *mut sys::zend_fiber_context) {
+    if !swapping() {
+        return;
+    }
+    // SAFETY: the caller upholds `# Safety`. Only zvals this module owns are moved, by value and
+    // without touching their refcounts -- a move between two places we own is not a new reference.
+    unsafe {
+        let (leaving, entering) = (scope_of(from), scope_of(to));
+        if leaving == entering {
+            return;
+        }
+        let objects: Vec<*mut sys::zend_object> = LIVE.with(|live| live.borrow().values().copied().collect());
+        for object in objects {
+            let count = (*(*object).ce).default_properties_count as usize;
+            let slots = (&raw mut (*object).properties_table) as *mut sys::zval;
+            let outgoing: Vec<sys::zval> = (0..count).map(|index| *slots.add(index)).collect();
+            TABLES.with(|tables| tables.borrow_mut().insert(((*object).handle, leaving), outgoing));
+            let incoming = TABLES.with(|tables| tables.borrow_mut().remove(&((*object).handle, entering)));
+            match incoming {
+                Some(values) => {
+                    for (index, value) in values.into_iter().enumerate() {
+                        std::ptr::write(slots.add(index), value);
+                    }
+                }
+                None => {
+                    // A scope that has not touched this object yet starts from the constructor's
+                    // table, copied rather than moved so row zero keeps its own reference.
+                    let defaults = TABLES.with(|tables| tables.borrow().get(&((*object).handle, ROW_ZERO)).cloned());
+                    for index in 0..count {
+                        let mut value = defaults.as_ref().map_or_else(|| std::mem::zeroed(), |values| values[index]);
+                        sys::zval_add_ref(&raw mut value);
+                        std::ptr::write(slots.add(index), value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The scope key a fiber context stands for, `ROW_ZERO` for `{main}`.
+///
+/// The context pointer *is* the key for a real fiber: `zend_fiber` embeds its `zend_fiber_context`
+/// by value, so the address the observer is handed is the address `current_scope()` takes of that
+/// field. `{main}` is the exception and must be forced to `ROW_ZERO`, because `current_scope()`
+/// reaches it through a **null** `active_fiber` and answers `ROW_ZERO`, while the observer is handed
+/// `EG(main_fiber_context)`, a real pointer. Two keys for one scope meant the constructor's values
+/// were saved under an address nothing looked up, and the first fiber to read one got the engine's
+/// own "must not be accessed before initialization" — which is variant `swap` working, reporting a
+/// bug of mine through a check variant `handlers` does not have at all.
+///
+/// # Safety
+/// PHP thread with an initialised TSRM cache.
+unsafe fn scope_of(context: *mut sys::zend_fiber_context) -> usize {
+    if context.is_null() {
+        return ROW_ZERO;
+    }
+    // SAFETY: the caller upholds `# Safety`; `main_fiber_context` is a plain pointer field.
+    if context == unsafe { (*tsrm::executor_globals()).main_fiber_context } {
+        return ROW_ZERO;
+    }
+    context as usize
 }
 
 /// An instance of `class` whose declared slots are `IS_UNDEF` and whose properties resolve per
@@ -143,8 +283,16 @@ pub unsafe fn allocate(class: &str) -> Result<*mut sys::zend_object, String> {
 
         let object = sys::zend_objects_new(class_entry);
         sys::object_properties_init(object, class_entry);
-        undef_every_slot(object);
-        (*object).handlers = &raw const handlers.0;
+        if swapping() {
+            let Some(swap) = SWAP_HANDLERS.get() else {
+                return Err("ignis: scoped objects are not installed in this build".into());
+            };
+            (*object).handlers = &raw const swap.0;
+            LIVE.with(|live| live.borrow_mut().insert((*object).handle, object));
+        } else {
+            undef_every_slot(object);
+            (*object).handlers = &raw const handlers.0;
+        }
         Ok(object)
     }
 }

@@ -5103,3 +5103,41 @@ when the rule is stubbed out. The rule is included in this repository's own `php
 userland is clean under it.
 
 PHP suite: **316 tests / 741 assertions**, phpstan level 9 on both configs, php-cs-fixer clean.
+
+## V-97 — what a fiber-scoped property costs, two ways (ADR-0042 kill criterion, partial)
+
+Date: 2026-09-20. Machine: this box, load light, release build at `ec27fbb` plus the swap variant.
+Command: `SERVICES=$n READS=50000 SWITCHES=8000 IGNIS_SCOPED_MODE=$mode ./target/release/ignis bench/php/scoped_cost.php`
+for `$n` in 1, 16, 64, 256 and `$mode` in `handlers`, `swap`. `Holder` has four typed `int`
+properties; the measured operation is `$this->a = $this->a + 1` — one read and one write.
+
+| services | mode | plain ns/op | scoped ns/op | ratio |
+|---:|---|---:|---:|---:|
+| 1 | handlers | 16.0 | 92.8 | **5.8×** |
+| 1 | swap | 15.6 | 17.7 | **1.1×** |
+| 16 | handlers | 15.9 | 94.0 | **5.9×** |
+| 16 | swap | 15.7 | 17.1 | **1.1×** |
+| 64 | handlers | 15.9 | 94.2 | **5.9×** |
+| 64 | swap | 15.8 | 16.3 | **1.0×** |
+| 256 | handlers | 15.4 | 95.7 | **6.2×** |
+| 256 | swap | 15.5 | 16.2 | **1.0×** |
+
+**`handlers`** keeps the declared slots `IS_UNDEF` so our own handlers always run, and pays a
+handler call plus a name-keyed hash lookup per access: **5.8–6.2× a plain property**, flat in the
+number of live scoped services. **`swap`** leaves the slots holding real values, so every access
+takes the VM's own fast path and the standard handlers do all the semantics; it is **1.0–1.1×**,
+which is a plain property inside the noise of this box.
+
+**What is NOT measured here, and the instrument is the reason.** The switch column that script
+prints (45–50 µs) is `Ignis\sleep(0)` round trips through the reactor, not the fiber switch, and its
+spread across identical runs is ±15 µs — the 256-service swap run read 34.29 µs, *below* every
+handlers run. That instrument cannot resolve a per-switch delta of a few µs, so **no conclusion is
+drawn from it**: the swap variant's per-switch cost, which is the cost it exists to trade for, is
+still unmeasured. E2 (fiber switch, 3.83 µs warm, V-45) is the right instrument and needs an arm
+with live scoped services.
+
+**Second result, not a number.** Under `swap` the engine's own checks apply, and they fired
+immediately: the first run ended with `Typed property CartContext::$shared must not be accessed
+before initialization` — a real bug of mine (two different scope keys for `{main}`), reported by a
+check that the `handlers` variant does not have at all. `handlers` would have stored an `int` in a
+`?string` silently.

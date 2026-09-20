@@ -23,11 +23,19 @@ final class Scope
      * point — a plain `new $class(...)` here would construct through the VM's ordinary fast path and
      * arm its property-offset cache before the handlers are ever in the picture, which nothing after
      * that point can undo.
+     *
+     * A class with no constructor is ordinary and must work: `ReflectionMethod` throws on one, so
+     * the call is guarded. Arguments passed to such a class are an error rather than a silent
+     * discard, because `new` would refuse them too and this must not be quieter than `new`.
      */
     public static function create(string $class, mixed ...$arguments): object
     {
         $instance = \ignis_scope_allocate($class);
-        (new \ReflectionMethod($instance, '__construct'))->invoke($instance, ...$arguments);
+        if (\method_exists($instance, '__construct')) {
+            (new \ReflectionMethod($instance, '__construct'))->invoke($instance, ...$arguments);
+        } elseif ($arguments !== []) {
+            throw new \ArgumentCountError(\sprintf('Ignis\Scope::create(): %s has no constructor, so it takes no arguments, %d given', $class, \count($arguments)));
+        }
 
         return $instance;
     }
