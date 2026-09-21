@@ -5848,3 +5848,73 @@ variable **unset** and let its RUNPATH do the work.
 Build: `scripts/build-php-nts.sh` then
 `PHP_CONFIG=/opt/php85-nts/bin/php-config CARGO_TARGET_DIR=target-nts cargo build --release -p ignis`.
 The ZTS gate is green with all of this in it.
+
+## V-114 — the whitelist, read off real extensions: what needs a row, and the poll bug it uncovered
+
+Date: 2026-09-21. The NTS mode (V-113) made this possible: `deb.sury.org`'s extensions load into our
+own NTS build unchanged — `igbinary 3.2.16 | redis 6.3.0`, `mongodb 2.1.4`, straight from the `.deb`,
+same `API20250925,NTS`.
+
+**The first answer overturned the premise.** phpredis was expected to block: it is its own `.so` and
+nothing lists it. Measured under Ignis against a real Redis, three concurrent `BLPOP`s of one second
+finished in **1054 ms** — already parked — and `ignis_park_inventory()` showed no `redis.so` at all,
+only `libphp.so`. Reason, from its own symbol table: `redis.so` imports **12 `php_stream_*` symbols
+and zero socket syscalls**. It does its I/O through PHP's stream layer, which lives in `libphp.so`,
+which is in the policy. An extension that uses the stream API inherits libphp's rows for free.
+
+**So the triage is mechanical, and it was run over all 86 extension `.so` files sury ships for 8.5**
+(`nm -D --undefined-only`, version suffixes stripped — the first pass missed every hit because
+`connect@GLIBC_2.2.5` is not `connect`). **20 of 86 make an interposed call themselves:**
+
+| extension | calls it makes itself |
+|---|---|
+| `mongodb` | accept connect poll read readv recv send sendmsg usleep waitpid write writev (+ `socket`, `getaddrinfo`) |
+| `grpc` | accept accept4 connect nanosleep poll read recvmsg sendmsg write |
+| `swoole`, `openswoole` | essentially all of them |
+| `xdebug` | accept connect flock poll read recv select sendmsg write |
+| `stomp` | poll recv send |
+| `memcache` | select send usleep |
+| `dio` | read select write |
+| `redis` | poll usleep |
+| `pdo_pgsql` | poll |
+| `mysqlnd` | select |
+| `pgsql`, `memcached` | usleep |
+| `soap`, `odbc`, `inotify`, `gnupg`, `xlswriter`, `pinba`, `http` | one or two each |
+
+The rest make none: their I/O is either PHP's stream layer or a **native library** they link —
+`librabbitmq`, `librdkafka`, `libssh2`, `libldap`, `libsmbclient`, `libnetsnmp`, `libevent`, and the
+already-listed `libpq`/`libssl`. So a policy row belongs to a library that performs I/O, almost never
+to an extension.
+
+**A deployment-dependent trap worth naming.** `pdo_pgsql`, `pgsql` and `mysqlnd` are compiled *into*
+libphp here, so their calls are attributed to `libphp.so` and covered. In a distribution build they
+are separate `.so` files and the same call sites would not be. The policy's meaning depends on how
+PHP was built, which is exactly why the list has to be read off the running process rather than
+written down.
+
+**The live arm: `mongodb`, the most consequential of the twenty.** Against a real MongoDB, three
+concurrent `sleep(1s)` admin commands:
+
+| policy | result |
+|---|---|
+| as shipped (`mongodb.so` unlisted) | **3013 ms** — serialized, and the inventory says `connect poll recv sendmsg → parks=NO` |
+| `+mongodb` | **libmongoc aborted**: `mongoc-socket.c:575 mongoc_socket_errno(): assertion failed: sock` |
+| `+mongodb:recv` / `:sendmsg` / `:connect` | 3010 ms — safe to park, and useless: libmongoc waits in `poll` |
+| `+mongodb:poll` | the same abort — **`poll` is both the call that must park and the one that broke** |
+
+**And the abort was our bug, not libmongoc's.** A thread-labelled trace (added because a library with
+its own background threads makes an unlabelled one unreadable) showed 9 parks, 9 wakes, and **3 wakes
+where the reactor reported the descriptor ready and the kernel then denied it**. On those,
+`poll_impl` returned the re-poll's `0` — which is `poll(2)` for *"the timeout elapsed"* — after none
+of a 300-second timeout had. A caller is entitled to trust that. libcurl, in the same build and the
+same policy, saw **0** spurious wakes, which is why this had never shown.
+
+`poll_impl` now re-parks for what is left of the caller's own timeout instead of answering a timeout
+that did not happen. With it, libmongoc no longer aborts and every call reports `parks=yes`.
+
+**The honest conclusion for `mongodb`: still not adoptable.** Parked, the same workload takes
+**12008 ms** against 3013 blocking — four times worse, through five spurious re-parks. A policy row
+is not enough for it and this entry does not add one. What the row *is* enough for is unknown until
+each of the other nineteen is measured the same way.
+
+The ZTS gate is green with the `poll` fix; E6 (336 ms concurrent) and E13 (0 mismatches) unmoved.

@@ -105,7 +105,14 @@ fn trace(msg: &str) {
     static ON: OnceLock<bool> = OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("IGNIS_PARK_TRACE").is_some()) {
         // Raw syscall on purpose: `eprintln!` would go through the interposed `write`.
-        let line = format!("park: {msg}\n");
+        //
+        // The thread id is not decoration. A library with its own background threads — libmongoc's
+        // topology monitor, for one — interleaves its decisions with the PHP thread's, and without
+        // a label the lines read as one sequence: an `n=1` call appearing to return 2 is two threads,
+        // not an impossible poll. That cost an hour before it was added.
+        // SAFETY: `gettid` takes no arguments, touches no memory and cannot fail.
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) };
+        let line = format!("park: [tid {tid}] {msg}\n");
         // SAFETY: `line` is a live local and its length is its own; write(2) only reads those bytes.
         unsafe { libc::syscall(libc::SYS_write, 2, line.as_ptr(), line.len()) };
     }
@@ -630,15 +637,39 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
             return r; // already ready, or an error: exactly what the caller would have seen
         }
         trace(&format!("{sym} n={n} timeout={timeout}: not ready, parking"));
-        match park_pollfds(std::slice::from_raw_parts(fds, n as usize), timeout) {
-            Some(by_fd) => {
-                let r = real(0);
-                trace(&format!("{sym}: woke by {}, revents fill r={r}", if by_fd { "fd" } else { "timer" }));
-                r // 0 if the timer won
-            }
-            None => {
-                trace(&format!("{sym}: could not park, blocking"));
-                real(timeout)
+        let started = std::time::Instant::now();
+        loop {
+            let left = if timeout < 0 {
+                -1
+            } else {
+                let remaining = i64::from(timeout) - started.elapsed().as_millis() as i64;
+                if remaining <= 0 {
+                    return real(0);
+                }
+                remaining.min(i64::from(c_int::MAX)) as c_int
+            };
+            match park_pollfds(std::slice::from_raw_parts(fds, n as usize), left) {
+                Some(true) => {
+                    let r = real(0);
+                    trace(&format!("{sym}: woke by fd, revents fill r={r}"));
+                    if r != 0 {
+                        return r;
+                    }
+                    // A readiness the kernel then denies. Returning `r` here would answer 0 —
+                    // "the timeout elapsed" — after none of it had, which is a lie `poll(2)` does
+                    // not permit and which a caller is entitled to trust. Measured on libmongoc:
+                    // 3 of 9 wakes were spurious and the extension asserted (V-114). So park again
+                    // for what is left of the caller's own timeout.
+                    trace(&format!("{sym}: spurious readiness, re-parking"));
+                }
+                Some(false) => {
+                    trace(&format!("{sym}: woke by timer"));
+                    return real(0);
+                }
+                None => {
+                    trace(&format!("{sym}: could not park, blocking"));
+                    return real(left);
+                }
             }
         }
     }

@@ -503,6 +503,17 @@ check is the last-mile assertion against an environment we do not control — a 
 `LD_PRELOAD`, a different `libcurl.so.4`, another interposer. They are complementary, and if the
 matrix carries the thorough half then the boot check can shrink rather than grow: "did anything bind
 at all" instead of 150 lines of `dlsym`/`transmute` in production.
+**What V-114 established, 2026-09-21, and it reshapes this entry.** The unit of the whitelist is a
+**library that performs I/O**, not an extension. Of the 86 extension `.so` files `deb.sury.org` ships
+for PHP 8.5, 66 make no interposed call at all — their I/O is PHP's stream layer (already covered by
+the `libphp` rows) or a native library they link. Twenty do make their own calls, `mongodb`, `grpc`
+and `xdebug` worst among them. And the attribution is **deployment-dependent**: `pdo_pgsql`, `pgsql`
+and `mysqlnd` are compiled into libphp here and separate `.so` files in a distribution build, so the
+same call site is covered in one and not the other. That is why the list has to be read off a running
+process — `ignis_park_inventory()` — rather than written down.
+**And widening it is not a matter of adding rows.** The first real library tried, `mongodb`, blocks
+as shipped (3013 ms serialized), **aborted** when listed (a bug in our own `poll`, fixed in V-114),
+and even fixed is **four times slower parked than blocking** (12008 ms). It is not adopted here.
 **Acceptance.** (a) Every third-party library in the policy has either a probe or a gated
 behavioural arm, and the boot check **names** the ones it did not probe instead of printing an
 unqualified `ok` — with a control that fails when a library is in the policy and unproven.
