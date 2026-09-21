@@ -260,3 +260,75 @@ alongside it (not a new file — a second assertion in the same script): after t
 assert every one of the 50 calls that reached a real connection attempt did not crash the process
 and `ok`/error counts are consistent across three repeated runs — a `valgrind`/ASan run of this
 same script is the kill-criterion (i) check, not a separate bench file.
+
+## Addendum, 2026-09-21 — the recommendation is the ecosystem's standard shape, and four references were stale
+
+Not a change of design. The owner asked what Swoole does and what Rust offers as stock, and the
+answers were read from source rather than recalled. They converge on §4's recommendation from two
+directions it did not claim, and they correct four things in the text above.
+
+**`tokio::net::lookup_host` *is* this design** (`tokio-1.53.1/src/net/addr.rs:179`):
+
+```rust
+// Run DNS lookup on the blocking pool
+MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
+    std::net::ToSocketAddrs::to_socket_addrs(&s)
+})))
+```
+
+`spawn_blocking` around the blocking std resolver, which on unix is `getaddrinfo`. Its own doc adds
+"This API is not intended to cover all DNS use cases. Anything beyond the basic use case should be
+done with a specialized library." So §4 is not a workaround for a missing async primitive — it is
+what the runtime we already depend on does, reached from the C side instead of the Rust side. std
+itself offers nothing async: `ToSocketAddrs` is the blocking call and `lookup_host` was never
+stabilised.
+
+It does not follow that we can call `lookup_host` and be done. It returns `SocketAddr`, discarding
+the caller's `hints` (`ai_family`/`ai_socktype`/`ai_protocol`, `AI_CANONNAME`, `AI_ADDRCONFIG`), the
+`service` argument, and the chain the caller will pass to `freeaddrinfo`. The interposer needs the
+layer below it.
+
+**Swoole runs both strategies, and its second one is this one** (`swoole-src@8340c53`):
+
+- `Coroutine\System::dnsLookup()` and the hooked `gethostbyname` go to `coroutine::dns_lookup()`
+  (`src/network/dns.cc:734`), which picks **at compile time** between its own UDP resolver
+  (`dns_lookup_impl_with_socket`) and c-ares (`dns_lookup_impl_with_cares`). This is §3's rejected
+  option, shipping.
+- `Coroutine\System::getaddrinfo()` goes to `coroutine::async(async::handler_getaddrinfo, ...)`
+  (`src/coroutine/system.cc:209`), which dispatches to the AIO thread pool and yields the coroutine.
+  The worker calls the real `::getaddrinfo`; the file's own comment reads *"blocking-IO, Use in
+  synchronous mode or AIO thread pool"*.
+
+**§3's argument against writing a resolver is confirmed by their implementation, not only by
+reasoning.** Swoole's own resolver *does* read `/etc/hosts` (`get_ip_by_hosts`, `dns.cc:206`) — so
+the text above overstates that part — but from `resolv.conf` it reads **only `nameserver`**
+(`dns.cc:79`): no `search`, no `ndots`, no `options`, and no `nsswitch.conf` anywhere. The
+"Kubernetes service name does not resolve" failure §3 predicts is therefore real in a shipping
+implementation, not hypothetical.
+
+**Two things worth copying from them, and one we cannot.** Swoole yields with a timeout
+(`co->yield_ex(timeout)`) and on expiry marks the event cancelled and **releases the coroutine** —
+the worker keeps resolving, but the caller is freed. Tokio's `spawn_blocking` gives us neither half:
+dropping the `JoinHandle` releases nothing and stops nothing, so the timeout has to be ours. Their
+pool is elastic with a ceiling (`core = SW_CPU_NUM`, `max = SW_CPU_NUM * 8`, idle reaping by
+`max_idle_time`, `src/os/async_thread.cc:84-85`) — the cap this document asks for, already built.
+
+**Corrections to the text above.**
+
+1. "suspending the fiber on that completion exactly as `pg.rs` does" — `pg.rs` was **deleted**
+   (V-87, 2026-09-18). The live shape is `submit(rv, async move { … })` in `grpc.rs` and
+   `backend/temporal.rs`.
+2. "both already named in ADR-0020 §1's export list — no new symbol to add" is true of the **ADR**
+   and not of the binary: `nm -D` shows 21 interposed symbols and no resolver among them. Designed,
+   not built.
+3. `IGNIS_RESOLVER` exists in this document and in `bench/php/e18_dns.php` / `bench/e18/resolver.py`,
+   and nowhere in the code. Both bench artefacts are present and waiting on it.
+4. The acceptance splits, because the metric is not stock: `max_blocking_threads` (default **512**,
+   unset in `main.rs` today) and `thread_keep_alive` are ordinary builder methods, but
+   `num_idle_blocking_threads()` and `blocking_queue_depth()` sit inside `cfg_unstable_metrics!`,
+   which expands to `#[cfg(tokio_unstable)]` — a `RUSTFLAGS` change for the whole build. Too much for
+   one number: the in-flight count should be our own counter around the `spawn_blocking` call, and
+   only the cap and the keep-alive come from tokio.
+
+**Status unchanged: not being built** (owner, 2026-09-21 — "пропускаем эту задачу"). This addendum
+exists so the next person does not re-derive any of it.
