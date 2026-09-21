@@ -53,6 +53,13 @@ Run a script: `./target/release/ignis [--threads N] [--offload M] [--supervise] 
 
 Benches are one script per expectation (`bench/eN-*.sh`), each writing into VALIDATION.md; `bench/compare.sh` produces `bench/results/compare.md` vs FrankenPHP and php-fpm. The comparison suites (E15) run in CI and are gated against `bench/results/e15-baseline.txt` by `scripts/ci-gate.sh <suite> <log>` — pass counts may never drop.
 
+The second **engine ABI** (non-thread-safe PHP, S-NTS-MODE, V-113) is a separate prefix and target
+dir too: `scripts/build-php-nts.sh` then `PHP_CONFIG=/opt/php85-nts/bin/php-config
+CARGO_TARGET_DIR=target-nts cargo build --release -p ignis` (enables `cfg(php_nts)`). It serves on
+one PHP thread and refuses `--threads` above 1, `--offload` and `--supervise`. **Run it with
+`LD_LIBRARY_PATH` unset** — both prefixes install a `libphp.so` with the same soname and the
+variable beats RUNPATH, so the usual `LD_LIBRARY_PATH=/opt/php85-zts/lib` makes it die in the loader.
+
 The second backend (true-async fork, ADR-0003) is a separate prefix and target dir:
 `scripts/build-php-async.sh` then `PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis` (enables `cfg(php_async_abi)` → `backend/async_core.rs`).
 

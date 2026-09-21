@@ -159,6 +159,20 @@ if (!function_exists('ignis_set_superglobals')) {
 
 // --- fiber-scoped objects (BACKLOG.md S-SCOPED-CLASS, DECISIONS.md 2026-09-20) ---
 
+if (!function_exists('ignis_park_inventory')) {
+    /**
+     * ignis_park_inventory(): array — every library observed making an interposed call in this
+     * process, the symbols it called, and whether the policy let each one park. A `false` blocked
+     * the OS thread. Shape: ['libphp.so' => ['read' => true], 'redis.so' => ['recv' => false]].
+     *
+     * @return array<string, array<string, bool>>
+     */
+    function ignis_park_inventory(): array
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
 if (!function_exists('ignis_scope_allocate')) {
     /**
      * ignis_scope_allocate(string $class): object — an $class instance with IS_UNDEF property

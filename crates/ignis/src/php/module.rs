@@ -351,6 +351,33 @@ unsafe extern "C" fn zif_ignis_stats(_ex: *mut sys::zend_execute_data, rv: *mut 
     }
 }
 
+/// `ignis_park_inventory(): array` — every library that has made an interposed call in this
+/// process, the symbols it called, and whether the policy let each one park.
+///
+/// The park policy is a whitelist of shared objects, so a library nobody listed blocks its OS
+/// thread and says nothing about it — and which libraries an application has is a property of its
+/// deployment: a PECL extension is its own `.so` and `deb.sury.org` ships 85 of them for PHP 8.5.
+/// The list therefore cannot be written here; it has to be read off a running application. This
+/// reads it, from the `dladdr` resolution `park.rs` already performs once per call site.
+///
+/// Shape: `['libphp.so' => ['read' => true, 'waitpid' => true], 'redis.so' => ['recv' => false]]`.
+/// A `false` is a call that blocked the thread.
+unsafe extern "C" fn zif_ignis_park_inventory(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
+    // SAFETY: rv is VM-owned writable storage. Every key is a Rust string whose bytes are copied
+    // into a zend_string by add_assoc_*; nothing borrows past the call.
+    unsafe {
+        zval::set_new_array(rv);
+        for (library, symbols) in super::park::inventory() {
+            let mut calls: sys::zval = std::mem::zeroed();
+            zval::set_new_array(&mut calls);
+            for (symbol, parks) in symbols {
+                sys::add_assoc_bool_ex(&mut calls, symbol.as_ptr() as *const c_char, symbol.len(), parks);
+            }
+            sys::add_assoc_zval_ex(rv, library.as_ptr() as *const c_char, library.len(), &mut calls);
+        }
+    }
+}
+
 /// `ignis_publish_stats(array $stats): void` — the PHP loop hands its own counters to the runtime
 /// so `/_ignis/metrics` can answer them while PHP is busy (M4-4). Called once per loop turn, next
 /// to the `ignis_poll()` that is about to block, so the cost is a handful of relaxed stores.
@@ -1026,13 +1053,14 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(all(not(php_async_abi), not(feature = "temporal")))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_park_inventory", zif_ignis_park_inventory, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
@@ -1074,7 +1102,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
 /// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(all(not(php_async_abi), feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 51]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 52]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
@@ -1089,6 +1117,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 51]> = SyncStatic([
     fe(c"ignis_temporal_heartbeat", crate::backend::temporal::zif_heartbeat, ARGINFO_TEMPORAL_HEARTBEAT.0.as_ptr(), 2),
     fe(c"ignis_temporal_shutdown", crate::backend::temporal::zif_shutdown, ARGINFO_TEMPORAL_WORKER.0.as_ptr(), 1),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_park_inventory", zif_ignis_park_inventory, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
@@ -1128,13 +1157,14 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 51]> = SyncStatic([
     fe_end(),
 ]);
 #[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 45]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 46]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_park_inventory", zif_ignis_park_inventory, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
@@ -1178,6 +1208,14 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 45]> = SyncStatic([
 
 /// `zend_module_entry` for the ignis module. Mutable because Zend writes
 /// `module_started`, `module_number`, `handle` into it at registration.
+/// An all-zero module entry, used as the base of the one below so that a field whose *name* differs
+/// between the two engine ABIs does not have to be written at all.
+// SAFETY: `zend_module_entry` is plain C data — pointers, integers and function pointers, all of
+// which have zero as a valid bit pattern (a null pointer and `None` for an `Option<extern fn>`).
+// Every field the module actually uses is written by the literal below; this only supplies the
+// rest, including the one whose name differs between the two engine ABIs.
+const ZEROED_MODULE: sys::zend_module_entry = unsafe { std::mem::zeroed() };
+
 pub static mut MODULE: sys::zend_module_entry = sys::zend_module_entry {
     size: sys::IGNIS_SIZEOF_ZEND_MODULE_ENTRY as u16,
     zend_api: sys::IGNIS_ZEND_MODULE_API_NO,
@@ -1194,7 +1232,9 @@ pub static mut MODULE: sys::zend_module_entry = sys::zend_module_entry {
     info_func: None,
     version: c"0.0.1".as_ptr(),
     globals_size: 0,
-    globals_id_ptr: ptr::null_mut(),
+    // `globals_id_ptr` (ZTS) and `globals_ptr` (NTS) occupy this slot under different names, and
+    // the module owns no globals either way, so neither is named: the zeroed base below supplies
+    // whichever one this engine's header declares (S-NTS-MODE).
     globals_ctor: None,
     globals_dtor: None,
     post_deactivate_func: None,
@@ -1203,6 +1243,7 @@ pub static mut MODULE: sys::zend_module_entry = sys::zend_module_entry {
     handle: ptr::null_mut(),
     module_number: 0,
     build_id: sys::IGNIS_ZEND_MODULE_BUILD_ID.as_ptr() as *const c_char,
+    ..ZEROED_MODULE
 };
 
 /// Replacement for `php_embed_module.startup`: identical to the stock one
@@ -1225,9 +1266,15 @@ mod tests {
         // turned into a reference, which is the whole point of `static_mut_refs`.
         unsafe {
             assert_eq!((*m).size as u64, size_of::<sys::zend_module_entry>() as u64);
-            assert_eq!((*m).zts, 1, "must be built against a ZTS PHP");
+            // The module's `zts` and the build id must agree with the engine this was compiled
+            // against, whichever of the two it is: a module whose build id does not match libphp's
+            // is refused at load with a message about the wrong API, which is exactly the check
+            // worth keeping honest on both ABIs (S-NTS-MODE).
+            let zts_expected = u8::from(cfg!(not(php_nts)));
+            assert_eq!((*m).zts, zts_expected, "the module's zts flag must match the engine it was built against");
             let bid = CStr::from_ptr((*m).build_id).to_str().unwrap();
-            assert!(bid.ends_with(",TS"), "build id {bid} is not a TS build");
+            let suffix = if cfg!(php_nts) { ",NTS" } else { ",TS" };
+            assert!(bid.ends_with(suffix), "build id {bid} does not end with {suffix}");
             assert!(bid.starts_with(&format!("API{}", (*m).zend_api)));
         }
     }

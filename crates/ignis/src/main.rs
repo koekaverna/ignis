@@ -60,6 +60,9 @@ fn main() -> ExitCode {
     // ini entry has to exist before anything is compiled.
     watch::set_supervised(flags.supervise);
     install_reload_signal(&rt, flags.supervise);
+    if let Err(code) = check_single_interpreter_flags(&flags) {
+        return code;
+    }
     metrics::mark_start();
     let mut engine = match initialize_php_engine(&args) {
         Ok(e) => e,
@@ -235,6 +238,37 @@ fn initialize_php_engine(args: &[String]) -> Result<php::embed::Engine, ExitCode
         eprintln!("{e:#}");
         ExitCode::from(1)
     })
+}
+
+/// S-NTS-MODE: a non-thread-safe engine is one interpreter per process, and it belongs to the
+/// thread that started it.
+///
+/// Three flags ask for a second PHP thread and each is refused here rather than half-working:
+/// `--threads` above 1 and `--supervise` both run the script on a spawned thread, and `--offload`
+/// is by construction "a second pool of PHP threads, each with its own TSRM context" — which is the
+/// thing NTS does not have. Refusing at startup with the usage exit code keeps this a diagnostic
+/// the operator reads, not a crash they have to bisect. The ZTS build accepts all three, so this
+/// costs nothing where it does not apply.
+#[cfg(php_nts)]
+fn check_single_interpreter_flags(flags: &RuntimeFlags) -> Result<(), ExitCode> {
+    let refused = [(flags.threads > 1, "--threads above 1"), (flags.offload > 0, "--offload"), (flags.supervise, "--supervise")];
+    for (asked, what) in refused {
+        if asked {
+            eprintln!(
+                "ignis: {what} needs a thread-safe PHP, and this binary is linked against a non-thread-safe one.\n\
+                 A non-thread-safe engine is one interpreter per process: run one process per core instead, \n\
+                 and supervise them with whatever already supervises your processes."
+            );
+            return Err(ExitCode::from(2));
+        }
+    }
+    Ok(())
+}
+
+/// The thread-safe build takes every threading flag; the check exists only for the other ABI.
+#[cfg(not(php_nts))]
+fn check_single_interpreter_flags(_flags: &RuntimeFlags) -> Result<(), ExitCode> {
+    Ok(())
 }
 
 /// ADR-0037 §4(a): universal park's failure mode is a hang, not an exception, so prove the

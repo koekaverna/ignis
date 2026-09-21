@@ -5788,3 +5788,63 @@ change in the build.
 
 **Gated** in `scripts/smoke.sh`: all three shapes under 600 ms and `answers_wrong=0`, so a
 regression to serialized execution or a lost exit status fails the run.
+
+## V-113 — NTS as a second engine mode: one interpreter per process, no offload
+
+Date: 2026-09-21. Owner: "делай сначала nts как один из режимов, без офлоад".
+
+**Why.** Every PHP a distribution ships is non-thread-safe. `deb.sury.org` publishes for this Ubuntu
+(`resolute`, HTTP 200) and carries 8.5.10 — our exact version — with `libphp8.5-embed`, and that
+build is NTS: its `libphp8.5.so` exports `executor_globals` and none of `tsrm_startup`,
+`ts_resource_ex`, `tsrm_get_ls_cache`, `executor_globals_id`, `compiler_globals_id` (ours is the
+mirror image). It also carries **85 extension packages** for 8.5 — `redis`, `mongodb`, `amqp`,
+`rdkafka`, `grpc`, `memcached`, `ssh2`, `ldap`, `solr`, `pq` — each its own `.so`, each outside the
+park policy, and none of them loadable into a TS engine. NTS is the ABI an unmodified application's
+extensions are actually built for.
+
+**What it cost.** The engine boundary was smaller than expected and is one cfg:
+
+| file | change |
+|---|---|
+| `crates/ignis-sys/build.rs` | reads `#define ZTS 1` out of the generated `php_config.h` — what the build *is*, not what the prefix is named — and exports it as `links` metadata |
+| `crates/ignis/build.rs` | re-emits it as `cfg(php_nts)`, because a build script's cfgs do not reach its dependents |
+| `php/tsrm.rs` | four accessors gain an NTS arm: `&raw mut executor_globals` instead of a TSRM cache plus a link-time offset. **This is the whole ABI difference** |
+| `php/embed.rs` | three sites that reached into TSRM by hand now go through those accessors; `WorkerThread::attach` refuses under NTS; `Drop` skips `ts_free_thread` |
+| `php/module.rs` | the module entry gets a zeroed base, so the field whose *name* differs (`globals_id_ptr` / `globals_ptr`) need not be written; the build-id assertion checks whichever suffix applies |
+| `main.rs` | `--threads` above 1, `--offload` and `--supervise` are refused with exit 2 |
+
+**Why those three flags go.** `run_workers` spawns `(1..threads)`, so at `--threads 1` PHP runs only
+on the thread that called `php_embed_init` — which is exactly what NTS wants, and why nothing
+structural had to move. The other two put PHP on a spawned thread: `--supervise` always respawns
+through `spawn_worker`, and `--offload` is by construction "a second pool of PHP threads, each with
+its own TSRM context" (`run_offload_worker` calls `WorkerThread::attach`), which is the thing NTS
+does not have.
+
+**It works, including the most invasive mechanism.**
+
+```
+hello from 8.5.10 ZTS=false
+3 concurrent 200ms sleeps in 202 ms
+scoped_semantics: a_inherited=1 a_own=1 a_list=A b_list=B b_count=2 plain_untouched=true
+                  clone_independent=true serialize_sees_props=true       ← ADR-0042 on NTS
+waitpid exec_ms=306 proc_close_ms=305 reference_ms=302 answers_wrong=0   ← V-112 on NTS
+chaos off/on app_draws identical                                          ← V-108 on NTS
+hello_server, 20 concurrent: 200 ×20
+--threads 2 / --offload 1 / --supervise: exit 2, one line each
+```
+
+**Speed: no difference this box can see.** E2 warm per-fiber µs, four runs each, interleaved — ZTS
+4.98 5.60 8.43 5.10, NTS 4.80 5.53 4.77 5.53. E1 wall ms — ZTS 1236.5 1161.4, NTS 1295.4 1169.7. The
+common claim that NTS is 5–15 % faster is **not** reproduced here, and neither is the opposite; the
+first NTS run looked slower and that was a cold build.
+
+**One operational hazard, found by tripping over it.** Both prefixes install a `libphp.so` with the
+same soname, and `LD_LIBRARY_PATH` beats the binary's RUNPATH. The project's standard
+`LD_LIBRARY_PATH=/opt/php85-zts/lib` therefore makes the NTS binary load the ZTS library and die in
+the loader: `symbol lookup error: undefined symbol: executor_globals`. Loud, immediate, and before
+any of our code runs — but the message does not say what is wrong. Run the NTS binary with the
+variable **unset** and let its RUNPATH do the work.
+
+Build: `scripts/build-php-nts.sh` then
+`PHP_CONFIG=/opt/php85-nts/bin/php-config CARGO_TARGET_DIR=target-nts cargo build --release -p ignis`.
+The ZTS gate is green with all of this in it.

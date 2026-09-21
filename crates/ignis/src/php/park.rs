@@ -34,7 +34,7 @@
 //! The module is gated by `php/mod.rs`; no inner attribute is needed here.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -62,6 +62,25 @@ static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 /// every row lock-free). Anything libphp calls that is not listed stays `block`; `getaddrinfo`
 /// has no fd and is offload's, not park's.
 const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libphp:flock,libphp:waitpid,libcurl,libpq,libssl,libcrypto";
+
+/// Every `(library, symbol)` pair that has actually made an interposed call in this process, and
+/// whether the policy let it park.
+///
+/// The policy is a whitelist of shared objects, so a library nobody listed blocks the OS thread and
+/// says nothing about it — and which libraries an application even has is a property of its
+/// deployment, not of this repository: a PECL extension is its own `.so`, and `deb.sury.org` ships
+/// 85 of them for PHP 8.5. Guessing the list is therefore not possible and reading it off a running
+/// process is, because `site_parks` already resolves the calling object through `dladdr`. This is
+/// that resolution, kept.
+///
+/// Written on the cache-miss path only — once per distinct call site, never per call — so the cost
+/// is the same `dladdr` that was already being paid.
+static INVENTORY: Mutex<BTreeMap<String, BTreeMap<String, bool>>> = Mutex::new(BTreeMap::new());
+
+/// What has called us so far, library by library. `false` means the call blocked the thread.
+pub fn inventory() -> BTreeMap<String, BTreeMap<String, bool>> {
+    INVENTORY.lock_unpoisoned().clone()
+}
 
 /// Set only while the boot self-check probes: makes `site_parks` record which library each
 /// resolved call site came from, so the check can prove a third-party `.so` really binds to us.
@@ -113,7 +132,7 @@ pub fn policy_summary() -> String {
         return "off".into();
     }
     let mut whole: Vec<&str> = Vec::new();
-    let mut scoped: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut scoped: BTreeMap<&str, usize> = BTreeMap::new();
     for (lib, sym) in libs() {
         match sym {
             None => whole.push(lib.as_str()),
@@ -183,6 +202,7 @@ unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
             if PROBING.load(Ordering::Relaxed) && parks {
                 PROBE_HITS.lock_unpoisoned().push(base.clone());
             }
+            INVENTORY.lock_unpoisoned().entry(base.clone()).or_default().insert(sym.to_string(), parks);
             trace(&format!("site {key:#x} {sym} from {base}: parks={parks}"));
             parks
         } else {

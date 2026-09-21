@@ -8,6 +8,14 @@ fn main() {
     if std::env::var("DEP_PHP_HAS_ASYNC_ABI").as_deref() == Ok("1") {
         println!("cargo:rustc-cfg=php_async_abi");
     }
+    // S-NTS-MODE: which engine ABI ignis-sys generated bindings for. A build script's own cfgs do
+    // not reach the crates that depend on it, so the fact travels as `links` metadata and is
+    // re-emitted here.
+    println!("cargo:rustc-check-cfg=cfg(php_nts)");
+    println!("cargo:rerun-if-env-changed=DEP_PHP_ZTS");
+    if std::env::var("DEP_PHP_ZTS").as_deref() == Ok("0") {
+        println!("cargo:rustc-cfg=php_nts");
+    }
     configure_universal_park();
     forward_temporal_descriptor_path();
 }

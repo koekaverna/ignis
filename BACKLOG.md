@@ -455,6 +455,34 @@ stands on), and `bench/wrk-hello.sh` within this box's ±6.7 % spread. No candid
 without those three numbers.
 **Constraints.** `main`. Never in the same commit as a behaviour change.
 
+### S-NTS-MODE A second engine ABI: non-thread-safe PHP, one interpreter per process `main` `built 2026-09-21 (V-113), open for what it still lacks`
+**What is built.** `scripts/build-php-nts.sh` → `/opt/php85-nts`, and
+`PHP_CONFIG=/opt/php85-nts/bin/php-config CARGO_TARGET_DIR=target-nts cargo build --release -p ignis`
+produces a binary that serves on one PHP thread with `cfg(php_nts)`. The whole ABI difference is four
+accessors in `php/tsrm.rs`; `--threads` above 1, `--offload` and `--supervise` are refused at startup
+with exit 2. Measured working: fibers, parking, ADR-0042 fiber-scoped objects, V-108, V-112, an HTTP
+server at 20/20 concurrent. No speed difference this box can resolve.
+**Why it exists.** Every distribution PHP is NTS, and `deb.sury.org` ships 85 extension packages for
+8.5 that a TS engine cannot load at all. That is the population `S-PARK-PROBE-COVERAGE` needs.
+**What it still lacks, in the order it will hurt.**
+(a) **No gate.** `scripts/gate.sh` builds and tests the ZTS binary only. Until the NTS build is in
+CI it will rot, and the owner's own direction (DECISIONS.md 2026-09-20) was that the ABI question is
+a matrix question.
+(b) **No offload replacement.** Everything that cannot park — every regular file, `SQLite3` — blocks
+the single PHP thread instead of a worker. On one thread per process that is one request of M
+fibers, not N threads, but it is strictly worse than the ZTS build for file I/O and nothing measures
+how much.
+(c) **No supervision.** The ZTS build respawns a dead PHP thread inside 50 ms with the process still
+serving (V-17). NTS has to be supervised as a process, by something outside this binary.
+(d) **`LD_LIBRARY_PATH` cross-links the two builds.** Both prefixes install a `libphp.so` with the
+same soname and the variable beats RUNPATH, so the project's standard
+`LD_LIBRARY_PATH=/opt/php85-zts/lib` kills the NTS binary in the loader with `undefined symbol:
+executor_globals`. Loud but unexplained; a startup check that names the mismatch would cost a line.
+**Acceptance for closing it.** (a) in `scripts/gate.sh` and `ci.yml`; (b) a number for what file I/O
+costs a single-threaded NTS worker under a real application; (d) a diagnostic that says which engine
+the binary wants and which one it found.
+**Constraints.** `main` — it touches `crates/ignis/src/php/**` and the FFI boundary.
+
 ### S-PARK-PROBE-COVERAGE The park self-check covers two of the policy's four libraries and reports `ok` `main` `open — measured 2026-09-20 (V-110)`
 **What.** `park::selfcheck()` proves that a third-party library's own code reaches the interposed libc
 symbols, because universal park's failure mode is a hang and not an exception — if `libcurl` does not

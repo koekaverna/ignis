@@ -140,25 +140,19 @@ const SENTINEL: i32 = i32::MIN;
 unsafe fn set_exit_status(v: i32) {
     // SAFETY: the caller upholds `# Safety` above, so this thread has a TSRM context and the offset
     // into it is the one the linked libphp reports; the field is a plain int owned by that thread.
-    unsafe {
-        let base = sys::tsrm_get_ls_cache() as *mut u8;
-        let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
-        (*eg).exit_status = v as _;
-    }
+    // SAFETY: the caller upholds `# Safety`; `tsrm::executor_globals()` is the one place that knows
+    // whether these globals are per thread or per process, and the field is a plain int.
+    unsafe { (*super::tsrm::executor_globals()).exit_status = v as _ }
 }
 
-/// `EG(exit_status)` without the macro: read through the executor globals
-/// exported by TSRM. In a ZTS build the macro expands to
-/// `((zend_executor_globals*)(((char*)tsrm_get_ls_cache()) + executor_globals_offset))->exit_status`.
+/// `EG(exit_status)` without the macro, through the one accessor that knows which engine this is
+/// (`tsrm::executor_globals`): a TSRM cache plus an offset under ZTS, a plain symbol under NTS.
 unsafe fn exit_status() -> i32 {
     // SAFETY: on a PHP thread after startup, tsrm_get_ls_cache() is the
     // thread's resource block and executor_globals_offset is the fast-id
     // offset assigned at zend_startup. Same expression as the EG() macro.
-    unsafe {
-        let base = sys::tsrm_get_ls_cache() as *mut u8;
-        let eg = base.add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
-        (*eg).exit_status as i32
-    }
+    // SAFETY: as `set_exit_status`.
+    unsafe { (*super::tsrm::executor_globals()).exit_status }
 }
 
 /// A non-main PHP thread (ADR-0004). Created on the thread it will run on.
@@ -172,6 +166,17 @@ pub struct WorkerThread {
 }
 
 impl WorkerThread {
+    /// Under NTS there is exactly one interpreter in the process and it belongs to the thread that
+    /// started it, so there is no second context to allocate and this must never be reached: the
+    /// entry points that would call it are refused at startup (`--threads` above 1, `--offload`,
+    /// `--supervise`). Answering with an error rather than a panic keeps that a startup diagnostic
+    /// instead of a crash, and keeps the type identical across the two builds.
+    #[cfg(php_nts)]
+    pub fn attach() -> Result<WorkerThread> {
+        bail!("this build is linked against a non-thread-safe PHP: a second PHP thread cannot exist")
+    }
+
+    #[cfg(not(php_nts))]
     pub fn attach() -> Result<WorkerThread> {
         // SAFETY: called on a fresh OS thread after php_embed_init completed on
         // the main thread (the caller guarantees ordering via thread spawn order).
@@ -218,6 +223,9 @@ impl Drop for WorkerThread {
         // SAFETY: mirrors attach(); on the owning thread.
         unsafe {
             sys::php_request_shutdown(std::ptr::null_mut());
+            // No per-thread context to release under NTS, and `attach()` refuses to make one, so
+            // this type never exists there — the arm is here to keep `Drop` identical in both builds.
+            #[cfg(not(php_nts))]
             sys::ts_free_thread();
         }
     }
@@ -252,7 +260,7 @@ fn run_file_on_current_thread(path: &Path) -> Result<i32> {
     let status = unsafe {
         revalidate_every_include();
         // Like php-cli: a `#!` first line on the primary script is skipped (E15b: vendor/bin/phpunit).
-        let cg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::compiler_globals_offset) as *mut sys::zend_compiler_globals;
+        let cg = super::tsrm::compiler_globals();
         (*cg).skip_shebang = true;
         let mut fh: sys::zend_file_handle = std::mem::zeroed();
         sys::zend_stream_init_filename(&mut fh, cpath.as_ptr());
@@ -306,7 +314,7 @@ pub unsafe fn fix_php_binary(module_number: std::ffi::c_int) {
     // SAFETY: MINIT on the main thread, before zend_post_startup copies the constants table for
     // other threads; the strings are permanent interned strings and never freed.
     unsafe {
-        let eg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::executor_globals_offset) as *mut sys::zend_executor_globals;
+        let eg = super::tsrm::executor_globals();
         let Some(intern) = sys::zend_string_init_interned else { return };
         sys::zend_hash_str_del((*eg).zend_constants, c"PHP_BINARY".as_ptr(), 10);
         let mut c: sys::zend_constant = std::mem::zeroed();
@@ -316,7 +324,7 @@ pub unsafe fn fix_php_binary(module_number: std::ffi::c_int) {
         // ZEND_CONSTANT_SET_FLAGS(&c, CONST_PERSISTENT, module_number)
         c.value.u2.constant_flags = ((module_number as u32) << 16) | 1;
         sys::zend_register_constant(&mut c);
-        let pg = (sys::tsrm_get_ls_cache() as *mut u8).add(sys::core_globals_offset) as *mut sys::_php_core_globals;
+        let pg = super::tsrm::core_globals();
         // PG(php_binary) is read by proc_open-of-PHP helpers; core_globals_dtor free()s it, so it
         // must come from libc's allocator, not Rust's (mimalloc): strdup.
         if let Ok(c) = CString::new(exe) {

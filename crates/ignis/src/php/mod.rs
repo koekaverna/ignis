@@ -13,6 +13,11 @@ pub mod park {
     pub fn policy_summary() -> String {
         "off".to_string()
     }
+
+    /// Nothing is interposed in this build, so nothing has been observed calling us.
+    pub fn inventory() -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, bool>> {
+        Default::default()
+    }
 }
 pub mod embed;
 pub mod locklib;
