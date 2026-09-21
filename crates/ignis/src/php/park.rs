@@ -203,6 +203,21 @@ unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
 /// its keep-alive socket parked for data the server would never send (H31 at the syscall layer:
 /// readiness is not what the caller asked for). A regular file cannot be parked on either (epoll
 /// refuses it).
+///
+/// The question this answers is "is readiness meaningful for this descriptor", and the kernel's own
+/// answer is whether `epoll_ctl` accepts it. Measured on 6.18 (`S_IFMT` → `epoll_ctl`): regular
+/// file, directory, `/dev/null`, `/dev/zero` and `memfd` are all `EPERM`; pipes, sockets and every
+/// **anonymous inode** are accepted. The last group is the one this used to get wrong. `eventfd`,
+/// `timerfd`, `epoll`, `signalfd`, `inotify` and `pidfd` all report `S_IFMT == 0`, a value no real
+/// file type has, and answering "cannot park" for them blocked the whole OS thread on descriptors
+/// the reactor could have waited on perfectly well — which is what a library carrying its own event
+/// loop blocks on (libevent, libuv, the grpc extension). Note that character devices are *not* in
+/// the group: `/dev/null` is `EPERM`, so no blanket rule by device class would have been right.
+/// What `fstat` reports for a descriptor with no file behind it — `eventfd`, `timerfd`, `epoll`,
+/// `signalfd`, `inotify`, `pidfd`. Linux gives these an anonymous inode whose `S_IFMT` is zero,
+/// which no real file type uses, so the value identifies the class exactly.
+const ANONYMOUS_INODE: libc::mode_t = 0;
+
 unsafe fn would_block(fd: c_int) -> bool {
     // SAFETY: F_GETFL takes no pointer and validates the descriptor itself, returning -1 for a bad
     // one -- which is handled on the next line.
@@ -217,7 +232,7 @@ unsafe fn would_block(fd: c_int) -> bool {
         return false;
     }
     let kind = st.st_mode & libc::S_IFMT;
-    if kind == libc::S_IFIFO {
+    if kind == libc::S_IFIFO || kind == ANONYMOUS_INODE {
         return true;
     }
     if kind != libc::S_IFSOCK {
@@ -1192,6 +1207,65 @@ mod tests {
 
         // SAFETY: as above; a zero-second sleep returns immediately with nothing left unslept.
         assert_eq!(unsafe { ignis_park_sleep(here, 0) }, 0, "nothing was interrupted, so nothing is owed");
+    }
+
+    /// Whether a descriptor can park is the question "is readiness meaningful for it", and the
+    /// kernel's own answer is whether `epoll_ctl` will accept it. So each descriptor is asked both
+    /// ways and the two must agree, rather than a table of file types being written down here —
+    /// a table would say nothing on the next kernel, and the matrix is where this has to hold.
+    ///
+    /// Sockets are excluded on purpose: `would_block` deliberately says *no* for a listening or
+    /// unconnected socket that `epoll` would accept, because readiness there is not "the call would
+    /// succeed" (A4's rule, ADR-0018).
+    #[test]
+    fn a_descriptor_parks_exactly_when_the_kernel_says_readiness_is_meaningful() {
+        // SAFETY: every descriptor below is created here, used only through libc calls that
+        // validate it, and closed at the end; `would_block` reads nothing but the descriptor.
+        unsafe {
+            let epoll = libc::epoll_create1(0);
+            assert!(epoll >= 0, "no epoll on this kernel: nothing here can be checked");
+            let accepts = |fd: c_int| {
+                let mut event = libc::epoll_event { events: libc::EPOLLIN as u32, u64: 0 };
+                libc::epoll_ctl(epoll, libc::EPOLL_CTL_ADD, fd, &mut event) == 0
+            };
+
+            let path = std::ffi::CString::new(std::env::temp_dir().join("ignis-park-fdkind").to_string_lossy().as_ref()).unwrap();
+            let regular = libc::open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
+            let directory = libc::open(c"/tmp".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY);
+            let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+            let mut pipe_fds = [0 as c_int; 2];
+            assert_eq!(libc::pipe(pipe_fds.as_mut_ptr()), 0);
+            let event = libc::eventfd(0, 0);
+            let timer = libc::timerfd_create(libc::CLOCK_MONOTONIC, 0);
+            let nested = libc::epoll_create1(0);
+
+            let cases: [(&str, c_int); 7] = [
+                ("a regular file", regular),
+                ("a directory", directory),
+                ("/dev/null", null),
+                ("a pipe", pipe_fds[0]),
+                ("an eventfd", event),
+                ("a timerfd", timer),
+                ("an epoll descriptor", nested),
+            ];
+            for (what, fd) in cases {
+                assert!(fd >= 0, "{what} could not be created");
+                assert_eq!(would_block(fd), accepts(fd), "{what}: park eligibility and what epoll accepts must be the same answer");
+            }
+
+            // Named outright as well, so this still says something on a kernel where epoll is
+            // uniformly permissive and the agreement above becomes vacuous.
+            assert!(!would_block(regular), "a regular file blocks: epoll refuses it (EPERM)");
+            assert!(!would_block(null), "and so does a character device with no readiness");
+            assert!(would_block(event), "an eventfd is an anonymous inode and parks");
+            assert!(would_block(timer), "so is a timerfd");
+            assert!(would_block(nested), "so is an epoll descriptor — a library's own event loop");
+
+            for fd in [regular, directory, null, pipe_fds[0], pipe_fds[1], event, timer, nested, epoll] {
+                libc::close(fd);
+            }
+            libc::unlink(path.as_ptr());
+        }
     }
 
     #[test]

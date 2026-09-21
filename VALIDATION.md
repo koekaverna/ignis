@@ -5643,3 +5643,49 @@ the failing run, the same trap that produced two false greens earlier in this cy
 
 Now in `smoke.sh`, so CI runs it. `libcrypto` still has no behavioural arm of its own, and the boot
 self-check still names no gap — both filed as `S-PARK-PROBE-COVERAGE`.
+
+## V-111 — a whole class of waitable descriptor was blocking the thread: anonymous inodes
+
+Date: 2026-09-21. Found answering "what would it take to park everything": the eligibility test asked
+the wrong question.
+
+`would_block()` decided a descriptor could park if it was a FIFO or a socket. The question it means
+to ask is "is readiness meaningful for this descriptor", and the kernel's own answer to that is
+whether `epoll_ctl` accepts it. Measured on 6.18 (`S_IFMT` → `epoll_ctl`):
+
+| descriptor | `S_IFMT` | `epoll_ctl` |
+|---|---|---|
+| regular file | `0100000` | **EPERM** |
+| directory | `0040000` | **EPERM** |
+| `/dev/null`, `/dev/zero` | `0020000` | **EPERM** |
+| `memfd` | `0100000` | **EPERM** |
+| pipe | `0010000` | accepts |
+| socket | `0140000` | accepts |
+| **eventfd, timerfd, epoll, pidfd, signalfd, inotify** | **`0`** | **accepts** |
+
+Every anonymous inode reports `S_IFMT == 0`, a value no real file type uses, and epoll takes all of
+them — so a blocking call on one is exactly what park exists for, and we were blocking the whole OS
+thread on it instead. That is what a library carrying its own event loop waits on: libevent and
+`ext-event`, libuv, the grpc extension, php-ev. Character devices are **not** in the class — a
+blanket rule by device kind would have been wrong, because `/dev/null` is `EPERM`.
+
+**The test derives the truth from the kernel rather than restating the table above.** For each
+descriptor it asks `epoll_ctl` and `would_block` and requires the same answer, so it says something
+on a kernel this box does not have — which is where it has to hold, since the coverage question is a
+matrix question (DECISIONS.md 2026-09-20). Sockets are excluded on purpose: `would_block` says *no*
+for a listening or unconnected socket that epoll would accept (A4's rule, ADR-0018).
+
+**Falsified**: with the old condition restored the test fails on the first anonymous inode —
+*"an eventfd: park eligibility and what epoll accepts must be the same answer"* — and passes again
+with it back.
+
+**And the chain past the decision was verified, not assumed.** Being wrong here is worse than the
+blocking it replaces: a park the reactor cannot complete is a hang. `Reactor::submit(Op::Watch)` on a
+real `eventfd` stays pending, wakes on an 8-byte write, and completes `Outcome::Ready`
+(`reactor.rs`). If epoll ever did refuse one, the degradation is safe rather than fatal: the refusal
+arrives as a completion, `park_io` answers `Wait::Ready`, and the caller falls through to the real
+blocking syscall — the behaviour that existed before this change.
+
+Not claimed: no behavioural arm through PHP, because stock PHP opens none of these descriptors. The
+end-to-end machinery below the decision is the same one E6/E13/E18 already gate for pipes and
+sockets; what was new is the decision, and that is what the two tests cover.

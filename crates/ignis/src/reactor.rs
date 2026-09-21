@@ -786,6 +786,35 @@ mod tests {
         assert!(r.poll(Some(Duration::from_millis(50))).is_empty());
     }
 
+    /// An anonymous-inode descriptor — `eventfd`, `timerfd`, `epoll`, `pidfd` — must really be
+    /// waitable here, because `park.rs` began treating them as parkable on 2026-09-21 and the cost
+    /// of being wrong is worse than the blocking it replaces: a park the reactor cannot complete is
+    /// a hang, not a slow call. `AsyncFd` is epoll underneath and epoll accepts these (measured, all
+    /// `S_IFMT == 0`), so this is the end of that chain rather than an assumption about it.
+    #[test]
+    fn an_anonymous_inode_descriptor_is_really_waitable_and_not_only_eligible() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        // SAFETY: eventfd(2) takes no pointers and returns a descriptor this test owns and closes.
+        let event = unsafe { libc::eventfd(0, 0) };
+        assert!(event >= 0, "eventfd unavailable");
+
+        let watch = r.submit(Op::Watch { fd: event, write: false });
+        assert!(r.poll(Some(Duration::from_millis(150))).is_empty(), "nothing has been written, so it is not ready");
+
+        let one: u64 = 1;
+        // SAFETY: writing the eight bytes an eventfd counter takes, from a live local of that size.
+        let written = unsafe { libc::write(event, (&raw const one).cast(), 8) };
+        assert_eq!(written, 8);
+
+        let completions = r.poll(Some(Duration::from_secs(2)));
+        assert_eq!(completions.len(), 1, "the write must wake the watch");
+        assert_eq!(completions[0].id, watch);
+        assert!(matches!(completions[0].outcome, Outcome::Ready), "got {:?}", completions[0].outcome);
+        // SAFETY: closing a descriptor this test owns and no longer uses.
+        unsafe { libc::close(event) };
+    }
+
     #[test]
     fn a_cancelled_watch_completes_both_ops() {
         use std::os::fd::AsRawFd;
