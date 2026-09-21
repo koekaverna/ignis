@@ -5958,3 +5958,42 @@ happens inside a C driver, below PHP, keyed by a connection string the applicati
 as identity.
 
 The ZTS gate is green with the `poll` fix; E6 (336 ms concurrent) and E13 (0 mismatches) unmoved.
+
+## V-115 — mongodb fixed: two application-side lines, no runtime change
+
+Date: 2026-09-21. Owner: "можешь починить монгу чтобы не было проблемы?" — yes, and nothing in the
+runtime had to change.
+
+V-114 established the cause: the PHP driver returns one `mongoc_client_t` per connection string, and
+libmongoc is not re-entrant, so two fibers inside one client leave a socket that never becomes ready.
+Two things compose into a fix, and **both are needed**:
+
+1. **`['disableClientPersistence' => true]`** in the Manager's driver options. It is a supported
+   option — the extension's own strings say "Stored persistent client with hash: %s" against
+   "Destroying non-persistent client for Manager" — and it stops the URI being the client's
+   identity. There is no ini for it (`mongodb.debug` is the only setting the driver registers), so
+   it is passed per Manager.
+2. **A fiber-scoped holder** (ADR-0042). Without one, the application caches its single Manager in an
+   ordinary property and every fiber gets that one again — the driver option alone changes nothing.
+   With `Scope::create()`, `$manager` lives per fiber: each fiber builds its own client once and
+   keeps it, so disabling persistence costs no reconnect.
+
+Measured, three concurrent one-second server-side sleeps, **the same URI in every fiber** as an
+application would actually write it:
+
+| holder | policy | |
+|---|---|---|
+| plain, one Manager for all fibers | blocked | 3009 ms |
+| plain, one Manager for all fibers | parked | **12010 ms** — the pathology |
+| fiber-scoped + `disableClientPersistence` | blocked | 3019 ms |
+| fiber-scoped + `disableClientPersistence` | **parked** | **1006 ms** |
+
+And it holds across rounds, which is what says the client is kept rather than rebuilt: 1006, 1003,
+1002 ms for three successive rounds.
+
+**The general shape, which is the part worth carrying.** This is `S-SINGLETON-CAPTURE` one floor
+down: an object that must not be shared between fibers, shared — except the sharing happens inside a
+C driver, keyed by a connection string the application never thinks of as identity. The fix is the
+same shape as everywhere else in this runtime: scope the thing that must not be shared, and stop
+whatever else is handing out one copy. Any driver with a client registry — libmongoc here, and worth
+checking for `librdkafka`, `libmemcached`, `libssh2` — will want the same two lines.

@@ -43,6 +43,62 @@ naming what may park; unset means the built-in seed — 16 `libphp:` symbols (th
 running `ignis serve`, which prints the resolved policy in its startup banner
 (`park=libcurl,libpq,libssl,libcrypto,libphp:16 symbols`); empty means nothing parks.
 
+## Third-party extensions and universal park
+
+An extension installed from PECL or a distribution is its own shared object, and universal park's
+policy is a whitelist of shared objects — so the first question for any of them is whether it makes
+a blocking call **itself** or delegates.
+
+Most delegate, and are already covered. Of the 86 extension `.so` files `deb.sury.org` ships for PHP
+8.5, 66 make no interposed call at all: their I/O goes through PHP's stream layer, which lives in
+`libphp` and is in the default policy. `phpredis` is the example worth knowing — it imports twelve
+`php_stream_*` symbols and no socket syscall, so it parks with nothing added (V-114).
+
+Twenty do make their own calls, `mongodb`, `grpc` and `xdebug` most of all. Those need a row:
+
+```
+IGNIS_PARK=<the default seed>,mongodb
+```
+
+and the row needs to be earned, because a library that holds a lock across a blocking call
+**deadlocks** under `park` (V-51). Run your own workload and read what actually happened:
+
+```php
+foreach (ignis_park_inventory() as $library => $calls) {
+    foreach ($calls as $call => $parks) {
+        printf("%-16s %-12s %s\n", $library, $call, $parks ? 'parks' : 'BLOCKED THE THREAD');
+    }
+}
+```
+
+Note that the answer depends on how PHP was built, not only on the application: `pdo_pgsql`, `pgsql`
+and `mysqlnd` are compiled into libphp in the images this project builds and are separate `.so` files
+in a distribution build, so the same call site is covered in one and not the other.
+
+### A worked example: mongodb
+
+`mongodb` parks and scales linearly once listed — 1006 ms for three, four or six concurrent
+one-second operations against 3018/4025/6035 blocked — **provided no libmongoc client is shared
+between fibers**. The driver returns one client per connection string and libmongoc is not
+re-entrant, so the common shape (the same URI everywhere) measures 12010 ms parked against 3012
+blocked: worse than not listing it at all. Two lines fix it, and both are needed (V-115):
+
+```php
+#[\Ignis\Symfony\Attribute\FiberScoped]        // or Ignis\Scope::create(...) outside Symfony
+final class MongoConnection
+{
+    private ?\MongoDB\Driver\Manager $manager = null;   // per fiber, so one client each
+
+    public function manager(): \MongoDB\Driver\Manager
+    {
+        return $this->manager ??= new \MongoDB\Driver\Manager(
+            $this->uri,
+            [],
+            ['disableClientPersistence' => true],          // stop the URI being the client's identity
+        );
+    }
+}
+
 ## Databases: what parks, what is pooled, and the one choice you have to make
 
 | driver | mechanism | why |
