@@ -33,6 +33,10 @@ unsafe impl Sync for Argv {}
 unsafe impl Send for Argv {}
 static ARGV: std::sync::OnceLock<Argv> = std::sync::OnceLock::new();
 
+/// Only a second PHP thread needs this: `php_build_argv` reads `SG(request_info)` at request
+/// startup, so an attached thread has to be given the main thread's. Under NTS there is no second
+/// thread and `attach()` refuses, so nothing reads it there.
+#[cfg(not(php_nts))]
 fn php_argv() -> &'static Argv {
     ARGV.get().expect("Engine::init before WorkerThread::attach")
 }

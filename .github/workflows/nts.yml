@@ -1,0 +1,81 @@
+# S-NTS-MODE: the non-thread-safe engine ABI is behind `cfg(php_nts)`, so nothing in ci.yml
+# compiles it and nothing on a developer's box does either — the exact shape that let backend (b)
+# stop compiling silently (see backend-b.yml's own header). It exists because every PHP a
+# distribution ships is NTS: deb.sury.org has no thread-safe build of any version, embed included,
+# and its 85 extension packages cannot be loaded by a thread-safe engine at all (V-113).
+#
+# Correctness, not performance, so not nightly.yml. Not ci.yml either, because building php-src
+# takes minutes and this ABI changes on PHP's schedule, not on ours. Scheduled, with
+# workflow_dispatch for when someone is working on it.
+name: nts
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  NTS_PREFIX: /opt/php85-nts
+
+jobs:
+  build:
+    name: the non-thread-safe ABI builds and serves
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the built engine
+        id: engine
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NTS_PREFIX }}
+          key: php-nts-${{ hashFiles('scripts/build-php-nts.sh') }}
+
+      - name: Build a non-thread-safe PHP
+        run: PREFIX="$NTS_PREFIX" timeout 3600 scripts/build-php-nts.sh
+
+      # What the whole job is written against. A prefix that is quietly thread-safe would make every
+      # later step pass while proving nothing, because `cfg(php_nts)` would simply be off.
+      - name: it really is non-thread-safe
+        run: |
+          "$NTS_PREFIX/bin/php" -r 'exit(PHP_ZTS ? 1 : 0);'
+          nm -D --defined-only "$NTS_PREFIX/lib/libphp.so" | grep -qw executor_globals
+          ! nm -D --defined-only "$NTS_PREFIX/lib/libphp.so" | grep -qw tsrm_startup
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # The unit suite needs a process per test; ci.yml installs nextest the same way.
+      - uses: taiki-e/install-action@nextest
+
+      # Every step below unsets LD_LIBRARY_PATH on purpose. Both prefixes install a `libphp.so` with
+      # the same soname and the variable beats the binary's RUNPATH, so the image's own
+      # LD_LIBRARY_PATH would make the NTS binary load the thread-safe library and die in the loader
+      # with `undefined symbol: executor_globals` (V-113). The RUNPATH is what must do the work here.
+      - name: clippy
+        run: |
+          env -u LD_LIBRARY_PATH PHP_CONFIG="$NTS_PREFIX/bin/php-config" CARGO_TARGET_DIR=target-nts \
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: cargo build --release
+        run: |
+          env -u LD_LIBRARY_PATH PHP_CONFIG="$NTS_PREFIX/bin/php-config" CARGO_TARGET_DIR=target-nts \
+            cargo build --release -p ignis
+
+      - name: unit tests against the non-thread-safe engine (nextest — these need a process each)
+        run: |
+          env -u LD_LIBRARY_PATH PHP_CONFIG="$NTS_PREFIX/bin/php-config" CARGO_TARGET_DIR=target-nts \
+            cargo nextest run --workspace --locked
+
+      # Compiling and linking is the floor. These are the claims V-113 actually made, and each one
+      # is a thing that would break without anything failing to build.
+      - name: it serves, parks, and scopes
+        run: env -u LD_LIBRARY_PATH scripts/nts-checks.sh

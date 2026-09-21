@@ -62,6 +62,9 @@ jobs:
         with:
           components: clippy
 
+      # The unit suite needs a process per test; ci.yml installs nextest the same way.
+      - uses: taiki-e/install-action@nextest
+
       # Compiling is the floor, not the gate: a file can compile and still be wrong. clippy with
       # the same -D warnings ci.yml uses is what actually caught the last breakage in feature-gated
       # code (2026-09-19, backend/temporal.rs), so it runs here too.
@@ -83,10 +86,15 @@ jobs:
       # V-8 measured E1 on engine coroutines through this backend. Running the unit suite is not
       # that, and does not claim to be — it is the cheapest proof that the binary this job just
       # built is a working one rather than merely a linked one.
-      - name: unit tests against the fork
+      # nextest, not `cargo test`: these tests need a process each. Plain `cargo test` runs them
+      # in threads of one process and twelve fail on shared state — measured on the ordinary ZTS
+      # build too, so this was never about the fork. This job had not run once since it was added
+      # (2026-09-20, A-BACKEND-B-CI), so the step had never been exercised; ci.yml has always used
+      # nextest and that is why nobody noticed.
+      - name: unit tests against the fork (nextest — these need a process each)
         run: |
           PHP_CONFIG="$ASYNC_PREFIX/bin/php-config" CARGO_TARGET_DIR=target-async \
-          LD_LIBRARY_PATH="$ASYNC_PREFIX/lib" cargo test --workspace --locked
+          LD_LIBRARY_PATH="$ASYNC_PREFIX/lib" cargo nextest run --workspace --locked
 
       # R-TA-CONTEXT and R-TA-REQUEST-SCOPE both need to read the fork's headers. Publishing them
       # means the next person answering those does it against a revision this job names, instead

@@ -465,9 +465,12 @@ server at 20/20 concurrent. No speed difference this box can resolve.
 **Why it exists.** Every distribution PHP is NTS, and `deb.sury.org` ships 85 extension packages for
 8.5 that a TS engine cannot load at all. That is the population `S-PARK-PROBE-COVERAGE` needs.
 **What it still lacks, in the order it will hurt.**
-(a) **No gate.** `scripts/gate.sh` builds and tests the ZTS binary only. Until the NTS build is in
-CI it will rot, and the owner's own direction (DECISIONS.md 2026-09-20) was that the ABI question is
-a matrix question.
+~~(a) No gate.~~ **Done 2026-09-21**: `.github/workflows/nts.yml` (scheduled + dispatch, modelled on
+`backend-b.yml` because building an engine does not belong in `ci.yml`) and a step in
+`scripts/gate.sh` that runs when `/opt/php85-nts` is present and names the gap when it is not.
+`scripts/nts-checks.sh` is the acceptance: the engine really is non-thread-safe, fibers park, ADR-0042
+holds, `waitpid` parks, the three threading flags are refused with exit 2 *and* say why, and a stale
+`LD_LIBRARY_PATH` fails loudly in the loader. Falsified against the ZTS binary — 8 failures, exit 1.
 (b) **No offload replacement.** Everything that cannot park — every regular file, `SQLite3` — blocks
 the single PHP thread instead of a worker. On one thread per process that is one request of M
 fibers, not N threads, but it is strictly worse than the ZTS build for file I/O and nothing measures
