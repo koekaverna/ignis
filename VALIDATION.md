@@ -5997,3 +5997,49 @@ C driver, keyed by a connection string the application never thinks of as identi
 same shape as everywhere else in this runtime: scope the thing that must not be shared, and stop
 whatever else is handing out one copy. Any driver with a client registry — libmongoc here, and worth
 checking for `librdkafka`, `libmemcached`, `libssh2` — will want the same two lines.
+
+## V-116 — pdo_mysql needs no policy row, and scales to 100 concurrent queries on one thread
+
+Date: 2026-09-21. Measured only because the NTS mode exists: this project's own PHP is built without
+any MySQL support (`php -m | grep -c mysql` → 0), so `mysqlnd.so`, `pdo_mysql.so` and `mysqli.so`
+came from `deb.sury.org` and loaded into our NTS build unchanged. MySQL 8.4.11 in docker.
+
+**It already parks, with nothing added.** Three concurrent `SELECT SLEEP(1)`, one PDO per fiber:
+**1006 ms** on the default policy, and **1005 ms** with `mysqlnd` added — no difference, because the
+row does nothing. `ignis_park_inventory()` lists no `mysql*` object at all; the calls are
+`libphp.so`'s `connect`, `poll`, `recv`, `send`, all parking.
+
+Why: `mysqlnd.so` imports **14 `php_stream_*` symbols** and its network I/O goes through PHP's stream
+layer, which is in the default policy. It does import `select`, which is what the static triage in
+V-114 flagged it on — and it never calls it on the query path.
+
+**That is the methodological correction.** `nm` says what a library *could* call; it over-predicts.
+`ignis_park_inventory()` says what it *did*. The static triage is a candidate list, and three of its
+candidates so far — `redis`, `mysqlnd`, `pgsql` — turn out to need nothing. The inventory is the
+answer and the symbol table is only the question.
+
+**It scales flat, on one PHP thread:**
+
+| concurrent `SELECT SLEEP(1)` | wall |
+|---|---|
+| 1 | 1008 ms |
+| 6 | 1008 ms |
+| 10 | 1151 ms |
+| 25 | 1031 ms |
+| 50 | 1069 ms |
+| **100** | **1116 ms** |
+
+A hundred one-second queries in 1.1 seconds, where a process-per-request model would take a hundred
+seconds or a hundred processes.
+
+**The precondition, and it fails the right way.** One PDO per fiber is required, and sharing one
+across fibers does not degrade quietly the way a shared libmongoc client does (V-115) — mysqlnd's own
+protocol guard fires at once:
+
+```
+PDOException: SQLSTATE[HY000]: General error: 2014 Cannot execute queries while other
+unbuffered queries are active.
+```
+
+Loud, immediate, and pointing at the real mistake. Worth contrasting with mongodb, where the same
+mistake cost four times the wall clock and said nothing.
