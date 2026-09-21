@@ -101,18 +101,34 @@ fn park_failed(what: &str) {
 
 /// `IGNIS_PARK_TRACE=1`: one stderr line per decision, for diagnosing a library that misbehaves
 /// under `park`. Off by default; the check is a `OnceLock<bool>` load.
+/// Which fiber is speaking, or `0` outside one.
+///
+/// Read only when the park gate is non-zero. That gate is set by the fiber-switch observer, so a
+/// non-zero value is proof this is a PHP thread with a live TSRM cache — which matters because
+/// `trace` is also called from a third-party library's own threads, where the executor globals
+/// cannot be reached at all.
+fn fiber_tag() -> usize {
+    if PARK.with(|p| p.get()) == 0 {
+        return 0;
+    }
+    // SAFETY: the gate above is only ever set on a PHP thread whose observer has run, so the TSRM
+    // cache is live; `active_fiber` is a plain pointer field read for its address alone.
+    unsafe { (*tsrm::executor_globals()).active_fiber as usize }
+}
+
 fn trace(msg: &str) {
     static ON: OnceLock<bool> = OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("IGNIS_PARK_TRACE").is_some()) {
         // Raw syscall on purpose: `eprintln!` would go through the interposed `write`.
         //
-        // The thread id is not decoration. A library with its own background threads — libmongoc's
-        // topology monitor, for one — interleaves its decisions with the PHP thread's, and without
-        // a label the lines read as one sequence: an `n=1` call appearing to return 2 is two threads,
-        // not an impossible poll. That cost an hour before it was added.
+        // Neither label is decoration, and the thread id alone is not enough. A library with its own
+        // background threads — libmongoc's topology monitor — interleaves its decisions with the PHP
+        // thread's, and **fibers interleave with each other on one thread**: a park printed by one
+        // fiber and a wake printed by another read as one impossible call, an `n=1` poll returning 3.
+        // Both readings cost an hour, one each, before the two labels were added.
         // SAFETY: `gettid` takes no arguments, touches no memory and cannot fail.
         let tid = unsafe { libc::syscall(libc::SYS_gettid) };
-        let line = format!("park: [tid {tid}] {msg}\n");
+        let line = format!("park: [tid {tid} fiber {:#x}] {msg}\n", fiber_tag());
         // SAFETY: `line` is a live local and its length is its own; write(2) only reads those bytes.
         unsafe { libc::syscall(libc::SYS_write, 2, line.as_ptr(), line.len()) };
     }

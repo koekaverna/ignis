@@ -9,5 +9,5 @@
 | ext/sockets/tests | main | 118 | 91 | 1 | 26 | 0 | 0 | 16 |
 | ext/sockets/tests | fiber | 118 | 85 | 7 | 26 | 0 | 0 | 16 |
 | ext/standard/tests/streams | stock | 160 | 140 | 0 | 20 | 0 | 0 | 7 |
-| ext/standard/tests/streams | main | 160 | 134 | 6 | 20 | 0 | 0 | 24 |
+| ext/standard/tests/streams | main | 160 | 134 | 6 | 20 | 0 | 0 | 23 |
 | ext/standard/tests/streams | fiber | 160 | 126 | 14 | 20 | 0 | 0 | 24 |

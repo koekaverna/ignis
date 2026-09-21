@@ -6090,3 +6090,46 @@ trace is a watchdog line and three warnings nobody reads.
 
 Not fixed here. Filed as `S-CANCEL-IN-C` with the two candidate designs, because the choice changes
 ADR-0009's contract and wants an ADR rather than a patch.
+
+## V-118 — how many of a distribution's 86 extensions load, and which three are our own fault
+
+Date: 2026-09-21. Owner asked for the detail behind V-113's claim that sury's extensions load. The
+honest starting point: V-113 measured **loading three** (igbinary, redis, mongodb) and **symbol
+imports for 86**. Loading the rest had not been tried. It has now — 77 packages, 86 `.so` files,
+each loaded into `/opt/php85-nts` on its own.
+
+| | count |
+|---|---|
+| load on their own | **53** |
+| load once a PHP-level dependency is loaded first | **+5** |
+| fail only because a system library is absent on this host | 26 |
+| fail because of **our** build flags | 3 |
+
+The five dependencies are ordinary packaging, not ABI: `redis` needs `igbinary`, `mysqli` and
+`pdo_mysql` need `mysqlnd`, `pq` needs `raphf`, `http` needs `raphf` and `propro`. All five load once
+told.
+
+The 26 are `cannot open shared object file` for a library the `.deb` declares and this host has not
+installed — `librdkafka.so.1`, `libmemcached.so.11`, `libsmbclient.so.0`, `libvips.so.42`,
+`libzip.so.5`, `libtidy.so.58`, `libnetsnmp.so.40`, `libgd.so.3`, `libc-client.so.2007e`,
+`libodbc.so.2` and the like. Nothing to do with the engine; `apt install` closes them.
+
+**So 83 of 86 are a packaging question. Three are ours, and both causes are build flags:**
+
+1. `apcu` → `undefined symbol: zend_signal_globals`. `scripts/build-php.sh` passes
+   `--disable-zend-signals` for FrankenPHP parity, because that build is E4's baseline against the
+   same libphp. Nothing compares against the NTS build, so the flag is gone from
+   `scripts/build-php-nts.sh` — and `apcu`'s failure moved to the next one, which is the proof it
+   worked.
+2. `mbstring`, `pgsql` and now `apcu` → `undefined symbol: pcre2_match_8` / `pcre2_code_free_8`. Our
+   PHP bundles PCRE2 and compiles it with hidden visibility, so those symbols exist nowhere in the
+   process; sury's libphp links the system `libpcre2-8.so.0` and its extensions expect to resolve
+   them from there. `--with-external-pcre` is the fix and needs `libpcre2-dev` on the build host,
+   which this one does not have. The script now uses the flag when `pkg-config` finds the library
+   and **says which two extensions stay unloadable** when it does not, rather than failing or
+   staying silent.
+
+**What this says about the NTS mode.** Its whole purpose is loading a distribution's extensions, and
+it does: 58 of 86 here with nothing installed, 83 on a host where the packages' own dependencies are
+present, and 86 with one more `apt install libpcre2-dev` before the engine is built. None of the
+remaining failures is an ABI mismatch — which was the thing actually in doubt.

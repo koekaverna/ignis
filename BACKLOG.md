@@ -510,13 +510,18 @@ fibers, not N threads, but it is strictly worse than the ZTS build for file I/O 
 how much.
 (c) **No supervision.** The ZTS build respawns a dead PHP thread inside 50 ms with the process still
 serving (V-17). NTS has to be supervised as a process, by something outside this binary.
-(d) **`LD_LIBRARY_PATH` cross-links the two builds.** Both prefixes install a `libphp.so` with the
+(d) **`libpcre2-dev` is a build-host prerequisite nobody is told about at the right moment.** Without
+it the engine bundles PCRE2 with hidden visibility and a distribution's `mbstring`, `pgsql` and
+`apcu` cannot load (`undefined symbol: pcre2_match_8`), which is three of the 86 and the only ones
+left that are our own doing (V-118). `scripts/build-php-nts.sh` warns at configure time and carries
+on; installing the package before building is the fix, and the image this is built in should have it.
+(e) **`LD_LIBRARY_PATH` cross-links the two builds.** Both prefixes install a `libphp.so` with the
 same soname and the variable beats RUNPATH, so the project's standard
 `LD_LIBRARY_PATH=/opt/php85-zts/lib` kills the NTS binary in the loader with `undefined symbol:
 executor_globals`. Loud but unexplained; a startup check that names the mismatch would cost a line.
-**Acceptance for closing it.** (a) in `scripts/gate.sh` and `ci.yml`; (b) a number for what file I/O
-costs a single-threaded NTS worker under a real application; (d) a diagnostic that says which engine
-the binary wants and which one it found.
+**Acceptance for closing it.** (b) a number for what file I/O costs a single-threaded NTS worker
+under a real application; (d) `libpcre2-dev` in the builder image, so the engine links system PCRE2
+and all 86 load; (e) a diagnostic that says which engine the binary wants and which one it found.
 **Constraints.** `main` — it touches `crates/ignis/src/php/**` and the FFI boundary.
 
 ### S-PARK-PROBE-COVERAGE The park self-check covers two of the policy's four libraries and reports `ok` `main` `open — measured 2026-09-20 (V-110)`
