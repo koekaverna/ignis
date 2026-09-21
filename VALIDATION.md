@@ -5726,7 +5726,31 @@ nobody imports it. Their value is conditional on the whitelist widening, so they
 child's stdout through a **pipe**, which is a FIFO and therefore parkable, and by the time libphp
 reaps the child it has already died — so the `waitpid` that follows returns at once. `proc_open()`
 with no descriptors has no pipe, goes straight to `waitpid`, and holds the thread for the child's
-entire life. That is `symfony/process`, and every shell-out to ffmpeg, git or an image converter.
+entire life.
+
+**Corrected the same day — "that is `symfony/process`" was wrong, and one shape is not fixed at
+all.** Every shape measured, control (`waitpid` out of the policy) against today:
+
+| shape | before | after |
+|---|---|---|
+| `proc_open` with no descriptors | 913 ms | **306 ms** |
+| `proc_open` + pipes, never drained | 915 ms | **306 ms** |
+| `proc_open` + pipes, read to EOF | 306 ms | 306 ms — already worked |
+| `proc_open` + a `stream_select` loop | 308 ms | 307 ms — already worked |
+| `popen` + `pclose` | 912 ms | **915 ms — not fixed** |
+
+So the gain is for a caller that does **not drain the child's pipes**: `proc_open(…, [])`, or pipes
+closed unread — the "I only want the exit code" shell-out. Symfony's `Process` drains, through
+`stream_get_contents` or a `stream_select` loop, and both of those already parked on the pipe read
+before any of this. (A `Process` with output disabled has no pipe to drain and would land in the
+fixed path; not verified here — the component is not in the fixture.)
+
+`popen`/`pclose` cannot be reached this way, and the trace says so directly: `proc_close` produces
+one `waitpid` trace line, `pclose` produces **zero**. libphp imports `pclose` from glibc, and
+glibc's `pclose` reaps the child through its own internal symbol — the executable-first lookup
+trick only catches calls that go through the PLT, and a library's internal calls bind directly.
+Covering it would mean interposing `pclose` itself, which is reimplementing `FILE*` teardown, or
+routing it to offload. Neither is a policy row.
 
 **After:**
 
