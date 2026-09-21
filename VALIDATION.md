@@ -6043,3 +6043,50 @@ unbuffered queries are active.
 
 Loud, immediate, and pointing at the real mistake. Worth contrasting with mongodb, where the same
 mistake cost four times the wall clock and said nothing.
+
+## V-117 — a deadline does not free the thread when the fiber is inside a C library, and the client is never answered
+
+Date: 2026-09-21. Predicted from reading on 2026-09-20 and measured now, because E11's 0.28–0.78 ms
+cancellation number covers fibers parked on **our own** ops and nothing covered the other path.
+
+Same handler, same 500 ms deadline, same five-second wait, one PHP thread, with a ticker fiber
+beside the server counting `Ignis\sleep(50)` — 20 ticks a second while the thread is free.
+
+**Parked on our own op (`Ignis\sleep(5000)`) — the path E11 gates:**
+
+```
+/slow  http 200 at 0.503 s   how = threw Ignis\DeadlineExceededException
+ticks  58 → 67 across those 502 ms          (20/s — the ticker never stopped)
+warnings in the loop: 0
+```
+
+**Parked inside libpq (`SELECT pg_sleep(5)` through `pdo_pgsql`):**
+
+```
+/slow  http 000 at 12.0 s    — the client gave up; nothing was ever sent
+ticks  58 → 203 across 12 s  (≈240 expected: about 95 ticks, ~4.75 s, lost)
+warnings in the loop: 3      Undefined variable $answer in Loop.php:893,895,897
+watchdog: php threads busy for > 1 s without polling  stalled=1
+```
+
+Three separate failures, and only the first was predicted:
+
+1. **The thread is held** for the remainder of the C call — ~4.75 s of a five-second query that a
+   500 ms deadline had already cancelled. Every other fiber on the thread stops with it. The chain
+   is in the code: `throwInto` finds no entry in the PHP-side maps (a C park lives in Rust's
+   `wait.rs` table), so `cancelCPark` resumes the fiber with the exception **on the loop's own
+   stack**; `await_op` sees `EG(exception)` and returns `None`; `park_pollfds` returns `None`;
+   `park_io` maps that to `Wait::Ready`; and the handler falls through to the real blocking syscall.
+2. **The request is never answered.** Not a 504, not a 500 — nothing. The client times out.
+3. **The VM frame is corrupted.** `Loop::answer()` reads its own parameter as undefined, three times.
+   That is what throwing into a fiber suspended inside a C frame does, and `cancelCPark`'s own doc
+   block already half-knew it: *"zend_fiber_resume_exception leaves the throwable pending in C when
+   the fiber has no handler, so it surfaces on return here with no throwInto frame in the trace"*.
+
+**What this costs in production.** A deadline exists to free the thread when a dependency is slow,
+and this is exactly the case where a dependency is slow. A client disconnect takes the same path
+(ADR-0009). So the mechanism fails at the moment it is for — and silently, because the only visible
+trace is a watchdog line and three warnings nobody reads.
+
+Not fixed here. Filed as `S-CANCEL-IN-C` with the two candidate designs, because the choice changes
+ADR-0009's contract and wants an ADR rather than a patch.
