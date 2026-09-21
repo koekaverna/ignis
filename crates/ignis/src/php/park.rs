@@ -61,7 +61,7 @@ static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 /// libphp's audited groups (research 30: (a) ext/sockets, (b) sleep, (c) streams/network/openssl —
 /// every row lock-free). Anything libphp calls that is not listed stays `block`; `getaddrinfo`
 /// has no fd and is offload's, not park's.
-const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libphp:flock,libcurl,libpq,libssl,libcrypto";
+const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libphp:flock,libphp:waitpid,libcurl,libpq,libssl,libcrypto";
 
 /// Set only while the boot self-check probes: makes `site_parks` record which library each
 /// resolved call site came from, so the check can prove a third-party `.so` really binds to us.
@@ -210,9 +210,15 @@ unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
 /// **anonymous inode** are accepted. The last group is the one this used to get wrong. `eventfd`,
 /// `timerfd`, `epoll`, `signalfd`, `inotify` and `pidfd` all report `S_IFMT == 0`, a value no real
 /// file type has, and answering "cannot park" for them blocked the whole OS thread on descriptors
-/// the reactor could have waited on perfectly well — which is what a library carrying its own event
-/// loop blocks on (libevent, libuv, the grpc extension). Note that character devices are *not* in
-/// the group: `/dev/null` is `EPERM`, so no blanket rule by device class would have been right.
+/// the reactor could have waited on perfectly well — a thread-pool wakeup through an eventfd, a
+/// sleep on a timerfd, `signalfd`, `inotify`. Note that character devices are *not* in the group:
+/// `/dev/null` is `EPERM`, so no blanket rule by device class would have been right.
+///
+/// This question is asked by the `read`/`write`/`recv`/`send`/`accept` families and by nothing else:
+/// `poll()` and `select()` go through `poll_impl`, which submits an `Op::Watch` per descriptor
+/// without consulting anything here. So an event loop is *not* covered — nothing `read()`s an epoll
+/// descriptor, a loop calls `epoll_wait`, which is not interposed and would buy nothing if it were:
+/// no library in the default policy imports it (measured, V-111).
 /// What `fstat` reports for a descriptor with no file behind it — `eventfd`, `timerfd`, `epoll`,
 /// `signalfd`, `inotify`, `pidfd`. Linux gives these an anonymous inode whose `S_IFMT` is zero,
 /// which no real file type uses, so the value identifies the class exactly.
@@ -997,6 +1003,48 @@ pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *
     }
 }
 
+/// `waitpid` for a named child: wait on a `pidfd` instead of the thread.
+///
+/// `proc_close()` is the caller that made this worth building. `exec()`/`shell_exec()` already park,
+/// because they read the child's stdout through a pipe and the child is reaped after it has died —
+/// but `proc_open()` with no descriptors has no pipe, so libphp goes straight here and the OS thread
+/// is held for the child's whole life. Measured: three concurrent 300 ms children, 915 ms through
+/// `proc_close` against 306 ms through `exec()` (V-112).
+///
+/// A `pidfd` is readable exactly when the process it names has exited, and epoll accepts one — which
+/// is what makes this the same shape as every other handler here, rather than a new mechanism. Three
+/// cases decline and fall through to the real call unchanged:
+///
+/// - `WNOHANG`, which does not block and has nothing to wait for;
+/// - `pid <= 0` — "any child" and "any child in a process group" name no single process, and
+///   `pidfd_open` cannot express either;
+/// - `pidfd_open` failing at all, which covers a kernel older than 5.3 (`ENOSYS`), a child already
+///   reaped (`ESRCH`) and anything else: the real `waitpid` then produces the right answer or the
+///   right errno by itself, exactly as it did before this existed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ignis_park_waitpid(ret: *const c_void, pid: c_int, status: *mut c_int, options: c_int) -> c_int {
+    // SAFETY: csrc/park.c calls this from the interposed symbol with the arguments libc was given.
+    // `status` is never dereferenced here — it is handed to the real `waitpid`, which is the same
+    // call the program already made; parking only delays it. The pidfd is opened and closed here and
+    // escapes nowhere.
+    unsafe {
+        if options & libc::WNOHANG == 0
+            && pid > 0
+            && let Some(_g) = may_park(ret, "waitpid")
+        {
+            let pidfd = libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) as c_int;
+            if pidfd >= 0 {
+                park_io(pidfd, false);
+                libc::close(pidfd);
+            }
+        }
+        // The raw syscall, never `libc::waitpid` — that is the symbol this function interposes, and
+        // calling it here would re-enter this handler for ever. `waitpid(p, s, o)` is
+        // `wait4(p, s, o, NULL)`.
+        libc::syscall(libc::SYS_wait4, pid, status, options, std::ptr::null_mut::<c_void>()) as c_int
+    }
+}
+
 // ---- boot self-check (ADR-0037 §4(a), research 32) --------------------------------------------
 
 /// Proves that the interposed symbols really bind inside the third-party libraries the policy
@@ -1259,7 +1307,7 @@ mod tests {
             assert!(!would_block(null), "and so does a character device with no readiness");
             assert!(would_block(event), "an eventfd is an anonymous inode and parks");
             assert!(would_block(timer), "so is a timerfd");
-            assert!(would_block(nested), "so is an epoll descriptor — a library's own event loop");
+            assert!(would_block(nested), "so is an epoll descriptor, though nothing read()s one");
 
             for fd in [regular, directory, null, pipe_fds[0], pipe_fds[1], event, timer, nested, epoll] {
                 libc::close(fd);

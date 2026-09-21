@@ -5665,9 +5665,21 @@ whether `epoll_ctl` accepts it. Measured on 6.18 (`S_IFMT` → `epoll_ctl`):
 
 Every anonymous inode reports `S_IFMT == 0`, a value no real file type uses, and epoll takes all of
 them — so a blocking call on one is exactly what park exists for, and we were blocking the whole OS
-thread on it instead. That is what a library carrying its own event loop waits on: libevent and
-`ext-event`, libuv, the grpc extension, php-ev. Character devices are **not** in the class — a
-blanket rule by device kind would have been wrong, because `/dev/null` is `EPERM`.
+thread on it instead. Character devices are **not** in the class — a blanket rule by device kind
+would have been wrong, because `/dev/null` is `EPERM`.
+
+**Corrected 2026-09-21, the same day: this entry over-claimed its reach.** It said the fix covers "a
+library carrying its own event loop — libevent and `ext-event`, libuv, the grpc extension, php-ev".
+It does not. `would_block` is consulted by exactly eleven call sites, the `read`/`write`/`recv`/
+`send`/`accept` families; `poll()` and `select()` never ask it — `poll_impl` submits an `Op::Watch`
+per descriptor — so an eventfd or timerfd inside a `poll` set already worked before this change.
+What this actually fixed is a **direct blocking `read()` on an anonymous inode**: a thread-pool
+wakeup through an eventfd, a sleep implemented on a timerfd, `signalfd`, `inotify`. Real, and
+narrower than written. An event loop is not among them, because nothing `read()`s an epoll
+descriptor — a loop calls `epoll_wait`, which is not interposed and would buy nothing if it were:
+**no library in the default policy imports `epoll_wait` at all** (`libcurl`, `libpq`, `libssl`,
+`libphp` — zero each, `nm -D --undefined-only`), so its value is conditional on the whitelist
+widening and belongs to `S-PARK-PROBE-COVERAGE`.
 
 **The test derives the truth from the kernel rather than restating the table above.** For each
 descriptor it asks `epoll_ctl` and `would_block` and requires the same answer, so it says something
@@ -5689,3 +5701,66 @@ blocking syscall — the behaviour that existed before this change.
 Not claimed: no behavioural arm through PHP, because stock PHP opens none of these descriptors. The
 end-to-end machinery below the decision is the same one E6/E13/E18 already gate for pipes and
 sockets; what was new is the decision, and that is what the two tests cover.
+
+## V-112 — `proc_close()` held the OS thread for the child's whole life; `waitpid` now waits on a pidfd
+
+Date: 2026-09-21. Asked what the remaining pollable symbols would buy. Two of the three buy nothing;
+this one was measured first and built second.
+
+**What the question turned up.** `epoll_wait`/`epoll_pwait` are worth **zero** today: no library in
+the default policy imports them (`nm -D --undefined-only`: `libcurl` 0, `libpq` 0, `libssl` 0,
+`libphp` 0 — curl and libpq wait through `poll`/`select`, which are interposed). `pselect`: the same,
+nobody imports it. Their value is conditional on the whitelist widening, so they belong to
+`S-PARK-PROBE-COVERAGE` rather than beside it. `libphp` does import **`waitpid`**.
+
+**Before**, three concurrent 300 ms children on one thread:
+
+```
+  exec() reading the pipe            306 ms
+  shell_exec()                       306 ms
+  proc_open + proc_close             915 ms      ← serialized
+  Ignis\sleep (reference, parks)     301 ms
+```
+
+`exec()` and `shell_exec()` were already fine and for a reason worth writing down: they read the
+child's stdout through a **pipe**, which is a FIFO and therefore parkable, and by the time libphp
+reaps the child it has already died — so the `waitpid` that follows returns at once. `proc_open()`
+with no descriptors has no pipe, goes straight to `waitpid`, and holds the thread for the child's
+entire life. That is `symfony/process`, and every shell-out to ffmpeg, git or an image converter.
+
+**After:**
+
+```
+  proc_open + proc_close             306 ms
+```
+
+**The mechanism is the one already in use, not a new one.** A `pidfd` is readable exactly when the
+process it names has exited, and epoll accepts one (measured in V-111), so the handler opens a
+`pidfd`, parks on it through `Op::Watch`, closes it, and then makes the real call. Three cases
+decline and fall through unchanged: `WNOHANG` (nothing to wait for), `pid <= 0` ("any child" names no
+single process and `pidfd_open` cannot express it), and any `pidfd_open` failure at all — a kernel
+older than 5.3 gives `ENOSYS`, an already-reaped child `ESRCH`, and the real `waitpid` then produces
+the right answer or the right errno by itself.
+
+**The forwarding call is the raw syscall, not `libc::waitpid`.** The first build used the libc
+wrapper, which is the very symbol this interposes: infinite recursion. `csrc/park.c`'s own header
+states the rule — "the Rust side never calls these wrappers back for its own forwarding — it uses
+raw `syscall(2)`" — and it applies here as everywhere.
+
+**Correctness, because a parked wait must still answer what the call answers:** exit status 7
+preserved, 0 preserved, `exec()` output `["hello"]` with `$code === 3`, and a child already dead
+before anyone waited still reports 0.
+
+**Falsified two ways, both back to the defect:**
+
+| control | `proc_close` |
+|---|---|
+| `IGNIS_NO_UNIVERSAL_PARK=1` | **914 ms** |
+| `waitpid` removed from `IGNIS_PARK` | **914 ms** |
+| unchanged | 306 ms |
+
+The second control is the sharper one: it proves the policy row is what enables this, not some other
+change in the build.
+
+**Gated** in `scripts/smoke.sh`: all three shapes under 600 ms and `answers_wrong=0`, so a
+regression to serialized execution or a lost exit status fails the run.

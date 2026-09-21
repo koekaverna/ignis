@@ -283,6 +283,21 @@ varies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^vary:')
 kill $ck 2>/dev/null; wait $ck 2>/dev/null || true
 echo "  set-cookie=$cookies vary=$varies"
 [ "$cookies" = 3 ] && [ "$varies" = 2 ] || { echo "multi-valued headers FAILED (want 3 and 2)"; exit 1; }
+# V-112: proc_open()/proc_close() has no pipe to park on, so libphp went straight to waitpid and
+# held the OS thread for the child's whole life -- three concurrent 300 ms children took 915 ms.
+# waitpid is interposed now and waits on a pidfd. exec() was always fine; it is here as the shape
+# that already worked, and Ignis\sleep as the floor.
+echo "== proc_close() waits on a pidfd instead of the OS thread"
+wp=$($T ./target/release/ignis bench/php/waitpid_parks.php 2>/dev/null)
+echo "  $(tr '\n' ' ' <<<"$wp")"
+wp_value() { sed -n "s/^waitpid $1=\([0-9]*\)$/\1/p" <<<"$wp"; }
+[ "$(wp_value answers_wrong)" = 0 ] || { echo "waitpid FAILED: a parked wait changed what the call answers"; exit 1; }
+for shape in exec_ms proc_close_ms reference_ms; do
+  ms=$(wp_value "$shape")
+  [ -n "$ms" ] || { echo "waitpid FAILED: no $shape line, so nothing was measured"; exit 1; }
+  [ "$ms" -lt 600 ] || { echo "waitpid FAILED: $shape=$ms ms -- three 300 ms children serialized, so it blocked the thread"; exit 1; }
+done
+
 # V-108: chaos is a test instrument and must not change its subject. `Chaos::init()` called
 # `mt_srand()`, so the application's own seeded sequence continued differently under every chaos
 # seed. Chaos draws from its own Randomizer now; this compares the application's draws across the

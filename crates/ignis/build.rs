@@ -46,6 +46,7 @@ fn configure_universal_park() {
             "sendmsg",
             "readv",
             "writev",
+            "waitpid",
         ] {
             println!("cargo:rustc-link-arg=-Wl,-u,{s}");
             println!("cargo:rustc-link-arg=-Wl,--export-dynamic-symbol={s}");

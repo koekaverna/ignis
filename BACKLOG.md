@@ -483,11 +483,13 @@ CI covers them.
 **Constraints.** `main` (touches `crates/ignis/src/php/park.rs`, which is `unsafe`). A probe must
 cost nothing at boot — the first version of the curl probe cost 1.3 s per process start because it
 connected to a closed loopback port.
-**Related, and already done** (2026-09-21, V-111): the eligibility test itself was refusing every
-anonymous-inode descriptor — `eventfd`, `timerfd`, `epoll`, `pidfd`, `signalfd`, `inotify` — which
-epoll accepts and the reactor can wait on. That is the class a library with its own event loop blocks
-on, so it bears directly on the coverage question this entry is about: a `.so` added to the policy
-now actually parks where it waits on its own loop, instead of being listed and still blocking.
+**Related, and already done** (2026-09-21, V-111): the eligibility test was refusing every
+anonymous-inode descriptor — `eventfd`, `timerfd`, `signalfd`, `inotify` — which epoll accepts and the
+reactor can wait on, so a direct blocking `read()` on one now parks. It does **not** cover a library's
+own event loop, as V-111 first claimed and then corrected the same day: that means `epoll_wait`, which
+is not interposed and which **no library in the default policy imports** (measured — `libcurl`,
+`libpq`, `libssl`, `libphp`, zero each). Interposing it is therefore worth nothing on its own and
+belongs to this entry rather than beside it.
 
 ### A-CLASSIC-FINISH `Ignis\Classic\finish()` stops the `listen()` worker loop `agent` `open — 2026-09-18`
 **What.** `finish()` throws `Finished`. `Runner::handle()` catches it, so `Classic\serve()` is fine —

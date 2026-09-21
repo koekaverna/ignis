@@ -45,6 +45,7 @@ ssize_t ignis_park_recvmsg(const void *ret, int fd, struct msghdr *msg, int flag
 ssize_t ignis_park_sendmsg(const void *ret, int fd, const struct msghdr *msg, int flags);
 ssize_t ignis_park_readv(const void *ret, int fd, const struct iovec *iov, int cnt);
 int ignis_park_flock(const void *ret, int fd, int operation);
+int ignis_park_waitpid(const void *ret, int pid, int *status, int options);
 ssize_t ignis_park_writev(const void *ret, int fd, const struct iovec *iov, int cnt);
 
 ssize_t read(int fd, void *buf, size_t n) { return ignis_park_read(__builtin_return_address(0), fd, buf, n); }
@@ -65,6 +66,11 @@ int ppoll(struct pollfd *fds, nfds_t n, const struct timespec *ts, const sigset_
 /* S1-FLOCK: a regular file cannot be parked on, so a blocking LOCK_EX inside a fiber took the whole
  * OS thread down (V-58). NOT fcntl — opcache's zend_shared_alloc_lock uses that one. */
 int flock(int fd, int operation) { return ignis_park_flock(__builtin_return_address(0), fd, operation); }
+/* proc_open()/proc_close() end here, and unlike exec() there is no pipe to park on first: with no
+ * descriptors requested, libphp goes straight to waitpid and holds the OS thread for the child's
+ * whole life. Measured: three concurrent 300 ms children took 915 ms through proc_close and 306 ms
+ * through exec(), which reads the child's stdout over a pipe and finds it already dead (V-112). */
+int waitpid(int pid, int *status, int options) { return ignis_park_waitpid(__builtin_return_address(0), pid, status, options); }
 /* _FORTIFY_SOURCE builds call poll through this; same policy row as `poll`. */
 int __poll_chk(struct pollfd *fds, nfds_t n, int timeout, size_t fdslen) { (void)fdslen; return ignis_park_poll(__builtin_return_address(0), fds, n, timeout); }
 ssize_t recvmsg(int fd, struct msghdr *msg, int flags) { return ignis_park_recvmsg(__builtin_return_address(0), fd, msg, flags); }
