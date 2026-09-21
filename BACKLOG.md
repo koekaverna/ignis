@@ -511,9 +511,17 @@ and `xdebug` worst among them. And the attribution is **deployment-dependent**: 
 and `mysqlnd` are compiled into libphp here and separate `.so` files in a distribution build, so the
 same call site is covered in one and not the other. That is why the list has to be read off a running
 process — `ignis_park_inventory()` — rather than written down.
-**And widening it is not a matter of adding rows.** The first real library tried, `mongodb`, blocks
-as shipped (3013 ms serialized), **aborted** when listed (a bug in our own `poll`, fixed in V-114),
-and even fixed is **four times slower parked than blocking** (12008 ms). It is not adopted here.
+**And widening it is not a matter of adding rows — but the first library tried does work.**
+`mongodb` blocks as shipped (3013 ms serialized) and **aborted** when listed, which was a bug in our
+own `poll` and is fixed (V-114). With that fixed it scales exactly: 1006 ms for three, four or six
+concurrent one-second operations against 3018 / 4025 / 6035 blocking — **N×**, flat.
+**Its row is opt-in, not default, and the reason is the precondition.** libmongoc is not re-entrant
+and the PHP driver hands back one `mongoc_client_t` per connection string, so two fibers inside one
+client leave a socket that never becomes ready and one operation sits out `connectTimeoutMS`: at
+default timeouts the common application shape (same URI everywhere) measures 12010 ms parked against
+3012 blocked. One client per fiber measures 1007. A default that made the common shape four times
+worse would be a bad default, so the row ships as a documented opt-in with its condition attached —
+which is the same family as `S-SINGLETON-CAPTURE`, one floor down inside a C driver.
 **Acceptance.** (a) Every third-party library in the policy has either a probe or a gated
 behavioural arm, and the boot check **names** the ones it did not probe instead of printing an
 unqualified `ok` — with a control that fails when a library is in the policy and unproven.

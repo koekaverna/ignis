@@ -663,8 +663,15 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
                     trace(&format!("{sym}: spurious readiness, re-parking"));
                 }
                 Some(false) => {
-                    trace(&format!("{sym}: woke by timer"));
-                    return real(0);
+                    // The re-poll is not redundant and the trace is not decoration: together they
+                    // say whether a timeout was real. `r=0` here means the kernel agrees the
+                    // descriptor was never ready, so the caller's timeout was earned; anything else
+                    // would mean a readiness we failed to deliver. That distinction is what turned
+                    // "parking made mongodb four times slower" into "two fibers were inside one
+                    // libmongoc client" (V-114) — without it the fault looks like ours.
+                    let r = real(0);
+                    trace(&format!("{sym}: woke by timer after {}ms, recheck r={r}", started.elapsed().as_millis()));
+                    return r;
                 }
                 None => {
                     trace(&format!("{sym}: could not park, blocking"));

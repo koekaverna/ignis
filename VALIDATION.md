@@ -5912,9 +5912,49 @@ same policy, saw **0** spurious wakes, which is why this had never shown.
 `poll_impl` now re-parks for what is left of the caller's own timeout instead of answering a timeout
 that did not happen. With it, libmongoc no longer aborts and every call reports `parks=yes`.
 
-**The honest conclusion for `mongodb`: still not adoptable.** Parked, the same workload takes
-**12008 ms** against 3013 blocking — four times worse, through five spurious re-parks. A policy row
-is not enough for it and this entry does not add one. What the row *is* enough for is unknown until
-each of the other nineteen is measured the same way.
+**That conclusion was wrong, and the correction is the most useful thing in this entry.**
+
+The first write-up here said `mongodb` was "not adoptable" because parked it took 12008 ms against
+3013 blocking, and blamed the re-parks. Wrong on the cause and wrong on the verdict. Split the
+measurement and the blame lands elsewhere:
+
+| | blocked | parked |
+|---|---|---|
+| **one** operation | 1007 ms | 1007 ms — parking costs nothing |
+| three operations | 3013 ms | 12011 ms |
+
+No per-operation cost at all, so the loss is entirely in concurrency. The penalty tracks libmongoc's
+own `connectTimeoutMS` exactly — 10000 → 11007, 4000 → 5006, 2000 → 3008 — so exactly one `poll()`
+sits out its whole timeout. And it is **not a wake we missed**: when the timer fires, a re-poll of
+the same descriptor still answers `r=0`. The kernel agrees it was never ready.
+
+What is never ready is a socket belonging to a **libmongoc client two fibers are inside at once**.
+The PHP driver hands back one `mongoc_client_t` for Managers built from the same connection string,
+and libmongoc is not re-entrant. Giving each fiber its own client — anything that makes the URI
+differ, `appname=` here — is the whole difference:
+
+| N | blocked | parked, one client per fiber | |
+|---|---|---|---|
+| 1 | 1005 ms | 1005 ms | 1.0× |
+| 2 | 2011 ms | 1007 ms | **2.0×** |
+| 3 | 3018 ms | 1006 ms | **3.0×** |
+| 4 | 4025 ms | 1006 ms | **4.0×** |
+| 6 | 6035 ms | 1006 ms | **6.0×** |
+
+Flat at ~1006 ms however many run: the mechanism doing exactly what it exists for.
+
+**So the row is worth having and it carries a precondition**, which is why it is not in the default
+seed. At default timeouts, the same three operations:
+
+| application shape | blocked | parked |
+|---|---|---|
+| one client shared (the same URI everywhere — the common shape) | 3012 ms | **12010 ms** |
+| one client per fiber | 3016 ms | **1007 ms** |
+
+A default that made the common shape four times worse would be a bad default. `IGNIS_PARK=…,mongodb`
+is therefore an opt-in row whose condition is "no libmongoc client is shared between fibers", and
+that condition is the same family as `S-SINGLETON-CAPTURE` and `S-EXCLUSIVE` — except the sharing
+happens inside a C driver, below PHP, keyed by a connection string the application never thinks of
+as identity.
 
 The ZTS gate is green with the `poll` fix; E6 (336 ms concurrent) and E13 (0 mismatches) unmoved.
