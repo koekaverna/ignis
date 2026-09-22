@@ -23,11 +23,21 @@ are deferred ([ADR-0032](../adr/0032-inbound-tls-and-http3.md)).
 The PHP kernel boots once per thread (V-16); routing lives in the application, not the runtime —
 there are no per-route limits or per-route configuration inside Ignis itself.
 
-## No NTS support
+## The default build is ZTS; NTS is a second, more limited engine
 
-Ignis requires PHP built ZTS (Zend Thread Safety) with the embed SAPI. Distribution packages are
-NTS and will not link — checked directly with `nm` against `libphp8.5-embed`. See
-[Install](../getting-started/install.md) for building the ZTS interpreter Ignis needs.
+The Docker image, the release tarball and most of this documentation assume PHP built ZTS (Zend
+Thread Safety) with the embed SAPI — distribution packages are NTS and will not link against that
+build, checked directly with `nm` against `libphp8.5-embed`. A second engine ABI for exactly those
+distribution builds exists since 2026-09-21 (`S-NTS-MODE`, V-113): `scripts/build-php-nts.sh` builds
+PHP into its own prefix, and `PHP_CONFIG=/opt/php85-nts/bin/php-config CARGO_TARGET_DIR=target-nts
+cargo build --release -p ignis` links against it. It exists because every distribution PHP is NTS
+and carries extensions (`redis`, `mongodb`, `grpc`, …) a ZTS build cannot load at all.
+
+On the NTS engine a process holds exactly one PHP thread by construction — `--threads` above 1 and
+`--supervise` are refused at startup with exit 2 — so cores are filled with `--workers N` instead, a
+master process that forks (ADR-0044): four NTS worker processes served 90 % of four ZTS threads on
+hello-world and 93 % on a CPU-bound route on this box, at 1.07× the resident memory by PSS (V-123).
+See [Install](../getting-started/install.md) for building either interpreter.
 
 ## No multi-tenant isolation
 

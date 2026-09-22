@@ -39,8 +39,11 @@ outside a container or to use the [CLI](../reference/cli.md).
 
 ## Build from source
 
-Ignis needs PHP 8.5.10 built **ZTS** (Zend Thread Safety) with the embed SAPI — distribution
-packages are NTS and will not link (see [What it is not](../concept/non-goals.md)).
+Ignis's default build needs PHP 8.5.10 built **ZTS** (Zend Thread Safety) with the embed SAPI —
+distribution packages are NTS and will not link against it. A second engine ABI links against
+those distribution-shaped NTS builds instead (`scripts/build-php-nts.sh` → `/opt/php85-nts`, then
+`PHP_CONFIG=/opt/php85-nts/bin/php-config CARGO_TARGET_DIR=target-nts cargo build --release -p
+ignis`); see [What it is not](../concept/non-goals.md) for what that engine still lacks.
 
 ```
 scripts/build-php.sh                  # idempotent, ~7 min, builds PHP 8.5.10 ZTS+embed → /opt/php85-zts

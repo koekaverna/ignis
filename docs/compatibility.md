@@ -141,5 +141,7 @@ answer for all of them now, and it is a stated non-goal
 ## What does not carry over
 
 See [What it is not](concept/non-goals.md) for the full, deliberate list — no durability across
-crashes, not a web server, one application per process, no NTS build, no multi-tenant isolation, no
-sub-millisecond scheduling, blocking regular-file I/O stays blocking, Linux-only.
+crashes, not a web server, one application per process, no multi-tenant isolation, no
+sub-millisecond scheduling, blocking regular-file I/O stays blocking, Linux-only. (The NTS engine
+is now built — `S-NTS-MODE`, V-113 — but one process still holds exactly one PHP thread there;
+`--workers N` fills the other cores with processes instead, ADR-0044.)
