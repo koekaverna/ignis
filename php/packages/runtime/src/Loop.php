@@ -465,7 +465,12 @@ final class Loop
             if (isset(self::$deadlines[$id])) {
                 $requestId = self::$deadlines[$id];
                 unset(self::$deadlines[$id], self::$deadlineOf[$requestId]);
-                self::cancelRequest($requestId, new DeadlineExceededException('deadline exceeded'), 0);
+                $fiberTimeoutMilliseconds = self::$fiberTimeoutMilliseconds[$requestId] ?? null;
+                unset(self::$fiberTimeoutMilliseconds[$requestId]);
+                $message = $fiberTimeoutMilliseconds === null
+                    ? 'deadline exceeded'
+                    : self::fiberTimeoutMessage($fiberTimeoutMilliseconds, $requestId);
+                self::cancelRequest($requestId, new DeadlineExceededException($message), 0);
                 continue;
             }
             $fiber = self::$waiting[$id] ?? null;
@@ -832,12 +837,13 @@ final class Loop
     {
         try {
             self::enterRequest($request, $id);
+            self::armFiberTimeout($id, $request->uri);
             if ($handler === null) {
                 throw new \LogicException('no request handler is set: serve through Ignis\\serve()');
             }
             return $handler($request);
-        } catch (DeadlineExceededException) {
-            return Http\Response::text("504 deadline exceeded\n", 504);
+        } catch (DeadlineExceededException $exception) {
+            return Http\Response::text('504 ' . $exception->getMessage() . "\n", 504);
         } catch (CancelledException) {
             return Http\Response::text("499 cancelled\n", 499);
         } catch (\Throwable $e) {
@@ -1173,6 +1179,25 @@ final class Loop
     }
 
     /**
+     * ADR-0043 §7, L0: arms the same wall-clock deadline machinery as `Ignis\deadline()` from the
+     * resolved `Recovery::fiberTimeoutFor($uri)`, unless that is 0 (off). A later `Ignis\deadline()`
+     * call from the handler disarms it and arms its own, which is the override the ADR asks for:
+     * `disarmDeadline()` drops `$fiberTimeoutMilliseconds` along with the timer, so what fires next
+     * is read as an application deadline, not an L0 one.
+     */
+    private static function armFiberTimeout(int $requestId, string $uri): void
+    {
+        $milliseconds = Recovery::fiberTimeoutFor($uri);
+        if ($milliseconds <= 0) {
+            return;
+        }
+        $op = \ignis_submit_sleep($milliseconds);
+        self::$deadlines[$op] = $requestId;
+        self::$deadlineOf[$requestId] = $op;
+        self::$fiberTimeoutMilliseconds[$requestId] = $milliseconds;
+    }
+
+    /**
      * Calls off a request's deadline timer: one wall-clock deadline per request is the contract, and
      * a request that answered in time has no use for one.
      *
@@ -1184,11 +1209,26 @@ final class Loop
      */
     private static function disarmDeadline(int $requestId): void
     {
+        unset(self::$fiberTimeoutMilliseconds[$requestId]);
         $op = self::$deadlineOf[$requestId] ?? null;
         if ($op === null) {
             return;
         }
         unset(self::$deadlineOf[$requestId], self::$deadlines[$op]);
         \ignis_cancel($op);
+    }
+
+    /**
+     * ADR-0043 §7: the L0 504 names where the fiber was parked when the engine can say — read
+     * before `cancelRequest()` starts throwing into it, because the throw is what moves it on.
+     */
+    private static function fiberTimeoutMessage(int $milliseconds, int $requestId): string
+    {
+        $fiber = self::$requestFibers[$requestId] ?? null;
+        $parkedAt = ($fiber !== null && \function_exists('ignis_fiber_where')) ? \ignis_fiber_where($fiber) : null;
+
+        return $parkedAt === null
+            ? \sprintf('fiber timeout after %d ms', $milliseconds)
+            : \sprintf('fiber timeout after %d ms, parked at %s', $milliseconds, $parkedAt);
     }
 }
