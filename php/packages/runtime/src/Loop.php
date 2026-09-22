@@ -20,6 +20,13 @@ final class Loop
     private static array $deadlines = [];
     /** @var array<int,int> request id => the deadline op it armed, so the timer can be called off */
     private static array $deadlineOf = [];
+    /**
+     * request id => the L0 fiber-timeout milliseconds armFiberTimeout() armed for it, only while
+     * that is still the active deadline. An app-level Ignis\deadline() disarms it like any other
+     * deadline, which is what tells the two apart when the timer fires (ADR-0043 §7, L0).
+     * @var array<int,int>
+     */
+    private static array $fiberTimeoutMilliseconds = [];
     /** @var array<int,true> ids sitting in the request queue, so a cancel for anything else is not remembered */
     private static array $queued = [];
     /** @var array<int,int> fiber object id => op id it is parked on (userland parks) */
@@ -35,6 +42,20 @@ final class Loop
     private static array $pending = [];
     /** @var list<\Fiber<mixed,mixed,mixed,mixed>> parked pool fibers */
     private static array $idle = [];
+    /**
+     * ADR-0043 §7, L2: fibers a cancellation was thrown into, whose next park (if there is one)
+     * is a swallowed cancellation and is force-closed. Cleared as each is resolved.
+     * @var array<int,\Fiber<mixed,mixed,mixed,mixed>> fiber object id => fiber
+     */
+    private static array $killPending = [];
+    /**
+     * The same watch as `$killPending`, kept instead of acted on when `IGNIS_ON_SWALLOWED_CANCEL`
+     * is `log`: the fiber and the request id its one warn line names.
+     * @var array<int,array{0:\Fiber<mixed,mixed,mixed,mixed>,1:int}> fiber object id => [fiber, request id]
+     */
+    private static array $logSwallowedPending = [];
+    /** IGNIS_ON_SWALLOWED_CANCEL (ADR-0043 §8): force-close a fiber that parks again after a cancellation, or only log it. */
+    private static bool $forceCloseOnSwallowedCancel = true;
     private static bool $running = false;
     /**
      * A `callable` return type is not enforced at run time, so the loop checks what came back
@@ -277,6 +298,7 @@ final class Loop
             while (!$stop()) {
                 self::startPending();
                 self::resumeReady();
+                self::forceClosePending();
                 if (self::$pending !== []) {
                     continue;
                 }
@@ -315,6 +337,7 @@ final class Loop
         self::gcInit();
         self::budgetInit();
         self::$canPublishStats = \function_exists('ignis_publish_stats');
+        self::$forceCloseOnSwallowedCancel = \trim(Env::text('IGNIS_ON_SWALLOWED_CANCEL', 'force-close')) !== 'log';
         // boot() runs on the first turn of every mode, including classic `listen()`, which never
         // calls serve() and would otherwise watch nothing at all.
         self::$watching = Env::flag('IGNIS_WATCH') && \function_exists('ignis_watch_generation');
@@ -956,10 +979,10 @@ final class Loop
         }
         $parent = self::$requestFibers[$requestId] ?? null;
         foreach (array_reverse(self::$children[$requestId] ?? []) as $child) {
-            self::throwInto($child, $exception);
+            self::throwInto($child, $exception, $requestId);
         }
         if ($parent !== null) {
-            self::throwInto($parent, $exception);
+            self::throwInto($parent, $exception, $requestId);
         }
         ++self::$cancelled;
         self::$cancelAgeUsMax = max(self::$cancelAgeUsMax, $ageUs);
@@ -986,9 +1009,12 @@ final class Loop
     /**
      * `$parkedOn` holds the op of a fiber parked in userland (Ignis\sleep, await); `$waiting` is
      * scanned for one parked in a C stream op; anything else is a park only Rust can find.
+     *
+     * $requestId, when known, is only for the ADR-0043 §7 L2 watch this arms afterwards: which
+     * request the "swallowed its cancellation" log line names under `IGNIS_ON_SWALLOWED_CANCEL=log`.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
-    private static function throwInto(\Fiber $fiber, \Throwable $exception): void
+    private static function throwInto(\Fiber $fiber, \Throwable $exception, ?int $requestId = null): void
     {
         if ($fiber->isTerminated() || !$fiber->isSuspended()) {
             return;
@@ -998,6 +1024,7 @@ final class Loop
             unset(self::$waiting[$opId]);
             ++self::$resumes;
             self::throwAndAbsorb($fiber, $exception);
+            self::watchForSwallowedCancellation($fiber, $requestId);
             return;
         }
         foreach (self::$waiting as $op => $waiter) {
@@ -1005,10 +1032,11 @@ final class Loop
                 unset(self::$waiting[$op]);
                 ++self::$resumes;
                 self::throwAndAbsorb($fiber, $exception);
+                self::watchForSwallowedCancellation($fiber, $requestId);
                 return;
             }
         }
-        self::cancelCPark($fiber, $exception);
+        self::cancelCPark($fiber, $exception, $requestId);
     }
 
     /**
@@ -1018,7 +1046,7 @@ final class Loop
      * so it surfaces on return here with no throwInto frame in the trace (ADR-0009).
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
-    private static function cancelCPark(\Fiber $fiber, \Throwable $exception): void
+    private static function cancelCPark(\Fiber $fiber, \Throwable $exception, ?int $requestId = null): void
     {
         if (!\function_exists('ignis_cancel_parked_any')) {
             return;
@@ -1029,6 +1057,105 @@ final class Loop
             if ($caught !== $exception) {
                 self::$unobserved[] = $caught;
             }
+        }
+        self::watchForSwallowedCancellation($fiber, $requestId);
+    }
+
+    /**
+     * ADR-0043 §7, L2: after a cancellation was thrown into $fiber, watches whether it parks again
+     * instead of unwinding — a swallowed cancellation. `IGNIS_ON_SWALLOWED_CANCEL=force-close`
+     * (the default) marks it for `forceClosePending()`; `=log` only remembers it for one warn line.
+     * A fiber that already terminated unwound cleanly and needs no watch at all.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function watchForSwallowedCancellation(\Fiber $fiber, ?int $requestId): void
+    {
+        if ($fiber->isTerminated()) {
+            return;
+        }
+        $fiberId = \spl_object_id($fiber);
+        if (self::$forceCloseOnSwallowedCancel) {
+            self::$killPending[$fiberId] = $fiber;
+            if (\function_exists('ignis_fiber_kill_pending')) {
+                \ignis_fiber_kill_pending($fiber, true);
+            }
+            return;
+        }
+        self::$logSwallowedPending[$fiberId] = [$fiber, $requestId ?? 0];
+    }
+
+    /**
+     * Runs every loop turn (ADR-0043 §7, L2): a fiber in `$killPending` that is still suspended
+     * parked again instead of unwinding, so it is force-closed — every reference the loop holds is
+     * dropped and then the local variable, so the object's refcount reaches zero and the engine
+     * unwinds it synchronously with an uncatchable graceful exit, `finally` blocks included. One
+     * still running or already terminated is left for a later turn, or forgotten if terminated.
+     */
+    private static function forceClosePending(): void
+    {
+        if (self::$killPending !== []) {
+            foreach (self::$killPending as $fiberId => $fiber) {
+                if (!isset(self::$killPending[$fiberId])) {
+                    continue;   // resolved already, by an earlier iteration's own cascade of finally blocks
+                }
+                if ($fiber->isTerminated()) {
+                    unset(self::$killPending[$fiberId]);
+                    continue;
+                }
+                if (!$fiber->isSuspended()) {
+                    continue;   // running right now; look again next turn
+                }
+                unset(self::$killPending[$fiberId]);
+                self::forceClose($fiber);
+            }
+        }
+        self::logFibersThatSwallowedTheirCancellation();
+    }
+
+    /** @param \Fiber<mixed,mixed,mixed,mixed> $fiber */
+    private static function forceClose(\Fiber $fiber): void
+    {
+        $fiberId = \spl_object_id($fiber);
+        unset(self::$parkedOn[$fiberId], self::$killPending[$fiberId]);
+        foreach (self::$waiting as $op => $waiter) {
+            if ($waiter === $fiber) {
+                unset(self::$waiting[$op]);
+            }
+        }
+        self::$idle = array_values(array_filter(self::$idle, static fn(\Fiber $idleFiber): bool => $idleFiber !== $fiber));
+        foreach (array_keys(self::$children) as $requestId) {
+            unset(self::$children[$requestId][$fiberId]);
+        }
+        foreach (self::$requestFibers as $requestId => $requestFiber) {
+            if ($requestFiber === $fiber) {
+                unset(self::$requestFibers[$requestId]);
+            }
+        }
+        self::$ready = array_values(array_filter(self::$ready, static fn(array $entry): bool => $entry[0] !== $fiber));
+        self::$pending = array_values(array_filter(self::$pending, static fn(array $entry): bool => $entry[0] !== $fiber));
+        try {
+            unset($fiber);
+        } catch (\Throwable $exception) {
+            self::$unobserved[] = $exception;
+        }
+    }
+
+    /**
+     * `IGNIS_ON_SWALLOWED_CANCEL=log`: the one warn line a swallowed cancellation gets instead of
+     * being force-closed, the first time it is seen parked again, then forgotten either way.
+     */
+    private static function logFibersThatSwallowedTheirCancellation(): void
+    {
+        foreach (self::$logSwallowedPending as $fiberId => [$fiber, $requestId]) {
+            if ($fiber->isTerminated()) {
+                unset(self::$logSwallowedPending[$fiberId]);
+                continue;
+            }
+            if (!$fiber->isSuspended()) {
+                continue;
+            }
+            unset(self::$logSwallowedPending[$fiberId]);
+            error_log(\sprintf('Ignis\Loop: request %d swallowed its cancellation and parked again', $requestId));
         }
     }
 

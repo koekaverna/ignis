@@ -95,6 +95,24 @@ function stop(): void
 }
 
 /**
+ * Marks the current fiber's blocking calls as accepted for the duration of $function (ADR-0043
+ * §5): the detector still counts and reports them, but at info instead of failing a strict-mode
+ * test or a `Ignis\Testing` audit. Runs $function unguarded when the binary has no detector.
+ */
+function allowBlocking(callable $function): mixed
+{
+    if (!\function_exists('ignis_allow_blocking')) {
+        return $function();
+    }
+    $wasAlreadyAllowed = \ignis_allow_blocking(true);
+    try {
+        return $function();
+    } finally {
+        \ignis_allow_blocking($wasAlreadyAllowed);
+    }
+}
+
+/**
  * Worker mode: serve HTTP forever, one pooled fiber per request.
  *
  * What the handler returns says how the request is answered, so the reader sees it in the
