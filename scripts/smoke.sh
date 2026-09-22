@@ -300,6 +300,22 @@ echo "  on  $chaos_on"
 # answers HTTP 503 before it knows the transport; a gRPC id cannot take a whole-body answer, so the
 # reactor refused it and the stream stayed open -- three of five concurrent calls hung for ever.
 # The client here is ours, so this needs no grpcurl and belongs in smoke rather than E10.
+# E10 without grpcurl or ghz (V-20's numbers need those; the behaviour does not): unary, streaming,
+# and ten Proxy calls that each park on a 200 ms client call — on one thread they finish together
+# or the client blocks the thread and they serialize to 2 s.
+echo "== E10 (gRPC unary, server-streaming, and a client call that parks the fiber)"
+E10_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 8 ))
+IGNIS_LISTEN="$E10_PORT" ./target/release/ignis --threads 1 examples/grpc_server.php > /tmp/e10-server.log 2>&1 & e10p=$!; HELPERS+=("$e10p")
+for _ in $(seq 1 50); do curl -sf -m 2 "http://$E10_PORT/" 2>/dev/null | grep -q "Ignis gRPC demo" && break; sleep 0.2; done
+e10=$(TARGET="$E10_PORT" N=10 timeout 30 ./target/release/ignis bench/php/e10_client.php 2>&1 | tail -1)
+kill $e10p 2>/dev/null; wait $e10p 2>/dev/null || true
+echo "  $e10"
+grep -q 'unary=ok' <<<"$e10" || { echo "E10 FAILED: the unary call did not answer"; cat /tmp/e10-server.log | tail -5; exit 1; }
+grep -q 'stream=ok' <<<"$e10" || { echo "E10 FAILED: the server stream did not arrive in order"; exit 1; }
+grep -q 'proxy_ok=10/10' <<<"$e10" || { echo "E10 FAILED: a proxied call did not come back"; exit 1; }
+e10_wall=$(sed -nE 's/.*wall_ms=([0-9]+).*/\1/p' <<<"$e10")
+[ "${e10_wall:-9999}" -lt 1000 ] || { echo "E10 FAILED: ten 200 ms client calls took ${e10_wall} ms on one thread -- the client is blocking the thread, not parking the fiber"; exit 1; }
+
 echo "== a gRPC call refused by the fiber budget gets a status, not a hang"
 GRPC_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 9 ))
 IGNIS_LISTEN="$GRPC_PORT" IGNIS_FIBER_BUDGET=1 IGNIS_QUEUE_DEPTH=1 \

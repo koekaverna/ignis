@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Disk (owner rule, 2026-09-16)
 
 - Before any build run `df -h /`; if less than 15% is free, stop and clean first.
-- Comparison build trees (php-fpm, FrankenPHP, RoadRunner, ext-grpc) live under `/tmp/cmp/` and are deleted the moment their numbers are in VALIDATION.md; keep only the binaries `bench/compare.sh` and `bench/e10-compare.sh` need (`/opt/frankenphp-bin`, `/opt/php85-fpm/sbin/php-fpm`, `/tmp/cmp/rr` + `/tmp/cmp/rr-app`).
+- A comparison build (php-fpm, FrankenPHP, RoadRunner) lives under `/tmp/cmp/` and is deleted the moment its numbers are in VALIDATION.md. The comparison scripts themselves went on 2026-09-22 (DECISIONS): the numbers are V-6, V-15 and V-20, and re-measuring them is a `bencher` task from `git log`, not a script in the tree.
 
 ### Document roles
 
@@ -51,7 +51,7 @@ scripts/smoke.sh                      # end-to-end gate: build, tests, app.php, 
 
 Run a script: `./target/release/ignis [--threads N] [--supervise] <script.php> [args...]`.
 
-Benches are one script per expectation (`bench/eN-*.sh`), each writing into VALIDATION.md; `bench/compare.sh` produces `bench/results/compare.md` vs FrankenPHP and php-fpm. The comparison suites (E15) run in CI and are gated against `bench/results/e15-baseline.txt` by `scripts/ci-gate.sh <suite> <log>` — pass counts may never drop.
+Benches are one script per expectation (`bench/eN-*.sh`), each writing into VALIDATION.md. The compat suites (E15) run in CI and are gated against `bench/results/e15-baseline.txt` by `scripts/ci-gate.sh <suite> <log>` — pass counts may never drop.
 
 The second **engine ABI** (non-thread-safe PHP, S-NTS-MODE, V-113) is a separate prefix and target
 dir too: `scripts/build-php-nts.sh` then `PHP_CONFIG=/opt/php85-nts/bin/php-config

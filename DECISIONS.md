@@ -933,3 +933,24 @@ in the runtime bounds how long a fiber stays parked, so a suite that hangs one f
 job's whole timeout and says nothing. The gate comes back when a per-fiber timeout exists —
 BACKLOG `S-FIBER-TIMEOUT` carries the acceptance. `bench/e15-chaos.sh` stays as a manual
 instrument. Seven jobs in `ci.yml`, nine runs.
+
+## 2026-09-22 — the research instruments that were not the product
+
+The owner asked what else could go and said "Делай" to the first three of five candidates and to
+the gRPC gate. Done:
+
+| what | size | why |
+|---|---|---|
+| `bench/compare.sh`, `bench/e10-compare.sh`, `bench/e9-probe.sh`, `examples/rust/{grpc-baseline,temporal-probe}`, `bench/results/{compare.md,e10-build-complexity.md}` | ~250 lines + three external builds | E4/E10 comparison instruments; their numbers are V-6, V-15, V-20, and re-measuring against FrankenPHP/php-fpm/RoadRunner on rented hardware is not something the owner wants to keep in the tree. A `bencher` can rebuild one from `git log` |
+| 15 fixtures under `bench/php/` (`a4_*`, `a6_*`, `e18_selfcheck`, `e18_timeo`, `reactor_latency`, `scoped_cost`, …) | 703 lines | nothing ran them; most belonged to mechanisms deleted on 2026-09-18 (A4 sockets hooks, A6 TLS read-ahead) |
+| `crates/ignis/src/php/locklib.rs`, `bench/e18/locklib.c`, `bench/e18-deadlock.sh`, `bench/php/e18_deadlock.php`, `IGNIS_LOCKLIB` | 208 Rust lines in the FFI layer | the H36 lock-hazard harness (V-51); a research instrument that lived inside an `unsafe` module |
+
+**Not deleted, decided separately:** classic mode (1,266 lines, hostage to the FrankenPHP gate the
+owner kept) and the history (`docs/research`, ADRs, VALIDATION, BACKLOG-CLOSED) — the evidence
+behind every number in STATUS.
+
+**Added instead of deleted:** E10 had no gate in CI although gRPC is in the MVP —
+`bench/e10-grpc.sh` needs grpcurl and ghz. `scripts/smoke.sh` now runs `bench/php/e10_client.php`
+against `examples/grpc_server.php` with the runtime's own client: unary, server-streaming in order,
+and ten concurrent Proxy calls that each park on a 200 ms client call and must finish in under a
+second on one thread — the arm that fails if the client ever blocks the thread instead of parking.

@@ -42,9 +42,8 @@ scripts/build-php.sh                                   # PHP 8.5.10 ZTS embed (s
 cargo build --release -p ignis && cargo nextest run     # binary + unit tests (miri: cargo +nightly miri test -p ignis -- php::zval php::module)
 scripts/smoke.sh                                       # hello, app.php, E1/E2, 4 threads, E13, E6, E7, E11, E12
 ignis serve examples/hello_server.php & bench/wrk-hello.sh   # or: docker run -p 8080:8080 ghcr.io/koekaverna/ignis (V-38, V-39) — HTTP hello on :8080
-bench/compare.sh [wrk_threads conns dur]               # Ignis vs FrankenPHP worker vs php-fpm+nginx → bench/results/compare.md (URL_PATH=/cpu, IGNIS_THREADS_LIST="1 4")
 # per expectation: bench/e6-fetch.sh e6-ssl.sh e7-revolt.sh e8-symfony.sh e11-cancel.sh e12-isolation.sh e12-inflight.sh e13-http.sh e23-stream.sh e25-reload.sh rss-1m.sh soak-threads.sh   (e14-pg.sh went with the pool, V-87)
-# E9/E20 (needs /opt/gobin/temporal and bench/e20-sdkphp.sh's vendor/): cargo build --release -p ignis --features temporal && bench/e20-sdkphp.sh && bench/e9-temporal.sh; probe bench/e9-probe.sh — E10: bench/e10-grpc.sh (grpcurl+ghz), bench/e10-compare.sh (vs pure tonic/RoadRunner in /tmp/cmp)
+# E9/E20 (needs /opt/gobin/temporal and bench/e20-sdkphp.sh's vendor/): cargo build --release -p ignis --features temporal && bench/e20-sdkphp.sh && bench/e9-temporal.sh; probe bench/e9-probe.sh — E10: bench/e10-grpc.sh (grpcurl+ghz for the numbers; the tool-free E10 arm is in scripts/smoke.sh)
 # E15: bench/e15-phpt.sh, bench/e15-revolt.sh, bench/e15-frankenphp.sh (in CI); SUITES=symfony-http-foundation bench/e15-chaos.sh (manual until S-FIBER-TIMEOUT); chaos: IGNIS_CHAOS=1 ./target/release/ignis <script>
 ```
 

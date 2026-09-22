@@ -1,6 +1,6 @@
 ---
 name: bencher
-description: Writes and runs benchmark scripts (wrk, ghz, ab-style loops, RSS soaks) against Ignis and comparison servers (FrankenPHP, php-fpm, RoadRunner, pure tonic), and fills VALIDATION-style tables with the numbers. Use for E10/E4/E5-type measurements and comparison builds.
+description: Writes and runs benchmark scripts (wrk, ghz, ab-style loops, RSS soaks) against Ignis, and against a comparison server (FrankenPHP, php-fpm, RoadRunner) built under /tmp/cmp for the occasion, and fills VALIDATION-style tables with the numbers. Use for E10/E4/E5-type measurements.
 model: claude-opus-5
 hooks:
   PreToolUse:
