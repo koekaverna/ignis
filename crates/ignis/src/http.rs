@@ -101,9 +101,20 @@ pub fn stalled_threads(limit: Duration) -> (usize, usize) {
     match REGISTRY.get() {
         Some(r) => {
             let rs = r.reactors.lock_unpoisoned();
-            (rs.iter().filter(|x| x.pending_requests() > 0 && x.idle_in_php() > limit).count(), rs.len())
+            (rs.iter().filter(|x| x.pending_requests() > 0 && busy_for(x) > limit).count(), rs.len())
         }
         None => (0, 0),
+    }
+}
+
+/// How long the thread has been out of `ignis_poll`: from its scoreboard slot when it has one
+/// (a thread parked inside `poll` with requests in flight is idle, not stalled — the old
+/// poll-timestamp rule counted it), else the reactor's own poll clock.
+fn busy_for(reactor: &Reactor) -> Duration {
+    match reactor.slot().and_then(crate::scoreboard::slot) {
+        Some(slot) if slot.state.load(Ordering::Acquire) == crate::scoreboard::STATE_IDLE => Duration::ZERO,
+        Some(slot) => Duration::from_nanos(crate::scoreboard::monotonic_ns().saturating_sub(slot.php_since_ns.load(Ordering::Relaxed))),
+        None => reactor.idle_in_php(),
     }
 }
 

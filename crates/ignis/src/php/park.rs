@@ -625,11 +625,14 @@ unsafe fn data_call<T: SyscallResult>(g: Gate, fd: c_int, write: bool, events: i
             Gate::Outside => real(),
             Gate::Block(_g, site) => forward(site, real),
             Gate::Park(_g, site) => {
-                if is_nonblocking(fd) || ready_now(fd, events) {
+                if is_nonblocking(fd) {
                     return real();
                 }
                 if !would_block(fd) {
                     return forward(site, real);
+                }
+                if ready_now(fd, events) {
+                    return real();
                 }
                 match park_io(fd, write) {
                     Wait::Ready => real(),
