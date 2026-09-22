@@ -102,6 +102,7 @@ pub struct Settings {
     pub blocking_trace: bool,
     pub blocking_report: Option<String>,
     /// `library:symbol[@route-prefix]` patterns reported at info instead of the mode's level.
+    #[cfg_attr(not(feature = "universal-park"), allow(dead_code))]
     pub blocking_allow: Vec<String>,
     pub alert_window: Duration,
     pub alert_escalate_count: u64,

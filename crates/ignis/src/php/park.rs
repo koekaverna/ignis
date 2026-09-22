@@ -226,7 +226,22 @@ unsafe fn gate(ret: *const c_void, sym: &str) -> Gate {
     // SAFETY: `ret` is a return address from the interposer, used only as a lookup key and passed to
     // dladdr, which validates it itself. The gate is already at 2, so resolve_site cannot re-enter.
     let site = unsafe { resolve_site(ret, sym) };
+    if site.index == SELF_SITE {
+        return Gate::Outside;
+    }
     if site.parks { Gate::Park(guard, site) } else { Gate::Block(guard, site) }
+}
+
+/// The site index of the executable's own code: Rust std writing a log line, the reactor, the
+/// runtime's own probes. Those calls are not the application's and are neither parked nor timed.
+const SELF_SITE: u32 = 0;
+
+/// The basename of this executable, which `dladdr` reports for call sites inside it.
+fn self_basename() -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| {
+        std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default()
+    })
 }
 
 unsafe fn resolve_site(ret: *const c_void, sym: &str) -> Site {
@@ -240,6 +255,12 @@ unsafe fn resolve_site(ret: *const c_void, sym: &str) -> Site {
         if libc::dladdr(ret, &mut info) != 0 && !info.dli_fname.is_null() {
             let name = CStr::from_ptr(info.dli_fname).to_string_lossy();
             let base = name.rsplit('/').next().unwrap_or(&name).to_string();
+            if !base.is_empty() && base == self_basename() {
+                trace(&format!("site {key:#x} {sym} from the executable itself: outside"));
+                let site = Site { parks: false, index: SELF_SITE };
+                SITES.with(|s| s.borrow_mut().insert(key, site));
+                return site;
+            }
             let parks = libs().iter().any(|(l, s)| base.starts_with(l.as_str()) && s.as_deref().is_none_or(|s| s == sym));
             if PROBING.load(Ordering::Relaxed) && parks {
                 PROBE_HITS.lock_unpoisoned().push(base.clone());
@@ -261,6 +282,12 @@ unsafe fn resolve_site(ret: *const c_void, sym: &str) -> Site {
 trait SyscallResult: Copy {
     fn failed(self) -> bool;
     fn failure() -> Self;
+    /// What the caller sees when a kill cancelled the call: the error value, except for `sleep()`,
+    /// which keeps its own answer (the seconds it did not sleep).
+    fn cancelled_value(interrupted: Self) -> Self {
+        let _ = interrupted;
+        Self::failure()
+    }
 }
 
 impl SyscallResult for isize {
@@ -281,13 +308,18 @@ impl SyscallResult for c_int {
     }
 }
 
-/// `sleep()` returns what is left to sleep and never an error code.
+/// `sleep()` returns what is left to sleep: non-zero only when a signal interrupted it, which is
+/// the case the kill needs to see. Its "failure" value is what an interrupted sleep already
+/// returned, so the caller keeps the remaining seconds and `errno` says `ECANCELED`.
 impl SyscallResult for c_uint {
     fn failed(self) -> bool {
-        false
+        self != 0
     }
     fn failure() -> Self {
-        0
+        1
+    }
+    fn cancelled_value(interrupted: Self) -> Self {
+        interrupted
     }
 }
 
@@ -303,10 +335,10 @@ unsafe fn forward<T: SyscallResult>(site: Site, real: impl FnOnce() -> T) -> T {
     // SAFETY: on a PHP thread inside a fiber (the gate said so); the meta helpers only read EG.
     if result.failed() && errno == libc::EINTR && unsafe { kill_cancels_this_fiber() } {
         errno = libc::ECANCELED;
-        result = T::failure();
+        result = T::cancelled_value(result);
     }
     // SAFETY: the detector runs on this PHP thread and reads its own frames only.
-    unsafe { super::detector::observe(site.index, us, errno) };
+    unsafe { super::detector::observe(site.index, us, if result.failed() { errno } else { 0 }) };
     // SAFETY: restoring errno for the caller after the detector's own calls may have changed it.
     unsafe { *libc::__errno_location() = errno };
     result

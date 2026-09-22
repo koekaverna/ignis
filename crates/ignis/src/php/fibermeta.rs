@@ -133,7 +133,9 @@ pub unsafe fn install() {
     }
 }
 
-/// `ignis_fiber_request(int $id): void` — the request the current fiber serves (0 = none).
+/// `ignis_fiber_request(int $id): void` — the request the current fiber serves (0 = none). A new
+/// request on a pooled fiber starts with a clean slate: a kill that cancelled the previous
+/// request's waits must not refuse this one's.
 pub unsafe extern "C" fn zif_ignis_fiber_request(ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
     // SAFETY: VM frame on the PHP thread.
     unsafe {
@@ -144,6 +146,8 @@ pub unsafe extern "C" fn zif_ignis_fiber_request(ex: *mut sys::zend_execute_data
         let meta = current();
         if !meta.is_null() {
             (*meta).request_id = id.max(0) as u64;
+            (*meta).kill_pending = false;
+            (*meta).allow_blocking = false;
         }
         scoreboard::set_current_request(id.max(0) as u64);
     }

@@ -37,6 +37,7 @@ thread_local! {
 
 /// How a C-side park came back.
 #[derive(Debug)]
+#[cfg_attr(not(feature = "universal-park"), allow(dead_code))]
 pub enum Parked<T> {
     Done(T),
     /// The fiber is being force-closed: no park was granted, or the park was resumed into an

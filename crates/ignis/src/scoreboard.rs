@@ -183,6 +183,7 @@ pub fn leave_poll() {
     }
 }
 
+#[cfg_attr(not(feature = "universal-park"), allow(dead_code))]
 /// The shim is about to forward a call that will block this thread (inside a fiber).
 pub fn enter_blocking(site: u32) -> u64 {
     let now = monotonic_ns();
@@ -194,6 +195,7 @@ pub fn enter_blocking(site: u32) -> u64 {
     now
 }
 
+#[cfg_attr(not(feature = "universal-park"), allow(dead_code))]
 /// The blocking forward returned; `started` is what `enter_blocking` returned. Returns the
 /// duration in microseconds.
 pub fn leave_blocking(started: u64) -> u64 {
@@ -244,6 +246,7 @@ pub fn kill_wanted_for(fiber: usize) -> bool {
 /// Blocking-forward sites, named `library:symbol`, indexed from 1.
 static SITE_NAMES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+#[cfg_attr(not(feature = "universal-park"), allow(dead_code))]
 /// The index of `name` in the site table, adding it if new. Called on the cache-miss path only.
 pub fn site_index(name: &str) -> u32 {
     let mut names = crate::lock::LockUnpoisoned::lock_unpoisoned(&SITE_NAMES);

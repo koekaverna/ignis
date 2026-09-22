@@ -7,6 +7,7 @@
 //! Everything here runs on the PHP thread after the syscall returned and before any fiber switch,
 //! so reading `EG(current_execute_data)` is sound; nothing here allocates on the path that stays
 //! under the threshold.
+#![cfg_attr(not(feature = "universal-park"), allow(dead_code))]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::{c_char, c_int};
