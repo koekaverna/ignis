@@ -34,7 +34,47 @@ env:
   PHP_CONFIG: /opt/php85-zts/bin/php-config
   LD_LIBRARY_PATH: /opt/php85-zts/lib
 jobs:
+  # Owner (2026-09-23): checks run only for what changed. Three buckets, coarse on purpose: a
+  # Rust change runs the Rust jobs and everything that executes the binary; a PHP change runs the
+  # PHP jobs and the same; a change to scripts or benches runs only the jobs that execute them.
+  # workflow_dispatch has no diff and runs everything.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch' }}
+      php: ${{ steps.filter.outputs.php == 'true' || github.event_name == 'workflow_dispatch' }}
+      runtime: ${{ steps.filter.outputs.runtime == 'true' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - "crates/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "deny.toml"
+              - ".github/workflows/ci.yml"
+            php:
+              - "php/**"
+              - "examples/**"
+              - "bench/php/**"
+              - "bench/e22/**"
+              - ".github/workflows/ci.yml"
+            runtime:
+              - "crates/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "php/**"
+              - "examples/**"
+              - "bench/**"
+              - "scripts/**"
+              - ".github/workflows/ci.yml"
   lint:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     name: fmt + clippy + deny
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -68,6 +108,8 @@ jobs:
         run: cargo deny check
 
   unit:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     name: nextest + miri (${{ matrix.engine }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -139,6 +181,8 @@ jobs:
           path: /tmp/*.log
 
   smoke:
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
     name: scripts/smoke.sh (${{ matrix.engine }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -169,6 +213,10 @@ jobs:
       # which the dist archive does not carry. Composer itself always runs on the zts php: it only
       # resolves the vendor tree, and that has nothing to do with which engine ABI smoke.sh then
       # exercises.
+      - uses: actions/cache@v4
+        with:
+          path: php/packages/revolt/vendor
+          key: revolt-vendor-${{ hashFiles('php/packages/revolt/composer.json', 'php/packages/revolt/composer.lock') }}
       - name: composer install (E7 Revolt/AMPHP examples)
         run: cd php/packages/revolt && timeout 600 /opt/php85-zts/bin/php "$(command -v composer)" install --prefer-source --no-interaction --quiet
       - name: composer install (the php/ monorepo and its dev tooling)
@@ -193,6 +241,8 @@ jobs:
             bench/results/
 
   php-lint:
+    needs: changes
+    if: needs.changes.outputs.php == 'true'
     name: php -l + phpstan + cs-fixer
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -227,6 +277,8 @@ jobs:
         run: cd php && /opt/php85-zts/bin/php vendor/bin/php-cs-fixer check --diff --show-progress=none
 
   php-unit:
+    needs: changes
+    if: needs.changes.outputs.php == 'true'
     name: phpunit + coverage
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -255,6 +307,8 @@ jobs:
           path: /tmp/*.log
 
   e9-temporal:
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
     name: "E9/E20 temporal: official sdk-php on sdk-core, conformance, live run, replay + negative control"
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -311,6 +365,8 @@ jobs:
           path: /tmp/*.log
 
   e15:
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
     name: E15 ${{ matrix.suite }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -337,6 +393,11 @@ jobs:
         run: |
           timeout 2400 bench/e15-phpt.sh 2>&1 | tee /tmp/e15-phpt.log
           scripts/ci-gate.sh phpt /tmp/e15-phpt.log
+      - uses: actions/cache@v4
+        if: matrix.suite == 'revolt'
+        with:
+          path: php/packages/revolt/vendor
+          key: revolt-vendor-${{ hashFiles('php/packages/revolt/composer.json', 'php/packages/revolt/composer.lock') }}
       - name: Revolt DriverTest on IgnisDriver
         if: matrix.suite == 'revolt'
         run: |

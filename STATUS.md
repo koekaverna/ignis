@@ -1,4 +1,4 @@
-# STATUS — Ignis (updated 2026-09-23, branch `main`, CI green on `ci.yml`'s seven jobs (nine runs at `fe565c6`, eleven since the `unit`/`smoke` ZTS/NTS matrix) — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
+# STATUS — Ignis (updated 2026-09-23, branch `main`, CI green on `ci.yml`'s eight jobs (nine runs at `fe565c6`, twelve since the `unit`/`smoke` ZTS/NTS matrix and the `changes` gate that runs only the jobs a push touches) — mission is now the product, ROADMAP.md M1–M5; the runtime numbers below are what it stands on)
 
 Read top down: what the product can do, what is open, what to do next, how to run it. The evidence is underneath — every number links a VALIDATION.md entry, and anything without one says "not measured".
 

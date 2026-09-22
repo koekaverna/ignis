@@ -984,3 +984,12 @@ E20 — answered with tee's status. The first nts smoke leg printed "PHP not bui
 the zts legs were green on their own merit, but nothing in the workflow could have said otherwise.
 `defaults.run.shell: bash` (`bash -eo pipefail`) makes the piped command's status the step's. The
 image build itself was necessary: the nts legs need `/opt/php85-nts`, which only the image carries.
+
+**Addendum, owner 2026-09-23: "образы билдить только на изменение образов, проверки кода на код".**
+The images already were (php-image.yml on its four inputs, release.yml on tags). `ci.yml` now
+starts with a `changes` job (`dorny/paths-filter`) and three buckets: `rust` (crates, Cargo, deny)
+runs `lint` and `unit`; `php` (php, examples, bench/php, bench/e22) runs `php-lint` and
+`php-unit`; `runtime` (either, plus bench and scripts) runs `smoke`, `e9-temporal` and `e15`,
+the jobs that execute the binary. `workflow_dispatch` runs everything. The Revolt vendor tree
+(`--prefer-source`, three minutes of git clones per leg) is cached by its lock file in `smoke`
+and `e15`.
