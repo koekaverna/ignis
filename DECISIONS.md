@@ -923,3 +923,13 @@ The owner: "Удали лишние ci workflow". Read against what each one is 
 Four workflow files remain (eight this morning). Kill criterion: a user asks for an image of a
 commit that is not a release — then `image.yml` returns from `git log`, on `workflow_dispatch`
 only.
+
+## 2026-09-22 — the chaos job leaves CI again, until fibers have a timeout
+
+The owner, after watching the new `e15-chaos` job: "Chaos, наверное лучше выключить с пометкой
+нужно сделать таймауты на файберы". Taken. The job ran the suites where chaos cannot act for half
+an hour (narrowed the same evening), and even narrowed it has no floor under a hung fiber: nothing
+in the runtime bounds how long a fiber stays parked, so a suite that hangs one fiber costs the
+job's whole timeout and says nothing. The gate comes back when a per-fiber timeout exists —
+BACKLOG `S-FIBER-TIMEOUT` carries the acceptance. `bench/e15-chaos.sh` stays as a manual
+instrument. Seven jobs in `ci.yml`, nine runs.

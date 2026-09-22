@@ -153,6 +153,28 @@ this item is already building. And offload worker threads never register with `m
 `Registry` at all, so an offload callback blocked on `recv_timeout` is invisible to the watchdog by
 construction.
 
+### S-FIBER-TIMEOUT A fiber that never resumes has no timeout, and the chaos gate cannot be a gate until it does `main` `open — owner, 2026-09-22`
+**What.** `bench/e15-chaos.sh` entered CI on 2026-09-22 and was switched off the same evening (owner:
+"Chaos лучше выключить с пометкой нужно сделать таймауты на файберы"). Under chaos scheduling a
+suite that hangs one fiber hangs the whole run until the job's wall-clock timeout — 30 to 60 minutes
+of runner time with nothing to read at the end — because nothing in the runtime bounds how long a
+fiber may stay parked or suspended. The request deadline (ADR-0009, `Ignis\deadline()`) is opt-in
+and per request; a fiber the scheduler itself parks has no ceiling at all, and the watchdog only
+names the thread (M4-7).
+**Why it matters.** The same gap is behind three closed or open items: S-POOL-LEASE-AGE's fix (3)
+(a hung fiber keeps its resource forever), S-CANCEL-IN-C (a deadline cannot reach a fiber inside
+C), and M4-7 (the watchdog cannot say which fiber). A per-fiber timeout is the one mechanism that
+turns "the run hangs" into "this test failed, here is the fiber", and it is what makes chaos
+affordable as a gate.
+**Acceptance.** (1) A configurable per-fiber wall-clock ceiling in the runtime (default off in
+production, on under `IGNIS_CHAOS` and in the compat benches), enforced at the loop's poll point:
+a fiber past it is thrown into with a `DeadlineExceededException` naming the fiber and where it
+was parked, and its request answers 504 — the ADR-0009 path, not a new one. (2) The C-parked case
+is answered or explicitly refused (S-CANCEL-IN-C's ADR decides which). (3) `bench/e15-chaos.sh`
+with `SUITES=symfony-http-foundation` finishes in bounded time with a hung test named, falsified
+by a fixture that parks a fiber forever. Then, and not before, the `e15-chaos` job returns to
+`ci.yml` (its last shape is in `git log` at `7c1c48e`).
+
 ### M4-9 Cancellation of offload jobs and PG queries on disconnect (E11') `main` `CLOSED 2026-09-22 — the offload pool is deleted (DECISIONS); the pgsql half stays a question under ROADMAP E11'`
 Nothing left to cancel on a worker thread: there are no worker threads.
 **What.** ROADMAP E11': today a client disconnect cancels the fiber (V-14) but a query already sent
