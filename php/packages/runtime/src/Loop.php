@@ -159,10 +159,26 @@ final class Loop
                 $future->resolve($function(...$arguments));
             } catch (\Throwable $e) {
                 $future->reject($e);
+            } finally {
+                self::rejectIfForceClosedMidJob($future);
             }
             self::forgetChild($requestId, $self);
             self::$idle[] = $self;
             $job = self::nextJob();
+        }
+    }
+
+    /**
+     * ADR-0043 §7, L2/L3: a fiber force-closed under `kill = "graceful"` unwinds through this
+     * `finally` without ever reaching `resolve()`/`reject()` above — the throw is uncatchable, so
+     * the ordinary `catch` never ran — which leaves its Future unsettled and whoever awaits it
+     * hanging forever. `kill = "exception"` already settled it through the `catch` above, so this
+     * is a no-op there.
+     */
+    private static function rejectIfForceClosedMidJob(Future $future): void
+    {
+        if (!$future->isDone()) {
+            $future->reject(new KilledException('fiber force-closed'));
         }
     }
 
@@ -772,11 +788,17 @@ final class Loop
             $id,
         );
         self::spawn(static function () use ($handler, $request, $id): void {
+            $answered = false;
             try {
                 self::answer($id, self::runHandler($handler, $request, $id));
+                $answered = true;
             } catch (\Throwable $e) {
                 self::answerFailed($id, $e);
+                $answered = true;
             } finally {
+                if (!$answered) {
+                    self::answerKilled($id);
+                }
                 self::releaseRequest($id);
             }
         });
@@ -795,6 +817,17 @@ final class Loop
         } catch (\Throwable $second) {
             self::logFailure('and so did answering it with a 500', $second);
         }
+    }
+
+    /**
+     * ADR-0043 §7, L2/L3: the request's fiber was force-closed before it answered — runs during
+     * the engine's own graceful unwind, where no park is possible, so this calls `ignis_respond()`
+     * directly rather than through `respondTo()` and ignores a false return in silence: the stream
+     * may already be open, or the client may already be gone, and neither is worth a log line here.
+     */
+    private static function answerKilled(int $id): void
+    {
+        \ignis_respond($id, 504, ['content-type' => 'text/plain'], "504 fiber killed\n");
     }
 
     /**
@@ -877,6 +910,9 @@ final class Loop
     {
         self::$requestFibers[$id] = self::currentFiber();
         Scope::set('ignis.request', $id);
+        if (\function_exists('ignis_fiber_request')) {
+            \ignis_fiber_request($id);
+        }
         if (\function_exists('ignis_set_superglobals')) {
             \ignis_set_superglobals(...$request->superglobals());
         }
@@ -912,6 +948,9 @@ final class Loop
     {
         self::disarmDeadline($id);
         unset(self::$requestFibers[$id], self::$children[$id]);
+        if (\function_exists('ignis_fiber_request')) {
+            \ignis_fiber_request(0);
+        }
         Scope::clear();
         \ignis_clear_request_info();
         Output::reset();
