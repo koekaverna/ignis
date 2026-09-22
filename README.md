@@ -1,5 +1,7 @@
 # Ignis
 
+Documentation site: <https://koekaverna.github.io/ignis/> (built from `docs/` by `.github/workflows/docs.yml`).
+
 An application server for PHP. One Rust process embeds PHP 8.5 (ZTS) and runs many requests per
 OS thread on native Fibers; every wait — a timer, a socket, TLS, a PostgreSQL query — is owned by
 tokio, so the thread serves other requests meanwhile. **Unmodified synchronous PHP becomes
@@ -164,8 +166,11 @@ behind `function_exists()`, and do not suspend inside the script.
 
 ## Build from source
 
-Ignis needs PHP 8.5.10 ZTS with the embed SAPI at `/opt/php85-zts`; distribution packages are
-NTS and will not do.
+Ignis's default build needs PHP 8.5.10 ZTS with the embed SAPI at `/opt/php85-zts`; distribution
+packages are NTS and will not link against it. A second engine ABI links against those NTS builds
+instead — `scripts/build-php-nts.sh` → `/opt/php85-nts`, then `PHP_CONFIG=/opt/php85-nts/bin/php-config
+CARGO_TARGET_DIR=target-nts cargo build --release -p ignis` — see the workers table above and
+[what it is not](docs/concept/non-goals.md).
 
 ```
 scripts/build-php.sh                  # idempotent, ~7 min, from $HOME/php-src (PHP_SRC= to override)

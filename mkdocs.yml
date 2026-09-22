@@ -1,5 +1,6 @@
 site_name: Ignis
 site_description: An application server for PHP — fiber concurrency for unmodified synchronous code.
+site_url: https://koekaverna.github.io/ignis/
 repo_url: https://github.com/koekaverna/ignis
 repo_name: koekaverna/ignis
 docs_dir: docs
