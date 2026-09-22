@@ -6133,3 +6133,70 @@ installed — `librdkafka.so.1`, `libmemcached.so.11`, `libsmbclient.so.0`, `lib
 it does: 58 of 86 here with nothing installed, 83 on a host where the packages' own dependencies are
 present, and 86 with one more `apt install libpcre2-dev` before the engine is built. None of the
 remaining failures is an ABI mismatch — which was the thing actually in doubt.
+
+## V-119 — the three scheduled workflows: what each is for, why two were red, and their first real numbers
+
+Date: 2026-09-22. Owner asked why the scheduled jobs fail. Runs read from GitHub Actions
+(`event=schedule`), fixes verified by `workflow_dispatch` on branch `claude/blissful-hawking-8h0cnk`.
+
+| workflow | schedule (UTC) | purpose | scheduled runs | verdict |
+|---|---|---|---|---|
+| `nightly.yml` | 03:00 | M5-4 perf gate: E1, E2, hello, E16, B1-p99 against the VALIDATION thresholds; opens `nightly: regression <date>` on a FAIL | 6, all red (2026-09-17 → 09-22) | never past line 1 |
+| `backend-b.yml` | 04:00 | A-BACKEND-B-CI: `cfg(php_async_abi)` compiles, clippy, release build, nextest against the true-async fork; publishes `zend_async_*.h` | 2, both red (09-21, 09-22) | link error |
+| `nts.yml` | 05:00 | S-NTS-MODE: `cfg(php_nts)` builds, serves, parks, scopes (`scripts/nts-checks.sh`) | 1, green (09-22) | fine |
+
+**nightly — cause.** Inside a `container:` job the runner defaults to `sh -e`; the image's `sh` is
+dash and the gate step's first line is `set -uo pipefail`:
+
+```
+shell: sh -e {0}
+/__w/_temp/….sh: 1: set: Illegal option -o pipefail
+##[error]Process completed with exit code 2.
+```
+
+Identical in runs 1 and 6. STATUS's "the schedule dispatch has still not run" was the wrong reading
+of the same red. Fix: `defaults.run.shell: bash` plus `set +e` in the gate step, because GitHub's
+`bash` is `bash -eo pipefail` and the script is written so a dead bench becomes a FAIL row.
+
+**backend-b — cause.** `cargo check` and clippy pass, the release build fails at link time:
+
+```
+rust-lld: error: undefined symbol: test_scheduler_set_idle_hook
+>>> referenced by async_core.rs:120 (crates/ignis/src/backend/async_core.rs:120)
+```
+
+The symbol exists only through `patches/0001-test-scheduler-idle-hook.patch`, which V-7 applied by
+hand and `scripts/build-php-async.sh` never applied. Fix: the script applies it idempotently
+(`git apply --check --reverse` first) and refuses to skip a prefix whose `libphp.so` lacks the
+export; the workflow's cache key includes `patches/*.patch` and a step asserts the export before
+the Rust build. The fork's `async-core` head is still `14af3cb` (2026-07-23), the patch applies
+cleanly. The first dispatch of the fix then failed with exit 141 on the script's own last line:
+`nm | grep -q` under `pipefail` — `grep -q` closes the pipe on its first match and `nm` dies of
+SIGPIPE. Reproduced locally on libc (`grep -qw read` → 141, `grep -w read >/dev/null` → 0); one
+function without `-q` now does the check in both places.
+
+**nightly — first two real tables** (dispatch, same commit `75a209c`, ubuntu-latest, 2 vCPU):
+
+```
+run 35756098500 (16:44Z)                              run 35756609005 (16:49Z)
+nightly: e1_wall_ms            1256.6  thr 1200  FAIL   1155.1  thr 1200     PASS
+nightly: e2_all3x200_ms         200.69 thr 230   PASS    201.86 thr 230      PASS
+nightly: e2_per_fiber_us_warm     5.21 thr 100   PASS      4.70 thr 100      PASS
+nightly: hello_rps            58425.07 (seeding) PASS  81276.06 (seeding)    PASS
+nightly: e16_wall_ms            2604   thr 3500  PASS   2603    thr 3500     PASS
+nightly: b1_p99_budget512_us   1500.00 thr 1925  PASS    950.00 thr 1212.50  PASS
+```
+
+The first run opened `nightly: regression 2026-09-22` (issue #1) on E1; five minutes later the same
+binary measured 1155.1 on another runner, and hello moved 39 % between the two. That is the runner's
+variance, not a change in the code: the E1 threshold (1200, from the 1144–1178 ms of V-28 on the
+development box) leaves 2–5 % headroom on hardware that varies by 10 %+. **Not changed today**:
+one week of scheduled runs is the right sample for re-setting the thresholds and for seeding
+`bench/results/nightly-baseline.txt` (two points 39 % apart are not a baseline). Left as the note
+on M5-4.
+
+**backend-b — first green run** (35756745022, commit `bb94ed5`): fork built in 4 min 18 s
+(cache miss, key now includes the patch), header present, `test_scheduler_set_idle_hook` exported,
+check + clippy `-D warnings` + release build clean, `76 tests run: 76 passed, 0 skipped` under
+nextest against the fork, headers artifact 9,439 B published. The prefix is cached for the next
+schedule.
