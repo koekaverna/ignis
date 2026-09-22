@@ -11,9 +11,15 @@ SRC="${PHP_ASYNC_SRC:-$HOME/php-src-async}"
 JOBS="${JOBS:-$(nproc)}"
 PATCH="$(cd "$(dirname "$0")/.." && pwd)/patches/0001-test-scheduler-idle-hook.patch"
 
+# grep without -q on purpose: -q closes the pipe on the first match, nm dies of SIGPIPE, and under
+# pipefail that is exit 141 (the first dispatch of backend-b.yml, 2026-09-22).
+exports_idle_hook() {
+  nm -D --defined-only "$1" | grep -w test_scheduler_set_idle_hook >/dev/null
+}
+
 if [ -x "$PREFIX/bin/php" ] && [ -f "$PREFIX/include/php/Zend/zend_async_API.h" ] \
    && "$PREFIX/bin/php" -r 'exit(PHP_ZTS ? 0 : 1);' 2>/dev/null \
-   && nm -D --defined-only "$PREFIX/lib/libphp.so" | grep -qw test_scheduler_set_idle_hook; then
+   && exports_idle_hook "$PREFIX/lib/libphp.so"; then
   echo "async php already present at $PREFIX ($("$PREFIX/bin/php" -v | head -1)); skipping build"
   exit 0
 fi
@@ -35,4 +41,4 @@ fi
 make -j"$JOBS"
 make install
 "$PREFIX/bin/php" -v
-nm -D --defined-only "$PREFIX/lib/libphp.so" | grep -qw test_scheduler_set_idle_hook
+exports_idle_hook "$PREFIX/lib/libphp.so"

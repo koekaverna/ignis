@@ -63,7 +63,7 @@ jobs:
       # first two scheduled runs (2026-09-21, 2026-09-22) built the fork unpatched and failed at
       # link time, after check and clippy had passed — neither of those links.
       - name: The idle hook the backend links against is exported
-        run: nm -D --defined-only "$ASYNC_PREFIX/lib/libphp.so" | grep -qw test_scheduler_set_idle_hook
+        run: nm -D --defined-only "$ASYNC_PREFIX/lib/libphp.so" | grep -w test_scheduler_set_idle_hook
 
       - uses: dtolnay/rust-toolchain@stable
         with:
