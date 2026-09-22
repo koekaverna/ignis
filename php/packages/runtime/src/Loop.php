@@ -1118,7 +1118,7 @@ final class Loop
      */
     private static function watchForSwallowedCancellation(\Fiber $fiber, ?int $requestId): void
     {
-        if ($fiber->isTerminated()) {
+        if ($fiber->isTerminated() || self::hasReturnedToThePoolIdle($fiber)) {
             return;
         }
         $fiberId = \spl_object_id($fiber);
@@ -1130,6 +1130,19 @@ final class Loop
             return;
         }
         self::$logSwallowedPending[$fiberId] = [$fiber, $requestId ?? 0];
+    }
+
+    /**
+     * A cancellation caught and fully handled — the interrupted job ran to completion instead of
+     * doing more work on it — leaves `poolBody()`'s own loop free to hand the fiber straight back
+     * to the pool before its next park, the same as any other finished job. That re-park is the
+     * ordinary "waiting for a new job" one every idle fiber sits in, not a swallowed cancellation,
+     * so it must not be force-closed: `Loop::spawn()` would otherwise be handed a fiber the engine
+     * is mid-way through destroying the moment a later request reuses it.
+     */
+    private static function hasReturnedToThePoolIdle(\Fiber $fiber): bool
+    {
+        return \in_array($fiber, self::$idle, true);
     }
 
     /**
@@ -1160,16 +1173,17 @@ final class Loop
     private static function forceCloseSuspendedFibers(): bool
     {
         $foundOneToClose = false;
-        foreach (self::$killPending as $fiberId => $fiber) {
-            if (!isset(self::$killPending[$fiberId])) {
-                continue;   // resolved already, by an earlier iteration's own cascade of finally blocks
+        foreach (\array_keys(self::$killPending) as $fiberId) {
+            $fiber = self::$killPending[$fiberId] ?? null;
+            if ($fiber === null) {
+                continue;
             }
             if ($fiber->isTerminated()) {
                 unset(self::$killPending[$fiberId]);
                 continue;
             }
             if (!$fiber->isSuspended()) {
-                continue;   // running right now; look again next turn
+                continue;
             }
             unset(self::$killPending[$fiberId]);
             self::dropLoopReferencesTo($fiber);

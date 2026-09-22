@@ -12,9 +12,9 @@ namespace Ignis;
  */
 final class Recovery
 {
-    private const int PRODUCTION_FIBER_TIMEOUT_MS = 0;
-    private const int LOAD_TEST_FIBER_TIMEOUT_MS = 30_000;
-    private const int TEST_FIBER_TIMEOUT_MS = 5_000;
+    private const PRODUCTION_FIBER_TIMEOUT_MS = 0;
+    private const LOAD_TEST_FIBER_TIMEOUT_MS = 30_000;
+    private const TEST_FIBER_TIMEOUT_MS = 5_000;
 
     /** The `fiber_timeout_ms` product default for a profile name, unrecognised names falling back to production's. */
     public static function profileDefault(string $profile): int
