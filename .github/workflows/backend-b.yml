@@ -48,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.ASYNC_PREFIX }}
-          key: php-async-${{ env.ASYNC_BRANCH }}-${{ hashFiles('scripts/build-php-async.sh') }}
+          key: php-async-${{ env.ASYNC_BRANCH }}-${{ hashFiles('scripts/build-php-async.sh', 'patches/*.patch') }}
 
       - name: Build the true-async fork
         run: PREFIX="$ASYNC_PREFIX" timeout 3600 scripts/build-php-async.sh
@@ -57,6 +57,13 @@ jobs:
       # something other than what it claims, and every later step would report a confusing error.
       - name: The async ABI header is where ADR-0003 says it is
         run: test -f "$ASYNC_PREFIX/include/php/Zend/zend_async_API.h"
+
+      # backend/async_core.rs links against this symbol, and it exists only because
+      # patches/0001-test-scheduler-idle-hook.patch adds it to the fork's reference scheduler. The
+      # first two scheduled runs (2026-09-21, 2026-09-22) built the fork unpatched and failed at
+      # link time, after check and clippy had passed — neither of those links.
+      - name: The idle hook the backend links against is exported
+        run: nm -D --defined-only "$ASYNC_PREFIX/lib/libphp.so" | grep -qw test_scheduler_set_idle_hook
 
       - uses: dtolnay/rust-toolchain@stable
         with:

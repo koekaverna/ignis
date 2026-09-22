@@ -5,6 +5,12 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+# Explicit on purpose: inside a `container:` job the runner defaults to `sh -e`, and the image's
+# `sh` is dash, which rejects `set -o pipefail`. The first six scheduled runs (2026-09-17 to
+# 2026-09-22) all died on that line before a single bench ran.
+defaults:
+  run:
+    shell: bash
 env:
   CARGO_TERM_COLOR: always
   PHP_CONFIG: /opt/php85-zts/bin/php-config
@@ -32,7 +38,9 @@ jobs:
       - name: E1 / E2 / hello / E16 / B1 p99, gated against VALIDATION thresholds
         id: gate
         run: |
-          set -uo pipefail
+          # +e on purpose: the shell above runs with -e, and a bench that dies must become a FAIL
+          # row in the table, not an aborted job with no table at all.
+          set +e -uo pipefail
           T="timeout 120"
           FAILED=0
           TABLE=""
