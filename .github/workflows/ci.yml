@@ -299,14 +299,17 @@ jobs:
             /tmp/*.log
             bench/results/
 
-  # E15e (owner, 2026-09-22): Symfony's and Doctrine's own suites under the runtime with chaos
+  # E15e (owner, 2026-09-22): Symfony's http-foundation suite under the runtime with chaos
   # scheduling on — the ready-fiber and completed-op batches shuffled and a yield inserted after
   # every awaited op — against the stock CLI of the same engine. Zero new failures is the gate.
-  # httpcache is skipped: five minutes of real sleep() per mode buys nothing chaos can act on.
+  # One suite on purpose (V-27): chaos can only act where a fiber awaits an Ignis op, and
+  # dbal, orm and http-kernel do so 1–4 times per run — their four modes cost 30 minutes and prove
+  # the embed environment, not the scheduler. httpcache is where chaos acts most (222,539 yields)
+  # but is five minutes of real sleep() per mode; it stays a manual run (`bench/e15-chaos.sh`).
   e15-chaos:
-    name: E15 chaos (Symfony + Doctrine suites, shuffled scheduling)
+    name: E15 chaos (http-foundation under shuffled scheduling)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     container:
       image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
       credentials:
@@ -322,7 +325,7 @@ jobs:
       # under stock PHP is a regression, and the line naming it is what fails the job.
       - name: chaos suites, zero new failures against stock PHP
         run: |
-          SKIP_SLOW=1 timeout 3000 bench/e15-chaos.sh 2>&1 | tee /tmp/e15-chaos.log
+          SUITES=symfony-http-foundation timeout 1500 bench/e15-chaos.sh 2>&1 | tee /tmp/e15-chaos.log
           ! grep -E 'new under (ignis|chaos) vs stock : [^[:space:]]' /tmp/e15-chaos.log
       - uses: actions/upload-artifact@v4
         if: failure()
