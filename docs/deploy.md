@@ -15,8 +15,8 @@ recipe below — it is not what you follow today; V-40/V-53 are.)
 
 ## 1. Get the image
 
-Published by CI on every push to `main` (`.github/workflows/image.yml`), and smoke-tested there
-before this doc trusts it (V-39 addendum):
+Published by the release workflow on every `v*` tag (`.github/workflows/release.yml`): `:latest`
+is the last release, and the image is smoke-tested there before this doc trusts it (V-39 addendum):
 
 ```
 docker pull ghcr.io/koekaverna/ignis:latest

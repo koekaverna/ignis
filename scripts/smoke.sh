@@ -13,10 +13,10 @@ HELPERS=()
 trap 'for h in ${HELPERS+"${HELPERS[@]}"}; do kill "$h" 2>/dev/null || true; done' EXIT
 
 # --image <tag>: smoke the built image instead of the local binary. Port publishing is broken on
-# this docker daemon (image.yml), so every probe is `docker exec <c> bash -c 'exec 3<>/dev/tcp/...'`
+# this docker daemon (release.yml), so every probe is `docker exec <c> bash -c 'exec 3<>/dev/tcp/...'`
 # instead of curl against a published port. Two containers: one with CMD overridden to serve
 # examples/app.php (the route table below), one left at the image's default CMD (hello_server) to
-# check /_ignis/health the way image.yml does. Everything below this block (build/tests/benches)
+# check /_ignis/health the way release.yml does. Everything below this block (build/tests/benches)
 # needs target/release/ignis and bench/*.sh hitting a local port directly — none of that reaches a
 # container only exposed via docker exec, so image mode skips it; see the summary line it prints.
 if [ "${1:-}" = "--image" ]; then
@@ -25,7 +25,7 @@ if [ "${1:-}" = "--image" ]; then
   HEALTH_C="ignis-smoke-health-$$"
   trap 'docker rm -f "$APP_C" "$HEALTH_C" >/dev/null 2>&1 || true' EXIT
 
-  # docker exec + /dev/tcp probe (image.yml's technique). Prints "body [code]" the same shape as
+  # docker exec + /dev/tcp probe (release.yml's technique). Prints "body [code]" the same shape as
   # the binary path's `curl -s -w " [%{http_code}]" | tr -d "\n" | cut -c1-90`.
   probe() {
     local c="$1" path="$2" raw code body

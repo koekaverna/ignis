@@ -907,3 +907,19 @@ its own. If the FrankenPHP gate is ever dropped, classic mode goes with it.
 **Kill criterion.** If an MVP application needs a blocking call that cannot park and cannot be
 made a `scoped` per-fiber resource — a CPU-bound extension call on the request path is the likely
 shape — the offload pool comes back from `git log` as a table row, per ADR-0037, not as a hook.
+
+## 2026-09-22 — two workflows fewer: the per-push image and the docs site
+
+The owner: "Удали лишние ci workflow". Read against what each one is for:
+
+| workflow | verdict | why |
+|---|---|---|
+| `image.yml` (runtime image on every push to `main`, `:latest` + `:<sha>`) | **deleted** | `release.yml` builds the same Dockerfile with the same smoke check on a tag; an image per commit is a release nobody asked for, and its `:latest` moved on every push. `release.yml` now tags `:latest` as well, so `docker pull ghcr.io/koekaverna/ignis:latest` means the last release. Rolling back is to a `:vX.Y.Z`, not a sha |
+| `docs.yml` (mkdocs to GitHub Pages on docs changes) | **deleted** | nothing links to the site — no `site_url`, no `github.io` anywhere in the repository — and no gate ran `mkdocs build` either, so it published pages nobody was sent to. The docs stay Markdown in `docs/`; a link check, if wanted, is a `mkdocs build --strict` step, not a deploy |
+| `php-image.yml` | kept | the builder image every CI job runs in; triggers only when its inputs change |
+| `nts.yml` | kept | the owner kept the NTS mode; nothing else compiles `cfg(php_nts)` |
+| `release.yml`, `ci.yml` | kept | the release and the gate |
+
+Four workflow files remain (eight this morning). Kill criterion: a user asks for an image of a
+commit that is not a release — then `image.yml` returns from `git log`, on `workflow_dispatch`
+only.

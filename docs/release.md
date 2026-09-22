@@ -26,7 +26,7 @@ git push origin v0.0.2-rc.1
 The tag push triggers `release.yml` (`on: push: tags: ["v*"]`). It:
 
 1. builds `docker/Dockerfile` and pushes `ghcr.io/koekaverna/ignis:v0.0.2-rc.1`
-2. smokes that pushed image — `/_ignis/health`, `ldd` has no "not found" (same check as `image.yml`)
+2. smokes that pushed image — `/_ignis/health`, `ldd` has no "not found" (M2's acceptance, V-39 addendum)
 3. runs `docker run ... --version` against it and fails the job if it doesn't print `ignis 0.0.2-rc.1`
 4. extracts `ignis` + `libphp.so` from the image into `ignis-v0.0.2-rc.1-linux-x86_64.tar.gz`
 5. builds release notes from `git log` since the previous `v*` tag
@@ -51,8 +51,8 @@ Note: this session must not run `gh workflow run` either (HARD LIMIT) — the ow
 
 ## Where it lands
 
-- Image: `ghcr.io/koekaverna/ignis:v0.0.2-rc.1` (and `:latest`/`:<sha>` only from `image.yml` on
-  pushes to `main`, never from a release tag)
+- Image: `ghcr.io/koekaverna/ignis:v0.0.2-rc.1` and `:latest` (since 2026-09-22 the tag is the only
+  thing that publishes an image; the per-push `image.yml` is gone)
 - Tarball: attached to the GitHub Release at `github.com/koekaverna/ignis/releases/tag/v0.0.2-rc.1`
 - Release notes: commit log since the previous `v*` tag, in the release body
 
@@ -98,8 +98,8 @@ pulling the image and the tarball and running `--version` on both (V-57), after 
 failed on the tarball step and was fixed. What is still unobserved is narrower than it was, and is
 what follows; it is reviewed by reading, not by running:
 
-- Whether the job finishes inside its 45-minute timeout on a cold GHA cache (image.yml's build has
-  always run warm-cached and finished in 2-3 minutes; a tag push after a long gap could miss cache).
+- Whether the job finishes inside its 45-minute timeout on a cold GHA cache (the per-push image
+  build that kept the cache warm is gone since 2026-09-22; a tag push after a long gap misses it).
   `v0.1.0-rc.1` ran warm, so it did not test this.
 - The now-fixed dry-run path (`load` instead of `push`, release step gated off) — the fix has not
   itself been dispatched, per the HARD LIMIT on triggering workflows.

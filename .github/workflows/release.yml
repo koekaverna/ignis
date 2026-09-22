@@ -1,5 +1,6 @@
-# Cuts a GitHub release from a `vX.Y.Z` tag: builds and pushes the runtime image
-# (same Dockerfile and smoke check as image.yml), proves `--version` matches the tag,
+# Cuts a GitHub release from a `vX.Y.Z` tag: builds and pushes the runtime image as
+# `:vX.Y.Z` and `:latest` (the per-push image.yml went on 2026-09-22, DECISIONS), smokes it,
+# proves `--version` matches the tag,
 # packages the binary + libphp.so, and publishes the release with notes since the
 # previous tag. workflow_dispatch with a `tag` input lets the owner dry-run the whole
 # thing against the current HEAD before pushing a real tag (the session git proxy
@@ -55,11 +56,13 @@ jobs:
           file: docker/Dockerfile
           push: ${{ github.event_name == 'push' }}
           load: ${{ github.event_name == 'workflow_dispatch' }}
-          tags: ghcr.io/koekaverna/ignis:${{ steps.v.outputs.tag }}
+          tags: |
+            ghcr.io/koekaverna/ignis:${{ steps.v.outputs.tag }}
+            ghcr.io/koekaverna/ignis:latest
           cache-from: type=gha,scope=ignis-runtime
           cache-to: type=gha,scope=ignis-runtime,mode=max
 
-      # Same acceptance image.yml runs on every push to main, against the tagged image.
+      # M2's acceptance, against the tagged image: it answers /_ignis/health from nothing but itself.
       - name: smoke the tagged image
         run: |
           docker run -d --name ignis ghcr.io/koekaverna/ignis:${{ steps.v.outputs.tag }}
