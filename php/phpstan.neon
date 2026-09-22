@@ -45,7 +45,6 @@ parameters:
         - packages/phpstan/tests
         - packages/runtime/src
         - packages/runtime/tests
-        - packages/swoole/src
         - packages/symfony-runtime/src
         - packages/temporal/src
         - packages/temporal-core-transport/src
@@ -55,7 +54,6 @@ parameters:
         - packages/doctrine/tests
         - packages/grpc/tests
         - packages/offload/tests
-        - packages/swoole/tests
         - packages/symfony-runtime/tests
         - packages/temporal/tests
         - packages/runtime/stubs

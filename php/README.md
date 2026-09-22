@@ -11,7 +11,6 @@ nothing else. Every package here needs the `ignis` binary — under php-fpm or p
 | [`ignis/offload`](packages/offload) | synchronous worker threads for what park cannot reach (ADR-0016) |
 | [`ignis/grpc`](packages/grpc) | gRPC handlers and clients on the runtime's own listener (E10) |
 | [`ignis/revolt`](packages/revolt) | Revolt driver, so AMPHP libraries run unchanged (E7) |
-| [`ignis/swoole`](packages/swoole) | a shim for part of the Swoole coroutine API (E15d) |
 | [`ignis/temporal`](packages/temporal) | Ignis host for the **official** `temporalio/sdk-php` (ADR-0040) |
 | [`ignis/temporal-core-transport`](packages/temporal-core-transport) | the portable half of that: sdk-core activations ↔ sdk-php's command model. Depends on nothing from Ignis and is written to be offered upstream. |
 | [`ignis/temporal-prototype`](packages/temporal-prototype) | our own pre-ADR-0040 workflow runtime (ADR-0013, V-19). Frozen; kept because the replay test was built on it. |

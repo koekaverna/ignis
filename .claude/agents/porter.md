@@ -1,6 +1,6 @@
 ---
 name: porter
-description: Ports test suites onto Ignis (php-src .phpt via scripts/ignis-php, Revolt DriverTest on IgnisDriver, Swoole runtime-hook tests through php/swoole/shim.php, FrankenPHP testdata through php/classic.php) and classifies every failure as ours / not-applicable / upstream. Use for E15 work and any "run suite X under ignis" task.
+description: Ports test suites onto Ignis (php-src .phpt via scripts/ignis-php, Revolt DriverTest on IgnisDriver, FrankenPHP testdata through php/classic.php) and classifies every failure as ours / not-applicable / upstream. Use for E15 work and any "run suite X under ignis" task.
 model: claude-opus-5
 hooks:
   PreToolUse:

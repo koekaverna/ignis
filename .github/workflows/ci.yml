@@ -251,7 +251,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [phpt, revolt, swoole, frankenphp]
+        suite: [phpt, revolt, frankenphp]
     container:
       image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
       credentials:
@@ -277,12 +277,6 @@ jobs:
           (cd php/packages/revolt && timeout 600 /opt/php85-zts/bin/php "$(command -v composer)" install --prefer-source --no-interaction --quiet)
           timeout 900 bench/e15-revolt.sh 2>&1 | tee /tmp/e15-revolt.log
           scripts/ci-gate.sh revolt /tmp/e15-revolt.log
-      - name: Swoole swoole_runtime through the shim
-        if: matrix.suite == 'swoole'
-        run: |
-          git clone -q --depth 1 https://github.com/swoole/swoole-src /home/user/cmp/swoole-src
-          timeout 1800 bench/e15-swoole.sh --all 2>&1 | tee /tmp/e15-swoole.log
-          scripts/ci-gate.sh swoole /tmp/e15-swoole.log
       - name: FrankenPHP testdata through the classic-mode adapter
         if: matrix.suite == 'frankenphp'
         run: |
@@ -296,4 +290,3 @@ jobs:
           path: |
             /tmp/*.log
             bench/results/
-            /tmp/swoole-e15/results.tsv

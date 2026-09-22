@@ -14,7 +14,6 @@ to wait.
 | `ignis/offload` | something blocks the thread and cannot be parked (SQLite, a CPU-bound extension) | [Offload](offload.md) |
 | `ignis/grpc` | you want to serve or call gRPC on the same listener | [gRPC](grpc.md) |
 | `ignis/revolt` | the code base already uses AMPHP or Revolt | [Revolt](revolt.md) |
-| `ignis/swoole` | a test suite or library expects a small part of the Swoole API | [Swoole shim](swoole.md) |
 | `ignis/temporal` | you run Temporal workflows and activities | [Temporal](temporal.md) |
 
 ## Installing them

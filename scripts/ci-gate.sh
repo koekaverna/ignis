@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression gate for the E15 compat suites: pass counts must not drop below bench/results/e15-baseline.txt.
-# Usage: scripts/ci-gate.sh <phpt|revolt|swoole|frankenphp> <log file>
+# Usage: scripts/ci-gate.sh <phpt|revolt|frankenphp> <log file>
 set -uo pipefail
 cd "$(dirname "$0")/.."
 suite="$1"; log="$2"; base=bench/results/e15-baseline.txt; fail=0
@@ -39,7 +39,6 @@ case "$suite" in
       check "phpt.$m.$s" "$p"
       check_set "$m-$s.tsv"
     done < <(grep -E "^\| (Zend|ext)" "$log") ;;
-  swoole) check swoole.pass "$(awk -F'\t' '$2=="PASS"' /tmp/swoole-e15/results.tsv 2>/dev/null | wc -l)" ;;
   frankenphp) check frankenphp.pass "$(sed -nE 's/^passed=([0-9]+).*/\1/p' "$log" | tail -1)" ;;
   revolt) check revolt.pass "$(sed -nE 's/.*IGNIS_PASSED=([0-9]+).*/\1/p' "$log" | tail -1)" ;;
   *) echo "unknown suite $suite"; exit 2 ;;

@@ -18,7 +18,6 @@
         "ignis/offload": "@dev",
         "ignis/phpstan": "@dev",
         "ignis/runtime": "@dev",
-        "ignis/swoole": "@dev",
         "ignis/symfony-runtime": "@dev",
         "ignis/temporal": "@dev",
         "ignis/temporal-core-transport": "@dev",
