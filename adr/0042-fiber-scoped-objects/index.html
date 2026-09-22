@@ -1,0 +1,2149 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+        <link rel="canonical" href="https://koekaverna.github.io/ignis/adr/0042-fiber-scoped-objects/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ADR-0042 — Fiber-scoped objects: declared properties live in per-scope storage, bound per object at creation - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-0042-fiber-scoped-objects-declared-properties-live-in-per-scope-storage-bound-per-object-at-creation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR-0042 — Fiber-scoped objects: declared properties live in per-scope storage, bound per object at creation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The two mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-engine-basis-read-in-php-src-at-php-8510-34308a6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The engine basis, read in ~/php-src at php-8.5.10 (34308a6)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rejected-alternatives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rejected alternatives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rules-that-fall-out-because-applications-are-written-against-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rules that fall out, because applications are written against them
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-symfony-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Symfony integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-eight-tests-backlogmd-owner-named-2026-09-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The eight tests (BACKLOG.md, owner-named 2026-09-20)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-this-context-against-adr-0037s-own-constraint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is this context, against ADR-0037's own constraint?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kill-criterion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kill criterion
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adr-0042-fiber-scoped-objects-declared-properties-live-in-per-scope-storage-bound-per-object-at-creation">ADR-0042 — Fiber-scoped objects: declared properties live in per-scope storage, bound per object at creation<a class="headerlink" href="#adr-0042-fiber-scoped-objects-declared-properties-live-in-per-scope-storage-bound-per-object-at-creation" title="Permanent link">&para;</a></h1>
+<p>Status: <strong>accepted</strong> (2026-09-20). The acceptance this ADR set itself is met and measured.
+Step 1, a prototype on a standalone class with two interleaved fibers: passes, gated in
+<code>scripts/smoke.sh</code>. Step 2, <code>FiberRequestStack</code> rewritten on the mechanism — "if that class
+disappears the mechanism is right": it disappeared, V-100, 89 lines and its test deleted, with
+Symfony's own <code>RequestStack</code> marked scoped measuring identically (0/3 leaks either way). Step 3,
+the kill criterion, read cost against a plain property: <strong>1.0–1.1×</strong>, V-97, flat from 1 to 256 live
+scoped services. And V-99 proves it on a real Symfony kernel under overlapping requests, where an
+unmarked control leaks 3 of 3.</p>
+<p><strong>All eight named tests are written and gated</strong> as of V-101: two interleaved fibers, inheritance in
+both directions, scope death and row-zero read-through, the <code>IS_UNDEF</code>-invariant question the engine
+basis answered by citation, <code>get_property_ptr_ptr</code> for <code>$this-&gt;arr[] =</code> and <code>$this-&gt;n++</code>,
+instantiation outside a request, <code>clone</code>/<code>serialize</code>/reflection, and read cost. The <code>IGNIS_CHAOS</code>
+arm runs four seeds at <code>P=100</code>. <code>lazy</code> + <code>scoped</code> — listed here as an open question because both
+change how an object is created — composes, measured on the E21 fixture.</p>
+<p>One thing this status still does <strong>not</strong> claim. The per-switch cost is <strong>not measured</strong>: V-98
+records that it sits below the floor of every instrument on this box and was accepted as negligible
+by owner decision rather than by measurement, and closing it properly needs an E2-shaped arm with
+live scoped objects. Two shapes are also untested and named rather than implied — a lazy ghost
+accessed by property instead of by method, and property hooks (<code>IS_HOOKED_PROPERTY_OFFSET</code> sits in
+the same VM switch as the guards this design rests on).</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>Four façades exist today because Symfony singletons cannot otherwise be made request-safe under
+fiber pooling: <code>FiberRequestStack</code> (89 lines), <code>FiberTokenStorage</code> (53), <code>FiberEntityManager</code> (247),
+<code>FiberManager</code> (58) — 447 lines total, each hand-writing "every method reads <code>Ignis\Scope</code>" against
+its parent's method list (V-16, V-68, V-69). <code>Ignis\Scope</code> itself (<code>php/packages/runtime/src/Scope.php</code>)
+is a <code>WeakMap&lt;Fiber, array&lt;string, mixed&gt;&gt;</code> with a <code>{main}</code> fallback bag for code with no active
+fiber, cleared once per request by <code>Loop::admitRequest</code>'s counterpart (<code>Scope::clear()</code>,
+<code>Scope.php:49-59</code>) — this is the storage ADR-0006's addendum already specified and V-11 measured.</p>
+<p>The question this ADR answers is not whether that storage works — it does, repeatedly, at V-16,
+V-68, V-69, V-95, V-96 — but whether an <em>object's own declared properties</em> can be redirected into it
+so that a singleton-shaped service resolves per request without a hand-written façade for every
+method. <code>S-OWNERSHIP</code>, the sibling proposal that taints every value a scoped service hands out, was
+killed as filed 2026-09-20 for being a fourth mechanism (it inspects every property and array write
+in the program, not a slot swap on a switch); <code>S-SCOPED-CLASS</code> was kept because, unlike ownership
+tracking, it does not touch every write in the program — only the declared properties of classes
+explicitly marked, and only through the two VM handlers that already exist for property access.</p>
+<p>Three defects motivate it directly. V-85 confirmed Symfony hands one PostgreSQL socket to every
+fiber on a thread unless the connection is rebuilt per fiber (the fix that shipped is a façade,
+<code>FiberEntityManager</code>, doing the rebuilding). V-95 confirmed <code>services_resetter</code> cannot be trusted to
+run between requests and disabled it, which means a plain Symfony singleton — one the framework
+itself, not this project, decided was shared — now keeps whatever it captured for the life of the
+thread. V-96 confirmed the two halves of that risk split apart under measurement: a singleton
+<strong>holding a fiber-scoped service</strong> resolves correctly (0 leaks in 6 requests, because the façade
+does the resolving), while one <strong>holding a value taken out of one</strong> is pinned to the first request
+(6 of 6 wrong). This ADR is aimed at the first half — turning "hand-write a façade" into "declare
+the class scoped" — and is explicit throughout about not touching the second.</p>
+<h2 id="the-engine-basis-read-in-php-src-at-php-8510-34308a6">The engine basis, read in <code>~/php-src</code> at <code>php-8.5.10</code> (<code>34308a6</code>)<a class="headerlink" href="#the-engine-basis-read-in-php-src-at-php-8510-34308a6" title="Permanent link">&para;</a></h2>
+<p>Two VM handlers touch a declared property with a class constant name, and both carry the same
+two-guard shape. <code>ZEND_ASSIGN_OBJ</code>'s fast path (<code>Zend/zend_vm_def.h:2488-2514</code>):</p>
+<div class="highlight"><pre><span></span><code>2491   if (EXPECTED(zobj-&gt;ce == CACHED_PTR(opline-&gt;extended_value))) {
+...
+2497       if (EXPECTED(IS_VALID_PROPERTY_OFFSET(prop_offset))) {
+...
+2501           property_val = OBJ_PROP(zobj, prop_offset);
+2502           if (Z_TYPE_P(property_val) != IS_UNDEF) {
+                   ... fast write, never calls write_property ...
+               }
+           }
+       }
+   ...
+2598   value = zobj-&gt;handlers-&gt;write_property(zobj, name, value, ...);
+</code></pre></div>
+<p>Guard one, line 2491, is keyed by <strong>class</strong>: the opcode's cache slot remembers a <code>zend_class_entry*</code>
+and a property offset, and the check is "does this object's class match the class the cache was
+warmed for". Guard two, line 2502, is keyed by <strong>object</strong>: it reads the actual zval sitting in this
+object's declared slot. Only when both hold does the handler write <code>OBJ_PROP</code> directly and skip
+<code>write_property</code> entirely (the <code>fast_assign_obj</code> label, line 2507). When guard two fails — the slot
+is <code>IS_UNDEF</code> — execution falls all the way through the <code>if</code>/<code>else if</code> chain to line 2598, which
+calls <code>zobj-&gt;handlers-&gt;write_property</code>, the per-object handler pointer.</p>
+<p><code>ZEND_FETCH_OBJ_R</code>'s hot path mirrors this exactly (<code>Zend/zend_vm_def.h:2069-2236</code>):</p>
+<div class="highlight"><pre><span></span><code>2105   if (EXPECTED(zobj-&gt;ce == CACHED_PTR_EX(cache_slot))) {
+2106       uintptr_t prop_offset = (uintptr_t)CACHED_PTR_EX(cache_slot + 1);
+2108       if (EXPECTED(IS_VALID_PROPERTY_OFFSET(prop_offset))) {
+2110           retval = OBJ_PROP(zobj, prop_offset);
+2111           if (EXPECTED(Z_TYPE_INFO_P(retval) != IS_UNDEF)) {
+                   ... fast copy out, never calls read_property ...
+               }
+           }
+       }
+   ...
+2211   retval = zobj-&gt;handlers-&gt;read_property(zobj, name, BP_VAR_R, cache_slot, EX_VAR(opline-&gt;result.var));
+</code></pre></div>
+<p>Same two guards, same fallthrough to the per-object handler (line 2211) when the slot reads
+<code>IS_UNDEF</code>.</p>
+<p><strong>This is the whole mechanism, and it is why the design works at all.</strong> Guard one is per class and
+would, on its own, make a warm opcode cache dangerous: once one instance of a class has been
+written through with the cache warm, every later instance of the <em>same class</em> hits the same cache
+slot. But guard two is per <strong>object</strong>, reads live state on that specific <code>zend_object</code>, and is
+evaluated every time, cache hit or not. A scoped object whose declared slot is kept permanently
+<code>IS_UNDEF</code> therefore fails guard two on every access, unconditionally, regardless of how warm guard
+one's cache is — which is exactly what lets a plain instance and a scoped instance of the same class
+coexist: the class-level cache resolves the same offset for both, and the object-level guard is what
+decides, per instance, whether that offset is trusted or whether the handler runs. Binding is
+consequently per object at creation (whichever handler table <code>obj-&gt;handlers</code> was given when the
+object was made), never per class as an intrinsic property enforced at every call site — the
+<code>ce</code>-keyed cache does not care which handler table an object carries, only guard two does, and guard
+two is decided once, when the object is created, and never revisited.</p>
+<p><strong>The invariant, stated as an invariant.</strong> <em>A scoped object's declared slots must be <code>IS_UNDEF</code>,
+always, for the life of the object.</em> The moment one is populated — by any path that writes
+<code>OBJ_PROP</code> directly rather than through <code>write_property</code>, which by construction none of our own code
+does, but a future engine change or an incautious internal function might — guard two starts
+passing, the fast path takes over, and <code>write_property</code>/<code>read_property</code> are silently never called
+again <strong>for that instance</strong>, and after the first such instance warms the class-level cache slot,
+every other instance of that class sharing the same call site inherits nothing wrong (guard two is
+still per-object) but the <em>symptom</em> — property reads answering the object's own value instead of the
+scope's — is indistinguishable from ordinary PHP unless a test specifically re-checks the invariant.
+This is a silent correctness failure: no exception, no warning, a property that quietly stops being
+scoped.</p>
+<p><strong>This answers, precisely, the kill criterion DECISIONS.md set for the class-level-call control
+level</strong> (2026-09-20): "if the cache is guarded only by <code>ce</code> and not by the handler table, the
+class-level call has to happen before any code touches the class". The cache is guarded only by
+<code>ce</code> — confirmed, lines 2491 and 2105 above name no handler-table check anywhere in the fast path.
+Read literally, that clause says the decision is wrong. It is not, because the clause did not
+anticipate guard two: the fast path additionally requires the object's own slot to be populated, and
+a scoped object's slot is never populated, by the invariant above, independent of whether the
+class-level cache is warm, cold, or was warmed by a plain instance created before <code>scopeClass()</code> was
+ever called. A class scoped after code has already run against it is therefore safe <strong>for every
+instance created after the call</strong> — which is the backlog's test 4, and it is now answered by
+citation rather than by the test alone. The <strong>class-level call still stands</strong>, but for a different
+reason than DECISIONS.md gave it: not because the cache cannot see past the class, but because the
+object-level guard makes the class-level cache irrelevant to correctness. This is flagged in the
+report for this ADR as a finding: DECISIONS.md's own kill criterion asked a narrower question than
+the mechanism actually turned on.</p>
+<p><strong>Property hooks share the same switch, and only partly the same guard.</strong> <code>IS_HOOKED_PROPERTY_OFFSET</code>
+(<code>Zend/zend_vm_def.h:2120</code>, mirrored at <code>:2572</code>) is a third state the same cache slot can hold. A
+"simple" hook — one that only reads or writes the backing slot — is rewritten to <code>fetch_obj_r_simple</code>
+/ <code>assign_obj_simple</code> (<code>:2122-2124</code>, <code>:2573-2579</code>) and so <strong>does</strong> pass through guard two, same as an
+unhooked property. A hook with an actual body is dispatched as a real function call
+(<code>:2125-2157</code>) and never reaches <code>OBJ_PROP</code>, <code>write_property</code>, or <code>read_property</code> at all — a hooked
+property with a body on a scoped class would silently bypass scoping entirely, in either direction.
+Listed under Open questions; this ADR takes no position on hooked scoped properties.</p>
+<p><strong>Lazy objects are the engine's only existing user of a permanently-<code>IS_UNDEF</code> object, and they are
+distinguished by a different flag, not by UNDEF-ness.</strong> <code>zend_object_make_lazy</code>
+(<code>Zend/zend_lazy_objects.c:269-283</code>) sets every declared slot to <code>IS_UNDEF</code> with <code>ZVAL_UNDEF(p)</code>
+(line 274) when it creates a ghost, the same shape this ADR needs. But the check that decides
+whether an access must go through lazy initialisation, <code>zend_lazy_object_must_init</code>
+(<code>Zend/zend_lazy_objects.h:98-101</code>), is <code>zend_object_is_lazy(obj)</code>
+(<code>Zend/zend_lazy_objects.h:81-84</code>), which reads <code>OBJ_EXTRA_FLAGS(obj) &amp; (IS_OBJ_LAZY_UNINITIALIZED |
+IS_OBJ_LAZY_PROXY)</code> — an explicit per-object flag, not an inference from the slot's type. A scoped
+object is never given that flag, so it never enters the lazy-initialisation path even though its
+slots are <code>IS_UNDEF</code> the same way a ghost's are; the two mechanisms use the same emptiness at the
+storage level and are told apart by a bit the lazy machinery owns and this ADR never touches. Whether
+a class can be <em>both</em> lazy and scoped is a separate question from whether the two mechanisms
+conflict at this specific check — they do not — and is listed under Open questions because nobody
+has built or run it.</p>
+<h2 id="rejected-alternatives">Rejected alternatives<a class="headerlink" href="#rejected-alternatives" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>#[FiberScoped]</code> attribute alone.</strong> Cannot reach a vendor class (<code>RequestStack</code>,
+  <code>EntityManagerInterface</code> are not ours to annotate) and arrives only at autoload, which is after
+  the class is already in the class table doing whatever autoload does before the attribute is read
+  — too late relative to "no instance exists yet".</li>
+<li><strong>Marking at MINIT.</strong> <code>route.rs</code>'s own installer is the demonstration of the failure mode:
+  <code>zend_hash_str_find</code> against the compiler globals' class table, and <code>if zv.is_null() { continue; }</code>
+  (<code>crates/ignis/src/php/route.rs:96-99</code>, mirrored for functions at <code>:84-87</code>) — a userland class name
+  not yet defined at MINIT silently does nothing, and MINIT runs before user code loads. That
+  silent-skip is exactly why <code>route.rs</code>'s own default class list is the one internal class that is
+  always present, <code>SQLite3</code> (<code>route.rs:58</code>), never a userland one. The same installer would silently
+  fail to scope every userland façade.</li>
+<li><strong>Initiating from the constructor.</strong> <code>create_proxy</code> (<code>crates/ignis/src/php/route.rs:206-218</code>)
+  shows the handler table is assigned inside <code>create_object</code>, per object: <code>(*obj).handlers =
+  &amp;raw const sys::std_object_handlers</code> at line 215, before the constructor ever runs. A constructor
+  that tried to swap its own object's handlers would run after <code>create_object</code> already fixed them
+  for this instance, and the class would only start converting from its <strong>second</strong> instance onward
+  — the first object built (the one code is already holding a reference to) stays unscoped forever.</li>
+<li><strong>Binding per class as an inheritance rule.</strong> Rejected implicitly by the engine basis above: guard
+  two is per object, not per class, so nothing at the VM level enforces or even expresses "every
+  instance of this class is scoped" as a single fact. Trying to enforce it in our own code would need
+  an inheritance rule for what happens when a scoped class is subclassed by a non-scoped one and vice
+  versa — which per-object binding dissolves by construction: an object either has the swapped
+  handler table or it does not, decided once, at its own creation, with no class-wide invariant to
+  maintain.</li>
+<li><strong>A per-call-site thread-local flag.</strong> Revives <code>R-PDO-SQLITE</code>'s problem, restated in <code>route.rs</code>'s
+  own comment on <code>DEFAULT_CLASSES</code> (<code>route.rs:47-52</code>): <code>create_object</code> runs before the constructor's
+  arguments exist, so a flag set from a call site cannot see what the constructor is about to be
+  given, and cannot distinguish "this call wants a scoped instance" from "this call wants a plain
+  one" for the same class.</li>
+</ul>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>The mechanism.</strong> A class becomes scoped by a class-level call, <code>Ignis\Scope::scopeClass(X::class)</code>,
+   made from a bootstrap or a container factory before the class's first instance — never from
+   MINIT (silently skips undefined userland names) and never from the constructor (too late, per
+   object). By the time this call can name the class, the class is linked, so <code>properties_info</code> is
+   complete and every declared slot's offset is known.</li>
+<li><strong>What the call does.</strong> It installs a <code>create_object</code> trampoline for <code>X</code> — the same shape
+   <code>route.rs::install()</code>/<code>create_proxy</code> already use for offload proxies (save the original
+   <code>create_object</code>, keep it reachable, install a replacement) — that runs the ordinary creation path
+   (<code>zend_objects_new</code> plus <code>object_properties_init</code>, so the properties table is allocated exactly as
+   it always was) and then overwrites the new object's <code>handlers</code> pointer to a table with six
+   functions replaced: <code>read_property</code>, <code>write_property</code>, <code>has_property</code>, <code>unset_property</code>,
+   <code>get_property_ptr_ptr</code>, <code>get_properties</code>. Every other handler — <code>clone_obj</code>, <code>free_obj</code>, <code>dtor_obj</code>,
+   <code>cast_object</code>, and so on — is inherited unchanged from <code>std_object_handlers</code>.</li>
+<li><strong>Layout is unchanged.</strong> The properties table <code>object_properties_init</code> allocates becomes the zero
+   scope's row of defaults; the allocation size for an instance never changes between a scoped and a
+   plain object of the same class. This withdraws the backlog entry's earlier "a façade with no
+   properties table": the properties table is kept, not removed, and the six handlers redirect
+   through <code>[scope_id][slot]</code> storage instead of <code>OBJ_PROP</code> directly, copying from the zero scope's
+   row on first write in a new scope.</li>
+<li><strong>The invariant is enforced by never writing <code>OBJ_PROP</code> on a scoped object.</strong> The six handlers
+   are the only place a scoped object's slots are ever touched from our own code, and none of them
+   populates the declared slot itself — the value lives in the scope's row, and the slot stays
+   <code>IS_UNDEF</code> for the object's entire lifetime so that guards one and two, above, always fall through
+   to our handlers.</li>
+<li><strong>Inheritance is not a rule this mechanism enforces — it is a fact about handler tables.</strong> A
+   subclass that does not override <code>create_object</code> uses its parent's, so a scoped parent's child is
+   scoped without asking for it: this is stated as owner decision in DECISIONS.md and is a
+   consequence of point 2, not a separate mechanism. A hierarchy needing both shapes leaves the
+   parent unscoped and calls <code>scopeClass()</code> on the branch of descendants that needs it.</li>
+</ol>
+<h2 id="rules-that-fall-out-because-applications-are-written-against-them">Rules that fall out, because applications are written against them<a class="headerlink" href="#rules-that-fall-out-because-applications-are-written-against-them" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>What the constructor stores is process-wide; what a method reads is per scope.</strong> Construction
+  happens once, for the one object application code holds as "the singleton" — typically at
+  container boot, outside any fiber, so its writes land wherever <code>Ignis\Scope</code> puts code with no
+  active fiber (the <code>{main}</code> bag, <code>Scope.php:14-16, 21-24, 34-36</code>) and become the zero scope's
+  defaults every later scope copies from. A method call made during a request runs inside that
+  request's fiber and its reads/writes land in that fiber's scope row instead.</li>
+<li><strong>Hold collaborators, never values taken out of them — and this mechanism does not close
+  <code>S-SINGLETON-CAPTURE</code>.</strong> Scoping a class makes holding <em>the object</em> safe (V-96's first half,
+  already true for the façades it measured); it does nothing about a singleton that reads
+  <code>$stack-&gt;getCurrentRequest()</code> in its own constructor and keeps the <code>Request</code> in a plain property of
+  a plain class — that <code>Request</code> is a value taken out of a scoped service, stored in an unscoped
+  one, and V-96's second half shows it pinned 6 of 6. <code>S-EXCLUSIVE</code>'s foreign-fiber check is the
+  mechanism aimed at that half; this ADR is silent on it deliberately.</li>
+<li><strong>The seal is a moment, not a phase.</strong> "What the constructor stores is process-wide" is true
+  because <code>Scope::create()</code> seals the object's slots into row zero the instant the constructor
+  returns. Anything that configures the object <em>after</em> that — a container's <code>addMethodCall</code>, a
+  setter run by a factory, an <code>init()</code> called by whoever built it — writes into the scope of the
+  fiber doing the building, and every other scope inherits row zero without it. Such a builder seals
+  again (<code>Scope::seal($instance)</code>) once it has finished; sealing twice is sound, because the seal
+  reads the object's own slots, takes its own reference to each value and releases what row zero held
+  before. This is not hypothetical — it is exactly how Symfony configures services, and it cost a
+  measured 6-of-6 failure before <code>FiberScopePass</code> started sealing from the configurator (V-105).</li>
+<li><strong>A scoped class's constructor must have no side effects.</strong> Whatever it writes becomes the zero
+  scope's defaults for every request that follows, forever, because the constructor runs exactly
+  once for the object application code is holding. A side effect performed there — opening a
+  connection, capturing "now", incrementing a counter — fires once at that zero-scope
+  initialisation and never again; work that must happen per request belongs in a method, not the
+  constructor.</li>
+<li><strong>Per-request teardown is a refcount, not a destructor.</strong> There is exactly one scoped-object
+  instance for a singleton-shaped service; its own <code>__destruct</code> runs once, whenever the container or
+  the process lets that one object go — never per request. What actually releases a request's state
+  is the same shape <code>Scope::clear()</code> already uses for the fiber-keyed bag today (<code>Scope.php:44-47</code>'s
+  own doc comment: "Anything holding a resource releases through its destructor when the reference
+  goes") — dropping a scope's <code>[scope_id]</code> row drops the refcount on whatever values live in its
+  slots, and <em>those</em> values' destructors fire, on the service fiber, the same rule <code>A-DESTRUCTOR-IO</code>
+  already states for <code>Scope</code>.</li>
+</ul>
+<h2 id="the-symfony-integration">The Symfony integration<a class="headerlink" href="#the-symfony-integration" title="Permanent link">&para;</a></h2>
+<p>Public <code>Definition</code> API and nothing else — no dumper patch, no container-internals reach-in. As
+built, <code>FiberScopePass</code> marks a definition with two calls, the same way <code>lazy: true</code> sits beside a
+definition without the compiler understanding what "lazy" means at the object-graph level:</p>
+<ul>
+<li><code>setFactory([Scope::class, 'create'])</code>, with the class prepended to the definition's own arguments,
+  so the container's <code>new</code> becomes allocate → construct → seal;</li>
+<li><code>setConfigurator([Scope::class, 'seal'])</code>, because <strong>the constructor is not the end of
+  construction</strong>. The compiled container emits <code>$instance-&gt;someCall(...)</code> <em>after</em> the factory
+  returned, and Symfony's configurator is the one hook that runs after all of them. Without it,
+  everything a definition configures by <code>addMethodCall</code> belongs to the single request that happened
+  to build the service: measured on <code>security.logout_url_generator</code>, whose two <code>registerListener()</code>
+  calls landed in one fiber's scope and left every other request throwing <code>Unable to find logout in
+  the current firewall</code>, 6 of 6 rounds (V-105). A definition that already carries a configurator of
+  its own is refused by name at compile time rather than scoped with one of the two dropped.</li>
+</ul>
+<p>Which services are marked comes from two places and neither is a boolean in the definition:
+<code>IgnisBundle</code>'s own <code>scoped_ids</code> setting, which is added to a short hand-picked list of framework
+ids, and the <code>ignis.scoped</code> tag that <code>#[FiberScoped]</code> produces through
+<code>registerAttributeForAutoconfiguration</code>. <code>kernel.reset</code> is explicitly not the criterion (research 36:
+nine of its fifteen services are caches shared between requests on purpose), so adding a row is a
+person's decision and it needs a test that fails without it.</p>
+<h2 id="the-eight-tests-backlogmd-owner-named-2026-09-20">The eight tests (BACKLOG.md, owner-named 2026-09-20)<a class="headerlink" href="#the-eight-tests-backlogmd-owner-named-2026-09-20" title="Permanent link">&para;</a></h2>
+<p>Written in this order because the fourth is the one the control level survives or dies by — the
+<code>IS_UNDEF</code> invariant is the whole mechanism, per the engine basis above, and its violation is silent,
+so it is proven before anything else is trusted.</p>
+<ol>
+<li><strong>Two interleaved fibers</strong> on a standalone scoped class each see their own property values,
+   neither sees the other's, with <code>IGNIS_CHAOS</code> on a second arm.</li>
+<li><strong>Inheritance, both directions</strong> — a scoped parent's child is scoped unasked; a non-scoped
+   parent's scoped descendant branch leaves the parent's own instances untouched, including
+   properties the descendant inherited.</li>
+<li><strong>Scope death frees the row</strong>, destructors run on the service fiber (<code>A-DESTRUCTOR-IO</code>), and a
+   reused fiber starts its next request from the zero scope's defaults, not the previous request's
+   values — V-67's shape, the reason <code>Scope</code> is cleared at request end.</li>
+<li><strong>A class scoped after code has already touched it</strong>, cold and with opcache warm. This was the
+   backlog's kill-criterion test; it is answered above by citation (<code>zend_vm_def.h:2491</code> vs. <code>:2502</code>,
+   <code>:2105</code> vs. <code>:2111</code>) rather than left to the test alone, but the test still runs, because a citation
+   is not a gate and DECISIONS.md's own standard is a passing test, not a reading.</li>
+<li><strong><code>get_property_ptr_ptr</code></strong>: <code>$this-&gt;arr[] = x</code> and <code>$this-&gt;n++</code> land in the right scope's row —
+   these hand out a pointer to the slot and write through it, past <code>write_property</code> entirely, and are
+   listed under Open questions below because no citation here establishes their correctness the way
+   the two-guard reading did for plain read/write.</li>
+<li><strong>Outside a request</strong>: instantiation and property access with no active fiber land in <code>Scope</code>'s
+   existing <code>{main}</code> bag (<code>Scope.php:14-16, 21-24, 34-36</code>) rather than throwing — infrastructure that
+   already exists and is already tested for the fiber-keyed case; this test exercises it for a scoped
+   object's properties specifically.</li>
+<li><strong><code>clone</code>, <code>serialize</code>, reflection</strong> — each either behaves correctly or refuses with a message
+   naming the class; silently copying another scope's row is the failure this catches. Listed under
+   Open questions: no handler for any of the three is decided here.</li>
+<li><strong>Read cost</strong> against a plain property, and the fiber-switch cost against E2's 3.83 µs warm
+   (<code>VALIDATION.md:2573</code>) — the standing constraint that no <code>context</code> work may move. This is also
+   this ADR's kill criterion; see below.</li>
+</ol>
+<h2 id="is-this-context-against-adr-0037s-own-constraint">Is this <code>context</code>, against ADR-0037's own constraint?<a class="headerlink" href="#is-this-context-against-adr-0037s-own-constraint" title="Permanent link">&para;</a></h2>
+<p>ADR-0037 defines <code>context</code> by what it is and, deliberately, by what it may not do: "fiber-switch
+observer slots (ADR-0006 addendum): superglobals are the first rows, listed vendor statics the
+next" and "<strong>allocate per switch</strong>: a slot swap is pointer moves; anything needing allocation
+happens at dispatch, not on the observer" (<code>docs/adr/0037-three-mechanisms.md</code>, §2 table). Making
+this argument honestly means separating two things this ADR's own decision keeps separate: the
+<strong>storage</strong>, and the <strong>plumbing</strong> that reaches it.</p>
+<p>The storage is <code>Ignis\Scope</code>, already <code>context</code>, already accepted (ADR-0006), unchanged by this ADR
+— the six handlers do not invent a new place to put values, they redirect <code>OBJ_PROP</code> syntax into
+the same per-fiber container that already holds superglobals and, per V-16/V-68/V-69, the façades'
+own state. ADR-0029's isolation ladder already named the generalisation this ADR performs as its own
+step (a), for statics: "observer static slots — the ADR-0006 mechanism generalised to a named
+(getter, setter) pair per static". This ADR is the same generalisation applied to instance
+properties instead of class statics, for the reason instance properties need a different plumbing
+than statics do: a static is reached by a fixed, named accessor the mechanism controls, while an
+instance property is reached by ordinary <code>$this-&gt;x</code> syntax on an object arbitrary code may hold a
+reference to at any time — there is no "the observer swaps it back at switch time" available for
+that, because nothing about the syntax changes on a switch. The object handlers are what makes
+<code>$this-&gt;x</code> resolve per scope without every read site knowing it is talking to a scoped object.</p>
+<p>On allocation, specifically: the six handlers run as part of ordinary opcode execution — the
+fallthrough at <code>zend_vm_def.h:2598</code> and <code>:2211</code> above — never inside
+<code>zend_observer_fiber_switch_register</code>'s callback, which this mechanism does not touch at all. No
+slot swap happens on switch, unlike superglobals (which do pay a fixed, measured +100 ns per switch,
+V-11, because every switch repoints all four regardless of use). The per-scope row a handler
+allocates — copying the zero scope's defaults into <code>[scope_id]</code> on first write — happens at the
+moment application code first writes a scoped property in a given scope, which is ordinary,
+request-driven allocation of the kind every PHP statement causes, not work inserted into the switch
+path. In that specific sense this satisfies "anything needing allocation happens at dispatch, not on
+the observer" more strictly than ADR-0006's own superglobal swap does: the superglobal swap touches
+every switch (as pointer moves, not allocation) whether or not the fiber ever reads a superglobal,
+while a class that is never scoped, and a scoped object that is never touched in a given scope, costs
+this mechanism nothing on any switch, ever.</p>
+<p><strong>Where the argument is not free, and is stated rather than glossed:</strong> the object-handler
+installation itself (<code>create_object</code> trampoline, six replaced function pointers) is new C surface
+<code>context</code> did not previously need — ADR-0006's superglobal swap needed no per-object hook at all, it
+owns four fixed slots on the symbol table. This ADR asks <code>context</code> to grow a second plumbing shape
+(object handlers) alongside its first (observer slot swap) to reach a second address space (instance
+properties) alongside its first (superglobals, listed statics). That is consistent with what
+ADR-0029 already anticipated <code>context</code> would need to become, and it adds no new <em>wait</em> — nothing here
+changes how or whether a fiber suspends — but it is a real, new capability inside the mechanism, not
+a free relabelling of existing code, and the honest version of this argument says so rather than
+calling it a pure reuse.</p>
+<p>Also distinguishing this from <code>S-OWNERSHIP</code>'s rejection, since the shapes look adjacent: ownership
+tracking was killed for inspecting every property write and every array-element write, transitively,
+across the whole program — work on every write regardless of whether the class involved opted in.
+The six handlers here run only for the classes a bootstrap or factory explicitly named through
+<code>scopeClass()</code>; an unscoped class's property access never reaches them, at any point in this design.
+It is targeted, not universal, which is the property <code>S-OWNERSHIP</code> lacked.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Better: the 358–447 façade lines this ADR could replace (<code>FiberRequestStack</code> 89,
+  <code>FiberTokenStorage</code> 53, <code>FiberEntityManager</code> 247, <code>FiberManager</code> 58) stop needing every method of a
+  vendor interface hand-written against <code>Ignis\Scope</code>; a new singleton-shaped vendor class needs a
+  <code>scopeClass()</code> call, not a new façade class.</li>
+<li>Worse: six new <code>unsafe</code> object handlers in FFI territory, gated on read cost against a plain
+  property (test 8) — every access on a scoped object is now, unconditionally, a call through
+  <code>zobj-&gt;handlers</code>, never the fast path, by the invariant's own design.</li>
+<li>Worse: the invariant is silent to violate and nothing outside a test currently detects a
+  populated slot on a scoped object; no runtime assertion is proposed here beyond the tests.</li>
+<li>Does not close <code>S-SINGLETON-CAPTURE</code> (stated above, deliberately, twice).</li>
+<li><code>FiberEntityManager</code>'s ~30 interface forwarders are a decorator, not scoping, and are unaffected
+  regardless of what this ADR resolves to (DECISIONS.md, 2026-09-20).</li>
+</ul>
+<h2 id="open-questions">Open questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<p>Left open rather than answered, because no reading or measurement here settles them:</p>
+<ul>
+<li><strong><code>lazy</code> and <code>scoped</code> together.</strong> They do not conflict at the one check this ADR read
+  (<code>zend_object_is_lazy</code> keys off a flag this mechanism never sets), but nothing here builds or runs
+  a class that is both, and <code>zend_object_make_lazy</code>'s own reflection-class restriction
+  (<code>zend_lazy_objects.c:237-248</code>, internal classes and internal parents refused) is unread against
+  our <code>create_object</code> trampoline.</li>
+<li><strong>Property hooks with a body</strong> (<code>ZEND_IS_PROPERTY_HOOK_SIMPLE_GET</code>/<code>SET</code> false,
+  <code>zend_vm_def.h:2125-2157</code>) bypass <code>OBJ_PROP</code> and our handlers entirely, dispatched as a function
+  call instead; a hooked scoped property may silently not be scoped, depending on hook shape. Simple
+  hooks (<code>:2122-2124</code>, <code>:2573-2579</code>) do pass through guard two and are covered.</li>
+<li><strong><code>clone</code>, <code>serialize</code>, reflection</strong> (backlog test 7). No handler decision is made here for
+  <code>clone_obj</code>, <code>__serialize</code>/<code>__unserialize</code>, or <code>ReflectionProperty::getValue()</code> against a scoped
+  object's <code>IS_UNDEF</code> slots.</li>
+<li><strong><code>get_property_ptr_ptr</code> correctness</strong> (backlog test 5) for <code>$this-&gt;arr[] =</code> and <code>$this-&gt;n++</code>,
+  which take a pointer to the slot and write through it — no citation here establishes what happens
+  when that pointer is taken against a permanently-<code>IS_UNDEF</code> slot.</li>
+<li><strong>Instantiation outside a request</strong> beyond the <code>{main}</code> bag's existing behaviour for value storage
+  (test 6) — whether <code>scopeClass()</code> itself is safe to call before <code>Ignis\Scope</code> or any fiber
+  infrastructure exists (extension load, MINIT-adjacent code) is unread.</li>
+<li><strong><code>R-TA-CONTEXT</code></strong>, which blocks this at the BACKLOG/DECISIONS level regardless of anything in this
+  ADR: whether backend (b)'s <code>internal_context</code> already provides this storage for free, which would
+  change what "per-scope storage" means on that backend without changing anything above for backend
+  (a).</li>
+</ul>
+<h2 id="kill-criterion">Kill criterion<a class="headerlink" href="#kill-criterion" title="Permanent link">&para;</a></h2>
+<p>Not the property-offset cache — read above, and answered: the cache is guarded by class alone, but
+correctness does not depend on it, because the object-level <code>IS_UNDEF</code> guard is what actually gates
+the fast path and that guard is evaluated every time, cache hit or not.</p>
+<p><strong>The kill criterion is test 8's read cost, weighed against two other candidates and rejected for
+both:</strong></p>
+<ul>
+<li><em>The fiber-switch cost against E2's 3.83 µs warm</em> (<code>VALIDATION.md:2573</code>) is the wrong gate for
+  this specific mechanism, argued above: nothing here runs inside the switch observer, so there is
+  no reason to expect this to move E2 at all, and if it somehow did, that would indicate a coding
+  error (a handler reached from the switch path) rather than tell us anything about whether the
+  design is sound. It stays as a regression check, not the criterion the design lives or dies by.</li>
+<li><em><code>lazy</code> + <code>scoped</code> proving incomposable</em> is a real risk (listed under Open questions) but is a
+  narrower question than the design's soundness — an application that never combines the two is
+  unaffected either way, so this cannot be the criterion that kills the whole mechanism.</li>
+<li><em>Read cost against a plain property</em> is the right criterion because it is the cost every scoped
+  object pays on every single access, by the invariant's own construction — there is no fast path
+  for a scoped object, ever, by design, so this number is not a tail cost or an edge case, it is the
+  mechanism's baseline price. The four façades already pay a version of this cost today (a method
+  call plus a <code>Scope::get</code>/<code>set</code>), so the number that matters is not "is it free" but "is it cheap
+  enough that turning a façade's hand-written method into a property access is still a win once the
+  handler indirection and the scope lookup are both paid for".</li>
+</ul>
+<p><strong>If the measured read (and write) cost against a plain property is not markedly cheaper than the
+equivalent façade method call it would replace, the trade DECISIONS.md left open — "~358 lines of
+plain userland PHP against six new <code>unsafe</code> object handlers" — resolves against building this: the
+façades are boring, working, well-tested PHP, and six new handlers earn their keep only if they are
+both correct and cheap. "Markedly cheaper" is deliberately not pinned to a number here, because no
+measurement exists yet to anchor one; the prototype's first number is what test 8 sets it against.</strong></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

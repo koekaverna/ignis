@@ -1,0 +1,1933 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+        <link rel="canonical" href="https://koekaverna.github.io/ignis/research/35-sdk-php-on-ignis/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Research 35 — running temporal/sdk (the official PHP SDK) on Ignis - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#research-35-running-temporalsdk-the-official-php-sdk-on-ignis" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Research 35 — running temporal/sdk (the official PHP SDK) on Ignis
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The two mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-two-seams-measured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The two seams, measured
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-what-the-protobuf-would-have-cost-and-why-we-skip-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. What the protobuf would have cost (and why we skip it)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-command-model-we-have-to-speak" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The command model we have to speak
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-why-the-mvp-needs-no-rust-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Why the MVP needs no Rust change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-risks-stated-before-building" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Risks, stated before building
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-where-the-translation-lives-the-owners-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Where the translation lives — the owner's correction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-the-boundary-carries-cores-documents-2026-09-17-v-65" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The boundary carries core's documents (2026-09-17, V-65)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="research-35-running-temporalsdk-the-official-php-sdk-on-ignis">Research 35 — running temporal/sdk (the official PHP SDK) on Ignis<a class="headerlink" href="#research-35-running-temporalsdk-the-official-php-sdk-on-ignis" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-09-17. Question from the owner: can we take the PHP SDK instead of growing our own
+workflow runtime, and what does it cost? Everything below was run, not read — the probes are in this
+session's scratchpad and are reproduced in <code>bench/e20-sdkphp.sh</code>.</p>
+<h2 id="1-the-two-seams-measured">1. The two seams, measured<a class="headerlink" href="#1-the-two-seams-measured" title="Permanent link">&para;</a></h2>
+<p><code>temporal/sdk</code> <strong>v2.19</strong> installed with composer (in docker: our PHP build has no <code>ext-phar</code>, so
+composer cannot run under it — only <code>vendor/</code> is needed, and the autoloader is plain PHP).</p>
+<p><strong>Seam A — the transport.</strong> <code>WorkerFactory::run(?HostConnectionInterface $host = null)</code>;
+<code>RoadRunner::create()</code> is only the default. The interface is three methods: <code>waitBatch(): ?CommandBatch</code>,
+<code>send(string $frame)</code>, <code>error(\Throwable)</code>. Probe: a host that feeds one <code>GetWorkerInfo</code> frame and
+ends. Run <strong>inside <code>target/release/ignis</code></strong>:</p>
+<div class="highlight"><pre><span></span><code>run() exit=0
+TaskQueue : ignis
+Workflows : [{'name': 'GreetWorkflow', 'queries': [], 'signals': [], 'versioning_behavior': 0}]
+Activities: [{'Name': 'greet'}]
+</code></pre></div>
+<p>sdk-php loads under the embed SAPI, drives its own loop on our transport, and reports the workflow
+and activity it found by attribute. The workflow body was stock sdk-php — <code>yield $a-&gt;greet($name)</code>.</p>
+<p><strong>Seam B — the codec.</strong> <code>WorkerFactory::$codec</code> is <code>protected</code> (the <code>createCodec()</code> that chooses
+Json/Proto from <code>$_SERVER['RR_CODEC']</code> is private, but the property is not), so a subclass can
+install its own <code>CodecInterface</code>. Probe with a codec that speaks plain arrays:</p>
+<div class="highlight"><pre><span></span><code>[0] PHP -&gt; host: [{"type":"SuccessClientResponse","payloads":[{"TaskQueue":"ignis","Options":{…}}]}]
+[1] PHP -&gt; host: [{"type":"FailedClientResponse","failure":"Method \"InvokeActivity\" is not registered"}]
+</code></pre></div>
+<p>The first frame is our format, our field names, <strong>no protobuf anywhere</strong>. The second is the probe's
+own fault — the frame carried no task-queue info, so the factory-level router (which knows only
+<code>GetWorkerInfo</code>) answered instead of the worker's. That failure is the useful result: <strong>what binds us
+is the command model and the shape of <code>options</code>, not the byte format.</strong></p>
+<h2 id="2-what-the-protobuf-would-have-cost-and-why-we-skip-it">2. What the protobuf would have cost (and why we skip it)<a class="headerlink" href="#2-what-the-protobuf-would-have-cost-and-why-we-skip-it" title="Permanent link">&para;</a></h2>
+<p>The stock <code>JsonCodec</code> keeps frames as JSON but requires <code>payloads</code> to be wire bytes of
+<code>temporal.api.common.v1.Payloads</code>, decoded with <code>google/protobuf</code>. Our build has no <code>ext-protobuf</code>,
+so that is the pure-PHP implementation. Same value (54 bytes on the wire), 10k iterations, our
+binary:</p>
+<table>
+<thead>
+<tr>
+<th>boundary</th>
+<th>encode</th>
+<th>decode</th>
+<th>round trip</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Payloads</code> in pure PHP</td>
+<td>35.91 µs</td>
+<td>17.53 µs</td>
+<td><strong>53.45 µs</strong></td>
+</tr>
+<tr>
+<td>our own JSON payload boundary (<code>Payloads::encode</code> in <code>php/packages/temporal-prototype/src/ignis-temporal.php</code>)</td>
+<td>0.35 µs</td>
+<td>0.55 µs</td>
+<td><strong>0.90 µs</strong></td>
+</tr>
+</tbody>
+</table>
+<p>59× — and against a workflow task that costs a network round trip to the Temporal server (V-19:
+1224 ms for 5 activations) it is noise either way. It is skipped because seam B makes it free to
+skip, not because 53 µs would have hurt.</p>
+<h2 id="3-the-command-model-we-have-to-speak">3. The command model we have to speak<a class="headerlink" href="#3-the-command-model-we-have-to-speak" title="Permanent link">&para;</a></h2>
+<p>sdk-php's worker is a request/response machine over batches. Two directions:</p>
+<p><strong>Host → PHP (<code>ServerRequest</code>, dispatched by <code>Internal/Transport/Router/*</code>), 10 routes:</strong>
+<code>GetWorkerInfo</code>, <code>StartWorkflow</code>, <code>InvokeActivity</code>, <code>InvokeLocalActivity</code>, <code>InvokeSignal</code>,
+<code>InvokeQuery</code>, <code>InvokeUpdate</code>, <code>CancelWorkflow</code>, <code>DestroyWorkflow</code>, <code>StackTrace</code>.</p>
+<p><strong>PHP → host (<code>Internal/Transport/Request/*</code>), 17 requests:</strong>
+<code>ExecuteActivity</code>, <code>NewTimer</code>, <code>CompleteWorkflow</code>, <code>Panic</code>, <code>SideEffect</code>, <code>GetVersion</code>,
+<code>ExecuteChildWorkflow</code>, <code>GetChildWorkflowExecution</code>, <code>ExecuteLocalActivity</code>, <code>ContinueAsNew</code>,
+<code>Cancel</code>, <code>CancelExternalWorkflow</code>, <code>SignalExternalWorkflow</code>, <code>UpsertMemo</code>,
+<code>UpsertSearchAttributes</code>, <code>UpsertTypedSearchAttributes</code>, <code>UndefinedResponse</code>.</p>
+<p><strong>The correlation model is the part that is not a rename.</strong> sdk-php gives every outgoing request a
+single monotonic <strong>id</strong> and expects the host to answer that id later with a success or failure
+response. sdk-core instead numbers commands by <strong><code>seq</code>, per command kind</strong> (<code>ScheduleActivity.seq</code>,
+<code>StartTimer.seq</code>), and reports resolutions as activation <em>jobs</em> (<code>resolveActivity</code>, <code>fireTimer</code>).
+So the translator keeps, per run, <code>id → (kind, seq)</code> and turns:</p>
+<table>
+<thead>
+<tr>
+<th>sdk-core activation job</th>
+<th>what PHP must receive</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>initializeWorkflow</code></td>
+<td><code>ServerRequest('StartWorkflow', options.info = WorkflowInfo, payloads = args)</code></td>
+</tr>
+<tr>
+<td><code>resolveActivity{seq}</code></td>
+<td><code>SuccessResponse</code>/<code>FailureResponse</code> <strong>with the id PHP used for <code>ExecuteActivity</code></strong></td>
+</tr>
+<tr>
+<td><code>fireTimer{seq}</code></td>
+<td><code>SuccessResponse</code> with the id PHP used for <code>NewTimer</code></td>
+</tr>
+<tr>
+<td><code>removeFromCache</code></td>
+<td><code>ServerRequest('DestroyWorkflow')</code></td>
+</tr>
+<tr>
+<td><code>signalWorkflow</code> / <code>queryWorkflow</code> / <code>doUpdate</code></td>
+<td><code>InvokeSignal</code> / <code>InvokeQuery</code> / <code>InvokeUpdate</code></td>
+</tr>
+<tr>
+<td>an activity task from <code>poll_activity_task</code></td>
+<td><code>ServerRequest('InvokeActivity')</code>, answered with the task token</td>
+</tr>
+</tbody>
+</table>
+<p>and the reverse for the four MVP commands:</p>
+<table>
+<thead>
+<tr>
+<th>sdk-php request</th>
+<th>our existing <code>PhpCommand</code> (translate_completion, <code>backend/temporal.rs</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ExecuteActivity{name, options}</code></td>
+<td><code>ScheduleActivity{seq, activity_type, task_queue, args, start_to_close_sec}</code></td>
+</tr>
+<tr>
+<td><code>NewTimer{ms}</code></td>
+<td><code>StartTimer{seq, ms}</code></td>
+</tr>
+<tr>
+<td><code>CompleteWorkflow{values}</code></td>
+<td><code>CompleteWorkflow{result}</code></td>
+</tr>
+<tr>
+<td><code>Panic{failure}</code></td>
+<td><code>FailWorkflow{message}</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>StartWorkflow</code>'s <code>options['info']</code> is unmarshalled into <code>Temporal\Workflow\WorkflowInfo</code>, so its
+keys are fixed by that class's <code>#[Marshal]</code> names: <code>WorkflowExecution{ID,RunID}</code>,
+<code>WorkflowType{Name}</code>, <code>TaskQueueName</code>, <code>Namespace</code>, <code>Attempt</code>, <code>WorkflowExecutionTimeout</code>,
+<code>WorkflowRunTimeout</code>, <code>WorkflowTaskTimeout</code>, <code>HistoryLength</code>, <code>HistorySize</code>, <code>CronSchedule</code>, …</p>
+<h2 id="4-why-the-mvp-needs-no-rust-change">4. Why the MVP needs no Rust change<a class="headerlink" href="#4-why-the-mvp-needs-no-rust-change" title="Permanent link">&para;</a></h2>
+<p><code>ignis_temporal_poll()</code> already returns the <strong>whole <code>WorkflowActivation</code> as JSON</strong> (serde over the
+proto, <code>backend/temporal.rs:255</code>), and <code>ignis_temporal_complete()</code> already accepts exactly the four
+commands above. So the translator is PHP, on top of functions that exist, and the Rust side is
+touched only when a fifth command type is needed (<code>SideEffect</code>, <code>GetVersion</code>, child workflows …) —
+one <code>workflow_command::Variant</code> arm each.</p>
+<p>That also keeps the work outside <code>crates/ignis/src/php/**</code> entirely, which is where the FFI guard
+and the <code>unsafe</code> review cost live.</p>
+<h2 id="5-risks-stated-before-building">5. Risks, stated before building<a class="headerlink" href="#5-risks-stated-before-building" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>The command model is sdk-php's internals.</strong> <code>HostConnectionInterface</code> and <code>CodecInterface</code> are
+  public; the set of route names and the shape of <code>options</code> are not. They change on minor versions
+  without notice, and nothing in sdk-php promises otherwise. Mitigation is a pinned version plus a
+  conformance test that fails loudly (<code>bench/e20-sdkphp.sh</code>), not hope.</li>
+<li><strong>Re-entrancy.</strong> <code>WorkerFactory</code> accumulates <code>$this-&gt;responses</code> inside one <code>dispatch()</code>. If an
+  activity body parks mid-dispatch and another batch is pulled on the same factory, that state
+  interleaves. The MVP therefore runs one batch at a time; concurrency comes from a <em>pool of
+  factories</em> (one per fiber), which is RoadRunner's worker pool with fibers instead of processes.</li>
+<li><strong><code>ext-grpc</code> is absent</strong>, so sdk-php's <code>WorkflowClient</code> (starting workflows from PHP) does not
+  work here. The runtime already links <code>temporalio-client</code> on the Rust side, so starting a workflow
+  belongs there as an op — not in scope for the MVP.</li>
+<li><strong><code>ext-protobuf</code> is absent</strong>; with seam B we never need it, but anything that reaches for the
+  stock <code>JsonCodec</code>/<code>ProtoCodec</code> (a future sdk-php internal that bypasses ours) would pay 53 µs per
+  payload or fail.</li>
+</ul>
+<h2 id="6-where-the-translation-lives-the-owners-correction">6. Where the translation lives — the owner's correction<a class="headerlink" href="#6-where-the-translation-lives-the-owners-correction" title="Permanent link">&para;</a></h2>
+<p>The first draft of this note put the translator in our repository, as Ignis glue. The owner's
+objection is the right one: <strong>the thing being translated is sdk-php's own internal model</strong>, so
+sdk-php is its natural owner. If a route is renamed there, the adapter should break there, in their
+CI, not silently rot here. PHP is also the only Temporal SDK that does not sit on sdk-core — .NET,
+Ruby and Python all do, which is what <code>temporalio-sdk-core-c-bridge</code> exists for — so a core
+transport is a missing piece of their architecture rather than a favour to us.</p>
+<p>Upstream acceptance cannot be waited on, so the code is written to be <em>movable</em> instead: it is a
+composer package, <code>ignis/temporal-core-transport</code> in <code>php/packages/temporal-core-transport/</code> — its own <code>composer.json</code>,
+PSR-4 <code>Temporal\Worker\Transport\Core\</code> over <code>src/</code>, <code>temporal/sdk</code> as its only dependency, its own
+README and conformance test. It depends on nothing from Ignis and reaches its host through one
+interface with two methods:</p>
+<div class="highlight"><pre><span></span><code><span class="x">public function poll(string $kind): ?string;             // JSON WorkflowActivation / ActivityTask</span>
+<span class="x">public function complete(string $kind, string $json): void;</span>
+</code></pre></div>
+<p>Ignis implements that port in <code>php/packages/temporal/src/CoreSource.php</code> (~40 lines over <code>ignis_temporal_*</code>). Anything
+else that can produce activations — a PECL extension, sdk-core's C bridge, a file of recorded
+activations — works unchanged. That is what <code>bench/e20-sdkphp.sh</code> proves by running the conformance
+test twice, once under the ignis binary and once under the stock PHP CLI.</p>
+<h2 id="7-result">7. Result<a class="headerlink" href="#7-result" title="Permanent link">&para;</a></h2>
+<p><code>php/packages/temporal-core-transport/tests/conformance.php</code> feeds a recorded script of sdk-core activations to a <strong>stock</strong>
+sdk-php worker — attributes, <code>Workflow::newActivityStub()</code>, <code>yield</code>, <code>Workflow::timer()</code> — and
+asserts the completions. Green under both hosts (V-61):</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>InitializeWorkflow</code> →</td>
+<td><code>ScheduleActivity{seq:1, activity_type:"greet", start_to_close_sec:5}</code></td>
+</tr>
+<tr>
+<td>activity task →</td>
+<td>result <code>"Hello, Ada!"</code>, task token echoed</td>
+</tr>
+<tr>
+<td><code>ResolveActivity{seq:1}</code> →</td>
+<td><code>StartTimer{seq:2, ms:1000}</code></td>
+</tr>
+<tr>
+<td><code>FireTimer{seq:2}</code> →</td>
+<td><code>CompleteWorkflow{result:"HELLO, ADA!"}</code></td>
+</tr>
+<tr>
+<td><code>RemoveFromCache</code> →</td>
+<td>no commands</td>
+</tr>
+</tbody>
+</table>
+<p>Two defects found and fixed while getting there, both worth recording because they are the seams
+nobody documents: <code>StartWorkflow</code>'s <code>options['info']</code> must carry the <code>#[Marshal]</code> names of
+<code>Temporal\Workflow\WorkflowInfo</code> with nanosecond timeouts; and sdk-php builds its own responses with
+<code>EncodedValues::fromValues()</code> and <strong>no</strong> data converter, so <code>toPayloads()</code> throws unless the
+transport calls <code>setDataConverter()</code> first.</p>
+<h2 id="8-the-boundary-carries-cores-documents-2026-09-17-v-65">8. The boundary carries core's documents (2026-09-17, V-65)<a class="headerlink" href="#8-the-boundary-carries-cores-documents-2026-09-17-v-65" title="Permanent link">&para;</a></h2>
+<p>§4 above said the MVP needed no Rust change because a small hand-written schema already accepted the
+four commands it emitted. That schema is now deleted. The owner asked whether sdk-php's contracts
+were leaking into our Rust; they were not — the vocabulary there was core's — but the question
+exposed that a <strong>third</strong> schema sat between core and sdk-php: an arm per feature, and lossy enough
+that an activity could not carry a retry policy.</p>
+<p>The obvious fix, passing core's own completion JSON through, fails with <code>temporalio-protos</code>' serde
+derive, and <code>backend/completion_json.rs</code> now pins why: the derive ignores unknown keys (a typo would
+silently yield an empty completion), wants canonical durations, and has <strong>no default for enum
+fields</strong>, so partial documents die one message at a time. protojson proper — <code>prost-reflect</code> over
+the descriptor pool the crate publishes through its <code>links</code> key — accepts partial documents <em>and</em>
+rejects unknown fields.</p>
+<p><code>backend/temporal.rs</code> went 441 -&gt; 311 lines, and the Rust side now costs nothing per Temporal
+feature. The loop is closed without a server: the completions the PHP transport really produces are
+decoded in a Rust test by the same function the runtime uses.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

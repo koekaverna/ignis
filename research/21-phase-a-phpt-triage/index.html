@@ -1,0 +1,2043 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An application server for PHP — fiber concurrency for unmodified synchronous code.">
+      
+      
+      
+        <link rel="canonical" href="https://koekaverna.github.io/ignis/research/21-phase-a-phpt-triage/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>21 — Phase A: phpt baseline on a fresh box + fiber-mode failure triage - Ignis</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#21-phase-a-phpt-baseline-on-a-fresh-box-fiber-mode-failure-triage" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ignis" class="md-header__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ignis
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              21 — Phase A: phpt baseline on a fresh box + fiber-mode failure triage
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/why/" class="md-tabs__link">
+          
+  
+  
+  Concept
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/install/" class="md-tabs__link">
+          
+  
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../packages/" class="md-tabs__link">
+          
+  
+  
+  Packages
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../operate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Operations
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../deploy/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deploy
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migrate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrate
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../comparison/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Comparison
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../adr/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ADRs
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ignis" class="md-nav__button md-logo" aria-label="Ignis" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Ignis
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/koekaverna/ignis" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    koekaverna/ignis
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concept
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/why/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why Ignis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/mechanisms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The two mechanisms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/non-goals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What it is not
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/legacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-line scripts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/symfony/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Symfony
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/grpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gRPC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/revolt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Revolt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/temporal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../packages/phpstan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHPStan rule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/php-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../classic-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Classic mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#machine-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Machine state
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#counts-vs-the-recorded-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Counts vs the recorded baseline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fiber-mode-triage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fiber-mode triage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fiber-mode triage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extsocketstests-7-fiber-failures-was-told-to-expect-5-found-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ext/sockets/tests — 7 fiber failures (was told to expect 5; found 7)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extstandardtestsstreams-17-fiber-failures-11-fiber-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ext/standard/tests/streams — 17 fiber failures, 11 fiber-only
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#summary-of-the-classification-fiber-mode-only-24-tests-across-both-suites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary of the classification (fiber-mode only, 24 tests across both suites)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-adds-tocorrects-in-the-existing-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this adds to/corrects in the existing record
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-blocked-me" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What blocked me
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="21-phase-a-phpt-baseline-on-a-fresh-box-fiber-mode-failure-triage">21 — Phase A: phpt baseline on a fresh box + fiber-mode failure triage<a class="headerlink" href="#21-phase-a-phpt-baseline-on-a-fresh-box-fiber-mode-failure-triage" title="Permanent link">&para;</a></h1>
+<p>Date: 2026-09-16 (Phase A groundwork, porter). Fresh machine, different box from the one that
+produced the numbers in <code>bench/results/e15-phpt/summary.md</code> / <code>bench/results/e15-baseline.txt</code> /
+research 17 / VALIDATION V-26. Goal: re-run <code>bench/e15-phpt.sh</code> here, diff against the recorded
+counts, and root-cause the fiber-mode failures the owner named (the ~8 <code>ext/standard/tests/streams</code>
+ones and the 5 <code>ext/sockets/tests</code> ones) using this run's own <code>.diff</code> files, not the old docs.</p>
+<h2 id="machine-state">Machine state<a class="headerlink" href="#machine-state" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>$ uname -a
+Linux book 6.18.33.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026 x86_64 GNU/Linux
+$ /opt/php85-zts/bin/php -v
+PHP 8.5.10 (cli) (built: Sep 16 2026 09:51:10) (ZTS)
+$ git -C /home/koe/php-src describe --tags   # php-8.5.10, 34308a66
+$ md5sum target/release/ignis php/packages/runtime/src/ignis.php
+856974a616438cc46dc615a0e31c7d7e  target/release/ignis
+960a6e7a0bde5a6e0597f107380d084d  php/packages/runtime/src/ignis.php
+$ git rev-parse HEAD   # 7917425aacd0e7d712e77485cc8d770063ef2224
+$ df -h /   # 865G free of 1007G (10% used) — no disk pressure
+</code></pre></div>
+<h2 id="command">Command<a class="headerlink" href="#command" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>PHPSRC=/home/koe/php-src bash bench/e15-phpt.sh
+</code></pre></div>
+<p>No script edits were needed — <code>PHPSRC</code> on the command line was sufficient, <code>/home/user/php-src</code>
+was never touched.</p>
+<h2 id="counts-vs-the-recorded-baseline">Counts vs the recorded baseline<a class="headerlink" href="#counts-vs-the-recorded-baseline" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>suite</th>
+<th>mode</th>
+<th>recorded (summary.md / V-26 addendum)</th>
+<th>this box</th>
+<th>delta</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Zend/tests/fibers</td>
+<td>stock</td>
+<td>108/108 pass, 2 skip</td>
+<td><strong>108/108, 2 skip</strong></td>
+<td>none</td>
+</tr>
+<tr>
+<td>Zend/tests/fibers</td>
+<td>main</td>
+<td>108/108 pass, 2 skip</td>
+<td><strong>108/108, 2 skip</strong></td>
+<td>none</td>
+</tr>
+<tr>
+<td>Zend/tests/fibers</td>
+<td>fiber</td>
+<td>78/108 pass, 30 fail, 2 skip</td>
+<td><strong>78/108, 30 fail, 2 skip</strong></td>
+<td>none</td>
+</tr>
+<tr>
+<td>ext/sockets/tests</td>
+<td>stock</td>
+<td>80 pass, 0 fail, 38 skip</td>
+<td><strong>91 pass, 1 fail, 26 skip</strong></td>
+<td><strong>+11 pass, +1 fail, -12 skip</strong></td>
+</tr>
+<tr>
+<td>ext/sockets/tests</td>
+<td>main</td>
+<td>80 pass, 0 fail, 38 skip</td>
+<td><strong>91 pass, 1 fail, 26 skip</strong></td>
+<td>same shape as stock</td>
+</tr>
+<tr>
+<td>ext/sockets/tests</td>
+<td>fiber</td>
+<td>75 pass, 5 fail, 38 skip</td>
+<td><strong>85 pass, 7 fail, 26 skip</strong></td>
+<td><strong>+10 pass, +2 fail, -12 skip</strong></td>
+</tr>
+<tr>
+<td>ext/standard/tests/streams</td>
+<td>stock</td>
+<td>138 pass, 0 fail, 22 skip</td>
+<td><strong>139 pass, 0 fail, 21 skip</strong></td>
+<td>+1 pass, -1 skip</td>
+</tr>
+<tr>
+<td>ext/standard/tests/streams</td>
+<td>main</td>
+<td>132 pass, 6 fail, 22 skip</td>
+<td><strong>133 pass, 6 fail, 21 skip</strong></td>
+<td>+1 pass, -1 skip</td>
+</tr>
+<tr>
+<td>ext/standard/tests/streams</td>
+<td>fiber</td>
+<td>120 pass, 18 fail, 22 skip</td>
+<td><strong>122 pass, 17 fail, 21 skip</strong></td>
+<td>+2 pass, -1 fail, -1 skip</td>
+</tr>
+</tbody>
+</table>
+<p><code>scripts/ci-gate.sh phpt</code> against <code>bench/results/e15-baseline.txt</code> (108/80/132/78/75/120) would
+<strong>pass</strong> on every row here — every count is at or above the floor. Zend/tests/fibers is bit-for-bit
+identical to the recording box.</p>
+<p><strong>The one real difference: <code>ext/sockets/tests</code> gained 12 tests that used to be <code>SKIP</code>ped and now
+run</strong>, on <strong>stock</strong> as much as on <code>main</code>/<code>fiber</code> — this is an environment/kernel capability
+difference between the two boxes (this one is WSL2 6.18), not an Ignis effect. Of those 12 newly-run
+tests, one — <code>socket_sendto_zerocopy.phpt</code> — <strong>fails identically on stock, main and fiber</strong>:</p>
+<div class="highlight"><pre><span></span><code>$ diff stock-diffs/.../socket_sendto_zerocopy.diff
+     16384 sent!
+002- 16 received!
+003- Received 0123456789abcdef!
+002+  received!
+003+ Received !
+</code></pre></div>
+<p><code>MSG_ZEROCOPY</code> completion notifications behave differently under this WSL2 kernel than on the
+recording box — <strong>upstream</strong> (fails on <code>/opt/php85-zts/bin/php</code> too), not an Ignis regression. This
+single test explains the whole <code>sockets</code> "+1 fail" row in every mode. The streams <code>+1 pass / -1
+skip</code> on stock is the same kind of box-capability drift (not investigated further — it does not
+touch the fiber-mode question below) and is small enough not to matter to the classification.</p>
+<p><strong>Net: no regression on this box; the counts are consistent with (mostly identical to, in two cases
+slightly better than) what was recorded, once the one upstream/kernel-capability test is set aside.</strong></p>
+<h2 id="fiber-mode-triage">Fiber-mode triage<a class="headerlink" href="#fiber-mode-triage" title="Permanent link">&para;</a></h2>
+<h3 id="extsocketstests-7-fiber-failures-was-told-to-expect-5-found-7"><code>ext/sockets/tests</code> — 7 fiber failures (was told to expect 5; found 7)<a class="headerlink" href="#extsocketstests-7-fiber-failures-was-told-to-expect-5-found-7" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>test</th>
+<th>actual vs expected</th>
+<th>root cause</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>socket_addrinfo_bind.phpt</code></td>
+<td><code>object(Socket)#7</code> vs <code>#2</code></td>
+<td><code>phpt-harness.php</code> allocates a Fiber/Future/closure before <code>include</code>ing the test, shifting every object id the test prints by a fixed offset</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>socket_addrinfo_connect.phpt</code></td>
+<td><code>object(Socket)#7</code> vs <code>#2</code></td>
+<td>same object-id shift</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>socket_create_listen_invalid_port.phpt</code></td>
+<td><code>object(Socket)#6</code> vs <code>#1</code></td>
+<td>same object-id shift</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>socket_create_pair.phpt</code></td>
+<td><code>object(Socket)#6/#7</code> vs <code>#1/#2</code></td>
+<td>same object-id shift</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>socket_set_nonblock.phpt</code></td>
+<td><code>object(Socket)#6</code> vs <code>#1</code></td>
+<td>same object-id shift</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>socket_sendto_zerocopy.phpt</code></td>
+<td>see above</td>
+<td>kernel MSG_ZEROCOPY behavior</td>
+<td><strong>upstream</strong> (fails on stock identically; not fiber-specific — main mode fails too)</td>
+</tr>
+<tr>
+<td><code>socket_create_listen.phpt</code></td>
+<td><code>Warning: socket_create_listen(): unable to bind to given address [98]: Address already in use</code> then a fatal <code>TypeError</code></td>
+<td><strong>not</strong> an object-id artifact — this is a real bind failure on the fixed port 31338. By the time I checked (<code>ss -ltnp</code>), nothing held that port; I could not reproduce a hang directly in this test (it does one <code>socket_create_listen()</code> call and exits, no timed read) so I read it as a downstream symptom of the streams-suite hang below (an earlier orphaned <code>ignis</code> process from the <em>same run</em> still holding a port) rather than a distinct defect. <strong>ours, unconfirmed independently — needs a rerun on a quiet box to see if it's port-collision noise or a real socket-listen defect.</strong></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>The 5 tests named in the brief (<code>socket_addrinfo_bind</code>, <code>socket_addrinfo_connect</code>,
+<code>socket_create_listen_invalid_port</code>, <code>socket_create_pair</code>, <code>socket_set_nonblock</code>) are all the same
+single root cause: the harness's own object allocations before <code>include</code> shift every subsequent
+object id by a constant. This confirms research 17's original diagnosis on the fresh box — nothing
+new here. <code>socket_create_listen.phpt</code> is new (not in the recorded 5) and <code>socket_sendto_zerocopy</code>
+is upstream/unrelated to fiber mode.</p>
+<h3 id="extstandardtestsstreams-17-fiber-failures-11-fiber-only"><code>ext/standard/tests/streams</code> — 17 fiber failures, 11 fiber-only<a class="headerlink" href="#extstandardtestsstreams-17-fiber-failures-11-fiber-only" title="Permanent link">&para;</a></h3>
+<p>6 of the 17 also fail in <strong>main</strong> mode (not fiber-specific, same diff both places — CLI-SAPI
+surface, unchanged from research 17): <code>bug51056.phpt</code>, <code>bug64433.phpt</code>, <code>gh10031.phpt</code>,
+<code>gh11418.phpt</code>, <code>glob-wrapper.phpt</code>, <code>stream_context_tcp_nodelay_server.phpt</code> — <strong>not applicable</strong>
+(proc_open of <code>PHP_BINARY</code> needing CLI stdin, or the CLI built-in web server harness, or — for
+<code>glob-wrapper</code> — the embed opening the primary script through the <code>open_basedir</code>-checked path where
+php-cli exempts it).</p>
+<p>The 11 <strong>fiber-only</strong> failures, each verified against this run's own <code>.diff</code> (and three against a
+fresh isolated repro):</p>
+<table>
+<thead>
+<tr>
+<th>test</th>
+<th>actual vs expected (trimmed)</th>
+<th>root-cause hypothesis</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bug60106-001.phpt</code></td>
+<td><code>Deprecated: substr(): Passing null to parameter #1</code> then <code>unlink(): File name too long</code> instead of just the one expected truncation warning</td>
+<td>the test's error handler does <code>global $socket_file;</code> — but the phpt body runs as an <code>include</code> inside the harness's pooled Fiber closure, so top-level <code>$socket_file</code> is a local of that closure, not a true global; the handler sees <code>null</code>, <code>substr(null,...)</code> warns, and <code>unlink()</code> runs on the untruncated 517-byte path</td>
+<td><strong>ours (harness)</strong> — global-scope defect, same class as research 17's <code>destructors_006</code>/<code>_009</code>/<code>_010</code></td>
+</tr>
+<tr>
+<td><code>bug60106-002.phpt</code></td>
+<td>same pattern, two globals (<code>$socket_file</code>, <code>$max_normal_length</code>), cascades into <code>Undefined variable</code> warnings</td>
+<td>identical global-scope defect</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>bug69521.phpt</code></td>
+<td><code>Warning: stream_socket_client(): Unable to connect to tcp://127.0.0.1:74321 (Unknown error)</code> then fatal <code>TypeError</code> on <code>fwrite(false, ...)</code></td>
+<td><strong>confirmed by isolated repro</strong>: <code>stream_socket_server('tcp://127.0.0.1:74321', ..., STREAM_SERVER_BIND\|LISTEN)</code> binds fine in every mode (port 74321 &gt; 65535 wraps to a 16-bit port, same on stock/main/fiber); but <code>stream_socket_client()</code> to that same URI <strong>fails only inside a fiber</strong> ("Unknown error", errno 0) while stock and <code>main</code> mode connect successfully. The hooked async-connect path mishandles a port literal outside 0–65535 differently from the hooked bind path.</td>
+<td><strong>ours</strong> — real defect, not just an error-text mismatch as previously guessed</td>
+</tr>
+<tr>
+<td><code>bug70362.phpt</code></td>
+<td><code>Warning: open_basedir restriction in effect. File(.../scripts/phpt-harness.php) is not within the allowed path(s): (.)</code> then a fatal include failure — the entire test never runs</td>
+<td>the test's <code>--INI-- open_basedir=.</code> applies to the <em>harness</em> file too (<code>phpt-harness.php</code> lives under <code>/home/koe/projects/ignis/scripts/</code>, outside <code>.</code> = php-src's test dir), so the harness itself is rejected before the test body executes</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>bug77664.phpt</code></td>
+<td>stack trace <code>#2 {main}</code> vs <code>#2 /…/phpt-harness.php(40): include(...)</code> … <code>#7 {main}</code></td>
+<td>the test body is an <code>include</code> inside a Fiber, so the trace tail carries harness/<code>ignis.php</code>/<code>Loop</code>/<code>Fiber</code> frames instead of collapsing to <code>{main}</code></td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>gh8409.phpt</code></td>
+<td>same stack-trace-tail pattern</td>
+<td>same</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>gh14506.phpt</code></td>
+<td><code>Fatal error: Uncaught TypeError: fclose(): Argument #1 ($stream) must be of type resource, null given</code> instead of the expected <code>Warning: fclose(): cannot close the provided stream...</code> chain</td>
+<td>same global-scope defect as <code>bug60106-*</code>, here on <code>global $readStream;</code> inside the userspace stream wrapper's methods — the wrapper closes a <code>null</code> instead of the real (already-open) stream, throwing instead of warning</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>ghsa-3cr5-j632-f35r.phpt</code></td>
+<td><code>Warning: stream_socket_client(): ... (Unknown error)</code> → actually observed: <code>errstr=""</code>, expected <code>"The hostname must not contain null bytes"</code></td>
+<td>the hooked connect path's NUL-byte-in-hostname validation returns failure without populating <code>$errstr</code>/<code>$errno</code> the way the stock transport does</td>
+<td><strong>ours</strong> — real defect (error text/errno not propagated on this hooked-path rejection)</td>
+</tr>
+<tr>
+<td><code>stream_get_meta_data_socket_variation2.phpt</code></td>
+<td>actual: <code>Warning: stream_socket_server(): Unable to connect to tcp://127.0.0.1:31332 (Address already in use)</code> then a fatal type error; <strong>but the real bug is upstream of that</strong></td>
+<td><strong>confirmed by isolated repro, most serious finding of this triage</strong>: <code>stream_set_timeout($client, 0, 1000); fread($client, 1);</code> on a hooked tcp socket with no data available <strong>never returns</strong> inside a fiber — <code>IGNIS_PHPT_FILE=.../variation2.php timeout -k2 20 ./target/release/ignis scripts/phpt-harness.php</code> hung past the 20 s wrapper and had to be SIGKILLed (exit 124), stuck exactly at <code>"Set a timeout on the client and attempt a read:"</code>. The read timeout set via <code>stream_set_timeout()</code> is not applied to the fiber-parked read (it waits for data-readiness with no deadline). Because <code>scripts/ignis-php</code> execs <code>target/release/ignis</code> as a <strong>forked child of bash</strong>, not via <code>exec</code>, <code>run-tests.php</code>'s <code>--set-timeout 15</code> (which kills the bash wrapper) does <strong>not</strong> reach the grandchild <code>ignis</code> process — it survives as an orphan, still holding the listening socket. That's what produced the "Address already in use" seen in <em>this run's</em> diff (an earlier hang, in the same suite run, left an orphan on the same port), and is the most likely explanation for <code>socket_create_listen.phpt</code>'s spurious bind failure above too.</td>
+<td><strong>ours</strong> — a real hang, not just a metadata mismatch; plus a secondary process-leak hazard in the bash wrapper</td>
+</tr>
+<tr>
+<td><code>stream_select_null_usec.phpt</code></td>
+<td>stack trace <code>#1 {main}</code> vs harness frames</td>
+<td>trace-tail artifact only, the <code>ValueError</code> itself is raised correctly</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+<tr>
+<td><code>user_streams_context_001.phpt</code></td>
+<td>stack trace <code>#1 {main}</code> vs harness frames</td>
+<td>trace-tail artifact only</td>
+<td><strong>ours (harness)</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Repro commands used to confirm the two "real" (non-harness) bugs:</p>
+<div class="highlight"><pre><span></span><code># bug69521 — connect fails only in fiber mode for a port &gt; 65535
+$ IGNIS_PHPT_FILE=repro69521c.php ./target/release/ignis scripts/phpt-harness.php   # client bool(false), errno 0
+$ ./target/release/ignis repro69521c.php                                            # {main} mode: client bool(true)
+
+# stream_get_meta_data_socket_variation2 — read-timeout hang
+$ IGNIS_PHPT_FILE=.../stream_get_meta_data_socket_variation2.php timeout -k2 20 ./target/release/ignis scripts/phpt-harness.php
+  ... hangs at "Set a timeout on the client and attempt a read:" ...
+  exit code: 124        # SIGKILLed by `timeout`, did not exit on its own
+</code></pre></div>
+<p>Both orphaned processes found/created during this triage (pids 365445/365451, bound to
+:31332) were reaped with <code>kill -9 &lt;pid&gt;</code> (explicit pids, no <code>pkill -f</code>) once confirmed; no other
+stray <code>ignis</code>/<code>ignis-php</code>/<code>phpt-harness</code> processes were found on the box afterward.</p>
+<h2 id="summary-of-the-classification-fiber-mode-only-24-tests-across-both-suites">Summary of the classification (fiber-mode only, 24 tests across both suites)<a class="headerlink" href="#summary-of-the-classification-fiber-mode-only-24-tests-across-both-suites" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>ours — real runtime/hook defects (4)</strong>: <code>bug69521.phpt</code> (connect fails for a port literal<blockquote>
+<p>65535, fiber-only), <code>ghsa-3cr5-j632-f35r.phpt</code> (errstr/errno not populated on a hooked-connect
+  rejection), <code>stream_get_meta_data_socket_variation2.phpt</code> (read timeout not honored — <strong>hangs the
+  process</strong>, most severe), <code>socket_create_listen.phpt</code> (unconfirmed independently, likely a
+  downstream symptom of the previous item's orphaned process rather than a fifth distinct bug).</p>
+</blockquote>
+</li>
+<li><strong>ours (harness) — artifacts of running the phpt body inside a pooled Fiber via <code>include</code>
+  (11)</strong>: <code>bug60106-001/002.phpt</code>, <code>gh14506.phpt</code> (global-scope: 3), <code>bug77664.phpt</code>, <code>gh8409.phpt</code>,
+  <code>stream_select_null_usec.phpt</code>, <code>user_streams_context_001.phpt</code> (stack-trace tail: 4),
+  <code>bug70362.phpt</code> (open_basedir on the harness file: 1), 5× object-id shift in
+  <code>ext/sockets/tests</code> (<code>socket_addrinfo_bind/connect</code>, <code>socket_create_listen_invalid_port</code>,
+  <code>socket_create_pair</code>, <code>socket_set_nonblock</code>).</li>
+<li><strong>not applicable (6, all main+fiber, unchanged from research 17)</strong>: <code>bug51056.phpt</code>,
+  <code>bug64433.phpt</code>, <code>gh10031.phpt</code>, <code>gh11418.phpt</code>, <code>glob-wrapper.phpt</code>,
+  <code>stream_context_tcp_nodelay_server.phpt</code>.</li>
+<li><strong>upstream (1)</strong>: <code>socket_sendto_zerocopy.phpt</code> — fails identically on stock; a WSL2-vs-recording-box
+  kernel <code>MSG_ZEROCOPY</code> difference, unrelated to fibers.</li>
+</ul>
+<h2 id="what-this-adds-tocorrects-in-the-existing-record">What this adds to/corrects in the existing record<a class="headerlink" href="#what-this-adds-tocorrects-in-the-existing-record" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The counts on this box match or slightly exceed the committed baseline everywhere; the gate would
+  pass. The <code>ext/sockets/tests</code> "+11 pass / -12 skip" on <strong>stock</strong> is a box-capability difference
+  (more socket features available under this WSL2 kernel), not an Ignis effect, and it brought one
+  new <strong>upstream</strong> failure (<code>socket_sendto_zerocopy</code>) along with it — this is a box difference worth
+  flagging, not a regression.</li>
+<li><code>bug60106-001/002.phpt</code> were classified in V-26 addendum as "unix-socket <code>stream_socket_get_name</code>
+  on a hooked server socket"; direct inspection of this run's <code>.diff</code> plus the test source shows the
+  actual cause is the already-known <strong>global-scope harness defect</strong> (same as <code>destructors_006</code> etc
+  in research 17), not a <code>stream_socket_get_name</code> problem. Correction, not a new bug.</li>
+<li><code>bug69521.phpt</code> was classified as "error text ... differs from stock"; it is actually a full
+  connect <strong>failure</strong> (not a text mismatch) for out-of-range port literals, fiber-only, confirmed by
+  isolated repro — more serious than previously recorded.</li>
+<li><strong>New finding, not in any prior doc</strong>: <code>stream_get_meta_data_socket_variation2.phpt</code> hangs the
+  whole <code>ignis</code> process — <code>stream_set_timeout()</code> is not honored by a fiber-parked <code>fread()</code>, it waits
+  forever instead of returning <code>false</code> after the configured timeout. Combined with <code>scripts/ignis-php</code>
+  forking (not exec'ing) the real binary, a hang here survives <code>run-tests.php</code>'s own per-test
+  timeout as an orphaned process that keeps a port bound, which is the proximate cause of the
+  "Address already in use" failures seen on <code>stream_get_meta_data_socket_variation2.phpt</code> itself and
+  very likely <code>socket_create_listen.phpt</code> in the same run. This is the one finding from this session
+  that belongs in front of the main agent: <strong>fiber-parked reads ignore <code>stream_set_timeout()</code> and
+  never wake up</strong>, in <code>crates/ignis/src/php/stream.rs</code>'s read path (not edited here — out of scope
+  for the porter).</li>
+</ul>
+<h2 id="what-blocked-me">What blocked me<a class="headerlink" href="#what-blocked-me" title="Permanent link">&para;</a></h2>
+<p>Nothing. <code>PHPSRC=/home/koe/php-src</code> on the command line was sufficient; no script edits were needed.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
