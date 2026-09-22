@@ -10,9 +10,12 @@
  * S-9 (`/proc` shows `syscall=230 wchan=hrtimer_nanosleep`).
  *
  * Measured on this box: `sleep()` does not throw on the L4 signal -- glibc's own `sleep()` just
- * returns the number of seconds left un-slept when a signal interrupts it, so the response reports
- * that instead of an exception. `unslept > 0` is the L4 signal's own evidence: without it the
- * blocking `sleep($seconds)` call cannot return before $seconds elapses.
+ * returns the number of seconds left un-slept when a signal interrupts it. The shim records that
+ * return as `blocking_call ... errno=125` (ECANCELED), and the interrupt function force-closes the
+ * fiber at its very next opcode, so under the ladder the client gets the watchdog's 504 and never
+ * this handler's answer. The `unslept_s` field is what a run without the kill sees (a hand-sent
+ * `SIGRTMIN+2` with `IGNIS_STALL_KILL_MS=0`): `unslept > 0` is then the signal's own evidence,
+ * because a blocking `sleep($seconds)` cannot otherwise return before $seconds elapses.
  */
 
 declare(strict_types=1);

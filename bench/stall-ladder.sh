@@ -62,7 +62,8 @@ wait_for_body() {
   return 1
 }
 
-# $1 fixture path, $2 address, remaining args: NAME=value env overrides for this server only
+# $1 fixture path, $2 address, remaining args: NAME=value env overrides for this server only.
+# SERVER_FLAGS (word-split) adds runtime flags for this server only, e.g. `--supervise`.
 start_server() {
   local fixture="$1" address="$2"
   shift 2
@@ -72,7 +73,8 @@ start_server() {
     for pair in "$@"; do
       export "$pair"
     done
-    RUST_LOG=info exec "$IGNIS_BIN" --threads "$WORKERS" "$fixture"
+    # shellcheck disable=SC2086
+    RUST_LOG=info exec "$IGNIS_BIN" --threads "$WORKERS" ${SERVER_FLAGS:-} "$fixture"
   ) >"$SCENARIO_LOG" 2>&1 &
   SERVER_PID=$!
 }
@@ -211,13 +213,15 @@ scenario_s6() {
   sleep 1.5
   local hello_ok
   hello_ok=$(curl -s -m 2 "http://$address/hello" 2>/dev/null || true)
-  local killed_line
-  killed_line=$(grep_alert 'kind="fiber_killed"' | head -1)
+  # L2 is the loop's own doing, so its evidence is the loop's line, not a Rust alert: the fiber
+  # swallowed the L1 cancel, parked again, and the loop force-closed it.
+  local force_closed_line
+  force_closed_line=$(strip_ansi | grep -F 'force-closed (L2)' | head -1)
   stop_server
-  if [ "$hello_ok" = "hello" ]; then
-    pass "S-6: worker survived the disconnect (/hello='$hello_ok'); fiber_killed line: '${killed_line:-<none>}'"
+  if [ "$hello_ok" = "hello" ] && [ -n "$force_closed_line" ]; then
+    pass "S-6: fiber force-closed after swallowing its cancellation and the worker survived (/hello='$hello_ok'): $force_closed_line"
   else
-    fail "S-6: worker did not answer /hello after the disconnect -- SKIP-able via IGNIS_LADDER_PHP=0 if L2 is not landed yet; log tail: $(strip_ansi | tail -8)"
+    fail "S-6: /hello='$hello_ok', force-closed line: '${force_closed_line:-<none>}' (want hello and one L2 line) -- SKIP-able via IGNIS_LADDER_PHP=0 if L2 is not landed yet; log tail: $(strip_ansi | tail -8)"
   fi
 }
 
@@ -235,18 +239,27 @@ scenario_s7() {
   pin_other_workers "$address" 4000
   local t0
   t0=$(date +%s%N)
-  local code
-  code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$address/stuck" 2>/dev/null || echo "curl-timeout")
-  local elapsed_ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+  # The probes run *while* /stuck is spinning: the stuck request is backgrounded and the probes
+  # are fired through its whole stall-and-kill window, so a sibling that could not run during the
+  # stall shows up as a probe that never answered.
+  local code_file
+  code_file=$(mktemp /tmp/ignis-stall-ladder-s7-XXXXXX)
+  (curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$address/stuck" 2>/dev/null || echo "curl-timeout") >"$code_file" &
+  local stuck_pid=$!
   local probes
   probes=$(probe_hello_through_stall "$address" 3 6 0.2)
+  wait "$stuck_pid" 2>/dev/null
+  local elapsed_ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+  local code
+  code=$(cat "$code_file")
+  rm -f "$code_file"
   local killed_line
   killed_line=$(grep_alert 'kind="fiber_killed"' | head -1)
   stop_server
-  if [ "$code" = "504" ] && [ "$elapsed_ms" -le 2000 ] && [ "$probes" = "ok=6/total=6" ]; then
-    pass "S-7: 504 in ${elapsed_ms} ms, all sibling probes answered ($probes), fiber_killed: '${killed_line:-<none>}'"
+  if [ "$code" = "504" ] && [ "$elapsed_ms" -le 2500 ] && [ "$probes" = "ok=6/total=6" ] && [ -n "$killed_line" ]; then
+    pass "S-7: 504 within ${elapsed_ms} ms of the request, every sibling probe answered during the stall ($probes), fiber_killed: '$killed_line'"
   else
-    fail "S-7: http=$code after ${elapsed_ms} ms, probes=$probes (want 504 <= 2000 ms and ok=6/total=6); log tail: $(strip_ansi | tail -8)"
+    fail "S-7: http=$code after ${elapsed_ms} ms, probes=$probes, fiber_killed: '${killed_line:-<none>}' (want 504 <= 2500 ms, ok=6/total=6 and one fiber_killed line); log tail: $(strip_ansi | tail -8)"
   fi
 }
 
@@ -264,35 +277,51 @@ scenario_s8() {
   pin_other_workers "$address" 4000
   local t0
   t0=$(date +%s%N)
-  local body
-  body=$(curl -s -m 4 "http://$address/stuck?s=30" 2>/dev/null || echo "curl-timeout")
+  local body_file
+  body_file=$(mktemp /tmp/ignis-stall-ladder-s8-XXXXXX)
+  local code
+  code=$(curl -s -m 4 -o "$body_file" -w '%{http_code}' "http://$address/stuck?s=30" 2>/dev/null || echo "curl-timeout")
   local elapsed_ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+  local body
+  body=$(tr -d '\n' <"$body_file")
+  rm -f "$body_file"
   local hello_ok
   hello_ok=$(curl -s -m 2 "http://$address/hello" 2>/dev/null || true)
-  local blocking_line
-  blocking_line=$(grep_alert 'kind="blocking_call"' | head -1)
+  local l4_line blocking_line killed_line
+  l4_line=$(grep_alert 'kind="stall"' | grep -F 'level=L4' | grep -F 'kill signal delivered' | head -1)
+  blocking_line=$(grep_alert 'kind="blocking_call"' | grep -F 'site=libphp.so:sleep' | grep -F 'errno=125' | head -1)
+  [ -n "$blocking_line" ] || blocking_line=$(grep_alert 'kind="blocking_call"' | grep -F 'subject="libphp.so:sleep"' | grep -F 'errno=125' | head -1)
+  killed_line=$(grep_alert 'kind="fiber_killed"' | head -1)
   stop_server
-  # `sleep()` does not throw on the L4 signal (glibc returns the unslept seconds instead), so the
-  # evidence here is that the request returned in ~stall_kill_ms, far short of the 30 s it asked
-  # for, not a particular HTTP status; the fixture's own doc block has the measurement.
-  if [ "$elapsed_ms" -le 2000 ] && [ "$hello_ok" = "hello" ]; then
-    pass "S-8: cancelled in ${elapsed_ms} ms (<= 2000 ms, not the 30 s requested), body='$body', /hello='$hello_ok', blocking_call: '${blocking_line:-<none>}'"
+  # The whole L4 chain, each link by its own evidence: the ticker classified the thread as blocked
+  # in the shim and delivered the signal (`level=L4 ... kill signal delivered`); the interrupted
+  # sleep(30) came back through the shim as `blocking_call ... errno=125` (ECANCELED, the EINTR it
+  # rewrote -- a blocking sleep(30) cannot otherwise return in ~1 s); the interrupt function then
+  # force-closed the fiber at its next opcode (`fiber_killed`), which is why the client sees the
+  # watchdog's 504 rather than the fixture's own answer. And the worker went on serving.
+  if [ "$code" = "504" ] && [ "$elapsed_ms" -le 2000 ] && [ "$hello_ok" = "hello" ] && [ -n "$l4_line" ] && [ -n "$blocking_line" ] && [ -n "$killed_line" ]; then
+    pass "S-8: 504 in ${elapsed_ms} ms (body='$body'), /hello='$hello_ok'; L4: '$l4_line'; ECANCELED: '$blocking_line'; killed: '$killed_line'"
   else
-    fail "S-8: elapsed=${elapsed_ms} ms, body='$body', /hello='$hello_ok' (want <= 2000 ms and /hello='hello'); log tail: $(strip_ansi | tail -8)"
+    fail "S-8: http=$code after ${elapsed_ms} ms, body='$body', /hello='$hello_ok', L4 line: '${l4_line:-<none>}', blocking_call(errno=125): '${blocking_line:-<none>}', fiber_killed: '${killed_line:-<none>}' (want 504 <= 2000 ms, /hello='hello' and all three lines); log tail: $(strip_ansi | tail -8)"
   fi
 }
 
 # --- S-9: classification picks the level (/proc) ------------------------------------------------
 scenario_s9() {
   echo "== S-9: classification picks the level (/proc) =="
+  # fixture:query:env:expected-subject:expected-level:expected-classification -- what /proc must
+  # say about each shape and which rung the ticker must therefore pick (ADR-0043 §4): a spinning
+  # VM and a C loop are `running` and get the interrupt (L3); a thread blocked in the shim is in
+  # a syscall and gets the signal into it (L4).
   local index=0
-  for fixture_spec in "spin.php::" "block-sleep.php:?s=30:IGNIS_PARK=" "c-loop.php:?cost=20:"; do
+  for fixture_spec in \
+    "spin.php:::php:L3:proc=running" \
+    "block-sleep.php:?s=30:IGNIS_PARK=:blocking_forward\:libphp.so\:sleep:L4:wchan=hrtimer_nanosleep" \
+    "c-loop.php:?cost=20::php:L3:proc=running"; do
     index=$((index + 1))
-    local fixture path env_pair
-    fixture="${fixture_spec%%:*}"
-    local rest="${fixture_spec#*:}"
-    path="${rest%%:*}"
-    env_pair="${rest#*:}"
+    local fixture path env_pair expected_subject expected_level expected_classification
+    IFS=: read -r fixture path env_pair expected_subject expected_level expected_classification <<<"$(printf '%s' "$fixture_spec" | sed 's/\\:/\x01/g')"
+    expected_subject="${expected_subject//$'\x01'/:}"
     local address="127.0.0.1:$((BASE_PORT + 90 + index))"
     if [ -n "$env_pair" ]; then
       start_server "bench/php/stall/$fixture" "$address" IGNIS_STALL_KILL_MS=1000 IGNIS_STALL_ABANDON_MS=3000 "$env_pair"
@@ -309,21 +338,26 @@ scenario_s9() {
     sleep 2.5
     kill "$stuck_pid" 2>/dev/null
     local kill_line
-    kill_line=$(grep_alert 'kind="stall"' | grep -E 'level=L[0-9]|classification=' | tail -1)
+    kill_line=$(grep_alert 'kind="stall"' | grep -F "subject=\"$expected_subject\"" | grep -F "level=$expected_level" | grep -F "$expected_classification" | tail -1)
     stop_server
     if [ -n "$kill_line" ]; then
-      pass "S-9($fixture): $kill_line"
+      pass "S-9($fixture): subject=$expected_subject level=$expected_level classification~$expected_classification: $kill_line"
     else
-      fail "S-9($fixture): no classified stall/kill line found; log tail: $(strip_ansi | tail -8)"
+      fail "S-9($fixture): no stall line with subject=\"$expected_subject\" level=$expected_level and $expected_classification; stall lines: $(grep_alert 'kind="stall"' | cut -c1-300 | tail -3)"
     fi
   done
 }
 
 # --- S-10: L5 abandon a live worker --------------------------------------------------------------
 scenario_s10() {
-  echo "== S-10: L5 abandon a live worker (c-loop.php) =="
+  echo "== S-10: L5 abandon a live worker (c-loop.php, --supervise) =="
   local address="127.0.0.1:$((BASE_PORT + 10))"
-  start_server bench/php/stall/c-loop.php "$address" \
+  # L5 replaces the abandoned worker, which takes a supervisor: under --supervise every PHP thread
+  # is one the supervisor can respawn. Without the flag the script also runs on the main thread,
+  # and when the pinning lands the stuck request there, nobody in-process can replace it and the
+  # process exits 3 for its external supervisor instead (ADR-0044's master, or systemd) -- the
+  # prefork half of V-124 covers that path; here it would only make the scenario a coin toss.
+  SERVER_FLAGS=--supervise start_server bench/php/stall/c-loop.php "$address" \
     IGNIS_BUSY_WARN_MS=100 IGNIS_STALL_KILL_MS=1000 IGNIS_STALL_ABANDON_MS=3000
   if ! wait_for_body "http://$address/hello" "hello" 10; then
     fail "S-10: server never became ready"

@@ -238,7 +238,8 @@ pub unsafe extern "C" fn zif_ignis_cancel_parked_any(ex: *mut sys::zend_execute_
     unsafe {
         let mut zfiber: *mut sys::zval = ptr::null_mut();
         let mut exc: *mut sys::zval = ptr::null_mut();
-        if sys::zend_parse_parameters(super::zval::num_args(ex), c"oo".as_ptr(), &mut zfiber, &mut exc) != sys::SUCCESS {
+        if sys::zend_parse_parameters(super::zval::num_args(ex), c"Oo".as_ptr(), &mut zfiber, sys::zend_ce_fiber, &mut exc) != sys::SUCCESS
+        {
             return;
         }
         let fiber = (*zfiber).value.obj as *mut sys::zend_fiber;

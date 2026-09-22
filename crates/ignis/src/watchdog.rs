@@ -82,10 +82,6 @@ fn tick(settings: &'static Settings, episodes: &mut HashMap<usize, Episode>) {
             continue;
         }
         let request_id = slot.request_id.load(Ordering::Relaxed);
-        if reactor.pending_requests() == 0 && request_id == 0 {
-            episodes.remove(&index);
-            continue;
-        }
         let since = slot.php_since_ns.load(Ordering::Relaxed);
         let episode = episodes.entry(index).or_default();
         if episode.since_ns != since {
@@ -174,8 +170,7 @@ fn abandon(index: usize, reactor: &std::sync::Arc<crate::reactor::Reactor>, subj
     let Some(slot) = scoreboard::slot(index) else { return };
     slot.state.store(STATE_ABANDONED, Ordering::Release);
     crate::http::leave_dispatch(reactor);
-    reactor.abandon();
-    let failed = reactor.fail_pending();
+    let failed = reactor.abandon();
     let leaked = LEAKED.fetch_add(1, Ordering::Relaxed) + 1;
     let fields = vec![
         ("worker", index.to_string()),
@@ -186,7 +181,7 @@ fn abandon(index: usize, reactor: &std::sync::Arc<crate::reactor::Reactor>, subj
         ("acks", slot.interrupt_acks.load(Ordering::Relaxed).to_string()),
     ];
     crate::alerts::report(Event {
-        key: Key::new("worker_abandoned", subject.to_string(), route.to_string()),
+        key: Key::new("worker_abandoned", format!("worker{index}:{subject}"), route.to_string()),
         level: Level::Critical,
         value_us: age_ms * 1000,
         fields,

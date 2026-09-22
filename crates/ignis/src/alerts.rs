@@ -96,6 +96,9 @@ struct KeyState {
 
 struct Inner {
     keys: HashMap<Key, KeyState>,
+    /// Since boot, never forgotten: a key that recovers leaves `keys` but not the scrape, because a
+    /// counter that resets when its subject goes quiet is not a counter.
+    lifetime: HashMap<Key, Lifetime>,
     bucket: f64,
     bucket_at: Instant,
     dropped: u64,
@@ -105,6 +108,12 @@ struct Inner {
 pub struct Alerts {
     policy: Policy,
     inner: Mutex<Inner>,
+}
+
+struct Lifetime {
+    level: Level,
+    count: u64,
+    max_us: u64,
 }
 
 /// A key's lifetime totals, for the scrape.
@@ -122,6 +131,7 @@ impl Alerts {
             policy,
             inner: Mutex::new(Inner {
                 keys: HashMap::new(),
+                lifetime: HashMap::new(),
                 bucket: policy.max_lines_per_s as f64,
                 bucket_at: now,
                 dropped: 0,
@@ -172,6 +182,11 @@ impl Alerts {
             fields.push(("escalated".into(), format!("{} in one window", state.count_in_window)));
             lines.push(Line { level: Level::Error, what: "escalated", key: event.key.clone(), fields });
         }
+        let level = state.level;
+        let lifetime = inner.lifetime.entry(event.key.clone()).or_insert(Lifetime { level, count: 0, max_us: 0 });
+        lifetime.count += 1;
+        lifetime.max_us = lifetime.max_us.max(event.value_us);
+        lifetime.level = lifetime.level.max(level);
         if event.level == Level::Critical
             && let Some(worker) = event.fields.iter().find(|(k, _)| *k == "worker")
         {
@@ -237,7 +252,7 @@ impl Alerts {
     pub fn totals(&self) -> Vec<Total> {
         let inner = self.inner.lock_unpoisoned();
         let mut out: Vec<Total> =
-            inner.keys.iter().map(|(k, s)| Total { key: k.clone(), level: s.level, count: s.total, max_us: s.max_total_us }).collect();
+            inner.lifetime.iter().map(|(k, l)| Total { key: k.clone(), level: l.level, count: l.count, max_us: l.max_us }).collect();
         out.sort_by(|a, b| a.key.cmp(&b.key));
         out
     }
@@ -427,9 +442,10 @@ mod tests {
             }
         }
         assert_eq!(recovered, 1);
-        assert!(a.totals().is_empty(), "forgotten");
+        assert_eq!(a.totals()[0].count, 2, "forgotten for dedup, kept for the scrape");
         let again = a.emit(event(Level::Warn, 1), at(t0, 600));
         assert_eq!(again[0].what, "first", "a forgotten key logs afresh");
+        assert_eq!(a.totals()[0].count, 3, "a counter never restarts");
     }
 
     #[test]

@@ -55,11 +55,23 @@ final class RecoveryTest extends TestCase
         self::assertSame($expected, Recovery::profileDefault($profile));
     }
 
-    public function testParseRoutesKeepsOnlyEntriesThatSetFiberTimeoutMs(): void
+    public function testParseRoutesKeepsEveryRouteAndReadsOnlyFiberTimeoutMs(): void
     {
         $routes = Recovery::parseRoutes('/export/=fiber_timeout_ms:120000;stall_kill_ms:0,/=busy_warn_ms:5');
 
-        self::assertSame([['/export/', 120_000]], $routes, 'busy_warn_ms and stall_kill_ms are Rust-only; PHP keeps neither');
+        self::assertSame(
+            [['/export/', 120_000], ['/', null]],
+            $routes,
+            'busy_warn_ms and stall_kill_ms are Rust-only, but the route itself still takes part in the longest-prefix match',
+        );
+    }
+
+    public function testParseRoutesRejectsANegativeOrFractionalTimeoutLikeRustDoes(): void
+    {
+        self::assertSame([['/export/', null]], Recovery::parseRoutes('/export/=fiber_timeout_ms:-1'));
+        self::assertSame([['/export/', null]], Recovery::parseRoutes('/export/=fiber_timeout_ms:1.5'));
+        self::assertSame([['/export/', null]], Recovery::parseRoutes('/export/=fiber_timeout_ms:1e3'));
+        self::assertSame([['/export/', 7]], Recovery::parseRoutes('/export/=fiber_timeout_ms: 007 '));
     }
 
     public function testParseRoutesOrdersTheLongestPrefixFirst(): void
@@ -83,9 +95,9 @@ final class RecoveryTest extends TestCase
         self::assertSame([], Recovery::parseRoutes('=fiber_timeout_ms:100'));
     }
 
-    public function testParseRoutesIgnoresAKeyWithANonNumericValue(): void
+    public function testParseRoutesKeepsTheRouteButNotAKeyWithANonNumericValue(): void
     {
-        self::assertSame([], Recovery::parseRoutes('/export/=fiber_timeout_ms:soon'));
+        self::assertSame([['/export/', null]], Recovery::parseRoutes('/export/=fiber_timeout_ms:soon'));
     }
 
     public function testParseRoutesAcceptsAnExplicitZeroToTurnTheTimeoutOff(): void
@@ -124,5 +136,24 @@ final class RecoveryTest extends TestCase
 
         self::assertSame(120_000, Recovery::fiberTimeoutFor('/export/report.csv'));
         self::assertSame(1234, Recovery::fiberTimeoutFor('/other'), 'a route with no fiber_timeout_ms key does not override anything');
+    }
+
+    public function testFiberTimeoutForLetsALongerPrefixWithoutATimeoutInheritTheGlobalValue(): void
+    {
+        putenv('IGNIS_PROFILE=production');
+        putenv('IGNIS_FIBER_TIMEOUT_MS=1234');
+        putenv('IGNIS_RECOVERY_ROUTES=/=fiber_timeout_ms:30,/export/=stall_kill_ms:0');
+
+        self::assertSame(1234, Recovery::fiberTimeoutFor('/export/report'), 'Rust picks /export/ first and inherits the global timeout; so must PHP');
+        self::assertSame(30, Recovery::fiberTimeoutFor('/other'));
+    }
+
+    public function testFiberTimeoutForIgnoresANegativeGlobalValueLikeRustDoes(): void
+    {
+        putenv('IGNIS_PROFILE=load-test');
+        putenv('IGNIS_FIBER_TIMEOUT_MS=-1');
+        putenv('IGNIS_RECOVERY_ROUTES');
+
+        self::assertSame(30_000, Recovery::fiberTimeoutFor('/anything'), 'a value Rust refuses must not turn the PHP timeout off');
     }
 }

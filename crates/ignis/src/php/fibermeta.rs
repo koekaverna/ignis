@@ -161,7 +161,7 @@ pub unsafe extern "C" fn zif_ignis_fiber_kill_pending(ex: *mut sys::zend_execute
     unsafe {
         let mut zfiber: *mut sys::zval = ptr::null_mut();
         let mut on: bool = false;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"ob".as_ptr(), &mut zfiber, &mut on) != sys::SUCCESS {
+        if sys::zend_parse_parameters(zval::num_args(ex), c"Ob".as_ptr(), &mut zfiber, sys::zend_ce_fiber, &mut on) != sys::SUCCESS {
             return;
         }
         let fiber = (*zfiber).value.obj as *mut sys::zend_fiber;
@@ -202,7 +202,7 @@ pub unsafe extern "C" fn zif_ignis_fiber_where(ex: *mut sys::zend_execute_data, 
     // stack, which stays allocated until it terminates; every pointer is null-checked and only read.
     unsafe {
         let mut zfiber: *mut sys::zval = ptr::null_mut();
-        if sys::zend_parse_parameters(zval::num_args(ex), c"o".as_ptr(), &mut zfiber) != sys::SUCCESS {
+        if sys::zend_parse_parameters(zval::num_args(ex), c"O".as_ptr(), &mut zfiber, sys::zend_ce_fiber) != sys::SUCCESS {
             return;
         }
         let fiber = (*zfiber).value.obj as *mut sys::zend_fiber;

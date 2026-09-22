@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ignis\Tests\Testing;
 
 use Ignis\Testing\BlockingAssertions;
+use Ignis\Testing\BlockingAudit;
 use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
 
@@ -14,6 +15,7 @@ use PHPUnit\Framework\TestCase;
  * under a plain `php` CLI, without which PHPStan reports the trait as unused (research 50 S-3).
  */
 #[CoversTrait(BlockingAssertions::class)]
+#[CoversTrait(BlockingAudit::class)]
 final class BlockingAssertionsTest extends TestCase
 {
     use BlockingAssertions;

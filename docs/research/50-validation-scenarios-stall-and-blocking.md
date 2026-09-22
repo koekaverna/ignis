@@ -19,7 +19,7 @@ and the run is bounded.
 | `spin.php` | Running PHP (VM) | `while (true) { $i++; }` on request; `?jit=1` variant runs under `opcache.jit=tracing` |
 | `block-sleep.php` | Blocked in the shim, policy `block` | `sleep(30)` with `IGNIS_PARK=` (empty policy — nothing parks) |
 | `block-curl.php` | Blocked in the shim inside a third-party library | `curl_exec` to a blackhole address (`10.255.255.1`, 30 s timeout) with `IGNIS_PARK=libpq` (curl under `block`) |
-| `c-loop.php` | Running C, no interrupt checks | `password_hash('x', PASSWORD_BCRYPT, ['cost' => 31])` |
+| `c-loop.php` | Running C, no interrupt checks | `password_hash('x', PASSWORD_BCRYPT, ['cost' => 20])` — 61.5 s on this box (the fixture's doc block); every +1 doubles it, so calibrate `?cost=` to the machine rather than raising it: the run only has to outlast `stall_abandon_ms` |
 | `file-read.php` | Blocking forward on a regular file | `file_get_contents` of a 256 MB file on a `dd`-throttled loop device, or `/dev/zero` read of 1 GB — a call the shim forwards and that takes > 100 ms |
 | `sqlite.php` | Blocking forward inside an extension under `block` | `SQLite3::query` on a 2 s `WITH RECURSIVE` — the documented "cannot park" case (MVP scope) |
 | `flock-hold.php` | Lock held across a yield (R-SESS shape) | fiber A `flock(LOCK_EX)` + `usleep`; fiber B `flock(LOCK_EX)` — must park, not stall (V-58 regression) |
@@ -61,11 +61,16 @@ that only parks → zero sites; `IGNIS_NO_UNIVERSAL_PARK=1` → every socket rea
 
 `php/packages/runtime/src/Testing/` (new): `BlockingAssertions` trait —
 `assertNoBlockingCalls(callable $fn)` runs `$fn` in a fiber on the loop under `strict`, reads
-`ignis_stats()['blocking']` before and after, and fails with the site list (library:symbol,
-duration, PHP file:line). For Symfony, `Ignis\Testing\WebTestCaseListener` (a PHPUnit extension)
-wraps every `KernelBrowser::request()` the same way, so an existing controller test suite reports
-blocking calls without changes. Expected on the skeleton's own tests: 0 failures with the allow
-file, N failures without it, each naming the controller and the line. Unit level:
+`ignis_blocking_sequence()`/`ignis_blocking_records()` before and after, and fails with the site
+list (library:symbol, duration, PHP file:line). For an existing suite, the `DetectsBlocking`
+trait: a `#[Before]`/`#[After]` pair that fails the test on every unallowed record the detector
+made on the thread during it. What it cannot do is wrap the test body itself — PHPUnit 12's
+`TestCase::runTest()` is private, and an extension only observes — and the detector's gate is the
+fiber, so code the test drives on its own context (a `KernelBrowser::request()`) is audited only
+through `$this->ignisAudited(fn () => …)`, one `request()` override in a `WebTestCase` base class
+(the earlier draft of this note promised a `WebTestCaseListener` extension that would do it
+without changes; it cannot). Expected on the skeleton's own tests, once wrapped: 0 failures with
+the allow file, N failures without it, each naming the controller and the line. Unit level:
 `assertNoBlockingCalls(fn () => file_get_contents('/etc/hostname'))` fails (regular file);
 `assertNoBlockingCalls(fn () => file_get_contents('http://127.0.0.1:$port/'))` passes (parks).
 

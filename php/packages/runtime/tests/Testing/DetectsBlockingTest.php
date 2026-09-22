@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ignis\Tests\Testing;
 
+use Ignis\Testing\BlockingAudit;
 use Ignis\Testing\DetectsBlocking;
 use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
@@ -14,6 +15,7 @@ use PHPUnit\Framework\TestCase;
  * PHPStan reports the trait as unused (research 50 S-3, C-2).
  */
 #[CoversTrait(DetectsBlocking::class)]
+#[CoversTrait(BlockingAudit::class)]
 final class DetectsBlockingTest extends TestCase
 {
     use DetectsBlocking;
@@ -26,5 +28,20 @@ final class DetectsBlockingTest extends TestCase
         $this->ignisAssertNoBlockingCalls();
 
         self::assertSame(0, $this->ignisBlockingWatchSequence, 'without the detector the watch starts at sequence 0 and the hooks change nothing');
+    }
+
+    public function testIgnisAuditedRunsTheCallableAndReturnsItsResultWithoutTheDetector(): void
+    {
+        self::assertSame('audited', $this->ignisAudited(static fn(): string => 'audited'));
+    }
+
+    public function testIgnisAuditedLetsTheCallablesExceptionThrough(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('from inside');
+
+        $this->ignisAudited(static function (): never {
+            throw new \RuntimeException('from inside');
+        });
     }
 }

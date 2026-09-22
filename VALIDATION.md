@@ -6416,3 +6416,45 @@ box), S-3 with a Symfony test suite (no composer here; the `Ignis\Testing` trait
 (a storm on all workers), S-16 (NTS scoreboard across forked children — the ladder ran inside a
 forked worker, but the per-process board is not the shared page ADR-0043 §3 describes; that part
 waits for the master-side ticker).
+
+### V-124 addendum (2026-09-23) — the review round: each rung by its own evidence, the planted-site audit, the abandonment bound
+
+Same box, same binary shape (`cargo build --release`, PHP 8.5.10 ZTS), after CodeRabbit's review of
+the pull request (DECISIONS 2026-09-23). The ladder's assertions were tightened so that every
+scenario needs the line its rung produces (S-6 the loop's `force-closed (L2)` line; S-7 sibling
+probes fired *during* the stall; S-8 the `level=L4 … kill signal delivered` line, the
+`blocking_call … errno=125` record and the `fiber_killed` line together; S-9 the subject, level and
+`/proc` shape per fixture) and S-10 runs under `--supervise`, because without it the pinning lands
+the stuck request on the main thread one time in four and the process exits 3 for an external
+supervisor instead — a different, also-correct path (the prefork paragraph above), not a coin to
+toss in a gate. Three consecutive runs; the third, with every change in, is the one below (`exit 0`,
+0 failing):
+
+| scenario | result |
+|---|---|
+| S-1 spin / block-sleep | warn at **age_ms=134** (spin) and **187** (block-sleep), `subject="blocking_forward:libphp.so:sleep"` for the latter |
+| S-7 L3 | 504 **1 736 ms** after the request was sent, all 6 `/hello` probes answered while the fiber spun, `fiber_killed subject="interrupt" route="/stuck"` |
+| S-8 L4 | 504 in **1 108 ms**: `level=L4 action=kill signal delivered`, `blocking_call libphp.so:sleep duration_us=1 095 243 errno=125`, `fiber_killed`; the body is the watchdog's own 504, because the interrupt function force-closes the fiber at the opcode after the interrupted `sleep()` returns (the fixture's `unslept_s` answer is what a run with `stall_kill_ms=0` and a hand-sent signal sees) |
+| S-9 | spin → `subject="php" level=L3 proc=running`; block-sleep → `subject="blocking_forward:libphp.so:sleep" level=L4 wchan=hrtimer_nanosleep`; c-loop → `subject="php" level=L3 proc=running` (then no ack, then L5) |
+| S-10 L5 (`--supervise`) | `worker_abandoned subject="worker0:php" age_ms=3026 failed_requests=1 leaked_workers=1`, the replacement served `/hello` |
+| S-5 L0 | 504 in **2 012 ms** |
+| S-6 L2 | `Ignis\Loop: fiber 11 parked again after its cancellation and is force-closed (L2)`, then `/hello` |
+
+**The abandonment bound (H-INT-6, revised target "within `stall_abandon_ms` + one tick"):** age at
+abandonment over the configured threshold, five runs at two settings — `3000`: 3 012, 3 016, 3 024,
+3 026, 3 029 ms (ladder runs, and the `--supervise` and unsupervised shapes alike); `1500`: 1 533,
+1 547 ms (`--threads 4 --supervise`, `IGNIS_STALL_KILL_MS=500`, the orchestrator's two hand runs,
+the stuck request answered 500 in 1.534 s / 1.548 s). Overshoot **12–47 ms** against a 100 ms tick.
+
+**S-2 on a planted site (`bench/blocking-audit.sh`, `DURATION=4 CONCURRENCY=8`, `wrk`, route file
+`/stuck`):** a fixture whose handler does `file_get_contents('/etc/hostname')` under
+`profile=load-test`/`strict`: the report lists `libphp.so:read count=139 max_us=3494 routes=/stuck:139`
+and the audit **exits 1** with `NOT in …: libphp.so:read@/stuck`; with the one line
+`libphp.so:read@/stuck` in the allow file, the same drive (79 records) **exits 0**; without a route
+file and with no route keys in the script it prints the new `WARNING: no route keys found …` and
+audits `/` alone. The Symfony-skeleton half of S-2 and S-3 still waits for a box with composer.
+
+**Unit level:** `cargo nextest run --workspace` **102 passed** (one new: an abandoned reactor
+refuses HTTP and gRPC admission alike, the drain and the refusal under one lock); clippy, fmt, the
+off build clean. `php -l` on every touched PHP file; the PHP suites run in CI's `php-unit` job (no
+composer here).

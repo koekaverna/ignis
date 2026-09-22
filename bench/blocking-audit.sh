@@ -37,14 +37,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Route keys of a `match`/array table, single- or double-quoted. A router that builds its paths
+# some other way is not found here: pass a route file as $2, or the audit drives `/` alone and
+# says so -- an audit that never drove a route cannot vouch for it.
 routes_from_script() {
-  grep -oE "^\s*'/[^']*'\s*=>" "$SCRIPT" 2>/dev/null | grep -oE "'/[^']*'" | tr -d "'" | sort -u
+  grep -oE "^\s*['\"]/[^'\"]*['\"]\s*=>" "$SCRIPT" 2>/dev/null | grep -oE "['\"]/[^'\"]*['\"]" | tr -d "'\"" | sort -u
 }
 
 if [ -n "$ROUTE_FILE" ] && [ -f "$ROUTE_FILE" ]; then
   mapfile -t ROUTES <"$ROUTE_FILE"
 else
   mapfile -t ROUTES < <(routes_from_script)
+  if [ "${#ROUTES[@]}" -eq 0 ]; then
+    echo "WARNING: no route keys found in $SCRIPT; auditing / only -- pass a route file (one path per line) as \$2 to drive the real routes" >&2
+  fi
   ROUTES+=("/")
 fi
 if [ "${#ROUTES[@]}" -eq 0 ]; then

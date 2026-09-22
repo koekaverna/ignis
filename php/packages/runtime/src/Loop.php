@@ -1099,14 +1099,26 @@ final class Loop
         if (!\function_exists('ignis_cancel_parked_any')) {
             return;
         }
+        self::throwIntoCPark($fiber, $exception);
+        self::watchForSwallowedCancellation($fiber, $requestId);
+    }
+
+    /**
+     * Resumes $fiber out of its C-side park with $exception thrown in, absorbing what surfaces
+     * here instead of inside it. A no-op returning false when the fiber is not C-parked.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function throwIntoCPark(\Fiber $fiber, \Throwable $exception): bool
+    {
         try {
-            \ignis_cancel_parked_any($fiber, $exception);
+            return \ignis_cancel_parked_any($fiber, $exception);
         } catch (\Throwable $caught) {
             if ($caught !== $exception) {
                 self::$unobserved[] = $caught;
             }
         }
-        self::watchForSwallowedCancellation($fiber, $requestId);
+
+        return true;
     }
 
     /**
@@ -1179,6 +1191,9 @@ final class Loop
                 continue;
             }
             $fiber = self::$killPending[$fiberId];
+            if ($fiber->isSuspended()) {
+                self::releaseCPark($fiber);
+            }
             if ($fiber->isTerminated()) {
                 unset(self::$killPending[$fiberId]);
                 continue;
@@ -1188,10 +1203,28 @@ final class Loop
             }
             unset(self::$killPending[$fiberId]);
             self::dropLoopReferencesTo($fiber);
+            error_log(\sprintf('Ignis\\Loop: fiber %d parked again after its cancellation and is force-closed (L2)', $fiberId));
             $foundOneToClose = true;
         }
 
         return $foundOneToClose;
+    }
+
+    /**
+     * A fiber parked inside a C hook is held by `wait.rs` (research 49 H1) for as long as that park
+     * lasts, and a held object is not a collectible cycle: dropping the loop's own references would
+     * leave it suspended for ever if the op never completes. So the park is ended first, with the
+     * kill thrown in — the fiber either unwinds (terminated, nothing left to do) or parks again on
+     * the loop's side, where the references really are the loop's to drop. Nothing to do for a
+     * fiber suspended on the loop's side, and nothing without the binary.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function releaseCPark(\Fiber $fiber): void
+    {
+        if (!\function_exists('ignis_cancel_parked_any')) {
+            return;
+        }
+        self::throwIntoCPark($fiber, new KilledException('fiber force-closed'));
     }
 
     /** @param \Fiber<mixed,mixed,mixed,mixed> $fiber */

@@ -29,9 +29,11 @@ final class Recovery
     /**
      * `IGNIS_RECOVERY_ROUTES`, the mirror of `recovery::parse_routes()`: comma separated
      * `prefix=key:value;key:value` entries, longest prefix first so the caller can take the first
-     * match. Only the `fiber_timeout_ms` key is kept, because that is all PHP enforces.
+     * match. Every route is kept, as in Rust, so a prefix that sets only Rust-side keys still wins
+     * the match and inherits the global timeout (null) instead of letting a shorter prefix's
+     * `fiber_timeout_ms` apply to it. Only that key is read, because it is all PHP enforces.
      *
-     * @return list<array{0: string, 1: int}>
+     * @return list<array{0: string, 1: int|null}>
      */
     public static function parseRoutes(string $text): array
     {
@@ -47,7 +49,7 @@ final class Recovery
         return $routes;
     }
 
-    /** @return array{0: string, 1: int}|null */
+    /** @return array{0: string, 1: int|null}|null */
     private static function routeFiberTimeoutFromEntry(string $entry): ?array
     {
         $equalsPosition = \strpos($entry, '=');
@@ -58,9 +60,8 @@ final class Recovery
         if ($prefix === '') {
             return null;
         }
-        $fiberTimeoutMilliseconds = self::fiberTimeoutFromKeys(\substr($entry, $equalsPosition + 1));
 
-        return $fiberTimeoutMilliseconds === null ? null : [$prefix, $fiberTimeoutMilliseconds];
+        return [$prefix, self::fiberTimeoutFromKeys(\substr($entry, $equalsPosition + 1))];
     }
 
     private static function fiberTimeoutFromKeys(string $keys): ?int
@@ -71,9 +72,8 @@ final class Recovery
                 continue;
             }
             $key = \trim(\substr($keyValue, 0, $colonPosition));
-            $value = \trim(\substr($keyValue, $colonPosition + 1));
-            if ($key === 'fiber_timeout_ms' && \is_numeric($value)) {
-                return (int) $value;
+            if ($key === 'fiber_timeout_ms') {
+                return self::unsignedMilliseconds(\substr($keyValue, $colonPosition + 1));
             }
         }
 
@@ -81,17 +81,33 @@ final class Recovery
     }
 
     /**
+     * What Rust's `u64` parse accepts and nothing else: digits only, so `-1`, `1.5` and `1e3` are
+     * rejected on both sides alike rather than clamped to 0 (off) here and refused there.
+     */
+    private static function unsignedMilliseconds(string $value): ?int
+    {
+        $value = \trim($value);
+        if ($value === '' || !\ctype_digit($value)) {
+            return null;
+        }
+        $milliseconds = (int) $value;
+
+        return (string) $milliseconds === \ltrim($value, '0') || $milliseconds === 0 && \trim($value, '0') === '' ? $milliseconds : null;
+    }
+
+    /**
      * The L0 ceiling for a request against `$uri`: an explicit `IGNIS_FIBER_TIMEOUT_MS`, else the
      * active profile's default, then the longest matching `IGNIS_RECOVERY_ROUTES` prefix overrides
-     * either one. 0 means off.
+     * either one when it sets `fiber_timeout_ms` itself. 0 means off; an invalid value is ignored
+     * the way Rust ignores it.
      */
     public static function fiberTimeoutFor(string $uri): int
     {
         $profileDefault = self::profileDefault(Env::text('IGNIS_PROFILE', 'production'));
-        $fiberTimeoutMilliseconds = Env::integer('IGNIS_FIBER_TIMEOUT_MS', $profileDefault);
+        $fiberTimeoutMilliseconds = self::unsignedMilliseconds(Env::text('IGNIS_FIBER_TIMEOUT_MS', '')) ?? $profileDefault;
         foreach (self::parseRoutes(Env::text('IGNIS_RECOVERY_ROUTES', '')) as [$prefix, $overrideMilliseconds]) {
             if (\str_starts_with($uri, $prefix)) {
-                return $overrideMilliseconds;
+                return $overrideMilliseconds ?? $fiberTimeoutMilliseconds;
             }
         }
 

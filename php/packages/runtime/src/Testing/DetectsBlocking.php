@@ -9,12 +9,21 @@ use PHPUnit\Framework\Attributes\After;
 use PHPUnit\Framework\Attributes\Before;
 
 /**
- * ADR-0043 §5/research 50 S-3 (C-2): gives an existing PHPUnit test case a blocking-call audit,
- * with no change to its own tests — `use DetectsBlocking;` on a Symfony `WebTestCase` turns every
- * `KernelBrowser::request()` in it into an audit. A no-op without the binary's detector.
+ * ADR-0043 §5/research 50 S-3 (C-2): gives an existing PHPUnit test case a blocking-call audit —
+ * every unallowed blocking call the detector recorded on this thread during the test fails it
+ * from an `#[After]` hook, with the site list.
+ *
+ * The detector records only what runs inside a fiber, and PHPUnit 12 runs a test method on its
+ * own context (`TestCase::runTest()` is private, so no trait or extension can wrap it). Code the
+ * test drives itself — a Symfony `KernelBrowser::request()`, a service call — is therefore audited
+ * only through `$this->ignisAudited(fn () => …)`, which runs it on the loop; the natural place for
+ * a `WebTestCase` is one `request()` override in its base class. Requests the application serves
+ * on the loop meanwhile are in the records regardless. A no-op without the binary's detector.
  */
 trait DetectsBlocking
 {
+    use BlockingAudit;
+
     private int $ignisBlockingWatchSequence = 0;
 
     #[Before]
@@ -26,30 +35,10 @@ trait DetectsBlocking
     #[After]
     protected function ignisAssertNoBlockingCalls(): void
     {
-        if (!\function_exists('ignis_blocking_records')) {
-            return;
-        }
-        $unallowedRecords = \array_values(\array_filter(
-            \ignis_blocking_records($this->ignisBlockingWatchSequence),
-            static fn(array $record): bool => !$record['allowed'],
-        ));
+        $unallowedRecords = $this->ignisUnallowedBlockingRecordsSince($this->ignisBlockingWatchSequence);
         if ($unallowedRecords === []) {
             return;
         }
         Assert::fail("blocking calls made during this test:\n" . $this->ignisBlockingRecordsAsText($unallowedRecords));
-    }
-
-    /** @param list<array{site:string,duration_us:int,uri:string,trace:list<string>}> $records */
-    private function ignisBlockingRecordsAsText(array $records): string
-    {
-        $lines = [];
-        foreach ($records as $record) {
-            $lines[] = \sprintf('%s %d %s', $record['site'], $record['duration_us'], $record['uri']);
-            foreach ($record['trace'] as $frame) {
-                $lines[] = '  ' . $frame;
-            }
-        }
-
-        return \implode("\n", $lines);
     }
 }

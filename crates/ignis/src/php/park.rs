@@ -1295,11 +1295,12 @@ pub unsafe extern "C" fn ignis_park_waitpid(ret: *const c_void, pid: c_int, stat
     // `wait4(p, s, o, NULL)`.
     unsafe {
         let real = || libc::syscall(libc::SYS_wait4, pid, status, options, std::ptr::null_mut::<c_void>()) as c_int;
-        let waits = options & libc::WNOHANG == 0 && pid > 0;
+        let blocks = options & libc::WNOHANG == 0;
+        let waits = blocks && pid > 0;
         let (site, _guard) = match gate(ret, "waitpid") {
             Gate::Outside => return real(),
-            Gate::Block(_g, site) => return if waits { forward(site, real) } else { real() },
-            Gate::Park(_g, _) if !waits => return real(),
+            Gate::Block(_g, site) => return if blocks { forward(site, real) } else { real() },
+            Gate::Park(_g, site) if !waits => return if blocks { forward(site, real) } else { real() },
             Gate::Park(guard, site) => (site, guard),
         };
         let pidfd = libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) as c_int;

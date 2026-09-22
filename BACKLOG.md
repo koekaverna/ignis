@@ -197,7 +197,7 @@ per key per window ≤ 3, escalation once, drops counted), S-14 (storm: ≤ `max
 **Constraints.** `alerts.rs` and its tests: `agent`. Slot writers in `module.rs`/`park.rs`, the
 NTS page and the ticker's `/proc` reads: `main`. Nothing in a signal handler.
 
-### S-BLOCKING-DETECTOR Every blocking forward inside a fiber is timed, reported once per site, and can fail a test (ADR-0043 §5) `main` `built 2026-09-23 (V-124): S-2 audit and S-13 done; S-3 on a Symfony suite and S-11 at 1 % resolution open`
+### S-BLOCKING-DETECTOR Every blocking forward inside a fiber is timed, reported once per site, and can fail a test (ADR-0043 §5) `main` `built 2026-09-23 (V-124): S-2 on a planted fixture (a site outside the allow file fails the audit, the allow line passes it) and S-13 done; S-2's Symfony-skeleton half, S-3 on a Symfony suite and S-11 at 1 % resolution open`
 **What.** In the interposer, on the path that already forwards blockingly inside a fiber: two
 `clock_gettime`, a `blocking_call` event over `blocking.threshold_us` with library, symbol,
 duration, fd kind, request id, and on the first occurrence per site (`blocking.trace`) a PHP
@@ -215,7 +215,7 @@ unchanged), S-13 (the `flock` backoff park is not a site).
 **Constraints.** `park.rs` timing and the backtrace: `main`. `Testing/`, the audit script, the
 report format: `agent`. The detector never times a park, only a forward that blocks.
 
-### S-FIBER-RECOVERY The ladder L0–L5 with flexible configuration, one delivery for both carriers (ADR-0043 §7, §8; research 49) `main` `built 2026-09-23 (V-124): S-5, S-6, S-7, S-8, S-10 done on ZTS and inside a forked worker; S-12 (ASAN) and the master-side NTS half open`
+### S-FIBER-RECOVERY The ladder L0–L5 with flexible configuration, one delivery for both carriers (ADR-0043 §7, §8; research 49) `main` `built 2026-09-23 (V-124): S-5, S-6, S-7, S-8, S-9, S-10 pass on ZTS and inside a forked worker, each rung asserted by its own evidence line; partial: S-7's JIT arm, S-8's libcurl/libpq arms, S-12 (ASAN), S-16 (the master-side NTS half) open`
 **What.** L0 `fiber_timeout_ms` per request with per-route override, armed through `deadline()`'s
 timer, the expiry naming the park's file:line from `zend_fiber.execute_data`. L2 force-close: after
 a swallowed cancellation the loop answers 504, drops every reference and `unset`s the fiber; the

@@ -340,25 +340,37 @@ impl Reactor {
     pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        if self.is_abandoned() {
+        if !self.admit(id, &req.uri, Answer::Whole(tx)) {
             return (id, rx);
         }
-        self.uris.lock_unpoisoned().insert(id, req.uri.clone());
-        self.answers.lock_unpoisoned().insert(id, Answer::Whole(tx));
-        self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
             self.answers.lock_unpoisoned().remove(&id);
         }
         (id, rx)
     }
 
+    /// Registers the answer a request is owed, unless the worker was abandoned: the check and the
+    /// insert happen under the one lock `abandon` drains under, so a request admitted is a request
+    /// the drain saw or will see, never one that slips in between the two. False refuses it, and
+    /// the dropped answer channel is what turns the connection into a 500.
+    fn admit(&self, id: u64, uri: &str, answer: Answer) -> bool {
+        let mut answers = self.answers.lock_unpoisoned();
+        if self.is_abandoned() {
+            return false;
+        }
+        self.uris.lock_unpoisoned().insert(id, uri.to_string());
+        answers.insert(id, answer);
+        self.inflight.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
     /// Tokio side (E10): deliver a gRPC request; PHP fills the returned stream via `stream_send`/`stream_end`.
     pub fn deliver_stream_request(&self, req: HttpRequest) -> (u64, mpsc::UnboundedReceiver<GrpcMsg>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
-        self.uris.lock_unpoisoned().insert(id, req.uri.clone());
-        self.answers.lock_unpoisoned().insert(id, Answer::Grpc(tx));
-        self.inflight.fetch_add(1, Ordering::Relaxed);
+        if !self.admit(id, &req.uri, Answer::Grpc(tx)) {
+            return (id, rx);
+        }
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
             self.answers.lock_unpoisoned().remove(&id);
         }
@@ -396,8 +408,13 @@ impl Reactor {
         self.uris.lock_unpoisoned().get(&id).cloned()
     }
 
-    pub fn abandon(&self) {
+    /// L5 (ADR-0043): refuses every request from now on and fails the ones already owed, as one
+    /// step under the admission lock. Returns how many were failed.
+    pub fn abandon(&self) -> usize {
+        let mut answers = self.answers.lock_unpoisoned();
         self.abandoned.store(true, Ordering::Release);
+        self.uris.lock_unpoisoned().clear();
+        answers.drain().count()
     }
 
     pub fn is_abandoned(&self) -> bool {
@@ -735,6 +752,25 @@ mod tests {
         assert_eq!(r.fail_pending(), 3, "one whole-body, one streamed, one gRPC");
         assert_eq!(r.pending_requests(), 0);
         assert!(!r.respond(whole, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
+    }
+
+    /// L5: once abandoned, a worker owes nothing new -- over HTTP or gRPC -- and the drain and the
+    /// refusal are one step, so nothing admitted is left unanswered (ADR-0043 §7).
+    #[test]
+    fn an_abandoned_reactor_refuses_http_and_grpc_alike() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (_owed, mut owed_rx) = r.deliver_request_with_id(a_request());
+
+        assert_eq!(r.abandon(), 1, "the one owed answer is failed");
+        let (_http, mut http_rx) = r.deliver_request_with_id(a_request());
+        let (_grpc, mut grpc_rx) = r.deliver_stream_request(a_request());
+
+        assert!(r.is_abandoned());
+        assert_eq!(r.pending_requests(), 0, "nothing admitted after the drain");
+        assert!(owed_rx.try_recv().is_err(), "the owed answer channel is closed");
+        assert!(http_rx.try_recv().is_err(), "the refused HTTP answer channel is closed");
+        assert!(grpc_rx.try_recv().is_err(), "the refused gRPC stream is closed");
     }
 
     /// A refusal the scheduler issues before it knows the transport must still end a gRPC call.
