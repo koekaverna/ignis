@@ -6241,3 +6241,35 @@ ignis/offload ignis/swoole ignis/temporal-prototype`), 7 `ignis/*` packages rema
 measured here, deliberately left to CI: E9 live + replay on the official SDK (needs the Temporal dev
 server), E15 phpt/revolt/frankenphp, and the new chaos job — the first CI run on `main` after this
 push is where they report.
+
+## V-121 — the research instruments deleted, and E10 gated without external tools
+
+Date: 2026-09-23. Owner: "Делай" on the first three cleanup candidates and the gRPC gate (DECISIONS,
+2026-09-22, fourth entry). `git diff --shortstat 8d8fd2a..HEAD -- bench examples crates docs .claude CLAUDE.md STATUS.md`:
+
+```
+42 files changed, 57 insertions(+), 2188 deletions(-)
+  comparison instruments: bench/compare.sh, bench/e10-compare.sh, bench/e9-probe.sh,
+    examples/rust/grpc-baseline (72 lines), examples/rust/temporal-probe (39), two result files
+  15 orphaned bench/php fixtures (703 lines) that no script ran
+  the H36 lock harness: crates/ignis/src/php/locklib.rs (208), bench/e18/locklib.c,
+    bench/e18-deadlock.sh, bench/php/e18_deadlock.php, IGNIS_LOCKLIB
+```
+
+Gates after the deletion, on this box (`/opt/php85-zts` built here, toolchain 1.98.0 as CI pins):
+clippy `-D warnings` clean, release build clean, `nextest` **67/67**, `composer cs` **0 of 108 files**
+to fix (the new fixture included).
+
+**E10 without grpcurl or ghz** (`bench/php/e10_client.php` against `examples/grpc_server.php`,
+one PHP thread, the runtime's own `Ignis\Grpc\Client`):
+
+```
+$ TARGET=127.0.0.1:8191 N=10 ./target/release/ignis bench/php/e10_client.php
+e10_client: unary=ok stream=ok proxy_ok=10/10 wall_ms=218
+```
+
+Ten concurrent `Proxy` calls, each parking on a 200 ms `Slow` call through the client, finish in
+**218 ms** on one thread — the arm `scripts/smoke.sh` now gates at `< 1000 ms`; a client that
+blocked the thread would serialize them to ~2,000 ms. Unary answers `hello ada`, the `Countdown`
+stream arrives as `[3, 2, 1]`. V-20's throughput and latency numbers still need grpcurl and ghz
+(`bench/e10-grpc.sh`, manual); the behaviour no longer does.
