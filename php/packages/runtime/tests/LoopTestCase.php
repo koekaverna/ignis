@@ -38,6 +38,16 @@ abstract class LoopTestCase extends TestCase
         FakeReactor::reset();
     }
 
+    /**
+     * Resetting every static to its declared default is also what turns a fiber a test left
+     * parked forever (many do, deliberately) into unreachable self-referencing garbage: `poolBody()`
+     * keeps a reference to its own fiber for as long as its job runs (ADR-0043 §7), so wiping
+     * `Loop`'s own maps out from under a still-suspended fiber is the last external reference
+     * gone, not a free. `gc_collect_cycles()` here is what actually frees it, in this test's own
+     * teardown rather than whenever some later test's own force-close happens to collect it —
+     * which is what a stray `504 fiber killed` answered against a request id from a different test
+     * would otherwise mean.
+     */
     protected static function resetLoop(): void
     {
         $class = new \ReflectionClass(Loop::class);
@@ -46,6 +56,7 @@ abstract class LoopTestCase extends TestCase
         }
         self::set('booted', true);
         self::set('canPublishStats', false);
+        gc_collect_cycles();
     }
 
     protected static function set(string $property, mixed $value): void
