@@ -8,6 +8,7 @@ use Ignis\CancelledException;
 use Ignis\Http\Request;
 use Ignis\Http\Response;
 use Ignis\Http\StreamedResponse;
+use Ignis\KilledException;
 use Ignis\Loop;
 use Ignis\Scope;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -623,6 +624,205 @@ final class LoopTest extends LoopTestCase
         self::assertSame([], Loop::$unobserved);
     }
 
+    // ---- ADR-0043 §7, L0: the fiber timeout ------------------------------------------------
+
+    /** IGNIS_FIBER_TIMEOUT_MS bounds a request that never yields to the app's own Ignis\deadline(). */
+    public function testAFiberTimeoutAnswers504NamingItselfWhenNoAppDeadlineWasSet(): void
+    {
+        self::withEnv(['IGNIS_FIBER_TIMEOUT_MS' => '30', 'IGNIS_PROFILE' => false, 'IGNIS_RECOVERY_ROUTES' => false], function (): void {
+            self::set('requestHandler', static function (Request $request): Response {
+                Loop::awaitOp(9200);
+
+                return Response::text("the handler finished anyway\n");
+            });
+            FakeReactor::inject(5, self::rawRequest('/slow'));
+            self::drive();
+        });
+
+        self::assertSame(
+            [['id' => 5, 'status' => 504, 'headers' => ['content-type' => 'text/plain; charset=utf-8'], 'body' => "504 fiber timeout after 30 ms\n"]],
+            FakeReactor::responses(),
+        );
+        self::assertSame(30, FakeReactor::clockMilliseconds(), 'the fiber timeout fired, not any longer default');
+    }
+
+    public function testAFiberTimeoutOfZeroIsOff(): void
+    {
+        self::withEnv(['IGNIS_FIBER_TIMEOUT_MS' => '0', 'IGNIS_PROFILE' => false, 'IGNIS_RECOVERY_ROUTES' => false], function (): void {
+            self::set('requestHandler', static function (Request $request): Response {
+                Loop::awaitOp(9250);
+
+                return Response::text("unreachable\n");
+            });
+            FakeReactor::inject(1, self::rawRequest());
+            self::drive();
+
+            self::assertSame([], self::get('deadlines'), 'production ships fiber_timeout_ms=0: no timer is armed at all');
+            self::assertSame([], FakeReactor::responses(), 'nothing has fired to answer the still-parked request');
+        });
+    }
+
+    /** An app-level Ignis\deadline() call replaces the L0 timer rather than racing it. */
+    public function testAnAppDeadlineReplacesTheFiberTimeoutInsteadOfAddingASecondOne(): void
+    {
+        self::withEnv(['IGNIS_FIBER_TIMEOUT_MS' => '30', 'IGNIS_PROFILE' => false, 'IGNIS_RECOVERY_ROUTES' => false], function (): void {
+            self::set('requestHandler', static function (Request $request): Response {
+                \Ignis\deadline(500);
+                Loop::awaitOp(9300);
+
+                return Response::text("in time\n");
+            });
+            FakeReactor::inject(5, self::rawRequest('/slow'));
+            self::drive();
+        });
+
+        self::assertSame(
+            [['id' => 5, 'status' => 504, 'headers' => ['content-type' => 'text/plain; charset=utf-8'], 'body' => "504 deadline exceeded\n"]],
+            FakeReactor::responses(),
+            'the app\'s own 500 ms deadline fired, not the 30 ms fiber timeout',
+        );
+        self::assertSame(500, FakeReactor::clockMilliseconds());
+        self::assertSame([], self::get('fiberTimeoutMilliseconds'), 'the app deadline is not tagged as an L0 timeout');
+    }
+
+    /** IGNIS_RECOVERY_ROUTES: the longest matching prefix overrides the global fiber timeout. */
+    public function testARecoveryRouteOverridesTheFiberTimeoutForItsPrefix(): void
+    {
+        self::withEnv([
+            'IGNIS_FIBER_TIMEOUT_MS' => '1000',
+            'IGNIS_PROFILE' => false,
+            'IGNIS_RECOVERY_ROUTES' => '/export/=fiber_timeout_ms:30;stall_kill_ms:0,/=busy_warn_ms:5',
+        ], function (): void {
+            self::set('requestHandler', static function (Request $request): Response {
+                Loop::awaitOp(9310);
+
+                return Response::text("unreachable\n");
+            });
+            FakeReactor::inject(6, self::rawRequest('/export/report.csv'));
+            self::drive();
+        });
+
+        self::assertSame(30, FakeReactor::clockMilliseconds(), 'the route\'s 30 ms overrides the global 1000 ms');
+        self::assertSame(
+            [['id' => 6, 'status' => 504, 'headers' => ['content-type' => 'text/plain; charset=utf-8'], 'body' => "504 fiber timeout after 30 ms\n"]],
+            FakeReactor::responses(),
+        );
+    }
+
+    // ---- ADR-0043 §7, L2: a swallowed cancellation is force-closed -------------------------
+
+    /**
+     * `swallow-cancel.php`'s shape (research 50 S-6): a fiber catches its cancellation and parks
+     * again instead of unwinding. The default policy force-closes it at that next park: its own
+     * `finally` runs, the loop answers 504, and the fiber is actually freed — proving the reference
+     * cycle `poolBody()`'s own `$self` creates was collected, not merely dereferenced.
+     */
+    public function testASwallowedCancellationIsForceClosedAtItsNextPark(): void
+    {
+        $finallyRan = false;
+        self::set('requestHandler', static function (Request $request) use (&$finallyRan): Response {
+            try {
+                Loop::awaitOp(9401);
+            } catch (CancelledException) {
+                try {
+                    Loop::awaitOp(9402);
+                } finally {
+                    $finallyRan = true;
+                }
+            }
+
+            return Response::text("unreachable\n");
+        });
+        FakeReactor::inject(7, self::rawRequest());
+        self::drive();
+
+        FakeReactor::inject(7, ['kind' => 'cancel', 'age_us' => 500]);
+        self::drive();
+
+        self::assertTrue($finallyRan, 'the handler\'s own finally ran during the forced unwind');
+        self::assertSame([], self::get('waiting'), 'nothing is left parked for a fiber that no longer exists');
+        self::assertSame([], self::get('killPending'));
+        self::assertSame(
+            [['id' => 7, 'status' => 504, 'headers' => ['content-type' => 'text/plain'], 'body' => "504 fiber killed\n"]],
+            FakeReactor::responses(),
+        );
+        self::assertArrayNotHasKey(7, self::get('requestFibers'));
+    }
+
+    /** IGNIS_ON_SWALLOWED_CANCEL=log: the fiber is left alone, one warn line, and it is forgotten. */
+    public function testOnSwallowedCancelLogLeavesTheFiberRunningWithOneWarnLine(): void
+    {
+        self::set('forceCloseOnSwallowedCancel', false);
+        $finallyRan = false;
+        self::set('requestHandler', static function (Request $request) use (&$finallyRan): Response {
+            try {
+                Loop::awaitOp(9701);
+            } catch (CancelledException) {
+                try {
+                    Loop::awaitOp(9702);
+                } finally {
+                    $finallyRan = true;
+                }
+            }
+
+            return Response::text("unreachable\n");
+        });
+        FakeReactor::inject(9, self::rawRequest());
+        self::drive();
+
+        $logged = self::withErrorLog(static function (): void {
+            FakeReactor::inject(9, ['kind' => 'cancel', 'age_us' => 20]);
+            self::drive();
+        });
+
+        self::assertFalse($finallyRan, 'log mode never touches the fiber');
+        self::assertStringContainsString('Ignis\Loop: request 9 swallowed its cancellation and parked again', $logged);
+        self::assertSame(1, substr_count($logged, 'swallowed its cancellation'), 'one line, not one per turn');
+        self::assertSame([], self::get('killPending'));
+        self::assertSame([], self::get('logSwallowedPending'), 'forgotten once logged');
+        self::assertArrayHasKey(9702, self::get('waiting'), 'still parked, not force-closed');
+    }
+
+    // ---- ADR-0043 §7, L2/L3: poolBody() wakes an awaiter of a force-closed job -------------
+
+    /**
+     * A force-close reached through some path other than a swallowed cancellation — L3's signal
+     * in the real binary, simulated here by marking a plain `Ignis\async()` job's fiber directly —
+     * must still settle its Future, or whoever awaits it hangs forever.
+     */
+    public function testAForceClosedJobRejectsItsFutureWithKilledExceptionInsteadOfHangingItsAwaiter(): void
+    {
+        $future = Loop::spawn(static function (): string {
+            Loop::awaitOp(9600);
+
+            return 'unreachable';
+        });
+        self::drive();
+
+        $weakFiberReference = (function (): \WeakReference {
+            $fiber = null;
+            foreach ((array) self::get('waiting') as $waiter) {
+                $fiber = $waiter;
+            }
+            if (!$fiber instanceof \Fiber) {
+                self::fail('the spawned job is not parked as expected');
+            }
+            self::set('killPending', [\spl_object_id($fiber) => $fiber]);
+
+            return \WeakReference::create($fiber);
+        })();
+
+        self::call('forceClosePending');
+
+        self::assertNull($weakFiberReference->get(), 'the job fiber\'s self-reference cycle was actually collected, not merely dereferenced');
+        self::assertTrue($future->isDone());
+        self::assertSame([], self::get('idle'), 'a killed fiber never goes back to the pool');
+
+        $this->expectException(KilledException::class);
+        $this->expectExceptionMessage('fiber force-closed');
+        $future->await();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     /**
@@ -644,6 +844,29 @@ final class LoopTest extends LoopTestCase
         @unlink($path);
 
         return $logged === false ? '' : $logged;
+    }
+
+    /**
+     * Runs $body with each named environment variable set (or, for `false`, unset), restoring
+     * every one of them afterwards. `Recovery::fiberTimeoutFor()` reads the real environment on
+     * every call rather than a value `boot()` cached, so this is how a test controls it.
+     * @param array<string, string|false> $variables
+     */
+    private static function withEnv(array $variables, callable $body): void
+    {
+        $before = [];
+        foreach ($variables as $name => $value) {
+            $before[$name] = getenv($name);
+            putenv($value === false ? $name : "{$name}={$value}");
+        }
+
+        try {
+            $body();
+        } finally {
+            foreach ($before as $name => $value) {
+                putenv($value === false ? $name : "{$name}={$value}");
+            }
+        }
     }
 
     private static function budget(int $fibers, int $queueDepth = 0): void

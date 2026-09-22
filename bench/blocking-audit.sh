@@ -75,9 +75,14 @@ fi
 echo "server up, pid=$SERVER_PID, log=$LOG_FILE"
 
 if command -v wrk >/dev/null 2>&1; then
-  echo "driving routes with wrk for ${DURATION}s at concurrency $CONCURRENCY"
+  # The whole drive takes ~$DURATION seconds regardless of how many routes there are: each route
+  # gets an even slice of it, one after another, rather than $DURATION seconds each (which would
+  # make the drive take route-count * $DURATION and starve the later routes of a fair audit).
+  PER_ROUTE_DURATION=$(( DURATION / ${#ROUTES[@]} ))
+  [ "$PER_ROUTE_DURATION" -lt 1 ] && PER_ROUTE_DURATION=1
+  echo "driving ${#ROUTES[@]} routes with wrk, ${PER_ROUTE_DURATION}s each at concurrency $CONCURRENCY"
   for route in "${ROUTES[@]}"; do
-    wrk -t2 -c"$CONCURRENCY" -d"${DURATION}s" "http://$ADDR$route" >/dev/null 2>&1 || true
+    wrk -t2 -c"$CONCURRENCY" -d"${PER_ROUTE_DURATION}s" "http://$ADDR$route" >/dev/null 2>&1 || true
   done
 else
   echo "wrk not installed; driving routes with a curl loop for ${DURATION}s at concurrency $CONCURRENCY"
