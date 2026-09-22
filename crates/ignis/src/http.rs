@@ -159,6 +159,11 @@ pub async fn drain() -> (Duration, usize) {
     }
 }
 
+/// A snapshot of the reactors registered for dispatch, for the ticker (ADR-0043 §4).
+pub fn reactors() -> Vec<Arc<Reactor>> {
+    REGISTRY.get().map(|r| r.reactors.lock_unpoisoned().clone()).unwrap_or_default()
+}
+
 /// Everything `/_ignis/metrics` sums over the registered threads, in one pass under one lock.
 pub fn totals() -> crate::metrics::Totals {
     let mut t = crate::metrics::Totals::default();
@@ -345,9 +350,13 @@ async fn serve_connection(
 fn health() -> Response<tonic::body::Body> {
     let (stalled, total) = stalled_threads(Duration::from_secs(1));
     let restarts = crate::RESTARTS.load(Ordering::Relaxed);
-    let ok = total > 0 && stalled < total && !is_draining();
+    let leaked = crate::watchdog::leaked_workers();
+    let unhealthy = crate::alerts::global().unhealthy_workers().len();
+    let blocked = crate::watchdog::blocked_workers();
+    let leaked_max = crate::recovery::Settings::global().leaked_workers_max;
+    let ok = total > 0 && stalled < total && !is_draining() && leaked < leaked_max;
     let body = format!(
-        "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts}}}\n",
+        "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts},\"blocked_workers\":{blocked},\"leaked_workers\":{leaked},\"unhealthy_workers\":{unhealthy}}}\n",
         if ok {
             "ok"
         } else if is_draining() {

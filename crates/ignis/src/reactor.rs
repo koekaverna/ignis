@@ -5,7 +5,7 @@
 //! timeout. HTTP requests arrive on the same completion channel as timer
 //! completions, so the PHP loop has exactly one wait point.
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -149,6 +149,11 @@ pub struct Reactor {
     /// which is how `pending_requests` came to count two of them and let a graceful shutdown
     /// truncate a live download (V-75).
     answers: Mutex<HashMap<u64, Answer>>,
+    /// Request id → its uri, for the ticker's and the detector's lines (ADR-0043 §3: the master
+    /// owns the request map, so no worker has to publish strings). Kept in step with `answers`.
+    uris: Mutex<HashMap<u64, String>>,
+    /// This thread's scoreboard slot (`scoreboard.rs`), `usize::MAX` until the worker registered.
+    slot: AtomicUsize,
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
     last_active_us: AtomicU64,
     created: std::time::Instant,
@@ -277,6 +282,8 @@ impl Reactor {
             done_tx,
             from_tokio,
             answers: Mutex::new(HashMap::new()),
+            uris: Mutex::new(HashMap::new()),
+            slot: AtomicUsize::new(usize::MAX),
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
             spin_us: std::env::var("IGNIS_POLL_SPIN_US").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -329,6 +336,7 @@ impl Reactor {
     pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
+        self.uris.lock_unpoisoned().insert(id, req.uri.clone());
         self.answers.lock_unpoisoned().insert(id, Answer::Whole(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
@@ -341,6 +349,7 @@ impl Reactor {
     pub fn deliver_stream_request(&self, req: HttpRequest) -> (u64, mpsc::UnboundedReceiver<GrpcMsg>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
+        self.uris.lock_unpoisoned().insert(id, req.uri.clone());
         self.answers.lock_unpoisoned().insert(id, Answer::Grpc(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
@@ -364,7 +373,30 @@ impl Reactor {
     /// caller was not entitled to. The first version of this map did remove first and cost a test.
     fn take_answer(&self, id: u64, expected: fn(&Answer) -> bool) -> Option<Answer> {
         let mut answers = self.answers.lock_unpoisoned();
-        if answers.get(&id).is_some_and(expected) { answers.remove(&id) } else { None }
+        if answers.get(&id).is_some_and(expected) {
+            self.uris.lock_unpoisoned().remove(&id);
+            answers.remove(&id)
+        } else {
+            None
+        }
+    }
+
+    /// The uri of a request this thread still owes an answer for.
+    pub fn uri_of(&self, id: u64) -> Option<String> {
+        if id == 0 {
+            return None;
+        }
+        self.uris.lock_unpoisoned().get(&id).cloned()
+    }
+
+    pub fn set_slot(&self, slot: usize) {
+        self.slot.store(slot, Ordering::Relaxed);
+    }
+
+    /// This thread's scoreboard slot, if the worker registered one.
+    pub fn slot(&self) -> Option<usize> {
+        let s = self.slot.load(Ordering::Relaxed);
+        (s != usize::MAX).then_some(s)
     }
 
     /// PHP-thread side (E10): finish the stream with a gRPC status (0 = OK).
@@ -389,6 +421,7 @@ impl Reactor {
     /// completion on the same id, not a replacement for the first.
     pub fn cancel_request(&self, id: u64) {
         let known = self.answers.lock_unpoisoned().remove(&id).is_some();
+        self.uris.lock_unpoisoned().remove(&id);
         if known {
             self.inflight.fetch_add(1, Ordering::Relaxed);
             let _ = self.done_tx.send(Completion { id, outcome: Outcome::Cancelled { dropped_at: std::time::Instant::now() } });
@@ -464,6 +497,7 @@ impl Reactor {
     /// A half-written stream is dropped with the rest: the client sees a truncated body rather than
     /// a connection that never finishes.
     pub fn fail_pending(&self) -> usize {
+        self.uris.lock_unpoisoned().clear();
         self.answers.lock_unpoisoned().drain().count()
     }
 

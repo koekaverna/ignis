@@ -16,6 +16,8 @@
 #include <Zend/zend_interfaces.h>
 #include <Zend/zend_ini.h>
 #include <Zend/zend_extensions.h>
+/* ADR-0043: zend_fetch_debug_backtrace for the blocking detector's first-occurrence trace. */
+#include <Zend/zend_builtin_functions.h>
 #include <TSRM/TSRM.h>
 
 static const char *const IGNIS_ZEND_MODULE_BUILD_ID = ZEND_MODULE_BUILD_ID;

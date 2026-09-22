@@ -5,12 +5,16 @@
 //!
 //! FFI contract:
 //! - Suspension: an op registers `(op id → EG(active_fiber))` in a thread-local table and calls
-//!   `zend_fiber_suspend`. The fiber object stays alive because its owner (the pool / userland)
-//!   holds it; the raw pointer is used once, by `resume_parked` running in `ignis_poll` on the
-//!   same thread.
+//!   `zend_fiber_suspend`. The fiber object is kept alive by a reference this table takes for the
+//!   duration of the park (research 49 H1: the GC's destructor fiber may otherwise be collected
+//!   while parked here) and releases on the loop's side, after the resume returned — never from
+//!   inside the fiber, whose stack the release could free.
 //! - Results cross through a thread-local table keyed by op id, so no Rust reference crosses the
 //!   fiber switch.
 //! - Outside a fiber (`EG(active_fiber) == NULL`) nothing here applies: the caller blocks as stock.
+//! - A fiber the loop is force-closing (ADR-0043 L2: `kill_pending`, or the engine's own
+//!   `DESTROYED` flag, research 49 H2) is refused any park and answered `Parked::Cancelled`, which
+//!   the interposer turns into `ECANCELED`.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr;
@@ -31,21 +35,78 @@ thread_local! {
     static RESULTS: RefCell<HashMap<u64, Outcome>> = RefCell::new(HashMap::new());
 }
 
-/// Parks the running fiber until op `id` completes. `None` = could not park
-/// (not in a fiber, switching blocked, or the fiber was unwound meanwhile).
+/// How a C-side park came back.
+#[derive(Debug)]
+pub enum Parked<T> {
+    Done(T),
+    /// The fiber is being force-closed: no park was granted, or the park was resumed into an
+    /// unwind. The caller answers `ECANCELED` and returns to the library at once.
+    Cancelled,
+    /// Not in a fiber, or switching is blocked: the caller blocks as stock.
+    Unavailable,
+}
+
+/// True when the loop or the engine has marked `fiber` as closing (ADR-0043 L2, research 49 H2).
+///
+/// # Safety
+/// `fiber` must be a live fiber object on this thread.
+#[cfg(feature = "universal-park")]
+unsafe fn closing(fiber: *mut sys::zend_fiber) -> bool {
+    // SAFETY: the caller upholds the contract; `flags` is a plain byte and the meta is this fiber's.
+    unsafe {
+        if (*fiber).flags & sys::ZEND_FIBER_FLAG_DESTROYED as u8 != 0 {
+            return true;
+        }
+        let meta = super::fibermeta::of(fiber);
+        !meta.is_null() && (*meta).kill_pending
+    }
+}
+
+/// Takes the reference that keeps the fiber object alive while it is parked here.
+///
+/// # Safety
+/// `fiber` must be a live fiber object on this thread.
+#[cfg(feature = "universal-park")]
+unsafe fn hold(fiber: *mut sys::zend_fiber) {
+    // SAFETY: GC_ADDREF on an object this thread owns; released by `release` on the loop's side.
+    unsafe { (*fiber).std.gc.refcount += 1 };
+}
+
+/// Drops the reference `hold` took. Called after the fiber's resume returned, so the fiber is
+/// suspended elsewhere (the loop holds it) or terminated (its context is already destroyed) —
+/// never running on the stack a free would take away.
+///
+/// # Safety
+/// On the loop's side, after `zend_fiber_resume` / `zend_fiber_resume_exception` returned.
+unsafe fn release(fiber: *mut sys::zend_fiber) {
+    // SAFETY: the caller upholds the contract; zval_ptr_dtor drops one reference and frees the
+    // object when it was the last, through the engine's own destroy and free handlers.
+    unsafe {
+        let mut zv: sys::zval = std::mem::zeroed();
+        zv.value.obj = &raw mut (*fiber).std;
+        zv.u1.type_info = sys::IGNIS_IS_OBJECT_EX;
+        sys::zval_ptr_dtor(&mut zv);
+    }
+}
+
+/// Parks the running fiber until op `id` completes.
 ///
 /// # Safety
 /// PHP thread, inside an internal call on the current fiber's stack.
 #[cfg(feature = "universal-park")]
-pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
+pub(crate) unsafe fn await_op(id: u64) -> Parked<Outcome> {
     // SAFETY: the caller upholds `# Safety` above -- PHP thread, internal call, current fiber's
     // stack. `fiber` is checked non-null and switching unblocked before it is suspended, and the
     // zval handed to zend_fiber_suspend is zeroed storage this frame owns.
     unsafe {
         let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() {
-            return None;
+            return Parked::Unavailable;
         }
+        if closing(fiber) {
+            return Parked::Cancelled;
+        }
+        hold(fiber);
         PARKED.with(|p| p.borrow_mut().insert(id, fiber));
         let mut ret: sys::zval = std::mem::zeroed();
         // Hands control to whoever resumed us (the loop). Returns when
@@ -56,26 +117,33 @@ pub(crate) unsafe fn await_op(id: u64) -> Option<Outcome> {
         if !(*tsrm::executor_globals()).exception.is_null() {
             PARKED.with(|p| p.borrow_mut().remove(&id));
             RESULTS.with(|r| r.borrow_mut().remove(&id));
-            return None;
+            return Parked::Cancelled;
         }
-        RESULTS.with(|r| r.borrow_mut().remove(&id))
+        match RESULTS.with(|r| r.borrow_mut().remove(&id)) {
+            Some(outcome) => Parked::Done(outcome),
+            None => Parked::Cancelled,
+        }
     }
 }
 
 /// Park the running fiber until ANY of `ids` completes; returns the id that did. The other ids'
-/// completions are dropped later (no fiber waits on them any more). `None` = could not park.
+/// completions are dropped later (no fiber waits on them any more).
 ///
 /// # Safety
 /// PHP thread, inside an internal call on the current fiber's stack.
 #[cfg(feature = "universal-park")]
-pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
+pub(crate) unsafe fn await_any(ids: &[u64]) -> Parked<(u64, Outcome)> {
     // SAFETY: as `await_op` -- the caller upholds `# Safety` above, and the same non-null and
     // switch-blocked checks guard the suspension.
     unsafe {
         let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() || sys::zend_fiber_switch_blocked() || ids.is_empty() {
-            return None;
+            return Parked::Unavailable;
         }
+        if closing(fiber) {
+            return Parked::Cancelled;
+        }
+        hold(fiber);
         PARKED.with(|p| {
             let mut p = p.borrow_mut();
             for id in ids {
@@ -99,16 +167,16 @@ pub(crate) unsafe fn await_any(ids: &[u64]) -> Option<(u64, Outcome)> {
                     r.remove(id);
                 }
             });
-            return None;
+            return Parked::Cancelled;
         }
         RESULTS.with(|r| {
             let mut r = r.borrow_mut();
             for id in ids {
                 if let Some(o) = r.remove(id) {
-                    return Some((*id, o));
+                    return Parked::Done((*id, o));
                 }
             }
-            None
+            Parked::Cancelled
         })
     }
 }
@@ -127,13 +195,15 @@ pub fn is_parked(id: u64) -> bool {
 pub unsafe fn resume_parked(id: u64, outcome: Outcome) -> bool {
     // SAFETY: the caller upholds `# Safety` above (inside ignis_poll, a valid resumer frame). The
     // fiber pointer comes out of PARKED, which only this thread writes and only while that fiber is
-    // suspended, so it is live and resumable exactly once -- the remove() makes it once.
+    // suspended, so it is live and resumable exactly once -- the remove() makes it once. The
+    // reference `hold` took is dropped only after the resume returned.
     unsafe {
         let Some(fiber) = PARKED.with(|p| p.borrow_mut().remove(&id)) else { return false };
         RESULTS.with(|r| r.borrow_mut().insert(id, outcome));
         let mut ret: sys::zval = std::mem::zeroed();
         sys::zend_fiber_resume(fiber, ptr::null_mut(), &mut ret);
         sys::zval_ptr_dtor(&mut ret);
+        release(fiber);
         true
     }
 }
@@ -164,6 +234,7 @@ pub unsafe extern "C" fn zif_ignis_cancel_parked_any(ex: *mut sys::zend_execute_
         let mut ret: sys::zval = std::mem::zeroed();
         sys::zend_fiber_resume_exception(fiber, exc, &mut ret);
         sys::zval_ptr_dtor(&mut ret);
+        release(fiber);
         super::zval::set_bool(rv, true);
     }
 }
