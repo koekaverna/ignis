@@ -76,17 +76,19 @@ step "e15 phpt"
 bench/e15-phpt.sh 2>&1 | tee /tmp/ignis-gate-e15-phpt.log
 scripts/ci-gate.sh phpt /tmp/ignis-gate-e15-phpt.log
 
-# S-NTS-MODE: the second engine ABI (V-113). Its own workflow (nts.yml) builds the engine, which
-# takes minutes and does not belong here; what belongs here is that a developer who *has* the prefix
-# does not push a change that breaks it. Absent, the gap is named rather than passed over silently —
-# the rule this file already states about steps that cannot run.
-step "nts (the non-thread-safe ABI)"
+# S-NTS-MODE: the second engine ABI (V-113), gated on every push like zts now (ci.yml's unit/smoke
+# engine matrix). Building the prefix itself still does not belong here (scripts/build-php-nts.sh,
+# minutes); what belongs here is that a developer who *has* the prefix does not push a change that
+# breaks it. Absent, the gap is named rather than passed over silently — the rule this file already
+# states about steps that cannot run. scripts/smoke.sh builds the release binary itself (its own
+# "build (release)" step honours PHP_CONFIG/CARGO_TARGET_DIR below), so this runs the same folded
+# smoke leg ci.yml's nts matrix runs, not a bare build + scripts/nts-checks.sh.
+step "nts (the non-thread-safe ABI, via the folded smoke leg)"
 if [ -x /opt/php85-nts/bin/php ]; then
   env -u LD_LIBRARY_PATH PHP_CONFIG=/opt/php85-nts/bin/php-config CARGO_TARGET_DIR=target-nts \
-    cargo build --release -p ignis
-  env -u LD_LIBRARY_PATH scripts/nts-checks.sh
+    BIN=./target-nts/release/ignis IGNIS_ENGINE=nts scripts/smoke.sh
 else
-  echo "  NOT COVERED HERE: no /opt/php85-nts (scripts/build-php-nts.sh builds it). nts.yml covers it in CI."
+  echo "  NOT COVERED HERE: no /opt/php85-nts (scripts/build-php-nts.sh builds it). ci.yml's nts matrix leg covers it in CI."
 fi
 
 echo; echo "GATE GREEN"

@@ -6,8 +6,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
-BIN="$REPO/target/release/ignis"
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
+case "${IGNIS_BIN:-}" in ""|"$REPO/target/release/ignis") export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/opt/php85-zts/lib}";; esac
+BIN="${IGNIS_BIN:-$REPO/target/release/ignis}"
 
 APP_DIR="${APP_DIR:-/home/koe/projects/symfony-ignis}"
 PORT="${PORT:-8189}"

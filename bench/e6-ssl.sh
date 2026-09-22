@@ -2,6 +2,7 @@
 # E6' / H25: ssl:// and STARTTLS through the stream hook. Needs openssl (cert) and /opt/php85-zts/bin/php (stock TLS servers).
 set -uo pipefail
 cd "$(dirname "$0")/.."
+IGNIS_BIN="${IGNIS_BIN:-./target/release/ignis}"
 D=/tmp/e6-ssl; mkdir -p "$D"
 # A tiny PKI: a CA and a leaf certificate for localhost signed by it (a self-signed leaf would be
 # "CA used as end entity" for webpki). cert.pem = leaf key + leaf cert for the servers; ca.pem for clients.
@@ -20,10 +21,10 @@ fi
 PIDS=(); for p in 8441 8442 8443; do PORT=$p DELAY_MS=200 CERT="$D/cert.pem" /opt/php85-zts/bin/php bench/php/e6_ssl_server.php 2>/dev/null & PIDS+=($!); done
 sleep 1
 echo "== hook on"
-CAFILE="$D/ca.pem" timeout 60 ./target/release/ignis bench/php/e6_ssl.php > "$D/on.txt" 2>&1; on_rc=$?
+CAFILE="$D/ca.pem" timeout 60 "$IGNIS_BIN" bench/php/e6_ssl.php > "$D/on.txt" 2>&1; on_rc=$?
 cat "$D/on.txt"
 echo "== nothing parks (control: IGNIS_PARK= )"
-CAFILE="$D/ca.pem" IGNIS_PARK= timeout 60 ./target/release/ignis bench/php/e6_ssl.php > "$D/off.txt" 2>&1
+CAFILE="$D/ca.pem" IGNIS_PARK= timeout 60 "$IGNIS_BIN" bench/php/e6_ssl.php > "$D/off.txt" 2>&1
 head -1 "$D/off.txt"
 kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null || true
 

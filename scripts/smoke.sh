@@ -71,6 +71,16 @@ export PHP_CONFIG="${PHP_CONFIG:-/opt/php85-zts/bin/php-config}"
 T="timeout 120"
 PGHOST="${PGHOST:-127.0.0.1}"
 
+# S-NTS-MODE: BIN is which engine ABI's binary this run smokes; IGNIS_ENGINE (or BIN pointing under
+# target-nts) says whether that's the non-thread-safe build. LD_LIBRARY_PATH is never forced here —
+# an nts run leaves it unset (or already correct) so the binary's own RUNPATH resolves libphp, not a
+# stale zts one (V-113); it is honoured wherever this script already had it, never overwritten.
+BIN="${BIN:-./target/release/ignis}"
+export IGNIS_BIN="$BIN"
+case "$BIN" in *target-nts/*) IGNIS_ENGINE="${IGNIS_ENGINE:-nts}" ;; esac
+IGNIS_ENGINE="${IGNIS_ENGINE:-zts}"
+skip_nts() { echo "skipped on nts: $*"; }
+
 echo "== build (release)"; timeout 900 cargo build --release -q -p ignis
 echo "== unit tests";      timeout 900 cargo nextest run --workspace 2>&1 | tail -1
 echo "== php unit tests (no binary needed)"
@@ -87,17 +97,17 @@ echo "== output isolation (a fiber's body must not collect another fiber's echo)
 # The control uses a plain ob_start() and MUST leak; if it stops leaking the probe stopped
 # measuring. `if !` rather than `[ $? = 1 ]` because `set -e` would kill the run on the failure we
 # are asking for.
-if IGNIS_RAW_OB=1 $T ./target/release/ignis bench/php/output_isolation.php >/tmp/ignis-ob-control.log 2>&1; then
+if IGNIS_RAW_OB=1 $T "$BIN" bench/php/output_isolation.php >/tmp/ignis-ob-control.log 2>&1; then
   echo "control did not leak — the probe is broken: $(cat /tmp/ignis-ob-control.log)"; exit 1
 fi
 echo "  control (plain ob_start): $(cat /tmp/ignis-ob-control.log)"
-$T ./target/release/ignis bench/php/output_isolation.php || { echo "output isolation FAILED"; exit 1; }
+$T "$BIN" bench/php/output_isolation.php || { echo "output isolation FAILED"; exit 1; }
 
 echo "== a fiber that dies mid-binding takes it with it (the next fiber reuses its address)"
-$T ./target/release/ignis bench/php/output_abandoned_fiber.php || { echo "abandoned-fiber binding FAILED"; exit 1; }
+$T "$BIN" bench/php/output_abandoned_fiber.php || { echo "abandoned-fiber binding FAILED"; exit 1; }
 
 echo "== the binary's parameter names are the stubs' (arg-info was shared by arity until 2026-09-19)"
-$T ./target/release/ignis bench/php/arginfo_names.php || { echo "arginfo names FAILED"; exit 1; }
+$T "$BIN" bench/php/arginfo_names.php || { echo "arginfo names FAILED"; exit 1; }
 
 echo "== classic listen(): finish() ends the request, not the worker"
 # Its own port: the app.php address below is not set yet, and this step starts a server of its own.
@@ -108,23 +118,23 @@ timeout 180 bench/e23-stream.sh 2>&1 | sed 's/^/  /' | tail -8
 echo "== E22 (multipart: our parser must agree with PHP's own, case for case)"
 timeout 180 bench/e22/e22-multipart.sh 2>&1 | tail -2
 [ "${PIPESTATUS[0]}" = 0 ] || { echo "E22 FAILED"; exit 1; }
-echo "== hello";           $T ./target/release/ignis examples/hello.php
+echo "== hello";           $T "$BIN" examples/hello.php
 # V-60: a CLI script overlaps its waits. 10 x sleep(1) in fibers is ~1 s; if park ever stops
 # reaching a plain sleep() from a CLI entry, this is 10 s and the gate says so.
 echo "== cli (examples/cli.php: 10 x sleep(1) in fibers, must be < 3 s)"
-cli_s=$($T ./target/release/ignis examples/cli.php | sed -nE 's/.*: ([0-9.]+) s/\1/p')
+cli_s=$($T "$BIN" examples/cli.php | sed -nE 's/.*: ([0-9.]+) s/\1/p')
 echo "cli: ${cli_s:-none} s"
 awk -v s="${cli_s:-99}" 'BEGIN{exit !(s+0 < 3)}' || { echo "cli.php did not overlap its waits (${cli_s:-no output} s)"; exit 1; }
 echo "== app.php (API spec: served in the background, routes curled)"
 # One address for the server and every curl below. Override with IGNIS_LISTEN when :8080 is taken —
 # before this, a stranger on :8080 was curled instead and its answers were reported as ours.
 export IGNIS_LISTEN="${IGNIS_LISTEN:-127.0.0.1:8183}"  # never :8080 — it belongs to another project on the owner box, and it answers "/" with 200
-$T ./target/release/ignis examples/app.php >/dev/null 2>&1 & APP=$!
+$T "$BIN" examples/app.php >/dev/null 2>&1 & APP=$!
 up=0; for _ in $(seq 1 50); do curl -sf "http://$IGNIS_LISTEN/" >/dev/null && { up=1; break; }; sleep 0.1; done
 [ "$up" = 1 ] || { echo "app.php never answered on $IGNIS_LISTEN (port taken? set IGNIS_LISTEN=127.0.0.1:8099)"; kill $APP 2>/dev/null; exit 1; }
 for r in / "/dashboard?user=7" /users "/upstream" "/whoami?x=1" /deadline "/sleep?ms=5"; do printf "%-20s -> %s\n" "$r" "$(curl -s -m 5 -w " [%{http_code}]" "http://$IGNIS_LISTEN$r" | tr -d "\n" | cut -c1-90)"; done
 kill $APP 2>/dev/null || true; wait $APP 2>/dev/null || true
-echo "== E2 (all() < 230 ms, per-fiber < 100 us)"; N=10000 $T ./target/release/ignis bench/php/e2_all.php
+echo "== E2 (all() < 230 ms, per-fiber < 100 us)"; N=10000 $T "$BIN" bench/php/e2_all.php
 echo "== E1 (10k fibers x 1000 ms < 1200 ms; warm pool round counts)"
 # E1 claims the runtime adds under 200 ms of overhead to 10k concurrent 1000 ms sleeps. On this box
 # that bar has no margin against scheduling noise: one quiet sample reads 1143 ms and a busy one
@@ -136,10 +146,10 @@ echo "== E1 (10k fibers x 1000 ms < 1200 ms; warm pool round counts)"
 # best. The minimum is the right estimator for a floor with additive noise, and printing every
 # sample means nothing is hidden by it. The measured runs are still ROUNDS=1, so the fiber pool is
 # cold and `fibers_created=10000` still has to appear.
-N=100 MS=10 $T ./target/release/ignis bench/php/e1_sleep_10k.php >/dev/null 2>&1 || true
+N=100 MS=10 $T "$BIN" bench/php/e1_sleep_10k.php >/dev/null 2>&1 || true
 wall=""; out=""
 for _ in 1 2 3; do
-  line=$(N=10000 MS=1000 $T ./target/release/ignis bench/php/e1_sleep_10k.php | tail -1)
+  line=$(N=10000 MS=1000 $T "$BIN" bench/php/e1_sleep_10k.php | tail -1)
   w=$(sed -E 's/.*wall_ms=([0-9.]+).*/\1/' <<<"$line")
   echo "  $line"
   if [ -z "$wall" ] || awk -v a="$w" -v b="$wall" 'BEGIN { exit (a < b) ? 0 : 1 }'; then wall="$w"; out="$line"; fi
@@ -154,14 +164,18 @@ echo "best: wall_ms=$wall  (load $(cut -d' ' -f1-3 /proc/loadavg))"
 grep -q "completed=10000" <<<"$out" || { echo "E1 FAILED: not all fibers completed: $out"; exit 1; }
 grep -q "fibers_created=10000" <<<"$out" || { echo "E1 FAILED: the pool was not cold, the number is not comparable: $out"; exit 1; }
 awk -v w="$wall" 'BEGIN { exit (w < 1200) ? 0 : 1 }' || echo "  NOTE: over the 1200 ms bar — re-run on a quiet box before calling it a regression (bench/e1 via VALIDATION)"
-echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 $T ./target/release/ignis --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
-echo "== E13 (isolation)"; $T ./target/release/ignis bench/php/e13_isolation.php
-echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T ./target/release/ignis bench/php/e15_fixes_sleep.php; $T ./target/release/ignis bench/php/e15_fixes_server.php 2>&1 | tail -1
+if [ "$IGNIS_ENGINE" = nts ]; then
+  skip_nts "E5 needs --threads 4; NTS serves on exactly one PHP thread (S-NTS-MODE)"
+else
+  echo "== E5 (4 threads, each prints its own time)"; IGNIS_THREADS=4 $T "$BIN" --threads 4 bench/php/e5_cpu.php | wc -l | grep -q "^4$" || { echo "E5 FAILED: expected 4 thread lines"; exit 1; }
+fi
+echo "== E13 (isolation)"; $T "$BIN" bench/php/e13_isolation.php
+echo "== E15 fixes (sleep via universal park, server socket + hooked client)"; $T "$BIN" bench/php/e15_fixes_sleep.php; $T "$BIN" bench/php/e15_fixes_server.php 2>&1 | tail -1
 # S1-FLOCK (V-58): a blocking flock held across a yield used to take the OS thread down for good —
 # a regular file cannot be parked on, so the loop could never resume the holder. Interposed, it
 # becomes LOCK_NB plus a parked retry. The tick count is the evidence the thread kept serving.
 echo "== a blocking flock across a yield parks instead of killing the thread"
-fl=$($T ./target/release/ignis --threads 1 bench/php/flock_park.php | tail -1)
+fl=$($T "$BIN" --threads 1 bench/php/flock_park.php | tail -1)
 echo "  $fl"
 ticks=$(sed -n 's/.*"ticks":\([0-9]*\).*/\1/p' <<<"$fl")
 grep -q '"waiter_acquired_ms":[0-9]' <<<"$fl" || { echo "flock FAILED: the waiter never got the lock"; exit 1; }
@@ -173,7 +187,7 @@ grep -q '"waiter_acquired_ms":[0-9]' <<<"$fl" || { echo "flock FAILED: the waite
 # dependencies on the first request that touches it, which is what this arm measured before it
 # existed (NULL inside a fiber, correct outside).
 echo "== a scoped object's properties are per fiber, and the constructor's values survive into one"
-sc=$($T ./target/release/ignis bench/php/scoped_two_fibers.php | tail -1)
+sc=$($T "$BIN" bench/php/scoped_two_fibers.php | tail -1)
 echo "  $sc"
 grep -q "a='A' b='B'" <<<"$sc" || { echo "scoped FAILED: two fibers did not each see their own value"; exit 1; }
 grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sc" || { echo "scoped FAILED: row zero is not read through"; exit 1; }
@@ -183,7 +197,7 @@ grep -q "instance_of=true" <<<"$sc" || { echo "scoped FAILED: the allocation is 
 # random. A mechanism that holds only at the switch points a quiet run happens to take is not a
 # mechanism, so this arm costs one extra run and answers that.
 echo "== a scoped object holds its isolation under chaos scheduling"
-sch=$(IGNIS_CHAOS=1 IGNIS_CHAOS_P=100 IGNIS_CHAOS_SEED=7 $T ./target/release/ignis bench/php/scoped_two_fibers.php | tail -1)
+sch=$(IGNIS_CHAOS=1 IGNIS_CHAOS_P=100 IGNIS_CHAOS_SEED=7 $T "$BIN" bench/php/scoped_two_fibers.php | tail -1)
 echo "  $sch"
 grep -q "a='A' b='B'" <<<"$sch" || { echo "scoped chaos FAILED: isolation depends on the switch points a quiet run takes"; exit 1; }
 grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sch" || { echo "scoped chaos FAILED: row zero is not read through under chaos"; exit 1; }
@@ -194,7 +208,7 @@ grep -q "constructor_value_inside_a_fiber='built-once'" <<<"$sch" || { echo "sco
 # start from the constructor's state. Measured before the fix: request 2 read request 1's.
 echo "== a pooled fiber starts each request from the constructor's state, with no reset"
 PORT_PF=8226
-( IGNIS_LISTEN=127.0.0.1:$PORT_PF $T ./target/release/ignis --threads 1 bench/php/scoped_pooled_fiber.php > /dev/null 2>&1 & )
+( IGNIS_LISTEN=127.0.0.1:$PORT_PF $T "$BIN" --threads 1 bench/php/scoped_pooled_fiber.php > /dev/null 2>&1 & )
 for _ in $(seq 1 60); do curl -sf -m 1 "http://127.0.0.1:$PORT_PF/?tag=warm" >/dev/null 2>&1 && break; sleep 0.2; done
 pf_dirty=0
 for i in 1 2 3; do
@@ -211,7 +225,7 @@ pkill -x ignis 2>/dev/null || true
 # S-SINGLETON-CAPTURE, and it is silent, so a_captured='B' is asserted as the defect it is rather
 # than left for someone to discover.
 echo "== a plain singleton may hold a scoped object, but not a value out of one"
-hp=$($T ./target/release/ignis bench/php/scoped_held_by_plain.php | tail -1)
+hp=$($T "$BIN" bench/php/scoped_held_by_plain.php | tail -1)
 echo "  $hp"
 grep -q "a_through_holder='A' b_through_holder='B'" <<<"$hp" || { echo "held-by-plain FAILED: reading through the holder did not give each request its own"; exit 1; }
 grep -q "a_captured='B'" <<<"$hp" || { echo "held-by-plain FAILED: the capture hazard changed shape -- S-SINGLETON-CAPTURE's premise moved, re-read it before touching this"; exit 1; }
@@ -223,7 +237,7 @@ grep -q "a_captured='B'" <<<"$hp" || { echo "held-by-plain FAILED: the capture h
 # behave. reflection=0 is correct rather than a miss: the read happens back in {main}, whose scope
 # never wrote that property, so it sees row zero's default.
 echo "== a scoped class: inheritance, the pointer path, clone, serialize and reflection"
-sm=$($T ./target/release/ignis bench/php/scoped_semantics.php | tail -1)
+sm=$($T "$BIN" bench/php/scoped_semantics.php | tail -1)
 echo "  $sm"
 grep -q 'a_inherited=1 a_own=1 a_list=A a_count=1' <<<"$sm" || { echo "scoped_semantics FAILED: one fiber did not keep its own values, inherited or pointer-written"; exit 1; }
 grep -q 'b_list=B b_count=2' <<<"$sm" || { echo "scoped_semantics FAILED: the second fiber saw the first's writes"; exit 1; }
@@ -236,7 +250,7 @@ grep -q 'reflection=0 serialize_sees_props=true' <<<"$sm" || { echo "scoped_sema
 # must not. This arm found three defects: values trapped in the building fiber's scope, a zval/object
 # type confusion in ignis_scope_seal, and the handlers variant discarding declared defaults.
 echo "== a scoped service built inside a request is still shared correctly with the next one"
-sl=$($T ./target/release/ignis bench/php/scoped_lazy_build.php | tail -1)
+sl=$($T "$BIN" bench/php/scoped_lazy_build.php | tail -1)
 echo "  $sl"
 grep -q "b_dependency='injected'" <<<"$sl" || { echo "scoped_lazy FAILED: the constructor's value did not reach another scope"; exit 1; }
 grep -q "b_seen=NULL" <<<"$sl" || { echo "scoped_lazy FAILED: one request saw another's write"; exit 1; }
@@ -247,7 +261,7 @@ grep -q "a_seen='A'" <<<"$sl" || { echo "scoped_lazy FAILED: the building reques
 # moment, so a hang-up mid-body reached nobody and the producer kept working for an absent client.
 echo "== a streaming producer is cancelled when the client leaves"
 SC_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 8 ))
-IGNIS_LISTEN="$SC_PORT" ./target/release/ignis --threads 1 bench/php/stream_cancel.php & sc=$!; HELPERS+=("$sc")
+IGNIS_LISTEN="$SC_PORT" "$BIN" --threads 1 bench/php/stream_cancel.php & sc=$!; HELPERS+=("$sc")
 for _ in $(seq 1 50); do curl -sf -m 2 "http://$SC_PORT/state" >/dev/null 2>&1 && break; sleep 0.2; done
 # `|| true` because the timeout IS the test: curl exits 28 when it hangs up, and this script runs
 # under `set -e`.
@@ -263,7 +277,7 @@ grep -q '"cancelled":1' <<<"$sc_state" && grep -q '"finally_ran":1' <<<"$sc_stat
 # not be comma-joined. The boundary was a flat map until 2026-09-18 and kept only the last value.
 echo "== multi-valued response headers (three Set-Cookie, two Vary)"
 COOKIE_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 7 ))
-IGNIS_LISTEN="$COOKIE_PORT" ./target/release/ignis bench/php/multi_cookie.php & ck=$!; HELPERS+=("$ck")
+IGNIS_LISTEN="$COOKIE_PORT" "$BIN" bench/php/multi_cookie.php & ck=$!; HELPERS+=("$ck")
 for _ in $(seq 1 50); do [ "$(curl -s -o /dev/null -w '%{http_code}' "http://$COOKIE_PORT/" 2>/dev/null)" = 200 ] && break; sleep 0.1; done
 cookies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^set-cookie:')
 varies=$(curl -sSi "http://$COOKIE_PORT/" | grep -ci '^vary:')
@@ -275,7 +289,7 @@ echo "  set-cookie=$cookies vary=$varies"
 # waitpid is interposed now and waits on a pidfd. exec() was always fine; it is here as the shape
 # that already worked, and Ignis\sleep as the floor.
 echo "== proc_close() waits on a pidfd instead of the OS thread"
-wp=$($T ./target/release/ignis bench/php/waitpid_parks.php 2>/dev/null)
+wp=$($T "$BIN" bench/php/waitpid_parks.php 2>/dev/null)
 echo "  $(tr '\n' ' ' <<<"$wp")"
 wp_value() { sed -n "s/^waitpid $1=\([0-9]*\)$/\1/p" <<<"$wp"; }
 [ "$(wp_value answers_wrong)" = 0 ] || { echo "waitpid FAILED: a parked wait changed what the call answers"; exit 1; }
@@ -290,8 +304,8 @@ done
 # seed. Chaos draws from its own Randomizer now; this compares the application's draws across the
 # two modes and they must be identical.
 echo "== chaos does not reseed the application's RNG"
-chaos_off=$($T ./target/release/ignis bench/php/chaos_owns_its_randomness.php | tail -1)
-chaos_on=$(IGNIS_CHAOS=1 IGNIS_CHAOS_SEED=7 $T ./target/release/ignis bench/php/chaos_owns_its_randomness.php | tail -1)
+chaos_off=$($T "$BIN" bench/php/chaos_owns_its_randomness.php | tail -1)
+chaos_on=$(IGNIS_CHAOS=1 IGNIS_CHAOS_SEED=7 $T "$BIN" bench/php/chaos_owns_its_randomness.php | tail -1)
 echo "  off $chaos_off"
 echo "  on  $chaos_on"
 [ "$chaos_off" = "$chaos_on" ] || { echo "chaos FAILED: it moved the application's RNG (V-108 defect is back)"; exit 1; }
@@ -305,9 +319,9 @@ echo "  on  $chaos_on"
 # or the client blocks the thread and they serialize to 2 s.
 echo "== E10 (gRPC unary, server-streaming, and a client call that parks the fiber)"
 E10_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 8 ))
-IGNIS_LISTEN="$E10_PORT" ./target/release/ignis --threads 1 examples/grpc_server.php > /tmp/e10-server.log 2>&1 & e10p=$!; HELPERS+=("$e10p")
+IGNIS_LISTEN="$E10_PORT" "$BIN" --threads 1 examples/grpc_server.php > /tmp/e10-server.log 2>&1 & e10p=$!; HELPERS+=("$e10p")
 for _ in $(seq 1 50); do curl -sf -m 2 "http://$E10_PORT/" 2>/dev/null | grep -q "Ignis gRPC demo" && break; sleep 0.2; done
-e10=$(TARGET="$E10_PORT" N=10 timeout 30 ./target/release/ignis bench/php/e10_client.php 2>&1 | tail -1)
+e10=$(TARGET="$E10_PORT" N=10 timeout 30 "$BIN" bench/php/e10_client.php 2>&1 | tail -1)
 kill $e10p 2>/dev/null; wait $e10p 2>/dev/null || true
 echo "  $e10"
 grep -q 'unary=ok' <<<"$e10" || { echo "E10 FAILED: the unary call did not answer"; cat /tmp/e10-server.log | tail -5; exit 1; }
@@ -319,9 +333,9 @@ e10_wall=$(sed -nE 's/.*wall_ms=([0-9]+).*/\1/p' <<<"$e10")
 echo "== a gRPC call refused by the fiber budget gets a status, not a hang"
 GRPC_PORT=${IGNIS_LISTEN%%:*}:$(( ${IGNIS_LISTEN##*:} + 9 ))
 IGNIS_LISTEN="$GRPC_PORT" IGNIS_FIBER_BUDGET=1 IGNIS_QUEUE_DEPTH=1 \
-  ./target/release/ignis --threads 1 examples/grpc_server.php & gp=$!; HELPERS+=("$gp")
+  "$BIN" --threads 1 examples/grpc_server.php & gp=$!; HELPERS+=("$gp")
 for _ in $(seq 1 50); do curl -sf -m 2 "http://$GRPC_PORT/" >/dev/null 2>&1 && break; sleep 0.2; done
-grpc_refused=$(TARGET="$GRPC_PORT" N=5 WAIT_MS=3000 timeout 30 ./target/release/ignis bench/php/grpc_refused_call.php 2>&1 | tail -1)
+grpc_refused=$(TARGET="$GRPC_PORT" N=5 WAIT_MS=3000 timeout 30 "$BIN" bench/php/grpc_refused_call.php 2>&1 | tail -1)
 kill $gp 2>/dev/null; wait $gp 2>/dev/null || true
 echo "  $grpc_refused"
 grep -q 'hung=0' <<<"$grpc_refused" && grep -q 'refused=3' <<<"$grpc_refused" \
@@ -342,5 +356,36 @@ else
 fi
 if [ -d php/packages/revolt/vendor ]; then echo "== E7 (Revolt/AMPHP examples: IgnisDriver must match a stock event loop)"; timeout 180 bench/e7-revolt.sh > /tmp/ignis-e7.log 2>&1; e7rc=$?; grep -E "^(DIFFER|e7)" /tmp/ignis-e7.log || true; [ "$e7rc" = 0 ] || { echo "E7 FAILED (see /tmp/ignis-e7.log)"; exit 1; }; else echo "== E7 skipped (run: cd php/packages/revolt && composer install --prefer-source)"; fi
 echo "== E11 (cancellation + deadline)"; timeout 120 bench/e11-cancel.sh | grep -E "cancelled|status=" | head -2
-echo "== E12 (supervisor: fatal + spin)"; timeout 120 bench/e12-isolation.sh | grep -E "^after \(a\)|^after hello|server"
+if [ "$IGNIS_ENGINE" = nts ]; then
+  skip_nts "E12 needs --threads 4 --supervise, and NTS serves on exactly one PHP thread (S-NTS-MODE)"
+else
+  echo "== E12 (supervisor: fatal + spin)"; timeout 120 bench/e12-isolation.sh | grep -E "^after \(a\)|^after hello|server"
+fi
+
+# S-NTS-MODE, folded from scripts/nts-checks.sh (nts-checks.sh is retired once this covers it): the
+# claims that are specific to the non-thread-safe ABI and not already exercised generically above.
+if [ "$IGNIS_ENGINE" = nts ]; then
+  echo "== nts: the engine behind it really is non-thread-safe"
+  zts=$("$BIN" -r 'echo PHP_ZTS ? "1" : "0";' 2>/dev/null)
+  echo "  PHP_ZTS=$zts"
+  [ "$zts" = 0 ] || { echo "NTS FAILED: this binary is linked against a thread-safe PHP; the ABI under test is absent"; exit 1; }
+
+  echo "== nts: the two flags that need a second PHP thread are refused"
+  for flag in "--threads 2" "--supervise"; do
+    set +e; out=$("$BIN" $flag -r 'echo 1;' 2>&1); rc=$?; set -e
+    printf "  %-14s exit=%s\n" "$flag" "$rc"
+    [ "$rc" = 2 ] || { echo "NTS FAILED: $flag was not refused (exit $rc); a second interpreter cannot exist here"; exit 1; }
+    grep -qi "thread-safe" <<<"$out" || { echo "NTS FAILED: $flag was refused without saying why"; exit 1; }
+  done
+
+  echo "== nts: a stale LD_LIBRARY_PATH is a loud failure, not a subtle one"
+  if [ -d /opt/php85-zts/lib ]; then
+    set +e; out=$(LD_LIBRARY_PATH=/opt/php85-zts/lib "$BIN" -r 'echo 1;' 2>&1); set -e
+    grep -q "executor_globals" <<<"$out" && echo "  dies in the loader, as expected" \
+      || { echo "NTS FAILED: expected a loader failure naming executor_globals, got: $(head -c 120 <<<"$out")"; exit 1; }
+  else
+    echo "  skipped (no thread-safe prefix on this machine to cross-link against)"
+  fi
+fi
+
 echo "smoke: GREEN"

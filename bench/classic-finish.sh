@@ -11,8 +11,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"
+case "${IGNIS_BIN:-}" in ""|./target/release/ignis) export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/opt/php85-zts/lib}";; esac
 BIN="${IGNIS_BIN:-./target/release/ignis}"
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/opt/php85-zts/lib}"
 
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT

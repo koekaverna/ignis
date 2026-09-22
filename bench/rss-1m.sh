@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.."
 # IGNIS_LISTEN when :8080 is taken; readiness is the expected body, never "something answered".
 ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
 T="${THREADS:-1}"; BURST="${BURST:-3s}"; TARGET="${TARGET:-1000000}"
-./target/release/ignis --threads "$T" examples/hello_server.php >/dev/null 2>&1 & PID=$!
+IGNIS_BIN="${IGNIS_BIN:-./target/release/ignis}"
+"$IGNIS_BIN" --threads "$T" examples/hello_server.php >/dev/null 2>&1 & PID=$!
 up=0; for _ in $(seq 1 50); do curl -sf "http://$ADDR/" 2>/dev/null | grep -q "Hello, World!" && { up=1; break; }; sleep 0.1; done
 if [ "${up:-0}" != 1 ] || ! kill -0 $PID 2>/dev/null; then
   echo "our server never answered on $ADDR (port taken? set IGNIS_LISTEN); see the server log"

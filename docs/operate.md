@@ -11,7 +11,7 @@ where nothing has been measured or wired up yet, this file says "not yet exposed
 ```
 $ ignis serve --config ignis.toml           # entry script + flags come from the file
 $ ignis serve app.php                       # entry script as a positional arg, defaults for the rest
-$ ignis [--threads N] [--supervise] script.php [args...]   # the pre-config form
+$ ignis [--workers N] [--threads N] [--supervise] script.php [args...]   # the pre-config form
 $ ignis --version
 ```
 
@@ -19,7 +19,10 @@ $ ignis --version
 where the environment is silent) before rewriting itself into the second form above, so
 `IGNIS_THREADS=8 ignis serve` beats the file (V-38). Precedence overall: CLI flag > environment
 variable > `ignis.toml` key > built-in default; an unknown key in the file is a parse error, not a
-silently ignored one.
+silently ignored one. `--workers N` / `workers` / `IGNIS_WORKERS` (ADR-0044) forks N worker
+processes from a master that binds the listener once and shares its opcache segment with them; the
+engine picks the shape — thread-safe build defaults `workers = 1` and fills cores with threads,
+non-thread-safe build defaults `workers = cores` and fills cores with processes (V-123).
 
 **What a clean start looks like.** `ignis serve` prints one line to stderr unconditionally, at any
 log level (V-55) — the pre-config script form prints nothing, because the phpt harness treats a
@@ -27,7 +30,7 @@ single unexpected stderr line as a test failure. Verified directly against this 
 
 ```
 $ ignis serve --config ignis.toml
-ignis 0.1.0-rc.1 — threads=2 listen=127.0.0.1:8096 park=libcurl,libpq,libssl,libcrypto,libphp:16 symbols — ready
+ignis 0.1.0-rc.1 — workers=1 threads=2 listen=127.0.0.1:8096 park=libcurl,libpq,libssl,libcrypto,libphp:17 symbols — ready
 ```
 
 That banner is the only output at the default log floor (`warn`) — V-39 measured a plain script run
@@ -203,12 +206,19 @@ fix would cost the worker model's own bootstrap saving.
   the runtime reports `503 {"status":"draining"}` from `/_ignis/health` for `IGNIS_DRAIN_DELAY_MS`
   (default 0, env-only) while still accepting, then closes the listener and gives in-flight requests
   `limits.drain_timeout_ms` / `IGNIS_DRAIN_TIMEOUT_MS` (default 10 s, in `ignis.toml` since
-  `c031408`) to finish before exiting 0 — measured in V-56. `SIGHUP` brings the workers back one at a
-  time with the code re-read from disk, without closing the listener, when `supervise` and
-  `[watch] enabled` are both on (V-90: 0 non-2xx of 319,340 requests while a file changed under
-  `wrk -t4 -c32`). That is a development mechanism — `ignis.toml` is parsed once at startup, so a
-  *configuration* change still needs a new process and a rolling deploy behind a balancer is the way
-  to make one without a gap (BACKLOG M4-5).
+  `c031408`) to finish before exiting 0 — measured in V-56. `SIGHUP` brings the threads inside a
+  worker back one at a time with the code re-read from disk, without closing the listener, when
+  `supervise` and `[watch] enabled` are both on (V-90: 0 non-2xx of 319,340 requests while a file
+  changed under `wrk -t4 -c32`). That is a development mechanism — `ignis.toml` is parsed once at
+  startup, so a *configuration* change still needs a new process and a rolling deploy behind a
+  balancer is the way to make one without a gap (BACKLOG M4-5).
+- **With `--workers` > 1 (ADR-0044), the master owns the signals instead.** It forwards
+  `SIGTERM`/`SIGINT` to every worker process and gives each `IGNIS_DRAIN_TIMEOUT_MS` + 2 s before
+  `SIGKILL`; `SIGHUP` becomes a rolling reload — one worker process drained and replaced at a time,
+  so the listener is never without an accepter — and reaps and respawns under `serve`/`--supervise`
+  (10 restarts/min, then a 5 s pause). `/_ignis/health` and `/_ignis/metrics` still answer for the
+  one worker that took the connection, not the set, and development reload does not send the master
+  a `SIGHUP` yet (BACKLOG `S-WORKERS-FOLLOW-UP`).
 
 ## Configuration reference
 
@@ -221,8 +231,9 @@ not a silently ignored one).
 |---|---|---|---|
 | `entry` | — (positional arg to `ignis serve`) | none, required | PHP entry script every worker thread runs |
 | `listen` | `IGNIS_LISTEN` | `127.0.0.1:8080` | listener address |
-| `threads` | `IGNIS_THREADS` | available parallelism (cores) | PHP worker threads |
-| `supervise` | — (bridged to the `--supervise` CLI flag, no env var) | `true` | respawn a worker whose script ends |
+| `threads` | `IGNIS_THREADS` | available parallelism (cores) on the thread-safe build, `1` on the non-thread-safe one | PHP worker threads per process |
+| `workers` | `IGNIS_WORKERS` | `1` on the thread-safe build, available parallelism on the non-thread-safe one | worker processes a master forks and supervises (ADR-0044, V-123) |
+| `supervise` | — (bridged to the `--supervise` CLI flag, no env var) | `true` on the thread-safe build under `serve`, `false` otherwise | respawn a worker thread whose script ends; with `--workers` > 1 the master supervises worker processes regardless of this key |
 | `php_ini` | `IGNIS_PHP_INI` | none | extra php.ini (the embed SAPI has no `-c`/`-d`) |
 | `log` | `RUST_LOG` | `warn` | log filter (`tracing_subscriber::EnvFilter` syntax) |
 | `budget.fibers` | `IGNIS_FIBER_BUDGET` | `1024` | request fibers admitted per thread; `0` = unlimited |

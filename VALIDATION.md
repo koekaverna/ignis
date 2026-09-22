@@ -6310,3 +6310,45 @@ same reason.
 Not measured: a CPU-bound route (`/cpu`), where TSRM lookups in the VM loop would matter most,
 and `--threads 4` on ZTS against four NTS processes, which is the deployment shape NTS actually
 implies (one process per core).
+
+## V-123 — E26: four NTS worker processes against four ZTS threads on hello and `/cpu` (ADR-0044 accepted)
+
+Date: 2026-09-23. `bench/e26-workers.sh` on this box (4 vCPU cloud VM, `wrk` on the same CPUs,
+load 0.16 before, 4.32 after), both binaries with toolchain 1.98.0, `examples/hello_server.php`,
+`wrk -t2 -c64 -d10s --latency`, three reps cycling through all arms. `zts-t4` is `--workers 1
+--threads 4`, `zts-w4` is `--workers 4 --threads 1`, `nts-w4` is `--workers 4`, the `*1` arms are one
+thread in one process. Medians of three; the raw lines are the script's output.
+
+| arm | `/` req/s (3 reps) | median | `/cpu` req/s (3 reps) | median |
+|---|---|---|---|---|
+| zts-t4 | 95.3k / 118.2k / 96.6k | 96.6k | 8796 / 8858 / 8890 | 8858 |
+| zts-w4 | 83.9k / 89.8k / 83.5k | 83.9k | 8535 / 8455 / 5178 | 8455 |
+| nts-w4 | 86.9k / 105.4k / 85.6k | 86.9k | 8623 / 7714 / 8222 | 8222 |
+| zts-t1 | 108.3k / 111.0k / 105.6k | 108.3k | 2597 / 2588 / 2541 | 2588 |
+| nts-w1 | 104.3k / 111.7k / 112.2k | 111.7k | 2608 / 2640 / 2623 | 2623 |
+
+Four NTS workers serve 90 % of four ZTS threads on hello and 93 % on `/cpu` by the medians; the
+spread inside one arm is 24 % on hello (`zts-t4` 95.3k → 118.2k) and one `zts-w4` `/cpu` rep lost
+40 % to a load spike, so the gap between the process arms and the thread arm is of the order of the
+noise on this box. Four processes of either engine reach 3.2–3.4× one process on `/cpu` (the
+CPU-bound route), which is the point: NTS now uses the other cores. `zts-w4` and `nts-w4` are within
+4 % of each other on both routes — the engine ABI does not show, as V-113 and V-122 found.
+
+Memory, measured separately after 2 s of `wrk -c16` (`/proc/<pid>/status` VmRSS and
+`/proc/<pid>/smaps_rollup` Pss, kB):
+
+| shape | VmRSS sum | Pss sum | of which master | of which workers |
+|---|---|---|---|---|
+| zts-t4 (one process) | 48 552 | 46 557 | — | — |
+| nts-w4 (master + 4) | 131 672 | 49 685 | 18 722 | 30 966 |
+| zts-w4 (master + 4) | — | 55 334 | 18 902 | 36 438 |
+
+The bench script's `rss_total_kb` column (138–140 MB for the four-worker arms against 49 MB for
+four threads) is VmRSS summed over five processes, which counts opcache's shared segment and
+`libphp.so`'s text once per process; the proportional figure is 50 MB for four NTS workers against
+47 MB for four ZTS threads — 7 % more for four address spaces, ~7.7 MB of private memory per worker.
+
+Kill criterion of ADR-0044: ≥ 90 % on both routes (90 % and 93 %) and memory under 3× (1.07× by
+Pss, 2.7× by the double-counting sum). Both hold; the ADR is accepted. Not measured: more workers
+than cores, the master's respawn latency under load, and the shape on a box where `wrk` has its own
+cores — hello's absolute numbers here are the VM's (V-122).

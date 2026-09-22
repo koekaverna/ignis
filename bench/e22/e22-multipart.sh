@@ -13,7 +13,7 @@ PHP=${IGNIS_STOCK_PHP:-/opt/php85-zts/bin/php}
 BIN=${IGNIS_BIN:-./target/release/ignis}
 ORACLE_PORT=${ORACLE_PORT:-8197}
 IGNIS_PORT=${IGNIS_PORT:-8198}
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
+case "${IGNIS_BIN:-}" in ""|./target/release/ignis) export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib};; esac
 
 for p in "$ORACLE_PORT" "$IGNIS_PORT"; do
   ss -ltn "sport = :$p" | grep -q LISTEN && { echo "port $p busy"; exit 2; }

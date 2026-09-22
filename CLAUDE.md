@@ -56,9 +56,16 @@ Benches are one script per expectation (`bench/eN-*.sh`), each writing into VALI
 The second **engine ABI** (non-thread-safe PHP, S-NTS-MODE, V-113) is a separate prefix and target
 dir too: `scripts/build-php-nts.sh` then `PHP_CONFIG=/opt/php85-nts/bin/php-config
 CARGO_TARGET_DIR=target-nts cargo build --release -p ignis` (enables `cfg(php_nts)`). It serves on
-one PHP thread and refuses `--threads` above 1 and `--supervise`; `scripts/nts-checks.sh`
-is its acceptance and `.github/workflows/nts.yml` runs it. **Run it with `LD_LIBRARY_PATH` unset** — both prefixes install a `libphp.so` with the same soname and the
+one PHP thread per process and refuses `--threads` above 1 and `--supervise`; its cores come from
+`--workers N` (ADR-0044: a master forks one worker process per core, on either engine, and `serve`
+defaults to `workers = cores` there). `scripts/smoke.sh` runs on both engines
+(`BIN=./target-nts/release/ignis IGNIS_ENGINE=nts`, with the NTS-only assertions at its end) and
+`ci.yml` runs `unit` and `smoke` as a `zts`/`nts` matrix out of one image. **Run the NTS binary with
+`LD_LIBRARY_PATH` unset** — both prefixes install a `libphp.so` with the same soname and the
 variable beats RUNPATH, so the usual `LD_LIBRARY_PATH=/opt/php85-zts/lib` makes it die in the loader.
+
+Run a server with `--workers N`: `IGNIS_LISTEN=127.0.0.1:8080 ./target/release/ignis --workers 4 examples/hello_server.php`
+(`SIGHUP` reloads workers one at a time, `SIGTERM` drains them; `bench/e26-workers.sh` compares the shapes).
 
 Useful env: `IGNIS_THREADS`, `IGNIS_PHP_INI` (the embed SAPI has no `-d`/`-c`/`-n`), `IGNIS_CHAOS`/`IGNIS_CHAOS_P`/`IGNIS_CHAOS_SEED` (random fiber switch at every await point), `IGNIS_NO_SUPERGLOBALS` / `IGNIS_NO_UNIVERSAL_PARK` (hook-off controls — every hook claim needs one), `IGNIS_PARK` (the policy table: `lib` or `lib:symbol` rows, ADR-0037), `IGNIS_LOOP_GC`.
 

@@ -7,9 +7,13 @@ One process, two worlds that only ever exchange plain data over channels.
   is deferred ([ADR-0032](../adr/0032-inbound-tls-and-http3.md)), and outbound TLS (`ssl://`,
   `https://`) is PHP's own `ext/openssl`, parked like any other syscall (rustls and the Rust-side
   TLS actor it used are gone — [The two mechanisms](mechanisms.md), ADR-0037 §6 step 4, V-49).
-- **The PHP side** — N OS threads (`--threads`, default: cores), each with its own embedded ZTS
-  engine context and *its own* `Reactor` handle. Requests are dispatched to the least-inflight
-  thread (ADR-0010).
+- **The PHP side** — N OS threads (`--threads`, default: cores on the thread-safe build, 1 on the
+  non-thread-safe one), each with its own embedded engine context and *its own* `Reactor` handle.
+  Requests are dispatched to the least-inflight thread (ADR-0010). On the non-thread-safe build a
+  process holds exactly one such thread, so a master forks `--workers N` of them instead, sharing
+  one opcache segment and one listening socket ([ADR-0044](../adr/0044-workers-by-fork.md), V-123)
+  — the same shape is available on the thread-safe build too, for isolating a worker at the process
+  boundary rather than the thread one.
 
 `reactor.rs` is the only bridge between the two worlds. PHP calls one of a small set of
 `ignis_*()` functions — `ignis_submit_sleep()`, `ignis_watch()`, `ignis_grpc_*()` — each packaging

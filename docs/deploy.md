@@ -105,7 +105,10 @@ threads = 4
 generic app (`listen = "0.0.0.0:8080"` — inside a container `127.0.0.1` is unreachable from the
 host); point `entry` at the Symfony app's own `public/index.php`, unmodified. `threads` defaults to
 the container's available parallelism if omitted (`crates/ignis/src/config.rs`) — set it to match
-whatever CPU limit you give the container (see `docker/compose.prod.yaml`'s `deploy.resources`).
+whatever CPU limit you give the container (see `docker/compose.prod.yaml`'s `deploy.resources`). On
+the non-thread-safe engine, use `workers = N` instead (`IGNIS_WORKERS`, ADR-0044): a master forks N
+processes sharing one opcache segment and one listening socket, since that engine cannot itself run
+more than one PHP thread per process (V-123).
 
 ## 6. Run it
 

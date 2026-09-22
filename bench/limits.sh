@@ -13,7 +13,8 @@ export IGNIS_MAX_BODY_BYTES=1024
 export IGNIS_HEADER_TIMEOUT_MS=800
 export IGNIS_IDLE_TIMEOUT_MS=800
 
-./target/release/ignis --threads 1 bench/php/limits_probe.php >/dev/null 2>&1 & PID=$!
+IGNIS_BIN="${IGNIS_BIN:-./target/release/ignis}"
+"$IGNIS_BIN" --threads 1 bench/php/limits_probe.php >/dev/null 2>&1 & PID=$!
 up=0; for _ in $(seq 1 50); do curl -sf "http://$ADDR/" 2>/dev/null | grep -q ok && { up=1; break; }; sleep 0.1; done
 if [ "${up:-0}" != 1 ] || ! kill -0 $PID 2>/dev/null; then
   echo "server never answered on $ADDR (port taken? set IGNIS_LISTEN); see the server log"

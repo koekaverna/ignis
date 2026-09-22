@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - scripts/build-php.sh
+      - scripts/build-php-nts.sh
       - docker/php.Dockerfile
       - .github/workflows/php-image.yml
   workflow_dispatch:

@@ -45,7 +45,9 @@ environment variable, the file, the product default. Full key reference:
 ```toml
 entry = "examples/hello_server.php"
 listen = "127.0.0.1:8080"
-# threads = 4              # default: available parallelism
+# threads = 4              # default: available parallelism (thread-safe build), 1 (non-thread-safe)
+# workers = 4              # default: 1 (thread-safe build), available parallelism (non-thread-safe);
+#                          # a master forks this many processes sharing one opcache segment (ADR-0044)
 # supervise = true
 # [watch]
 # enabled = true           # development: a saved file brings the workers back with it, one at a

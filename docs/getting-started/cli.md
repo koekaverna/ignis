@@ -50,7 +50,9 @@ else.
 
 - **Parallel CPU.** All the fibers share one thread. Ten busy loops still run one after another,
   and so does anything that cannot park — a regular file, `SQLite3`, a CPU-bound extension call.
-  `--threads N` for a script that should run N times; separate processes for anything else.
+  `--threads N` for a script that should run N times on the thread-safe build; `--workers N`
+  (ADR-0044) forks N processes instead, which is also the only way to do this on the
+  non-thread-safe build.
 - **Concurrent DNS.** `getaddrinfo` is not interposed, so twenty `file_get_contents()` calls to a
   *hostname* resolve one at a time before their sockets ever open. Resolve once and reuse, or use an
   IP, until this is fixed.

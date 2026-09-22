@@ -7,8 +7,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 PORT=${PORT:-8199}
+case "${IGNIS_BIN:-}" in ""|./target/release/ignis) export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib};; esac
 BIN=${IGNIS_BIN:-./target/release/ignis}
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
 ss -ltn "sport = :$PORT" | grep -q LISTEN && { echo "port $PORT busy"; exit 2; }
 
 IGNIS_LISTEN="127.0.0.1:$PORT" "$BIN" --threads 1 bench/php/stream_server.php >/tmp/ignis-e23.log 2>&1 & S=$!

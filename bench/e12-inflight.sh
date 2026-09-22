@@ -5,7 +5,8 @@ cd "$(dirname "$0")/.."
 # Listen address for the server this script starts and every URL below. Override with
 # IGNIS_LISTEN when :8080 is taken; readiness is the expected body, never "something answered".
 ADDR="${IGNIS_LISTEN:-127.0.0.1:8080}"; export IGNIS_LISTEN="$ADDR"
-./target/release/ignis --supervise --threads 1 examples/hello_server.php > /tmp/e12-inflight.log 2>&1 & S=$!
+IGNIS_BIN="${IGNIS_BIN:-./target/release/ignis}"
+"$IGNIS_BIN" --supervise --threads 1 examples/hello_server.php > /tmp/e12-inflight.log 2>&1 & S=$!
 up=0; for _ in $(seq 1 50); do curl -sf "http://$ADDR/" 2>/dev/null | grep -q "Hello, World!" && { up=1; break; }; sleep 0.1; done
 if [ "${up:-0}" != 1 ] || ! kill -0 $S 2>/dev/null; then
   echo "our server never answered on $ADDR (port taken? set IGNIS_LISTEN); see the server log"

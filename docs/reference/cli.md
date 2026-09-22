@@ -14,7 +14,7 @@ using fibers in a console command at all.
 ```
 ignis --version | -V
 ignis serve [--config ignis.toml] [entry.php] [args...]
-ignis [--threads N] [--supervise] <script.php> [args...]
+ignis [--workers N] [--threads N] [--supervise] <script.php> [args...]
 ignis [--threads N] [--supervise] -r <code>
 ignis [--threads N] [--supervise] -- [args...]      # script read from stdin
 ```
@@ -52,20 +52,36 @@ looks for `./ignis.toml` and falls back to built-in defaults if that isn't there
    (these become the script's own `$argv[1..]`, untouched).
 4. Falls through into the exact same code path as `ignis <script.php>` below.
 
-Note `serve` does **not** accept `--threads`/`--supervise` as its own CLI flags — those are
-`ignis.toml` keys (`threads`, `supervise`) or the `IGNIS_THREADS` environment variable under
-`serve`. They're CLI flags only on the raw form below.
+Note `serve` does **not** accept `--workers`/`--threads`/`--supervise` as its own CLI flags — those
+are `ignis.toml` keys (`workers`, `threads`, `supervise`) or the `IGNIS_WORKERS`/`IGNIS_THREADS`
+environment variables under `serve`. They're CLI flags only on the raw form below.
 
 Once the engine is up and the boot self-check (below) has passed, `ignis serve` prints one line to
-stderr: `ignis <version> — threads=<N> listen=<addr> park=<summary> — ready` (`main.rs`,
+stderr: `ignis <version> — workers=<N> threads=<N> listen=<addr> park=<summary> — ready` (`main.rs`,
 `print_ready_banner`). The raw `ignis <script.php>` form prints nothing on a clean start — this
 banner exists specifically so `serve` has a visible sign of life at the default `warn` log floor.
 
-### `ignis [--threads N] [--supervise] <script.php> [args...]`
+### `ignis [--workers N] [--threads N] [--supervise] <script.php> [args...]`
 
 The form every other entry point (including `serve`, after its rewrite) ends up running. Flags are
 parsed left to right, in any combination/order, stopping at the first token that isn't one of the
-two — that token and everything after it is the script name plus its own `$argv`.
+three — that token and everything after it is the script name plus its own `$argv`.
+
+`--workers N` (config key `workers`, env `IGNIS_WORKERS`; ADR-0044) makes the process a master
+instead of a single worker: it binds `IGNIS_LISTEN` once, before any runtime thread exists, then
+forks N worker processes, each of which is exactly what a single-process `ignis` was — its own
+tokio runtime, its own reactor, its own `--threads` PHP threads — adopting the inherited socket
+rather than binding its own. `ignis_serve` inside a worker refuses an address that differs from the
+master's. The master never runs PHP after the fork; under `serve` or `--supervise` it reaps and
+respawns a worker that ends (10 restarts/min, then a 5 s pause, the same budget the thread
+supervisor uses), forwards `SIGTERM`/`SIGINT` to every worker and gives them
+`IGNIS_DRAIN_TIMEOUT_MS` + 2 s before `SIGKILL`, and turns `SIGHUP` into a rolling reload — one
+worker drained and replaced at a time, so the socket is never left without an accepter. A plain
+script run with `--workers` (no `serve`, no `--supervise`) waits for every worker and answers with
+the worst exit status, the way `--threads` does for threads. `serve`'s defaults follow the engine:
+thread-safe build `workers = 1` (threads fill the cores), non-thread-safe build `workers = cores`
+(one PHP thread per process is the only way it uses a second core) — see `configuration.md` and
+`S-NTS-MODE` in BACKLOG.md for what a per-worker view (health, metrics, dev reload) still lacks.
 
 `-r <code>` and `--` (script piped on stdin) are also accepted here, mirroring `php-cli`'s `-r` and
 `--`: both run as a single script on the main thread only — no worker threads, no supervisor —
@@ -89,6 +105,7 @@ alongside `threads - 1` additional worker threads, and the process exits once al
 | Flag | Applies to | Default | What it does |
 |---|---|---|---|
 | `--config PATH` | `ignis serve` only | `./ignis.toml` if present, else built-in defaults | Explicit `ignis.toml` path; must be the first two tokens after `serve`. |
+| `--workers N` | raw `ignis <script>` form | `IGNIS_WORKERS` env if set, else `1` (floored at `1` either way) | Master-forked worker processes sharing one listener and one opcache segment (ADR-0044). Parsed with `.parse().unwrap_or(1)` like `--threads`. |
 | `--threads N` | raw `ignis <script>` form | `IGNIS_THREADS` env if set, else `1` (floored at `1` either way) | PHP worker OS threads. Parsed with `.parse().unwrap_or(1)` — a non-numeric `N` silently becomes `1`, not an error. |
 | `--supervise` | raw `ignis <script>` form | off (present only if passed, or added by `serve`'s rewrite) | Enables the respawn supervisor described above. |
 | `-r <code>` | raw `ignis <script>` form | — | Runs `<code>` as PHP on the main thread only, like `php -r`, then exits with its status. |
@@ -105,8 +122,8 @@ call; `curl_*`, `pdo_pgsql`, sockets and `sleep()` park as before.
 
 | Signal | What happens |
 |---|---|
-| `SIGTERM`, `SIGINT` | Drain and exit: `/_ignis/health` answers `503 {"status":"draining"}` for `IGNIS_DRAIN_DELAY_MS` while the listener is still accepting, then it closes and in-flight requests get `limits.drain_timeout_ms` to finish (V-56). |
-| `SIGHUP` | Reload the workers: each leaves dispatch in turn, finishes what it is holding, and comes back on a fresh engine with the code re-read from disk (V-90). Needs `--supervise` **and** watching on (`[watch] enabled` / `IGNIS_WATCH`) — with either missing the signal is logged and ignored, because nothing would bring the worker back. Configuration is not re-read; `ignis.toml` is parsed once at startup. |
+| `SIGTERM`, `SIGINT` | Drain and exit: `/_ignis/health` answers `503 {"status":"draining"}` for `IGNIS_DRAIN_DELAY_MS` while the listener is still accepting, then it closes and in-flight requests get `limits.drain_timeout_ms` to finish (V-56). With `--workers` > 1 the master forwards the signal to every worker and gives each `IGNIS_DRAIN_TIMEOUT_MS` + 2 s before `SIGKILL` (ADR-0044, V-123). |
+| `SIGHUP` | Reload the threads inside a worker: each leaves dispatch in turn, finishes what it is holding, and comes back on a fresh engine with the code re-read from disk (V-90). Needs `--supervise` **and** watching on (`[watch] enabled` / `IGNIS_WATCH`) — with either missing the signal is logged and ignored, because nothing would bring the worker back. With `--workers` > 1 the master instead treats `SIGHUP` as a rolling reload — one worker process drained and replaced at a time, so the listener is never without an accepter (ADR-0044); development reload (`watch.rs`) does not yet send it there itself (BACKLOG `S-WORKERS-FOLLOW-UP`). Configuration is not re-read; `ignis.toml` is parsed once at startup. |
 
 ## Exit codes
 

@@ -153,6 +153,13 @@ this item is already building. And offload worker threads never register with `m
 `Registry` at all, so an offload callback blocked on `recv_timeout` is invisible to the watchdog by
 construction.
 
+### S-WORKERS-FOLLOW-UP What `--workers` leaves per process: health, metrics, development reload `main` `open — 2026-09-23, ADR-0044`
+`/_ignis/health` and `/_ignis/metrics` answer for the worker that accepted the connection, not the
+set; a load balancer sees one worker at a time. Development reload (`watch.rs`) replaces threads
+inside one worker; with `--workers` the operator's reload is `SIGHUP` to the master (rolling, V-123),
+which the watcher does not send yet. Neither blocks the MVP: the master is the supervisor and the
+numbers are per process, as php-fpm's are.
+
 ### S-FIBER-TIMEOUT A fiber that never resumes has no timeout, and the chaos gate cannot be a gate until it does `main` `open — owner, 2026-09-22`
 **What.** `bench/e15-chaos.sh` entered CI on 2026-09-22 and was switched off the same evening (owner:
 "Chaos лучше выключить с пометкой нужно сделать таймауты на файберы"). Under chaos scheduling a
@@ -525,7 +532,7 @@ server at 20/20 concurrent. No speed difference this box can resolve (V-113; aga
 **Why it exists.** Every distribution PHP is NTS, and `deb.sury.org` ships 85 extension packages for
 8.5 that a TS engine cannot load at all. That is the population `S-PARK-PROBE-COVERAGE` needs.
 **What it still lacks, in the order it will hurt.**
-~~(a) No gate.~~ **Done 2026-09-21**: `.github/workflows/nts.yml` (scheduled + dispatch, modelled on
+~~(a) No gate.~~ **Done 2026-09-21, folded into `ci.yml` 2026-09-23** (the `unit` and `smoke` jobs run a `zts`/`nts` matrix out of one image; `scripts/nts-checks.sh` became the NTS block at the end of `scripts/smoke.sh`, and `nts.yml` is gone): `.github/workflows/nts.yml` (scheduled + dispatch, modelled on
 `backend-b.yml` because building an engine does not belong in `ci.yml`) and a step in
 `scripts/gate.sh` that runs when `/opt/php85-nts` is present and names the gap when it is not.
 `scripts/nts-checks.sh` is the acceptance: the engine really is non-thread-safe, fibers park, ADR-0042
@@ -535,8 +542,9 @@ holds, `waitpid` parks, the three threading flags are refused with exit 2 *and* 
 the single PHP thread (as it does on the ZTS build too since the offload pool went, 2026-09-22). On one thread per process that is one request of M
 fibers, not N threads, but it is strictly worse than the ZTS build for file I/O and nothing measures
 how much.
-(c) **No supervision.** The ZTS build respawns a dead PHP thread inside 50 ms with the process still
-serving (V-17). NTS has to be supervised as a process, by something outside this binary.
+~~(c) No supervision.~~ **Done 2026-09-23 (ADR-0044, V-123)**: `--workers N` forks a master-supervised
+worker per process on either engine; the master respawns, drains on `SIGTERM` and reloads one worker
+at a time on `SIGHUP`. `serve` on NTS defaults to `workers = cores`.
 (d) **`libpcre2-dev` is a build-host prerequisite nobody is told about at the right moment.** Without
 it the engine bundles PCRE2 with hidden visibility and a distribution's `mbstring`, `pgsql` and
 `apcu` cannot load (`undefined symbol: pcre2_match_8`), which is three of the 86 and the only ones

@@ -4,6 +4,9 @@
 # to git clones; that is why php/vendor was never installable in CI and the PHP unit tests silently
 # skipped). pcov is built against the ZTS engine so line coverage is measured on the engine we ship.
 # The php-src tree stays in the image (tests for the E15 phpt suites; objects removed).
+# The tag names the PHP version, not the ABI: this image also carries /opt/php85-nts, the second
+# engine ABI (S-NTS-MODE, V-113), built by scripts/build-php-nts.sh into its own source tree so the
+# two builds never share object files — ci.yml's engine matrix (zts/nts) runs out of one image.
 FROM ubuntu:24.04
 ARG PHP_TAG=php-8.5.10
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,6 +21,10 @@ RUN mkdir -p /home/user && ln -s /opt/php-src /home/user/php-src \
     && PHP_TAG="$PHP_TAG" PHP_SRC=/opt/php-src PREFIX=/opt/php85-zts JOBS="$(nproc)" bash /tmp/build-php.sh \
     && (cd /opt/php-src && make clean >/dev/null) \
     && /opt/php85-zts/bin/php -v
+COPY scripts/build-php-nts.sh /tmp/build-php-nts.sh
+RUN PHP_TAG="$PHP_TAG" PHP_NTS_SRC=/opt/php-src-nts PREFIX=/opt/php85-nts JOBS="$(nproc)" bash /tmp/build-php-nts.sh \
+    && (cd /opt/php-src-nts && make clean >/dev/null) \
+    && /opt/php85-nts/bin/php -v
 ARG PCOV_TAG=v1.0.12
 RUN git clone -q --depth 1 --branch "$PCOV_TAG" https://github.com/krakjoe/pcov /tmp/pcov \
     && cd /tmp/pcov && /opt/php85-zts/bin/phpize \

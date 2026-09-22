@@ -9,7 +9,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
+case "${IGNIS_BIN:-}" in ""|./target/release/ignis) export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/opt/php85-zts/lib}";; esac
+IGNIS_BIN="${IGNIS_BIN:-./target/release/ignis}"
 LISTEN="${IGNIS_LISTEN:-127.0.0.1:8120}"; export IGNIS_LISTEN="$LISTEN"
 
 SKEL="$(mktemp -d)"
@@ -61,7 +62,7 @@ echo "skeleton installed at $APP"
 fail=0
 for T in 1 4; do
   echo "### threads=$T"
-  ./target/release/ignis --threads "$T" "$APP/public/index.php" > /tmp/ignis-sf.log 2>&1 &
+  "$IGNIS_BIN" --threads "$T" "$APP/public/index.php" > /tmp/ignis-sf.log 2>&1 &
   PID=$!
   up=0
   for _ in $(seq 1 60); do

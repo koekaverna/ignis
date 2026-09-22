@@ -958,3 +958,18 @@ second on one thread — the arm that fails if the client ever blocks the thread
 **Addendum, owner 2026-09-23: "Оставляем".** Classic mode (with the FrankenPHP gate it serves)
 and the history — `docs/research`, the ADRs, VALIDATION, BACKLOG-CLOSED — stay. The cleanup list
 of 2026-09-22 is closed; nothing else on it is pending.
+
+## 2026-09-23 — both engines stay, and NTS gets php-fpm's process model (ADR-0044)
+
+Owner, after the NTS/ZTS table and the question of how php-fpm shares opcache: "нам нужно оставить
+оба варианта и сделать nts полноценным, так как сейчас проще его тестировать, а потом догонять zts".
+Two corrections were agreed: the shape is php-fpm's — a master runs MINIT once, so opcache's
+`mmap(MAP_SHARED)` segment is inherited, binds the socket and forks — and it is built once for both
+engines, so ZTS has nothing to catch up on. The owner's result criteria: "минимальное количество кода,
+максимальная поддержка совместимости". Delivered as `--workers N` / `workers = N`
+(`crates/ignis/src/workers.rs`, 230 lines, no FFI change): the master forks after a complete
+`php_embed_init`, the way `pcntl_fork()` always has, each worker builds its own tokio runtime and
+reactor and adopts the inherited socket. `serve` defaults follow the engine — ZTS threads = cores in one
+process, NTS one thread and workers = cores. Numbers: V-123 (E26). CI runs `unit` and `smoke` on both
+engines out of one image from now on (the NTS prefix joins `docker/php.Dockerfile`); `nts.yml` and
+`scripts/nts-checks.sh` are folded into `scripts/smoke.sh`'s NTS leg.

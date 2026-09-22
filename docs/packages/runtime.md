@@ -88,7 +88,10 @@ listener never closes.
 
 `SIGHUP` does the same thing without a file changing, which is what a deploy or a configuration
 change wants. Both need `--supervise` — without something to respawn a worker, a worker that returns
-is simply gone, and the runtime refuses to watch rather than take the server down.
+is simply gone, and the runtime refuses to watch rather than take the server down. This reloads the
+threads inside one process; with `--workers` > 1 (ADR-0044) it does not yet reach the master, which
+also owns a rolling `SIGHUP` reload of whole worker processes — send that one to the master
+directly until development reload forwards it (BACKLOG `S-WORKERS-FOLLOW-UP`).
 
 Requests still **overlap** during and after a reload, which is the whole reason it works this way
 rather than restarting the worker after each request: a bug that needs two requests at once —

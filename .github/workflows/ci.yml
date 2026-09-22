@@ -59,38 +59,65 @@ jobs:
         run: cargo deny check
 
   unit:
-    name: nextest + miri
+    name: nextest + miri (${{ matrix.engine }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [zts, nts]
     container:
       image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    # S-NTS-MODE: the nts leg is a separate prefix and target dir (CLAUDE.md). PHP_CONFIG/
+    # CARGO_TARGET_DIR are overridden here at job level; LD_LIBRARY_PATH is left at the workflow's
+    # zts default and unset per step instead, so the binary's own RUNPATH does the work.
+    env:
+      PHP_CONFIG: ${{ matrix.engine == 'nts' && '/opt/php85-nts/bin/php-config' || '/opt/php85-zts/bin/php-config' }}
+      CARGO_TARGET_DIR: ${{ matrix.engine == 'nts' && 'target-nts' || 'target' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: dtolnay/rust-toolchain@nightly
+        if: matrix.engine == 'zts'
         with:
           components: miri
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: unit-${{ matrix.engine }}
       - name: nextest
-        run: timeout 900 cargo +stable nextest run --workspace 2>&1 | tee /tmp/nextest.log
+        # Both prefixes install a same-soname libphp.so and LD_LIBRARY_PATH beats RUNPATH, so the
+        # workflow's zts LD_LIBRARY_PATH would make an nts-built test binary load the wrong libphp
+        # and die in the loader (V-113); unset per step.
+        run: |
+          if [ "${{ matrix.engine }}" = "nts" ]; then
+            env -u LD_LIBRARY_PATH timeout 900 cargo +stable nextest run --workspace 2>&1 | tee /tmp/nextest.log
+          else
+            timeout 900 cargo +stable nextest run --workspace 2>&1 | tee /tmp/nextest.log
+          fi
       - name: miri (zval + module helpers)
+        if: matrix.engine == 'zts'
         run: |
           cargo +nightly miri setup
           timeout 1200 cargo +nightly miri test -p ignis -- php::zval php::module 2>&1 | tee /tmp/miri.log
       # Reported, not gated (ADR-0041 section 6). bindings.rs is 17,944 lines and ~244 instrumentable
       # functions no test calls, so leaving it in the denominator would make the number meaningless.
+      # zts only: coverage is one number for the engine we ship (docker/php.Dockerfile builds pcov
+      # against zts), and running it twice would only cost time for a second copy of the same claim.
       - uses: taiki-e/install-action@cargo-llvm-cov
+        if: matrix.engine == 'zts'
       - name: coverage
+        if: matrix.engine == 'zts'
         run: |
           cargo llvm-cov nextest --workspace --lcov --output-path lcov.info \
             --ignore-filename-regex '(bindings\.rs|/build\.rs|/rustc/)'
           cargo llvm-cov report --summary-only \
             --ignore-filename-regex '(bindings\.rs|/build\.rs|/rustc/)' | tee /tmp/coverage.txt
       - uses: actions/upload-artifact@v4
+        if: matrix.engine == 'zts'
         with:
           name: coverage
           path: |
@@ -99,37 +126,59 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: unit-logs
+          name: unit-logs-${{ matrix.engine }}
           path: /tmp/*.log
 
   smoke:
-    name: scripts/smoke.sh
+    name: scripts/smoke.sh (${{ matrix.engine }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [zts, nts]
     container:
       image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    # S-NTS-MODE: see the `unit` job above for why PHP_CONFIG/CARGO_TARGET_DIR are overridden here
+    # and LD_LIBRARY_PATH is unset per step instead.
+    env:
+      PHP_CONFIG: ${{ matrix.engine == 'nts' && '/opt/php85-nts/bin/php-config' || '/opt/php85-zts/bin/php-config' }}
+      CARGO_TARGET_DIR: ${{ matrix.engine == 'nts' && 'target-nts' || 'target' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-${{ matrix.engine }}
       # Both of these used to end in `|| echo`, and smoke.sh then printed "skipped" into a green
       # run -- which is why the PHP unit suite had never actually executed in CI. They fail hard now.
       # --prefer-source stays for revolt only: its DriverTest needs vendor/revolt/event-loop/test/,
-      # which the dist archive does not carry.
+      # which the dist archive does not carry. Composer itself always runs on the zts php: it only
+      # resolves the vendor tree, and that has nothing to do with which engine ABI smoke.sh then
+      # exercises.
       - name: composer install (E7 Revolt/AMPHP examples)
         run: cd php/packages/revolt && timeout 600 /opt/php85-zts/bin/php "$(command -v composer)" install --prefer-source --no-interaction --quiet
       - name: composer install (the php/ monorepo and its dev tooling)
         run: cd php && timeout 900 /opt/php85-zts/bin/php "$(command -v composer)" install --no-interaction --quiet
       - name: smoke (every step under timeout)
-        run: timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
+        # BIN/IGNIS_ENGINE tell smoke.sh which engine to smoke; it builds that engine's binary
+        # itself. nts additionally needs LD_LIBRARY_PATH unset so the binary's own RUNPATH resolves
+        # libphp instead of the workflow's zts LD_LIBRARY_PATH (V-113).
+        run: |
+          if [ "${{ matrix.engine }}" = "nts" ]; then
+            env -u LD_LIBRARY_PATH BIN=./target-nts/release/ignis IGNIS_ENGINE=nts \
+              timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
+          else
+            timeout 2400 scripts/smoke.sh 2>&1 | tee /tmp/smoke.log
+          fi
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: smoke-logs
+          name: smoke-logs-${{ matrix.engine }}
           path: |
             /tmp/*.log
             bench/results/

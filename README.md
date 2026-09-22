@@ -20,10 +20,15 @@ ignis serve app.php         # or name the entry script
 ignis serve --config /etc/ignis/ignis.toml
 ```
 
-`ignis serve` starts one PHP thread per core, supervises them (a worker that dies is respawned
-without an opcache reset), listens on `127.0.0.1:8080`, and answers `/_ignis/health` itself — 200
-while at least one worker is alive and not stalled, 503 otherwise, so a load balancer can stop
-sending to a wedged process even when PHP could not say so.
+`ignis serve` fills the cores with one PHP thread each on the thread-safe build, supervises them (a
+worker that dies is respawned without an opcache reset), listens on `127.0.0.1:8080`, and answers
+`/_ignis/health` itself — 200 while at least one worker is alive and not stalled, 503 otherwise, so
+a load balancer can stop sending to a wedged process even when PHP could not say so. The
+non-thread-safe build (every distribution PHP) instead fills the cores with `workers = cores`
+processes forked by a master that shares one opcache segment and one listening socket across them
+(`--workers N` / `workers` / `IGNIS_WORKERS`, ADR-0044) — the master reaps and respawns, forwards
+`SIGTERM`/`SIGINT` to drain, and rolls a `SIGHUP` reload one worker at a time (V-123: four such
+workers serve 90–93% of four ZTS threads on this box).
 
 The entry script is either a plain script that calls `Ignis\serve()` (see
 [examples/hello_server.php](examples/hello_server.php)) or a framework runtime — an untouched
@@ -40,7 +45,8 @@ the default.
 |---|---|---|
 | `entry` | — | PHP entry script every worker runs |
 | `listen` | `127.0.0.1:8080` | listener address |
-| `threads` | cores | PHP worker threads |
+| `threads` | cores (thread-safe build), `1` (non-thread-safe) | PHP worker threads per process |
+| `workers` | `1` (thread-safe build), cores (non-thread-safe) | worker processes a master forks (ADR-0044) |
 | `supervise` | `true` | respawn a worker whose script ends |
 | `php_ini` | — | extra php.ini (the embed SAPI has no `-c`/`-d`) |
 | `log` | `warn` | `RUST_LOG` filter; a respawn or a stalled thread is never silent |

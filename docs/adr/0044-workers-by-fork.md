@@ -1,6 +1,6 @@
 # ADR-0044 — Workers by fork: one master binds and forks, the same way on both engines
 
-Status: accepted 2026-09-23 pending V-123 (research 50; DECISIONS 2026-09-23). Built in
+Status: accepted 2026-09-23 (V-123 holds the kill criterion; research 50; DECISIONS 2026-09-23). Built in
 `crates/ignis/src/workers.rs`; the flag is `--workers N`, the config key is `workers`.
 
 ## Context
