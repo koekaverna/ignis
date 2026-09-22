@@ -126,8 +126,8 @@ Until this cycle there was **no linter of any kind in CI, on either side, and no
 
 | | before | after | entry |
 |---|---|---|---|
-| Rust tests / line coverage | 9 / **7.67 %** | **56** / **29.95 %** — 60 when V-78 measured it, 51 after the PostgreSQL pool went (V-87), 56 after this cycle's regression tests (V-91) | V-78, V-87, V-91 |
-| PHP tests / line coverage | 42 / **5.61 %** | **307 / 720 assertions** (209 when V-79 measured the coverage) / **36.60 %**, floored at 31.6 % in CI | V-79 + addenda 1–2 |
+| Rust tests / line coverage | 9 / **7.67 %** | **67** tests after the MVP cut (V-120); coverage **29.95 %** when V-78 measured it (60 tests then, 51 after the PostgreSQL pool went, V-87, 56 after V-91's regression tests) | V-78, V-87, V-91, V-120 |
+| PHP tests / line coverage | 42 / **5.61 %** | **190 / 426 assertions** after the MVP cut (307 before it — the deleted packages took their suites) / **43.36 %** (36.60 % before the cut), floored at 31.6 % in CI | V-79 + addenda 1–2, V-120 |
 | undocumented `unsafe` blocks | **101** | **0**, and now under `--all-features` | V-79 addendum 3 |
 | PHPStan errors | 123 at level 6 | **0 at level 9** (`php/phpstan.neon`, no baseline) | V-79 addendum, S3-STAN8 |
 

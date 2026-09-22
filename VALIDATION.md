@@ -6200,3 +6200,44 @@ on M5-4.
 check + clippy `-D warnings` + release build clean, `76 tests run: 76 passed, 0 skipped` under
 nextest against the fork, headers artifact 9,439 B published. The prefix is cached for the next
 schedule.
+
+## V-120 — the MVP cut: what left the tree, and every gate green on what stayed
+
+Date: 2026-09-22. Owner decision after a two-round interview (DECISIONS 2026-09-22, second entry).
+Deleted as code, tests, benches and CI jobs: the offload pool and its auto-routing (E16), the Swoole
+shim, the Doctrine package (`bench/e21`, `bench/e24` with it), backend (b) with its fork build,
+patch and workflow, and `temporal-prototype`; the nightly perf job went earlier the same day (V-119).
+Classic mode stays (the FrankenPHP compat gate runs through it). Temporal's replay gate moved onto the
+official SDK (`CoreSource::replay()`, `bin/replay.php`); `e15-chaos` entered CI as a gate.
+
+**Size of the cut** (`git diff --shortstat aa17d1e..HEAD`, `wc -l` on this checkout):
+
+```
+165 files changed, 742 insertions(+), 10827 deletions(-); 79 files deleted
+crates/        18 files,   +57  -1149      Rust (without bindings): 9,575 -> 8,497 lines
+php/packages/  47 files,  +122  -5294      PHP package sources:     7,821 -> 5,365 lines
+bench/         38 files,   +37  -1719
+.github/        4 files,   +45   -297      workflows: 8 -> 6 files; ci.yml jobs: 7 -> 8 (chaos in, swoole leg out)
+docs/ + *.md   71 files,  +630  -1052
+```
+
+**Every gate, run here on a `/opt/php85-zts` built on this box for the purpose** (`re2c`, the dev
+libraries and the 1.98.0 toolchain CI pins had to be installed first; `cargo deny` is the one step
+not run locally — the tool is not installed here and no dependency was added, only removed; CI runs it):
+
+| gate | result |
+|---|---|
+| `cargo fmt --all --check` | clean |
+| `cargo +1.98.0 clippy --workspace --all-targets -- -D warnings` | clean (on 1.94 two `unnecessary_cast` findings in `park.rs` fire that do not on CI's 1.98 — pre-existing, untouched) |
+| `cargo check --no-default-features` (the off build) | clean |
+| `cargo +1.98.0 build --release -p ignis` | clean |
+| `cargo nextest run --workspace` | **67 tests run: 67 passed, 0 skipped** |
+| `composer check` (`php -l`, phpstan level 9 both configs, php-cs-fixer, phpunit) | lint clean; phpstan **0 errors** (one `offsetAccess.nonOffsetAccessible` in the new `CoreSource::countsNondeterministicEvictions` fixed before this run); cs-fixer clean after one fix in `examples/app.php`; **OK (190 tests, 426 assertions)** — 307 before the cut, the difference is the deleted packages' own suites |
+| `scripts/test-php.sh --coverage` (pcov built here) | **Lines: 43.36 % (751/1732)** against the 31.6 % floor — up from 36.60 % (V-79), because the least-covered packages left |
+| `scripts/smoke.sh` | **smoke: GREEN** — E22, hello, cli, app.php routes, E2, E1, E5, E13, E15 fixes, flock, scoped objects (5 arms), streaming cancel, multi-valued headers, `proc_close`, chaos RNG, gRPC budget refusal, E13 HTTP, E6, E6-SSL, E7, E11, E12 |
+
+The `composer.lock` had to lose the four deleted path packages (`composer update ignis/doctrine
+ignis/offload ignis/swoole ignis/temporal-prototype`), 7 `ignis/*` packages remain in it. Not
+measured here, deliberately left to CI: E9 live + replay on the official SDK (needs the Temporal dev
+server), E15 phpt/revolt/frankenphp, and the new chaos job — the first CI run on `main` after this
+push is where they report.
