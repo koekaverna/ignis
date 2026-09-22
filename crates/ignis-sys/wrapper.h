@@ -30,20 +30,6 @@ static const unsigned int IGNIS_ZEND_CALL_FRAME_SLOT = ZEND_CALL_FRAME_SLOT;
 static const unsigned int IGNIS_GC_STRING = GC_STRING;
 static const unsigned long IGNIS_ZSTR_STRUCT_HEADER = _ZSTR_HEADER_SIZE;
 
-/* Backend (b): the true-async fork's scheduler ABI (php-src PR #22561). Only
- * present when PHP_CONFIG points at that build; ignis-sys emits
- * cfg(php_async_abi) in that case. */
-#if __has_include(<Zend/zend_async_API.h>)
-#include <Zend/zend_async_API.h>
-#define IGNIS_HAS_ASYNC_ABI 1
-/* Exported by patches/0001-test-scheduler-idle-hook.patch (not in a header). */
-typedef bool (*ignis_ts_idle_hook_t)(void);
-ZEND_API void test_scheduler_set_idle_hook(ignis_ts_idle_hook_t hook);
-#else
-#define IGNIS_HAS_ASYNC_ABI 0
-#endif
-static const int IGNIS_HAS_ASYNC_ABI_CONST = IGNIS_HAS_ASYNC_ABI;
-
 /* Exported by Zend/zend_fibers.c in 8.5.10 (ZEND_API) but not declared in
  * zend_fibers.h; declared here so bindgen exposes it (used for E11). */
 ZEND_API void zend_fiber_resume_exception(zend_fiber *fiber, zval *exception, zval *return_value);

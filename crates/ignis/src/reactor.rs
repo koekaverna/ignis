@@ -570,32 +570,6 @@ impl Reactor {
 mod tests {
     use super::*;
 
-    /// A tripwire for the consumers of `Outcome` that no build here compiles.
-    ///
-    /// `backend/async_core.rs` matches on this enum and is gated behind `cfg(php_async_abi)`, which
-    /// needs the true-async engine: no CI job and no developer box builds it. So when `Outcome` grew
-    /// from two variants to nine, that file stopped compiling and nothing said so. Adding a variant
-    /// breaks this match, here, where everything is compiled -- and the fix is to teach
-    /// `async_core::outcome_payload` about it as well.
-    fn every_variant_is_accounted_for(outcome: &Outcome) {
-        match outcome {
-            Outcome::Slept { .. }
-            | Outcome::Request(_)
-            | Outcome::Ready
-            | Outcome::Cancelled { .. }
-            | Outcome::Json(_)
-            | Outcome::Failed(_)
-            | Outcome::Blob(_)
-            | Outcome::OffloadCallback { .. }
-            | Outcome::Error(_) => {}
-        }
-    }
-
-    #[test]
-    fn a_new_outcome_variant_has_to_be_taught_to_backend_b() {
-        every_variant_is_accounted_for(&Outcome::Ready);
-    }
-
     fn rt() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap()
     }

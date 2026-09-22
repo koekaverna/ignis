@@ -1,7 +1,5 @@
-//! Backends (ADR-0003). `mainline85` is the production path (userland loop in
-//! php/packages/runtime/src/ignis.php); `async_core` is compiled only against the true-async fork.
-#[cfg(php_async_abi)]
-pub mod async_core;
+//! Optional backends behind features. The production path is the userland loop in
+//! php/packages/runtime/src/ignis.php; `temporal` is sdk-core in-process (ADR-0013, ADR-0040).
 #[cfg(feature = "temporal")]
 pub mod temporal;
 

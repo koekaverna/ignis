@@ -60,9 +60,6 @@ one PHP thread and refuses `--threads` above 1, `--offload` and `--supervise`; `
 is its acceptance and `.github/workflows/nts.yml` runs it. **Run it with `LD_LIBRARY_PATH` unset** — both prefixes install a `libphp.so` with the same soname and the
 variable beats RUNPATH, so the usual `LD_LIBRARY_PATH=/opt/php85-zts/lib` makes it die in the loader.
 
-The second backend (true-async fork, ADR-0003) is a separate prefix and target dir:
-`scripts/build-php-async.sh` then `PHP_CONFIG=/opt/php86-async-zts/bin/php-config CARGO_TARGET_DIR=target-async cargo build --release -p ignis` (enables `cfg(php_async_abi)` → `backend/async_core.rs`).
-
 Useful env: `IGNIS_THREADS`, `IGNIS_PHP_INI` (the embed SAPI has no `-d`/`-c`/`-n`), `IGNIS_CHAOS`/`IGNIS_CHAOS_P`/`IGNIS_CHAOS_SEED` (random fiber switch at every await point), `IGNIS_NO_SUPERGLOBALS` / `IGNIS_NO_UNIVERSAL_PARK` (hook-off controls — every hook claim needs one), `IGNIS_PARK` (the policy table: `lib` or `lib:symbol` rows, ADR-0037), `IGNIS_LOOP_GC`.
 
 ## Architecture

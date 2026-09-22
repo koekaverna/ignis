@@ -44,10 +44,10 @@ final class StubsMatchTheBinaryTest extends TestCase
     /**
      * The other direction: every function the binary registers is declared in the stubs.
      *
-     * Three `FUNCTIONS` tables exist in `module.rs` (default, `feature = "temporal"`,
-     * `cfg(php_async_abi)`) and a stub file has to cover every build an IDE might target, so the
-     * union of all three is what must be declared — which is also why the table is read rather
-     * than trusted: only one of the three is compiled on any given box.
+     * Two `FUNCTIONS` tables exist in `module.rs` (default and `feature = "temporal"`) and a stub
+     * file has to cover every build an IDE might target, so the union of both is what must be
+     * declared — which is also why the table is read rather than trusted: only one of the two is
+     * compiled on any given box.
      */
     public function testEveryFunctionTheBinaryRegistersHasAStub(): void
     {

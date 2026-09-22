@@ -538,22 +538,3 @@ if (!function_exists('ignis_temporal_heartbeat')) {
         throw new \LogicException('stub: only the ignis binary (temporal feature) defines ' . __FUNCTION__);
     }
 }
-
-// --- backend (b) async-ABI primitives (cfg(php_async_abi), ADR-0003) ---
-// Only present when built against the true-async fork (scripts/build-php-async.sh).
-
-if (!function_exists('ignis_park_on')) {
-    /** ignis_park_on(int $id): void — mark the current coroutine as waiting for reactor op $id (ADR-0003, V-8). */
-    function ignis_park_on(int $id): void
-    {
-        throw new \LogicException('stub: only the ignis binary (backend b) defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_op_result')) {
-    /** ignis_op_result(int $id): int — payload of a completed op, or -1 if unknown; removes it (ADR-0003, V-8). */
-    function ignis_op_result(int $id): int
-    {
-        throw new \LogicException('stub: only the ignis binary (backend b) defines ' . __FUNCTION__);
-    }
-}

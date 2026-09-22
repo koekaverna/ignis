@@ -332,7 +332,6 @@ except for the two noted below.
 | `ignis_offload_submit`/`_next`/`_done`/`_callback`/`_cb_result`/`_stats` | `Ignis\Offload\Client`/`offload()` above |
 | `ignis_route_enable`/`_route_pass` | `Ignis\Offload\Router` above |
 | `ignis_temporal_*` (8 functions — `connect`, `replay`, `poll`, `complete`, `poll_activity`, `complete_activity`, `heartbeat`, `shutdown`; `feature = "temporal"` builds only) | Two consumers, neither covered in full by this reference: `php/packages/temporal-prototype/src/ignis-temporal.php` (the frozen ADR-0013 workflow runtime of our own) and `Ignis\Temporal\CoreSource` (`php/packages/temporal/src/CoreSource.php`, ADR-0040 — the current, supported host, which drives the official `temporalio/sdk-php` over the same primitives via `ignis/temporal-core-transport`'s `ActivationSource`). |
-| `ignis_park_on`/`ignis_op_result` (`cfg(php_async_abi)` builds only — the true-async backend, ADR-0003) | `backend/async_core.rs`'s PHP-side counterpart |
 
 **Two exceptions a custom event-loop integration legitimately calls directly** (as `IgnisDriver`
 does): `ignis_watch(resource $stream, int $mode): int` (one-shot readiness watch, mode `1` =
@@ -346,13 +345,12 @@ function throws `LogicException` if the real binary somehow reaches one, and sin
 `5b88148` it is no longer `require`d by anything — it was removed from `php/composer.json`'s
 `autoload-dev.files` and is instead read by phpstan through `scanFiles`, which parses a file
 without executing it) declares every function above, **plus** the 8 `ignis_temporal_*` functions
-and `ignis_park_on`/`ignis_op_result` unconditionally — i.e. it is a superset of any single build's
-function table, since those two groups only exist in the `feature = "temporal"` and
-`cfg(php_async_abi)` builds of `module.rs::FUNCTIONS` respectively. That is intentional (a stub
+unconditionally — i.e. it is a superset of any single build's function table, since that group
+only exists in the `feature = "temporal"` build of `module.rs::FUNCTIONS`. That is intentional (a stub
 file has to cover every build an IDE might target) and not a discrepancy. `StubsMatchTheBinaryTest`
 (`php/packages/runtime/tests/`) is the guard, and since 2026-09-18 it checks both directions: every
 `ignis_*` call site under `php/packages` and `examples/` has a declaration here, **and** every
-`fe(c"ignis_…")` in the three `FUNCTIONS` tables of `module.rs` has one too. It used to check only
+`fe(c"ignis_…")` in the two `FUNCTIONS` tables of `module.rs` has one too. It used to check only
 the first, which is how `ignis_respond_start` sat in the default build's table with no stub and no
 caller until the audit found it — the registration is deleted now, and a test that carries "matches
 the binary" in its name reads the binary.

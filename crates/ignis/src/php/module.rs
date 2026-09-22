@@ -149,8 +149,6 @@ arginfo!(ARGINFO_TEMPORAL_REPLAY, 3, c"url", c"workflowId", c"taskQueue");
 arginfo!(ARGINFO_TEMPORAL_COMPLETE, 2, c"worker", c"completionJson");
 #[cfg(feature = "temporal")]
 arginfo!(ARGINFO_TEMPORAL_HEARTBEAT, 2, c"worker", c"json");
-#[cfg(php_async_abi)]
-arginfo!(ARGINFO_OP_ID, 1, c"id");
 arginfo!(ARGINFO_SCOPE_ALLOCATE, 1, c"class");
 arginfo!(ARGINFO_SCOPE_SEAL, 1, c"instance");
 arginfo!(ARGINFO_REQUEST_INFO, 3, c"method", c"content_type", c"body");
@@ -1052,7 +1050,7 @@ const fn fe_end() -> sys::zend_function_entry {
     }
 }
 
-#[cfg(all(not(php_async_abi), not(feature = "temporal")))]
+#[cfg(not(feature = "temporal"))]
 static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
@@ -1099,9 +1097,8 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
     fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
     fe_end(),
 ]);
-/// Backend (b) adds `ignis_park_on` / `ignis_op_result` (see backend/async_core.rs).
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
-#[cfg(all(not(php_async_abi), feature = "temporal"))]
+#[cfg(feature = "temporal")]
 static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 52]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
@@ -1154,55 +1151,6 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 52]> = SyncStatic([
     fe(c"ignis_offload_stats", zif_ignis_offload_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_route_enable", zif_ignis_route_enable, ARGINFO_ROUTE_ENABLE.0.as_ptr(), 1),
     fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
-    fe_end(),
-]);
-#[cfg(php_async_abi)]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 46]> = SyncStatic([
-    fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
-    fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
-    fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
-    fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_park_inventory", zif_ignis_park_inventory, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_capture_take", super::output::zif_capture_take, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_capture_reset", super::output::zif_capture_reset, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_stream_bind", super::output::zif_stream_bind, ARGINFO_STREAM_BIND.0.as_ptr(), 3),
-    fe(c"ignis_stream_unbind", super::output::zif_stream_unbind, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_stream_write", super::output::zif_stream_write, ARGINFO_STREAM_WRITE.0.as_ptr(), 1),
-    fe(c"ignis_cancel_parked_any", super::wait::zif_ignis_cancel_parked_any, ARGINFO_CANCEL.0.as_ptr(), 2),
-    fe(c"ignis_watch", zif_ignis_watch, ARGINFO_WATCH.0.as_ptr(), 2),
-    fe(c"ignis_cancel", zif_ignis_cancel, ARGINFO_CANCEL_OP.0.as_ptr(), 1),
-    fe(c"ignis_set_superglobals", super::superglobals::zif_ignis_set_superglobals, ARGINFO_SUPERGLOBALS.0.as_ptr(), 4),
-    fe(c"ignis_submit_sleep", zif_ignis_submit_sleep, ARGINFO_SUBMIT_SLEEP.0.as_ptr(), 1),
-    fe(c"ignis_poll", zif_ignis_poll, ARGINFO_POLL.0.as_ptr(), 1),
-    fe(c"ignis_inflight", zif_ignis_inflight, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_publish_stats", zif_ignis_publish_stats, ARGINFO_PUBLISH_STATS.0.as_ptr(), 1),
-    fe(c"ignis_serve", zif_ignis_serve, ARGINFO_SERVE.0.as_ptr(), 1),
-    fe(c"ignis_watch_files", zif_ignis_watch_files, ARGINFO_WATCH_FILES.0.as_ptr(), 1),
-    fe(c"ignis_watch_generation", zif_ignis_watch_generation, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_watch_claim_reset", zif_ignis_watch_claim_reset, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_watch_begin_reload", zif_ignis_watch_begin_reload, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_watch_end_reload", zif_ignis_watch_end_reload, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_stop_accepting", zif_ignis_stop_accepting, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_respond", zif_ignis_respond, ARGINFO_RESPOND.0.as_ptr(), 4),
-    fe(c"ignis_respond_chunk", zif_ignis_respond_chunk, ARGINFO_RESPOND_CHUNK.0.as_ptr(), 2),
-    fe(c"ignis_respond_end", zif_ignis_respond_end, ARGINFO_RESPOND_END.0.as_ptr(), 1),
-    fe(c"ignis_grpc_send", zif_ignis_grpc_send, ARGINFO_GRPC_SEND.0.as_ptr(), 2),
-    fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC_END.0.as_ptr(), 3),
-    fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
-    fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_GRPC_RECV.0.as_ptr(), 1),
-    fe(c"ignis_offload_submit", zif_ignis_offload_submit, ARGINFO_OFFLOAD_SUBMIT.0.as_ptr(), 3),
-    fe(c"ignis_offload_next", zif_ignis_offload_next, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_offload_done", zif_ignis_offload_done, ARGINFO_OFFLOAD_DONE.0.as_ptr(), 2),
-    fe(c"ignis_offload_callback", zif_ignis_offload_callback, ARGINFO_OFFLOAD_CALLBACK.0.as_ptr(), 3),
-    fe(c"ignis_offload_cb_result", zif_ignis_offload_cb_result, ARGINFO_OFFLOAD_CB_RESULT.0.as_ptr(), 3),
-    fe(c"ignis_offload_stats", zif_ignis_offload_stats, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_route_enable", zif_ignis_route_enable, ARGINFO_ROUTE_ENABLE.0.as_ptr(), 1),
-    fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_park_on", crate::backend::async_core::zif_ignis_park_on, ARGINFO_OP_ID.0.as_ptr(), 1),
-    fe(c"ignis_op_result", crate::backend::async_core::zif_ignis_op_result, ARGINFO_OP_ID.0.as_ptr(), 1),
     fe_end(),
 ]);
 

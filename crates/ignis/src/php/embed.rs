@@ -91,8 +91,6 @@ impl Engine {
         if rc != sys::SUCCESS {
             bail!("php_embed_init failed ({rc})");
         }
-        #[cfg(php_async_abi)]
-        crate::backend::async_core::install();
         Ok(Engine { _not_send: PhantomData })
     }
 
