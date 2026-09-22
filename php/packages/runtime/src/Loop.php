@@ -1120,6 +1120,7 @@ final class Loop
         }
         $fiberId = \spl_object_id($fiber);
         if (self::$forceCloseOnSwallowedCancel) {
+            error_log('DEBUG watchForSwallowedCancellation: adding fiber ' . $fiberId . ' to killPending');
             self::$killPending[$fiberId] = $fiber;
             if (\function_exists('ignis_fiber_kill_pending')) {
                 \ignis_fiber_kill_pending($fiber, true);
@@ -1139,10 +1140,12 @@ final class Loop
     private static function forceClosePending(): void
     {
         if (self::$killPending !== []) {
+            error_log('DEBUG forceClosePending: killPending has ' . count(self::$killPending) . ' entries');
             foreach (self::$killPending as $fiberId => $fiber) {
                 if (!isset(self::$killPending[$fiberId])) {
                     continue;   // resolved already, by an earlier iteration's own cascade of finally blocks
                 }
+                error_log('DEBUG forceClosePending: fiber ' . $fiberId . ' terminated=' . ($fiber->isTerminated() ? '1' : '0') . ' suspended=' . ($fiber->isSuspended() ? '1' : '0'));
                 if ($fiber->isTerminated()) {
                     unset(self::$killPending[$fiberId]);
                     continue;
@@ -1151,7 +1154,9 @@ final class Loop
                     continue;   // running right now; look again next turn
                 }
                 unset(self::$killPending[$fiberId]);
+                error_log('DEBUG forceClosePending: calling forceClose on ' . $fiberId);
                 self::forceClose($fiber);
+                error_log('DEBUG forceClosePending: forceClose returned for ' . $fiberId);
             }
         }
         self::logFibersThatSwallowedTheirCancellation();
@@ -1180,9 +1185,26 @@ final class Loop
         self::$pending = array_values(array_filter(self::$pending, static fn(array $entry): bool => $entry[0] !== $fiber));
         try {
             unset($fiber);
+            self::collectSelfReferencingFiberCycle();
         } catch (\Throwable $exception) {
             self::$unobserved[] = $exception;
         }
+    }
+
+    /**
+     * `poolBody()` keeps a reference to its own fiber (`$self`) for the length of the job it is
+     * running, so a suspended job fiber is always the tail of a reference cycle back to itself:
+     * removing every reference the loop itself holds is not enough to bring its refcount to zero,
+     * only to make it collectible. `gc_collect_cycles()` is what actually frees it and is what
+     * triggers the engine's forced unwind (research 49 H1/H2) — immediately, not on the loop's own
+     * periodic schedule (`collectGarbage()`), because a fiber this call is meant to reclaim now
+     * must not wait for a root count nobody else is going to reach.
+     */
+    private static function collectSelfReferencingFiberCycle(): void
+    {
+        error_log('DEBUG collectSelfReferencingFiberCycle: roots before=' . gc_status()['roots']);
+        $freed = gc_collect_cycles();
+        error_log('DEBUG collectSelfReferencingFiberCycle: freed=' . $freed . ' roots after=' . gc_status()['roots']);
     }
 
     /**
