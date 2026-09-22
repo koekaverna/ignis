@@ -6273,3 +6273,40 @@ Ten concurrent `Proxy` calls, each parking on a 200 ms `Slow` call through the c
 blocked the thread would serialize them to ~2,000 ms. Unary answers `hello ada`, the `Countdown`
 stream arrives as `[3, 2, 1]`. V-20's throughput and latency numbers still need grpcurl and ghz
 (`bench/e10-grpc.sh`, manual); the behaviour no longer does.
+
+## V-122 — hello-world throughput, NTS mode against the ZTS build on one thread (no difference beyond noise)
+
+Date: 2026-09-23. Owner: "гоняй тест на nts, тот который говорил 128к рпс" — the E4 hello-world number
+(V-6: 128k req/s on one thread, the owner's box). Both engines built on this box today
+(`scripts/build-php.sh` → `/opt/php85-zts`, `scripts/build-php-nts.sh` → `/opt/php85-nts`,
+`PHP_ZTS` empty on the second), both binaries with toolchain 1.98.0. Box: 4 vCPU cloud VM, `wrk` on
+the same CPUs as the server, load 0.59 at start. `examples/hello_server.php`, `--threads 1` for
+both (NTS refuses more), `wrk -t2 -c64 -d10s --latency`, three alternating runs:
+
+```
+ZTS  rps=102619.99  p50=539.00us p99=2.35ms
+NTS  rps=105283.75  p50=563.00us p99=1.55ms
+ZTS  rps=113764.18  p50=521.00us p99=1.22ms
+NTS  rps=114775.39  p50=514.00us p99=1.24ms
+ZTS  rps=110170.85  p50=532.00us p99=1.48ms
+NTS  rps=112154.99  p50=508.00us p99=1.75ms
+```
+
+| | ZTS | NTS | NTS / ZTS |
+|---|---|---|---|
+| req/s, three runs | 102.6k / 113.8k / 110.2k | 105.3k / 114.8k / 112.2k | +2.6 % / +0.9 % / +1.8 % |
+| p50 | 521–539 µs | 508–563 µs | — |
+| p99 | 1.22–2.35 ms | 1.24–1.75 ms | — |
+
+NTS reads 1–3 % above ZTS in each pair, and the pairs themselves spread 11 % run to run
+(102.6k → 113.8k on the same binary), so the difference is inside this box's noise — the same
+verdict V-113 gave, now with the E4 workload rather than a scoped-object micro-bench. The common
+claim of 5–15 % for NTS over ZTS does not show on a hello-world through the runtime: the per-request
+cost here is hyper, the reactor hop and the fiber resume, not TSRM's thread-local lookups. The
+absolute 110k against V-6's 128k is the hardware (a shared 4-vCPU VM with `wrk` on it against
+the owner's box), not the code; V-119's hello numbers on the GitHub runner were 58–81k for the
+same reason.
+
+Not measured: a CPU-bound route (`/cpu`), where TSRM lookups in the VM loop would matter most,
+and `--threads 4` on ZTS against four NTS processes, which is the deployment shape NTS actually
+implies (one process per core).

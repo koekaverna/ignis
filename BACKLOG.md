@@ -521,7 +521,7 @@ without those three numbers.
 produces a binary that serves on one PHP thread with `cfg(php_nts)`. The whole ABI difference is four
 accessors in `php/tsrm.rs`; `--threads` above 1, `--offload` and `--supervise` are refused at startup
 with exit 2. Measured working: fibers, parking, ADR-0042 fiber-scoped objects, V-108, V-112, an HTTP
-server at 20/20 concurrent. No speed difference this box can resolve.
+server at 20/20 concurrent. No speed difference this box can resolve (V-113; again on E4 hello, V-122: NTS +1–3 %, noise 11 %).
 **Why it exists.** Every distribution PHP is NTS, and `deb.sury.org` ships 85 extension packages for
 8.5 that a TS engine cannot load at all. That is the population `S-PARK-PROBE-COVERAGE` needs.
 **What it still lacks, in the order it will hurt.**
