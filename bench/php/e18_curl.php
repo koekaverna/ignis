@@ -6,10 +6,6 @@
 // the default 1 PHP thread every fiber's call serializes, so wall time is N * ms, not ms — that IS
 // the control baseline this bench exists to record (H32's falsifier: after E18-I, wall ~= ms).
 //
-// MUST run with IGNIS_NO_OFFLOAD_ROUTE=1 (the driver, bench/e18.sh, sets it): without it ADR-0016's
-// auto-routing (crates/ignis/src/php/route.rs) swaps curl_* to run on an offload worker thread
-// instead, which would measure the offload pool, not blocking libcurl.
-//
 // Usage: ignis bench/php/e18_curl.php <url> [n]   (env fallback: URL, N; default n=100)
 declare(strict_types=1);
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';

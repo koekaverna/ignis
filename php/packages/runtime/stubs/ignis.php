@@ -52,7 +52,6 @@ if (!function_exists('ignis_poll')) {
      *   null                                                   a Blob with none
      *   array{kind:'error', message:string}                    Failed
      *   array{kind:'cancel', age_us:int}                       Cancelled (ADR-0009)
-     *   array{kind:'offload_cb', job:int, seq:int, cb:int, args:string}   OffloadCallback (E16)
      *   array{method:string, uri:string, headers:array<string,string>, body:string}   Request
      *
      * @return array<int, int|string|null|IgnisCompletion|IgnisRequest>
@@ -304,82 +303,6 @@ if (!function_exists('ignis_watch_end_reload')) {
 if (!function_exists('ignis_stop_accepting')) {
     /** ignis_stop_accepting(): void — leave HTTP dispatch, keeping the requests already in flight. */
     function ignis_stop_accepting(): void
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-// --- offload pool (ADR-0016, V-24) ---
-
-if (!function_exists('ignis_offload_submit')) {
-    /** ignis_offload_submit(string $fn, string $serializedArgs, int $affinity = -1): int|false — op id (ADR-0016, V-24). */
-    function ignis_offload_submit(string $fn, string $serializedArgs, int $affinity = -1): int|false
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_offload_next')) {
-    /**
-     * ignis_offload_next(): ?array — worker thread: blocks for the next job [id, fn, args] (ADR-0016, V-24).
-     *
-     * @return array{0: int, 1: string, 2: string}|null
-     */
-    function ignis_offload_next(): ?array
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_offload_done')) {
-    /** ignis_offload_done(int $job, string $serializedResult): bool — worker thread (ADR-0016, V-24). */
-    function ignis_offload_done(int $job, string $serializedResult): bool
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_offload_callback')) {
-    /** ignis_offload_callback(int $job, int $cb, string $serializedArgs): string|false — worker thread, blocks (ADR-0016, V-24). */
-    function ignis_offload_callback(int $job, int $cb, string $serializedArgs): string|false
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_offload_cb_result')) {
-    /** ignis_offload_cb_result(int $job, int $seq, string $serializedResult): bool — calling thread (ADR-0016, V-24). */
-    function ignis_offload_cb_result(int $job, int $seq, string $serializedResult): bool
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_offload_stats')) {
-    /**
-     * ignis_offload_stats(): array — [workers, busy, done, queued] (ADR-0016, V-24).
-     *
-     * @return array<string, int>
-     */
-    function ignis_offload_stats(): array
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-// --- auto-routing (ADR-0016, V-24 addendum) ---
-
-if (!function_exists('ignis_route_enable')) {
-    /** ignis_route_enable(bool $on): void — the PHP Router is loaded (ADR-0016, V-24 addendum). */
-    function ignis_route_enable(bool $on): void
-    {
-        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
-    }
-}
-
-if (!function_exists('ignis_route_pass')) {
-    /** ignis_route_pass(): void — the Router declines the current call (ADR-0016, V-24 addendum). */
-    function ignis_route_pass(): void
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
     }

@@ -1,5 +1,5 @@
 # nextest runs each test in its own process, and that is load-bearing rather than incidental here:
-# http::REGISTRY, pg::POOLS/BY_DSN, offload::POOL and metrics::START are OnceLocks, and
+# http::REGISTRY and metrics::START are OnceLocks, and
 # config::default_env mutates the process environment. Under `cargo test` those tests would share one
 # process and fight; `cargo test` is therefore not a supported runner for this workspace (DECISIONS).
 [profile.default]

@@ -1,6 +1,6 @@
 # ADR-0003 — Reactor/scheduler behind a trait with two backends
 
-Status: accepted (Cycle 2, 2026-09-16; accepted by V-7 (fork builds, 61/61; the ABI has no I/O path) and V-8 (E1 on engine coroutines in 1165–1177 ms through the 14-line idle hook))
+Status: **backend (b) deleted 2026-09-22** (owner, MVP cut, DECISIONS) — mainline PHP 8.5 is the only backend. Was: accepted (Cycle 2, 2026-09-16; accepted by V-7 (fork builds, 61/61; the ABI has no I/O path) and V-8 (E1 on engine coroutines in 1165–1177 ms through the 14-line idle hook))
 
 ## Context
 

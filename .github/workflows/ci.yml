@@ -197,7 +197,7 @@ jobs:
           path: /tmp/*.log
 
   e9-temporal:
-    name: E9 temporal (sdk-core in-process, replay + negative control)
+    name: "E9/E20 temporal: official sdk-php on sdk-core, conformance, live run, replay + negative control"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     container:
@@ -234,7 +234,15 @@ jobs:
         run: timeout 900 cargo nextest run --workspace --all-features
       - name: build with the temporal feature
         run: timeout 2400 cargo build --release -p ignis --features temporal
-      - name: live workflow + replay + mutated replay must fail
+      # temporal/sdk pulls grpc/grpc, which declares ext-grpc; only the pure-PHP client half is
+      # used here (V-66), so the platform requirement is ignored on purpose.
+      - name: sdk-php (composer on the image's system php)
+        run: (cd php/packages/temporal-core-transport && timeout 900 composer install --ignore-platform-reqs --no-interaction --prefer-source --quiet)
+      - name: E20 conformance, under the ignis binary and under stock PHP
+        run: |
+          timeout 600 bench/e20-sdkphp.sh 2>&1 | tee /tmp/e20.log
+          grep -q "E20: GREEN" /tmp/e20.log
+      - name: E9 live workflow + replay + mutated replay must fail
         run: |
           TEMPORAL=/usr/local/bin/temporal timeout 300 bench/e9-temporal.sh 2>&1 | tee /tmp/e9.log
           grep -q "REPLAY_OK" /tmp/e9.log && grep -q "REPLAY_FAILED" /tmp/e9.log && grep -q "Status.*COMPLETED" /tmp/e9.log
@@ -290,3 +298,36 @@ jobs:
           path: |
             /tmp/*.log
             bench/results/
+
+  # E15e (owner, 2026-09-22): Symfony's and Doctrine's own suites under the runtime with chaos
+  # scheduling on — the ready-fiber and completed-op batches shuffled and a yield inserted after
+  # every awaited op — against the stock CLI of the same engine. Zero new failures is the gate.
+  # httpcache is skipped: five minutes of real sleep() per mode buys nothing chaos can act on.
+  e15-chaos:
+    name: E15 chaos (Symfony + Doctrine suites, shuffled scheduling)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: timeout 1800 cargo build --release -p ignis
+      # The bench reports; this step decides. A test that fails under ignis or under chaos and not
+      # under stock PHP is a regression, and the line naming it is what fails the job.
+      - name: chaos suites, zero new failures against stock PHP
+        run: |
+          SKIP_SLOW=1 timeout 3000 bench/e15-chaos.sh 2>&1 | tee /tmp/e15-chaos.log
+          ! grep -E 'new under (ignis|chaos) vs stock : [^[:space:]]' /tmp/e15-chaos.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e15-chaos-logs
+          path: |
+            /tmp/*.log
+            /tmp/e15-chaos/*.txt

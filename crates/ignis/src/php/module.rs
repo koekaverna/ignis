@@ -50,12 +50,10 @@ pub fn try_reactor() -> Option<Arc<Reactor>> {
 
 /// The calling thread's reactor, or a thrown PHP `Error` and `None`.
 ///
-/// Offload workers have no reactor on purpose (ADR-0016), and every runtime function is registered
-/// on every thread, so an offloaded job that called one of these reached `reactor()`'s `expect`.
-/// A panic in a `zif_` frame is not a failed job: `extern "C"` cannot unwind, so the process aborted
-/// with SIGABRT. Measured 2026-09-18 with `Ignis\offload('ignis_inflight')` — exit 134, whole server
-/// gone. Refusing in PHP makes it what it always should have been: this job throws, the pool and the
-/// server carry on.
+/// Every runtime function is registered on every thread, and a thread without a reactor (one
+/// that only ran a function hook, E15c) used to reach `reactor()`'s `expect`. A panic in a `zif_`
+/// frame cannot unwind through `extern "C"`, so the process aborted with SIGABRT (measured
+/// 2026-09-18, exit 134). Refusing in PHP makes it a thrown error the caller can catch.
 ///
 /// # Safety
 /// PHP thread inside a `zif_` frame, where a thrown error is picked up on return.
@@ -66,10 +64,7 @@ unsafe fn reactor_or_throw() -> Option<Arc<Reactor>> {
     // SAFETY: the caller upholds `# Safety` above -- a VM frame on a PHP thread, which is where
     // zend_throw_error is defined to be called; the message is a 'static NUL-terminated literal.
     unsafe {
-        sys::zend_throw_error(
-            ptr::null_mut(),
-            c"this Ignis runtime function needs a reactor; it is not available on an offload worker thread".as_ptr(),
-        );
+        sys::zend_throw_error(ptr::null_mut(), c"this Ignis runtime function needs a reactor; this thread has none".as_ptr());
     }
     None
 }
@@ -104,13 +99,12 @@ const fn arg_info_head(required: usize) -> sys::zend_internal_arg_info {
 
 /// One arg-info per function, with that function's own parameter names.
 ///
-/// They used to be shared by arity — one `ARGINFO_ONE` whose parameter was called `$value`, one
-/// `ARGINFO_GRPC3` borrowed by `ignis_offload_submit`, `ARGINFO_RESPOND` borrowed by
-/// `ignis_respond_chunk` and `ignis_stream_bind`. Three things were wrong with that. Named arguments
-/// did not work, because the names were another function's. `ReflectionFunction` reported those
-/// names as fact. And the borrowed heads carried the lender's `required_num_args`, so
-/// `ignis_stream_bind` declared three parameters while telling the engine four were required, and
-/// `ignis_offload_submit` marked an optional `$affinity` required.
+/// They used to be shared by arity — one `ARGINFO_ONE` whose parameter was called `$value`,
+/// `ARGINFO_RESPOND` borrowed by `ignis_respond_chunk` and `ignis_stream_bind`. Three things were
+/// wrong with that. Named arguments did not work, because the names were another function's.
+/// `ReflectionFunction` reported those names as fact. And the borrowed heads carried the lender's
+/// `required_num_args`, so `ignis_stream_bind` declared three parameters while telling the engine
+/// four were required.
 ///
 /// The cost of sharing was never the bytes; it was that nothing tied a table to the function it
 /// described. These are one per function and named after it.
@@ -129,14 +123,9 @@ arginfo!(ARGINFO_CANCEL_OP, 1, c"op");
 arginfo!(ARGINFO_WATCH_FILES, 1, c"files");
 arginfo!(ARGINFO_RESPOND_END, 1, c"id");
 arginfo!(ARGINFO_GRPC_RECV, 1, c"stream");
-arginfo!(ARGINFO_ROUTE_ENABLE, 1, c"on");
 arginfo!(ARGINFO_STREAM_WRITE, 1, c"bytes");
 arginfo!(ARGINFO_RESPOND_CHUNK, 2, c"id", c"bytes");
 arginfo!(ARGINFO_STREAM_BIND, 3, c"id", c"status", c"headers");
-arginfo!(ARGINFO_OFFLOAD_SUBMIT, 2, c"fn", c"serializedArgs", c"affinity");
-arginfo!(ARGINFO_OFFLOAD_DONE, 2, c"job", c"serializedResult");
-arginfo!(ARGINFO_OFFLOAD_CALLBACK, 3, c"job", c"cb", c"serializedArgs");
-arginfo!(ARGINFO_OFFLOAD_CB_RESULT, 3, c"job", c"seq", c"serializedResult");
 arginfo!(ARGINFO_GRPC_SEND, 2, c"id", c"message");
 arginfo!(ARGINFO_GRPC_END, 3, c"id", c"code", c"message");
 #[cfg(feature = "temporal")]
@@ -243,17 +232,6 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
                 Outcome::Json(json) => sys::add_index_stringl(rv, c.id, json.as_ptr() as *const c_char, json.len()),
                 Outcome::Blob(Some(b)) => sys::add_index_stringl(rv, c.id, b.as_ptr() as *const c_char, b.len()),
                 Outcome::Blob(None) => sys::add_index_null(rv, c.id),
-                Outcome::OffloadCallback { job, seq, cb, args } => {
-                    // ['kind' => 'offload_cb', 'job', 'seq', 'cb', 'args' => serialized]
-                    let mut item: sys::zval = std::mem::zeroed();
-                    zval::set_new_array(&mut item);
-                    sys::add_assoc_stringl_ex(&mut item, c"kind".as_ptr(), 4, c"offload_cb".as_ptr(), 10);
-                    sys::add_assoc_long_ex(&mut item, c"job".as_ptr(), 3, job as i64);
-                    sys::add_assoc_long_ex(&mut item, c"seq".as_ptr(), 3, seq as i64);
-                    sys::add_assoc_long_ex(&mut item, c"cb".as_ptr(), 2, cb as i64);
-                    sys::add_assoc_stringl_ex(&mut item, c"args".as_ptr(), 4, args.as_ptr() as *const c_char, args.len());
-                    sys::zend_hash_index_update((*rv).value.arr, c.id, &mut item);
-                }
                 Outcome::Failed(msg) => {
                     let mut item: sys::zval = std::mem::zeroed();
                     zval::set_new_array(&mut item);
@@ -707,122 +685,6 @@ unsafe extern "C" fn rinit(_type: c_int, module_number: c_int) -> sys::zend_resu
     sys::SUCCESS
 }
 
-thread_local! {
-    /// Index of this offload worker thread (E16), if it is one.
-    pub static OFFLOAD_WORKER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-}
-
-/// # Safety
-/// `p` must point to `l` readable bytes for the duration of the call.
-unsafe fn str_arg(p: *mut c_char, l: usize) -> String {
-    // SAFETY: the caller upholds the length contract above; the slice is read and copied before it
-    // returns, so the String never borrows VM memory.
-    unsafe { String::from_utf8_lossy(std::slice::from_raw_parts(p as *const u8, l)).into_owned() }
-}
-
-/// # Safety
-/// `p` must point to `l` readable bytes for the duration of the call.
-unsafe fn bytes_arg(p: *mut c_char, l: usize) -> bytes::Bytes {
-    // SAFETY: as `str_arg` -- copy_from_slice owns the result, so nothing outlives the VM's buffer.
-    unsafe { bytes::Bytes::copy_from_slice(std::slice::from_raw_parts(p as *const u8, l)) }
-}
-
-/// `ignis_offload_submit(string $fn, string $serializedArgs, int $affinity = -1): int|false` — op id (E16).
-unsafe extern "C" fn zif_ignis_offload_submit(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: VM-owned args copied before returning.
-    unsafe {
-        let (mut f, mut fl, mut a, mut al): (*mut c_char, usize, *mut c_char, usize) = (ptr::null_mut(), 0, ptr::null_mut(), 0);
-        let mut aff: sys::zend_long = -1;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"ss|l".as_ptr(), &mut f, &mut fl, &mut a, &mut al, &mut aff) != sys::SUCCESS {
-            return;
-        }
-        let affinity = if aff >= 0 { Some(aff as usize) } else { None };
-        let Some(reactor) = reactor_or_throw() else { return };
-        match crate::offload::submit(reactor, str_arg(f, fl), bytes_arg(a, al), affinity) {
-            Ok(op) => zval::set_long(rv, op as i64),
-            Err(e) => {
-                tracing::warn!("ignis_offload_submit: {e}");
-                zval::set_bool(rv, false);
-            }
-        }
-    }
-}
-
-/// `ignis_offload_next(): ?array` — worker thread: blocks for the next job `[id, fn, args]` (E16).
-unsafe extern "C" fn zif_ignis_offload_next(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: builds a fresh array on the worker thread.
-    unsafe {
-        let Some(w) = OFFLOAD_WORKER.with(|c| c.get()) else {
-            zval::set_null(rv);
-            return;
-        };
-        match crate::offload::next(w) {
-            Some(job) => {
-                zval::set_new_array(rv);
-                sys::add_index_long(rv, 0, job.id as i64);
-                sys::add_index_stringl(rv, 1, job.func.as_ptr() as *const c_char, job.func.len());
-                sys::add_index_stringl(rv, 2, job.args.as_ptr() as *const c_char, job.args.len());
-            }
-            None => zval::set_null(rv),
-        }
-    }
-}
-
-/// `ignis_offload_done(int $job, string $serializedResult): bool` (E16, worker thread).
-unsafe extern "C" fn zif_ignis_offload_done(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: as above.
-    unsafe {
-        let mut id: sys::zend_long = 0;
-        let (mut r, mut rl): (*mut c_char, usize) = (ptr::null_mut(), 0);
-        if sys::zend_parse_parameters(zval::num_args(ex), c"ls".as_ptr(), &mut id, &mut r, &mut rl) != sys::SUCCESS {
-            return;
-        }
-        zval::set_bool(rv, crate::offload::done(id as u64, bytes_arg(r, rl)));
-    }
-}
-
-/// `ignis_offload_callback(int $job, int $cb, string $serializedArgs): string|false` (E16, worker thread; blocks).
-unsafe extern "C" fn zif_ignis_offload_callback(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: as above.
-    unsafe {
-        let (mut job, mut cb): (sys::zend_long, sys::zend_long) = (0, 0);
-        let (mut a, mut al): (*mut c_char, usize) = (ptr::null_mut(), 0);
-        if sys::zend_parse_parameters(zval::num_args(ex), c"lls".as_ptr(), &mut job, &mut cb, &mut a, &mut al) != sys::SUCCESS {
-            return;
-        }
-        match crate::offload::callback(job as u64, cb as u64, bytes_arg(a, al)) {
-            Ok(b) => {
-                let mut tmp: sys::zval = std::mem::zeroed();
-                zval::set_new_array(&mut tmp);
-                sys::add_index_stringl(&mut tmp, 0, b.as_ptr() as *const c_char, b.len());
-                // Move element 0 out as the return value (a string zval), then drop the array.
-                let el = sys::zend_hash_index_find((tmp).value.arr, 0);
-                (*rv).value = (*el).value;
-                (*rv).u1 = (*el).u1;
-                (*el).u1.type_info = sys::IS_NULL;
-                sys::zval_ptr_dtor(&mut tmp);
-            }
-            Err(e) => {
-                tracing::warn!("ignis_offload_callback: {e}");
-                zval::set_bool(rv, false);
-            }
-        }
-    }
-}
-
-/// `ignis_offload_cb_result(int $job, int $seq, string $serializedResult): bool` (E16, calling thread).
-unsafe extern "C" fn zif_ignis_offload_cb_result(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: as above.
-    unsafe {
-        let (mut job, mut seq): (sys::zend_long, sys::zend_long) = (0, 0);
-        let (mut r, mut rl): (*mut c_char, usize) = (ptr::null_mut(), 0);
-        if sys::zend_parse_parameters(zval::num_args(ex), c"lls".as_ptr(), &mut job, &mut seq, &mut r, &mut rl) != sys::SUCCESS {
-            return;
-        }
-        zval::set_bool(rv, crate::offload::callback_result(job as u64, seq as u64, bytes_arg(r, rl)));
-    }
-}
-
 /// `ignis_scope_allocate(string $class): object` — an instance whose declared slots are `IS_UNDEF`
 /// and whose properties resolve per fiber (ADR-0042). The constructor is **not** run here;
 /// `Ignis\\Scope::create()` runs it next, so its writes reach the scope's row instead of filling the
@@ -918,41 +780,6 @@ unsafe extern "C" fn zif_ignis_clear_request_info(_ex: *mut sys::zend_execute_da
 unsafe extern "C" fn zif_ignis_scope_rows_clear(_ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
     // SAFETY: a zif frame on a PHP thread, which is what `rows_clear` asks for.
     unsafe { super::scoped::rows_clear() }
-}
-
-/// `ignis_offload_stats(): array` — `[workers, busy, done, queued]` (E16).
-unsafe extern "C" fn zif_ignis_offload_stats(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: fresh array.
-    unsafe {
-        let (workers, busy, done, queued) = crate::offload::stats();
-        zval::set_new_array(rv);
-        sys::add_assoc_long_ex(rv, c"workers".as_ptr(), 7, workers as i64);
-        sys::add_assoc_long_ex(rv, c"busy".as_ptr(), 4, busy as i64);
-        sys::add_assoc_long_ex(rv, c"done".as_ptr(), 4, done as i64);
-        sys::add_assoc_long_ex(rv, c"queued".as_ptr(), 6, queued as i64);
-        // Index of this thread if it is an offload worker, else -1 (the worker loop needs it for handle refs).
-        sys::add_assoc_long_ex(rv, c"this".as_ptr(), 4, OFFLOAD_WORKER.with(|c| c.get()).map(|w| w as i64).unwrap_or(-1));
-    }
-}
-
-/// `ignis_route_enable(bool $on): void` — the PHP Router is loaded (E16 auto-routing).
-unsafe extern "C" fn zif_ignis_route_enable(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: bool argument.
-    unsafe {
-        let mut on: bool = true;
-        if sys::zend_parse_parameters(zval::num_args(ex), c"b".as_ptr(), &mut on) != sys::SUCCESS {
-            return;
-        }
-        super::route::set_enabled(on);
-        zval::set_null(rv);
-    }
-}
-
-/// `ignis_route_pass(): void` — the Router declines the current call; the original handler runs (E16).
-unsafe extern "C" fn zif_ignis_route_pass(_ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    super::route::pass();
-    // SAFETY: `rv` is the VM's return slot for this internal call, valid and writable once.
-    unsafe { zval::set_null(rv) }
 }
 
 /// `ignis_watch_files(array $files): int` — add loaded files to the development watcher (research 40);
@@ -1051,7 +878,7 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(not(feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 36]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
@@ -1087,19 +914,11 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC_END.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_GRPC_RECV.0.as_ptr(), 1),
-    fe(c"ignis_offload_submit", zif_ignis_offload_submit, ARGINFO_OFFLOAD_SUBMIT.0.as_ptr(), 3),
-    fe(c"ignis_offload_next", zif_ignis_offload_next, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_offload_done", zif_ignis_offload_done, ARGINFO_OFFLOAD_DONE.0.as_ptr(), 2),
-    fe(c"ignis_offload_callback", zif_ignis_offload_callback, ARGINFO_OFFLOAD_CALLBACK.0.as_ptr(), 3),
-    fe(c"ignis_offload_cb_result", zif_ignis_offload_cb_result, ARGINFO_OFFLOAD_CB_RESULT.0.as_ptr(), 3),
-    fe(c"ignis_offload_stats", zif_ignis_offload_stats, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_route_enable", zif_ignis_route_enable, ARGINFO_ROUTE_ENABLE.0.as_ptr(), 1),
-    fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
     fe_end(),
 ]);
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(feature = "temporal")]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 52]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
@@ -1143,14 +962,6 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 52]> = SyncStatic([
     fe(c"ignis_grpc_end", zif_ignis_grpc_end, ARGINFO_GRPC_END.0.as_ptr(), 3),
     fe(c"ignis_grpc_call", zif_ignis_grpc_call, ARGINFO_GRPC4.0.as_ptr(), 4),
     fe(c"ignis_grpc_recv", zif_ignis_grpc_recv, ARGINFO_GRPC_RECV.0.as_ptr(), 1),
-    fe(c"ignis_offload_submit", zif_ignis_offload_submit, ARGINFO_OFFLOAD_SUBMIT.0.as_ptr(), 3),
-    fe(c"ignis_offload_next", zif_ignis_offload_next, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_offload_done", zif_ignis_offload_done, ARGINFO_OFFLOAD_DONE.0.as_ptr(), 2),
-    fe(c"ignis_offload_callback", zif_ignis_offload_callback, ARGINFO_OFFLOAD_CALLBACK.0.as_ptr(), 3),
-    fe(c"ignis_offload_cb_result", zif_ignis_offload_cb_result, ARGINFO_OFFLOAD_CB_RESULT.0.as_ptr(), 3),
-    fe(c"ignis_offload_stats", zif_ignis_offload_stats, ARGINFO_NONE.0.as_ptr(), 0),
-    fe(c"ignis_route_enable", zif_ignis_route_enable, ARGINFO_ROUTE_ENABLE.0.as_ptr(), 1),
-    fe(c"ignis_route_pass", zif_ignis_route_pass, ARGINFO_NONE.0.as_ptr(), 0),
     fe_end(),
 ]);
 
@@ -1248,8 +1059,6 @@ mod tests {
             "ignis_grpc_end",
             "ignis_grpc_call",
             "ignis_grpc_recv",
-            "ignis_offload_submit",
-            "ignis_offload_next",
         ] {
             assert!(names.contains(&n.to_string()), "{n} missing");
         }

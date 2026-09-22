@@ -14,10 +14,15 @@ BIN=${IGNIS_BIN:-./target/release/ignis}
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
 
 if [ ! -f "$VENDOR" ]; then
-  echo "== installing temporal/sdk into php/packages/temporal-core-transport/vendor (composer in docker)"
-  command -v docker >/dev/null || { echo "docker needed to install sdk-php, or set SDKPHP_VENDOR"; exit 2; }
-  timeout 600 docker run --rm -v "$PWD/php/packages/temporal-core-transport":/app -w /app composer:latest \
-    install --ignore-platform-reqs --no-interaction 2>&1 | tail -3
+  if command -v composer >/dev/null && command -v php >/dev/null; then
+    echo "== installing temporal/sdk into php/packages/temporal-core-transport/vendor (composer on the system php)"
+    (cd php/packages/temporal-core-transport && timeout 900 composer install --ignore-platform-reqs --no-interaction --prefer-source 2>&1 | tail -3)
+  else
+    echo "== installing temporal/sdk into php/packages/temporal-core-transport/vendor (composer in docker)"
+    command -v docker >/dev/null || { echo "docker or composer needed to install sdk-php, or set SDKPHP_VENDOR"; exit 2; }
+    timeout 600 docker run --rm -v "$PWD/php/packages/temporal-core-transport":/app -w /app composer:latest \
+      install --ignore-platform-reqs --no-interaction 2>&1 | tail -3
+  fi
   VENDOR=php/packages/temporal-core-transport/vendor/autoload.php
 fi
 [ -f "$VENDOR" ] || { echo "no sdk-php at $VENDOR"; exit 1; }

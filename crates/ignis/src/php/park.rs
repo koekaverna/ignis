@@ -3,7 +3,7 @@
 //! Three questions, in order, on every interposed call:
 //! 1. **Gate** (a thread-local byte, ~8 ns — research 28): `0` = not inside a fiber on a PHP thread,
 //!    `1` = inside one, `2` = inside one of these handlers already. Anything but `1` forwards to
-//!    the raw syscall at once; that is the path every tokio thread, offload worker, curl resolver
+//!    the raw syscall at once; that is the path every tokio thread, curl resolver
 //!    thread and nested call takes.
 //! 2. **Policy**: the caller's return address (captured by the C shim) is resolved with `dladdr`
 //!    once per call site and cached; only a library named in `IGNIS_PARK` (e.g. `libcurl,libpq`)
@@ -60,7 +60,7 @@ static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 /// The default table (ADR-0037 §2): research 27's verdicts (libcurl, libpq, OpenSSL park) plus
 /// libphp's audited groups (research 30: (a) ext/sockets, (b) sleep, (c) streams/network/openssl —
 /// every row lock-free). Anything libphp calls that is not listed stays `block`; `getaddrinfo`
-/// has no fd and is offload's, not park's.
+/// has no fd and stays blocking.
 const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libphp:flock,libphp:waitpid,libcurl,libpq,libssl,libcrypto";
 
 /// Every `(library, symbol)` pair that has actually made an interposed call in this process, and

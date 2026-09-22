@@ -13,15 +13,12 @@
         }
     ],
     "require": {
-        "ignis/doctrine": "@dev",
         "ignis/grpc": "@dev",
-        "ignis/offload": "@dev",
         "ignis/phpstan": "@dev",
         "ignis/runtime": "@dev",
         "ignis/symfony-runtime": "@dev",
         "ignis/temporal": "@dev",
         "ignis/temporal-core-transport": "@dev",
-        "ignis/temporal-prototype": "@dev",
         "php": ">=8.4"
     },
     "require-dev": {

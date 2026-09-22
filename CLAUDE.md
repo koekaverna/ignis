@@ -49,14 +49,14 @@ scripts/gate.sh [--fast]              # what CI runs, in CI's order; --fast skip
 scripts/smoke.sh                      # end-to-end gate: build, tests, app.php, output isolation, E22/E23, E1/E2, E13, E6, E7, E11, E12
 ```
 
-Run a script: `./target/release/ignis [--threads N] [--offload M] [--supervise] <script.php> [args...]`.
+Run a script: `./target/release/ignis [--threads N] [--supervise] <script.php> [args...]`.
 
 Benches are one script per expectation (`bench/eN-*.sh`), each writing into VALIDATION.md; `bench/compare.sh` produces `bench/results/compare.md` vs FrankenPHP and php-fpm. The comparison suites (E15) run in CI and are gated against `bench/results/e15-baseline.txt` by `scripts/ci-gate.sh <suite> <log>` — pass counts may never drop.
 
 The second **engine ABI** (non-thread-safe PHP, S-NTS-MODE, V-113) is a separate prefix and target
 dir too: `scripts/build-php-nts.sh` then `PHP_CONFIG=/opt/php85-nts/bin/php-config
 CARGO_TARGET_DIR=target-nts cargo build --release -p ignis` (enables `cfg(php_nts)`). It serves on
-one PHP thread and refuses `--threads` above 1, `--offload` and `--supervise`; `scripts/nts-checks.sh`
+one PHP thread and refuses `--threads` above 1 and `--supervise`; `scripts/nts-checks.sh`
 is its acceptance and `.github/workflows/nts.yml` runs it. **Run it with `LD_LIBRARY_PATH` unset** — both prefixes install a `libphp.so` with the same soname and the
 variable beats RUNPATH, so the usual `LD_LIBRARY_PATH=/opt/php85-zts/lib` makes it die in the loader.
 
@@ -69,25 +69,35 @@ One process, two worlds that only ever exchange plain data over channels:
 - **tokio side** (`http.rs`, `grpc.rs`, `watch.rs`, `reactor.rs`) — hyper 1.x auto h1/h2 front door, tonic on the same listener, the development file watcher, all timers and socket readiness. There is no database client: the runtime-owned PostgreSQL pool was deleted on 2026-09-18 (ADR-0015 closed, V-87) because `pdo_pgsql` parks and is faster (V-86). The listener is plaintext (ADR-0032) and rustls is gone with the stream transport factory (ADR-0037 cycle 3): outbound TLS is PHP's own `ext/openssl`, parked like any other syscall.
 - **PHP side** — N OS threads, each with its own embedded ZTS engine context and *its own* `Reactor`; requests are dispatched to the least-inflight thread (ADR-0010).
 
-`reactor.rs` is the only bridge. PHP calls `ignis_submit_sleep()` / `ignis_watch()` and `ignis_poll(timeout)`; an `Op` is `Sleep`, `Watch`, `CancelWatch` or `Custom` — the `Connect`/`Read`/`Write`/`Upgrade` variants went with the transport factory; HTTP requests, gRPC calls, timer completions and offload answers all arrive on that one completion channel, so a PHP thread has **exactly one wait point**. Invariants: no Zend pointer ever crosses to tokio, PHP never awaits a tokio future, an `Op` is plain data.
+`reactor.rs` is the only bridge. PHP calls `ignis_submit_sleep()` / `ignis_watch()` and `ignis_poll(timeout)`; an `Op` is `Sleep`, `Watch`, `CancelWatch` or `Custom` — the `Connect`/`Read`/`Write`/`Upgrade` variants went with the transport factory; HTTP requests, gRPC calls and timer completions all arrive on that one completion channel, so a PHP thread has **exactly one wait point**. Invariants: no Zend pointer ever crosses to tokio, PHP never awaits a tokio future, an `Op` is plain data.
 
 `crates/ignis/src/php/` is the FFI/Zend boundary — `embed.rs` (engine lifecycle, `!Send` `Engine`, `WorkerThread::attach` per thread), `module.rs` (the `ignis` internal module: `ignis_submit_sleep`, `ignis_poll`, `ignis_serve`, `ignis_respond`, …), `zval.rs`, `wait.rs` (the C-side park registry: op id → suspended fiber, resumed by `ignis_poll`), `park.rs` + `crates/ignis/csrc/park.c` (universal park, ADR-0020/0037: the interposed libc calls, on by default, policy from `IGNIS_PARK` — this is how unmodified `file_get_contents`/`fsockopen`/`ext/sockets`/`sleep()` park the fiber), `superglobals.rs` (zend_observer fiber-switch hook swapping `$_SERVER`/`$_GET`/`$_POST`/`$_COOKIE` per fiber), `route.rs`. `crates/ignis-sys` is raw bindgen over the embed SAPI headers.
 
-`php/packages/runtime/src/ignis.php` is the userland scheduler: `Ignis\Loop` (fiber pool — parked Fibers are reused, which is the single biggest win of the project, V-4), `Future`, `async()`, `all()`, `sleep()`, `deadline()`, `Scope`, `serve()`. It is deliberately shaped like a Revolt driver (`php/packages/revolt/src/IgnisDriver.php`). Integrations layer on top without new primitives: `php/packages/offload/`, `php/packages/grpc/`, `php/packages/temporal/`, `php/packages/doctrine/`, `php/packages/symfony-runtime/`, `php/packages/swoole/src/shim.php`, `php/packages/runtime/src/classic.php` (one package per integration since V-62).
+`php/packages/runtime/src/ignis.php` is the userland scheduler: `Ignis\Loop` (fiber pool — parked Fibers are reused, which is the single biggest win of the project, V-4), `Future`, `async()`, `all()`, `sleep()`, `deadline()`, `Scope`, `serve()`. It is deliberately shaped like a Revolt driver (`php/packages/revolt/src/IgnisDriver.php`). Integrations layer on top without new primitives: `php/packages/grpc/`, `php/packages/temporal/`, `php/packages/symfony-runtime/`, `php/packages/runtime/src/classic.php` (one package per integration since V-62).
 
 `examples/app.php` is the API spec — the file an application developer should be able to write. Unimplemented parts are feature-guarded and reported, never faked. Change it only with intent.
 
-### Mechanism budget (owner, 2026-09-17)
+### Mechanism budget (owner, 2026-09-17; cut to two on 2026-09-22)
 
-Three mechanisms and one table, no more: **park** (syscall interposition with a per-symbol
-policy, ADR-0020), **offload** (synchronous worker threads with copy-in/copy-out and worker-pinned
-proxies, ADR-0016), **context** (fiber-switch observer slots, ADR-0006), and one policy table in
-`ignis.toml` — `symbol | PHP function | class → park | offload | block`. Adapters (Revolt,
-symfony/runtime, Laravel, gRPC, Temporal, Doctrine) carry no mechanism of their own. The
-transition from today's seven wait mechanisms to this budget, with its measurements and gates, is
-ADR-0037; the inventory is research 29. A new blocking library, PHP function or vendor static is
-a table row, not a hook — anything that needs more is an "outside the three" entry in ADR-0037
-with its reason.
+Two mechanisms and one table, no more: **park** (syscall interposition with a per-symbol
+policy, ADR-0020), **context** (fiber-switch observer slots, ADR-0006/0042), and one policy table
+in `ignis.toml` — `symbol | PHP function → park | block`. The third mechanism, **offload**
+(synchronous worker threads, ADR-0016), was deleted on 2026-09-22 with the MVP cut (DECISIONS): a
+call that cannot park — a regular file, `SQLite3` — blocks its thread, and that is documented, not
+worked around. Adapters (Revolt, symfony/runtime, gRPC, Temporal) carry no mechanism of their
+own. The transition from seven wait mechanisms to this budget, with its measurements and gates,
+is ADR-0037; the inventory is research 29. A new blocking library or PHP function is a table
+row, not a hook — anything that needs more is an "outside the budget" entry in ADR-0037 with its
+reason.
+
+### MVP scope (owner interview, 2026-09-22 — DECISIONS)
+
+An async platform for Symfony: HTTP, gRPC, server-sent events and websockets as the protocols,
+Symfony Messenger asynchronously, Temporal on the official SDK. Kept: park, context, gRPC,
+Temporal (`ignis/temporal` + `ignis/temporal-core-transport`), the Revolt driver, symfony-runtime,
+development reload, `--supervise`, metrics, classic mode (the FrankenPHP compat gate runs through
+it), the NTS mode. Deleted: the offload pool, the Swoole shim, the Doctrine package, backend (b),
+`temporal-prototype`, the nightly perf job. Laravel is out of scope.
 
 ### Editing rules that come from the architecture
 

@@ -1,7 +1,7 @@
 <?php
 
 // A3 soak: examples/app.php's routes (streams via /upstream, per-fiber superglobals via
-// /whoami, offload pool via /offload, multi-await concurrency via /dashboard), plus a
+// /whoami, multi-await concurrency via /dashboard), plus a
 // /stats route (rss_kb + counters) so the driving script can read RSS from the process
 // itself as a cross-check against `ps`/`/proc`. Listens on IGNIS_LISTEN (default differs
 // from app.php's 127.0.0.1:8080 so this can run without colliding with anything else on
@@ -9,7 +9,6 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../../php/packages/runtime/src/ignis.php';
-require __DIR__ . '/../../php/packages/offload/src/ignis-offload.php';
 
 use Ignis\Http\Request;
 use Ignis\Http\Response;
@@ -35,15 +34,6 @@ function upstreamJson(string $url): array
     return json_decode(file_get_contents($url), true, 512, JSON_THROW_ON_ERROR);
 }
 
-function offloadDemo(): array
-{
-    if ((Ignis\Offload\Client::stats()['workers'] ?? 0) === 0) {
-        return ['offload' => 'start ignis with --offload N to enable'];
-    }
-    $upper = Ignis\offload('strtoupper', 'hello from a worker thread');
-    return ['result' => $upper, 'pool' => Ignis\Offload\Client::stats()];
-}
-
 
 Ignis\serve(static function (Request $req): Response {
     return match ($req->path()) {
@@ -51,7 +41,6 @@ Ignis\serve(static function (Request $req): Response {
         '/dashboard' => Response::json(fetchDashboard((int) ($req->query('user') ?? 1))),
         '/upstream'  => Response::json(upstreamJson('http://' . (getenv('IGNIS_LISTEN') ?: '127.0.0.1:8099') . '/dashboard')),
         '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),
-        '/offload'   => Response::json(offloadDemo()),
         '/sleep'     => (static function () use ($req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");

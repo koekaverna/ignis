@@ -242,7 +242,6 @@ pub unsafe extern "C" fn minit(_type: std::ffi::c_int, _module_number: std::ffi:
     unsafe {
         #[cfg(feature = "universal-park")]
         super::park::install(); // E18 (ADR-0020)
-        super::route::install();
         super::locklib::install(); // H36 harness, only when IGNIS_LOCKLIB is set
         super::output::install(); // drops a dying fiber's buffers and binding, whatever this file does below
         super::scoped::install(); // ADR-0042: the handler table scoped objects are created with

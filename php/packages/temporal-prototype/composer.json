@@ -1,9 +1,0 @@
-{
-    "name": "ignis/temporal-prototype",
-    "description": "The pre-ADR-0040 workflow runtime of our own (ADR-0013, V-19): workflows as fibers, activities as fibers, replay with a negative control. Frozen — kept because the replay test was built on it. New work uses ignis/temporal with the official SDK.",
-    "type": "library",
-    "license": "MIT",
-    "require": { "php": ">=8.4", "ignis/runtime": "@dev" },
-    "autoload": { "files": ["src/ignis-temporal.php"] },
-    "config": { "allow-plugins": false }
-}

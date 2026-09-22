@@ -92,13 +92,6 @@ pub enum Outcome {
     Failed(String),
     /// PHP-facing binary result of a `Custom` op (E10 gRPC): a string, or null for end-of-stream.
     Blob(Option<Bytes>),
-    /// E16: an offload worker asks this thread to run callback `cb` of job `job` with serialized `args`.
-    OffloadCallback {
-        job: u64,
-        seq: u64,
-        cb: u64,
-        args: Bytes,
-    },
     Error(String),
 }
 

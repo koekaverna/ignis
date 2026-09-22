@@ -242,19 +242,6 @@ grep -q "b_dependency='injected'" <<<"$sl" || { echo "scoped_lazy FAILED: the co
 grep -q "b_seen=NULL" <<<"$sl" || { echo "scoped_lazy FAILED: one request saw another's write"; exit 1; }
 grep -q "a_seen='A'" <<<"$sl" || { echo "scoped_lazy FAILED: the building request lost its own write"; exit 1; }
 
-# A-LEAKS-RUST (b): a worker that dies mid-job used to leave its JOBS entry behind and the caller's
-# reserved op raised for ever, so the calling fiber waited on a completion nothing would ever send.
-# The job here calls exit(), which WorkerRuntime::run's own try/catch cannot see, so the whole
-# worker loop unwinds with the job still marked running -- the shape a PHP fatal produces. Without
-# the fix this step does not fail, it HANGS, so the timeout is part of the assertion.
-echo "== an offload worker that dies mid-job fails its caller instead of stranding the op"
-od=$(IGNIS_OFFLOAD_PRELUDE="$PWD/bench/php/offload_worker_dies_prelude.php" \
-  timeout 20 ./target/release/ignis --offload 1 bench/php/offload_worker_dies.php 2>&1) || {
-  echo "offload_worker_dies FAILED: the caller was never answered (timeout = the defect)"; exit 1; }
-echo "  $(tail -2 <<<"$od" | head -1)"
-grep -q 'inflight_after=0' <<<"$od" || { echo "offload_worker_dies FAILED: the reserved op was not released"; exit 1; }
-grep -q 'failed=true' <<<"$od" || { echo "offload_worker_dies FAILED: the caller was not told its worker died"; exit 1; }
-
 # R-STREAM-CANCEL: a streaming handler must learn the client left. The cancel guard used to be
 # disarmed when the *headers* went out, and the Loop dropped the request's fiber mapping at the same
 # moment, so a hang-up mid-body reached nobody and the producer kept working for an absent client.

@@ -1,8 +1,7 @@
 <?php
 
-// E18-B / H33 control: N fibers, each `new PDO(pgsql DSN)` + `SELECT pg_sleep(0.2)`. Offload
-// routing must be off (the driver sets IGNIS_NO_OFFLOAD_ROUTE=1) so this measures blocking
-// pdo_pgsql, not ADR-0016's offload pool. Today (no universal park) every query serializes on the
+// E18-B / H33 control: N fibers, each `new PDO(pgsql DSN)` + `SELECT pg_sleep(0.2)`. This
+// measures blocking pdo_pgsql. Today (no universal park) every query serializes on the
 // single PHP thread: wall ~= N * 200 ms is the control baseline (H33's falsifier: after E18-I,
 // wall ~= 200 ms).
 //

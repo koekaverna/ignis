@@ -41,11 +41,31 @@ final class CoreSource implements ActivationSource, HeartbeatSink
         private readonly string $namespace = 'default',
     ) {}
 
+    /** Evictions core issued because the workflow code diverged from the history it was replaying. */
+    private int $nondeterministicEvictions = 0;
+
     public static function connect(string $url, string $namespace, string $taskQueue): self
     {
         $worker = self::workerIdOf(self::await(\ignis_temporal_connect($url, $namespace, $taskQueue)));
 
         return new self($worker, $taskQueue, $namespace);
+    }
+
+    /**
+     * A replay worker over one run's recorded history (fetched by the runtime over gRPC): the same
+     * workflow code is driven by the history instead of by a server, and a divergence surfaces as a
+     * nondeterminism eviction. The E9 replay gate is built on this; activities never run here.
+     */
+    public static function replay(string $url, string $workflowId, string $taskQueue): self
+    {
+        $worker = self::workerIdOf(self::await(\ignis_temporal_replay($url, $workflowId, $taskQueue)));
+
+        return new self($worker, $taskQueue);
+    }
+
+    public function nondeterministicEvictions(): int
+    {
+        return $this->nondeterministicEvictions;
     }
 
     /** The `{"worker": id}` connect result, decoded and validated: a malformed document cannot start a worker. */
@@ -63,9 +83,35 @@ final class CoreSource implements ActivationSource, HeartbeatSink
     /** A null result means the worker is shutting down; sdk-php ends its loop on that signal. */
     public function poll(string $kind): ?string
     {
-        return self::activationOf(Loop::awaitOp($kind === self::ACTIVITY
+        $activation = self::activationOf(Loop::awaitOp($kind === self::ACTIVITY
             ? \ignis_temporal_poll_activity($this->worker)
             : \ignis_temporal_poll($this->worker)));
+        if ($activation !== null && $kind !== self::ACTIVITY) {
+            $this->nondeterministicEvictions += self::countsNondeterministicEvictions($activation);
+        }
+
+        return $activation;
+    }
+
+    /**
+     * Counted here, before the transport turns the job into a `DestroyWorkflow`, because sdk-php has
+     * no word for "your code disagrees with the history": to it an eviction is an eviction. protojson
+     * renders the reason as `NONDETERMINISM`; the tag it once was on this boundary is kept accepted
+     * (V-65's spelling change silently defeated an earlier version of this check).
+     */
+    private static function countsNondeterministicEvictions(string $activationJson): int
+    {
+        $activation = \json_decode($activationJson, true);
+        $jobs = \is_array($activation) ? ($activation['jobs'] ?? []) : [];
+        $count = 0;
+        foreach (\is_array($jobs) ? $jobs : [] as $job) {
+            $reason = \is_array($job) ? ($job['removeFromCache']['reason'] ?? null) : null;
+            if ($reason === 3 || (\is_string($reason) && \strtoupper($reason) === 'NONDETERMINISM')) {
+                ++$count;
+            }
+        }
+
+        return $count;
     }
 
     /**
@@ -143,7 +189,8 @@ final class CoreSource implements ActivationSource, HeartbeatSink
 }
 
 /**
- * Runs a sdk-php worker on Ignis until the source shuts down.
+ * Runs a sdk-php worker on Ignis until the source shuts down. `$activityFibers` is how many
+ * activities may be in flight at once; `0` is a replay, which has no activities to run.
  *
  * @param callable(WorkerInterface): void $register registers workflow types and activity instances
  */
@@ -159,7 +206,7 @@ function serve(CoreSource $source, callable $register, int $activityFibers = 8):
     $workflows = $factory();
     $workers = [\Ignis\async(static fn() => $workflows->run($workflows->host($source, ActivationSource::WORKFLOW)))];
 
-    for ($i = 0; $i < \max(1, $activityFibers); $i++) {
+    for ($i = 0; $i < $activityFibers; $i++) {
         $activities = $factory();
         $workers[] = \Ignis\async(static fn() => $activities->run($activities->host($source, ActivationSource::ACTIVITY)));
     }

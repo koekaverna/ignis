@@ -3,8 +3,9 @@
 /**
  * The demo workflow for the core transport — deliberately **stock temporalio/sdk-php**: attributes,
  * an activity stub, `yield`, `Workflow::timer()`. Nothing here knows it is running on Ignis, which
- * is the entire claim of ADR-0040. Used by both `core/selftest.php` and `sdk-worker.php`, so the
- * test and the example cannot drift apart.
+ * is the entire claim of ADR-0040. Shared by the conformance test, the worker and the replay gate,
+ * so they cannot drift apart. `DEMO_MUTATE=1` drops the timer: the replay negative control must
+ * then fail with a nondeterminism eviction (E9, V-19).
  */
 
 declare(strict_types=1);
@@ -28,7 +29,9 @@ class GreetWorkflow
             ActivityOptions::new()->withStartToCloseTimeout(5),
         );
         $greeting = yield $stub->greet($name);
-        yield Workflow::timer(1);
+        if (\getenv('DEMO_MUTATE') === false) {
+            yield Workflow::timer(1);
+        }
 
         return \strtoupper($greeting);
     }

@@ -457,15 +457,12 @@ final class Loop
     }
 
     /**
-     * A completion no fiber is waiting for, as the reactor's tagged union: a cancelled request, an
-     * offload callback (E16), or a new request — which carries no tag, only a method. It arrives
-     * off the reactor as `array<array-key, mixed>`, so every field is checked before use.
+     * A completion no fiber is waiting for, as the reactor's tagged union: a cancelled request, or
+     * a new request — which carries no tag, only a method. It arrives off the reactor as
+     * `array<array-key, mixed>`, so every field is checked before use.
      *
-     * A payload matching none of the three tags is dropped with no log, on purpose:
-     * `Ignis\Offload\Router::release()` (`offload/src/ignis-offload.php`) submits its handle-free
-     * job fire-and-forget, awaiting nothing, so a `kind => 'error'` reactor-level failure for that
-     * op arrives here unmatched — and release is cleanup for an object the caller already let go
-     * of, so there is nobody left to tell and nothing left to do about it.
+     * A payload matching neither tag is dropped with no log, on purpose: a fire-and-forget op
+     * nobody awaits can fail at the reactor level, and there is nobody left to tell.
      * @param array<array-key, mixed> $payload
      */
     private static function dispatchUnawaited(int $id, array $payload): void
@@ -476,10 +473,6 @@ final class Loop
         }
         if (($payload['kind'] ?? null) === 'cancel') {
             self::cancelRequest($id, new CancelledException('client disconnected'), self::asAgeUs($payload));
-            return;
-        }
-        if (($payload['kind'] ?? null) === 'offload_cb') {
-            (self::$offloadCallbackHandler ?? static fn() => null)(self::asOffloadCallback($payload));
         }
     }
 
@@ -492,23 +485,6 @@ final class Loop
         }
 
         return $ageUs;
-    }
-
-    /**
-     * @param array<array-key, mixed> $payload
-     * @return array{kind: string, job: int, seq: int, cb: int, args: string}
-     */
-    private static function asOffloadCallback(array $payload): array
-    {
-        $job = $payload['job'] ?? null;
-        $sequence = $payload['seq'] ?? null;
-        $callback = $payload['cb'] ?? null;
-        $arguments = $payload['args'] ?? null;
-        if (!\is_int($job) || !\is_int($sequence) || !\is_int($callback) || !\is_string($arguments)) {
-            throw new \UnexpectedValueException('Ignis\\Loop: a malformed offload_cb completion');
-        }
-
-        return ['kind' => 'offload_cb', 'job' => $job, 'seq' => $sequence, 'cb' => $callback, 'args' => $arguments];
     }
 
     /**
@@ -546,8 +522,6 @@ final class Loop
 
     /** @var list<\Throwable> rejected futures nobody has awaited (reported when the loop stops) */
     public static array $unobserved = [];
-    /** @var null|callable(array<string, mixed>):void set by Ignis\Offload\Client (E16) */
-    public static $offloadCallbackHandler = null;
 
     private static bool $booted = false;
 

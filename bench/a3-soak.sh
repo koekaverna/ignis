@@ -12,7 +12,7 @@ DUR=${DUR:-30s}                 # per chunk
 CONNS=${CONNS:-200}
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-/opt/php85-zts/lib}
 
-$BIN --threads 4 --offload 4 --supervise bench/php/a3-soak.php > /tmp/a3-soak-server.log 2>&1 & PID=$!
+$BIN --threads 4 --supervise bench/php/a3-soak.php > /tmp/a3-soak-server.log 2>&1 & PID=$!
 up=0; for _ in $(seq 1 80); do curl -sf "http://$ADDR/stats" >/dev/null 2>&1 && { up=1; break; }; sleep 0.25; done
 if [ "${up:-0}" != 1 ] || ! kill -0 $PID 2>/dev/null; then
   echo "soak server never answered on $ADDR"; tail -5 /tmp/a3-soak-server.log; kill $PID 2>/dev/null; exit 1
@@ -21,8 +21,8 @@ echo "pid=$PID addr=$ADDR target=$TARGET chunk=$DUR conns=$CONNS"
 echo -e "requests\trss_kb\tfibers\tidle\trestarts\tstalled"
 total=0
 while [ "$total" -lt "$TARGET" ]; do
-  # A mix of the routes: /whoami is cheap, /dashboard awaits children, /offload crosses to the pool.
-  for path in /whoami?x=1 /dashboard?user=7 /offload; do
+  # A mix of the routes: /whoami is cheap, /dashboard awaits children.
+  for path in /whoami?x=1 /dashboard?user=7; do
     out=$(wrk -t4 -c"$CONNS" -d"$DUR" "http://$ADDR$path" 2>/dev/null)
     n=$(awk '/requests in/{print $1}' <<<"$out")
     err=$(awk '/Non-2xx/{print $NF}' <<<"$out")

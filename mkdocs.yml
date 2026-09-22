@@ -74,8 +74,6 @@ nav:
       - Overview: packages/index.md
       - Runtime: packages/runtime.md
       - Symfony: packages/symfony.md
-      - Doctrine: packages/doctrine.md
-      - Offload: packages/offload.md
       - gRPC: packages/grpc.md
       - Revolt: packages/revolt.md
       - Temporal: packages/temporal.md

@@ -1,9 +1,0 @@
-{
-    "name": "ignis/offload",
-    "description": "Ignis\\offload(): synchronous worker threads with copy-in/copy-out and worker-pinned proxies (ADR-0016), for the calls universal park cannot reach — SQLite3, a file-backed PDO, CPU-bound work.",
-    "type": "library",
-    "license": "MIT",
-    "require": { "php": ">=8.4", "ignis/runtime": "@dev" },
-    "autoload": { "files": ["src/ignis-offload.php"] },
-    "config": { "allow-plugins": false }
-}

@@ -3,8 +3,7 @@
 #
 # Same flags as scripts/build-php.sh minus --enable-zts, in its own source tree so the two builds
 # never share object files. NTS is one interpreter per process, so an Ignis built against it serves
-# on a single PHP thread and has no `offload`: that mechanism is a second pool of PHP threads, each
-# with its own TSRM context, and in NTS there is no second context to give them.
+# on a single PHP thread: there is no second TSRM context to give another thread.
 #
 # Why it exists: every PHP package a distribution ships is NTS — deb.sury.org has no ZTS build of
 # any version, embed included (checked 2026-09-21: libphp8.5-embed exports `executor_globals`, not

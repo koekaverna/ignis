@@ -4,7 +4,7 @@
 //! The PHP side (`php/packages/runtime/src/ignis.php`, the examples, the Symfony runtime) already reads `IGNIS_*`
 //! environment variables, so the file is bridged into the environment once, before any other
 //! thread exists — the scheduler needed no change to gain a config file. `serve` then rewrites
-//! itself into the legacy `[--supervise] [--threads N] [--offload N] <entry.php>` form, so the
+//! itself into the legacy `[--supervise] [--threads N] <entry.php>` form, so the
 //! rest of `main` is untouched too.
 use std::path::{Path, PathBuf};
 
@@ -21,8 +21,6 @@ pub struct Config {
     pub listen: Option<String>,
     /// PHP worker threads. Default: the machine's available parallelism.
     pub threads: Option<usize>,
-    /// Synchronous offload workers (E16) for `curl_*`/`PDO`/`SQLite3`. Default 0: each costs a PHP thread.
-    pub offload: Option<usize>,
     /// Respawn a worker whose script ends (ADR-0012). Default true under `serve`.
     pub supervise: Option<bool>,
     /// Extra php.ini; the embed SAPI has no `-c`/`-d`.
@@ -142,9 +140,6 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
     }
     let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     default_env("IGNIS_THREADS", &cores.to_string());
-    if let Some(v) = cfg.offload {
-        default_env("IGNIS_OFFLOAD", &v.to_string());
-    }
     if let Some(v) = &cfg.php_ini {
         default_env("IGNIS_PHP_INI", &v.to_string_lossy());
     }

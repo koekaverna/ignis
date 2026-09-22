@@ -13,7 +13,7 @@
  * thread, which is the right answer: a single wait has nothing to overlap with.
  *
  * What this does NOT give you: parallel CPU. All ten fibers share one thread, so ten busy loops
- * would still run one after another — that is what `--offload N` or `--threads N` are for.
+ * would still run one after another — that is what `--threads N` is for.
  */
 require __DIR__ . '/../php/packages/runtime/src/ignis.php';
 

@@ -126,6 +126,27 @@ pub unsafe fn zstr_to_string(zs: *const sys::zend_string) -> String {
     }
 }
 
+/// A fresh (non-interned, refcounted) string zval owned by the caller.
+///
+/// # Safety
+/// PHP thread inside an active request: the string is allocated by the request allocator.
+pub(super) unsafe fn string_zval(bytes: &[u8]) -> sys::zval {
+    // No zend_string_init binding (static inline): build it through a temporary array element.
+    // SAFETY: the caller upholds `# Safety` above. The element is stolen rather than copied -- its
+    // slot is retagged IS_NULL before the temporary array is destroyed, so the refcount the caller
+    // receives is the one add_index_stringl created, and zval_ptr_dtor frees only the array.
+    unsafe {
+        let mut tmp: sys::zval = std::mem::zeroed();
+        set_new_array(&mut tmp);
+        sys::add_index_stringl(&mut tmp, 0, bytes.as_ptr() as *const std::ffi::c_char, bytes.len());
+        let el = sys::zend_hash_index_find(tmp.value.arr, 0);
+        let out = *el;
+        (*el).u1.type_info = sys::IS_NULL;
+        sys::zval_ptr_dtor(&mut tmp);
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! These tests need no PHP runtime: they check layout assumptions

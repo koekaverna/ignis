@@ -16,7 +16,6 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../php/packages/runtime/src/ignis.php';
-require __DIR__ . '/../php/packages/offload/src/ignis-offload.php'; // E16: offload pool (route /offload needs --offload N)
 
 use Ignis\Http\Request;   // → E4 (hyper transport)
 use Ignis\Http\Response;  // → E4
@@ -55,7 +54,7 @@ function fetchDashboard(int $userId): array
 //    inside it is interposed and parks (universal park, ADR-0020/0037) — the tcp://
 //    transport factory this used to go through was deleted in V-49. PDO sqlite is the
 //    exception: a regular file is not epoll-able, so it still blocks the thread
-//    (V-59 addendum) — short queries only, or route it to an offload worker.
+//    (V-59 addendum) — short queries only.
 // ---------------------------------------------------------------------------
 /**
  * PDO's own stub promises no more than `array` for fetchAll(), so that is what this claims. Saying
@@ -138,7 +137,6 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
         '/users'     => Response::json(usersFromDb($pdo)),
         '/upstream'  => Response::json(upstreamJson("http://$listen/dashboard")), // self-call, suspends (E6)
         '/whoami'    => Response::json(['uri' => $_SERVER['REQUEST_URI'], 'get' => $_GET]),  // per-fiber superglobals (E13)
-        '/offload'   => Response::json(offloadDemo()),                                        // blocking code on a sync worker thread, fiber parks (E16)
         '/sleep'     => (static function () use ($req): Response {
             Ignis\sleep((int) ($req->query('ms') ?? 1000));
             return Response::text("slept\n");
@@ -152,16 +150,3 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
     };
 }, $listen);
 
-/**
- * E16: a named function runs on a synchronous worker thread with its own PHP context; this fiber parks meanwhile.
- * @return array<string, mixed>
- */
-function offloadDemo(): array
-{
-    if ((Ignis\Offload\Client::stats()['workers'] ?? 0) === 0) {
-        return ['offload' => 'start ignis with --offload N to enable'];
-    }
-    $t = hrtime(true);
-    $upper = Ignis\offload('strtoupper', 'hello from a worker thread'); // any function the worker can resolve; closures are not copied
-    return ['result' => $upper, 'round_trip_us' => (int) ((hrtime(true) - $t) / 1e3), 'pool' => Ignis\Offload\Client::stats()];
-}

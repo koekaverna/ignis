@@ -45,8 +45,8 @@ wp=$(WAIT_MS=3000 timeout 60 "$BIN" bench/php/waitpid_parks.php 2>/dev/null | tr
 echo "  $wp"
 grep -q "answers_wrong=0" <<<"$wp" || bad "a parked wait changed what the call answers"
 
-say "the three flags that need a second PHP thread are refused"
-for flag in "--threads 2" "--offload 1" "--supervise"; do
+say "the two flags that need a second PHP thread are refused"
+for flag in "--threads 2" "--supervise"; do
   out=$("$BIN" $flag -r 'echo 1;' 2>&1); rc=$?
   printf "  %-14s exit=%s\n" "$flag" "$rc"
   [ "$rc" = 2 ] || bad "$flag was not refused (exit $rc); a second interpreter cannot exist here"

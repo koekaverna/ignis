@@ -1,6 +1,6 @@
 # ADR-0016 — Offload pool: run blocking PHP on synchronous worker threads with their own TSRM context
 
-Status: accepted (Cycle 18, 2026-09-16; V-24). Affects pain-map items: Swoole 5 (incomplete hooks → anything not hooked can be offloaded), Swoole 6 (one blocking call stalls the process → it stalls one offload worker), RoadRunner 5 (pipe serialization → the same serialization, but in-process and only for the routed calls), FrankenPHP 3 (threads vs workers → two pools with distinct roles). Depends on ADR-0007 (parking), ADR-0013 (`Op::Custom`), V-22 (function-handler swap).
+Status: **closed 2026-09-22 — the mechanism is deleted** (owner, MVP cut, DECISIONS). Was: accepted (Cycle 18, 2026-09-16; V-24). Affects pain-map items: Swoole 5 (incomplete hooks → anything not hooked can be offloaded), Swoole 6 (one blocking call stalls the process → it stalls one offload worker), RoadRunner 5 (pipe serialization → the same serialization, but in-process and only for the routed calls), FrankenPHP 3 (threads vs workers → two pools with distinct roles). Depends on ADR-0007 (parking), ADR-0013 (`Op::Custom`), V-22 (function-handler swap).
 
 ## Decision
 

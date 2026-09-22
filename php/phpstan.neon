@@ -19,7 +19,7 @@ includes:
 parameters:
     # Raised 8 -> 9 on 2026-09-18 (S4-MIXED). Measured with 6 clean: 7 = 36, 8 = 39, 9 = 349,
     # 10 = 399. The 39 were worth taking and four were bug-shaped -- a PDOStatement|false
-    # dereferenced, a string invoked without a callable check on the offload job channel, protobuf
+    # dereferenced, a string invoked without a callable check on a job channel, protobuf
     # methods on a bare object. Level 9 is S4-MIXED, filed under its real name: it is 300-odd
     # unchecked accesses on `mixed` at the network boundary, not a number to raise.
     level: 9
@@ -34,13 +34,11 @@ parameters:
     # are also importable, which a file-local one is not: Loop.php had to keep its own copy.
     # The Rust side of each arm is `Outcome` in crates/ignis/src/reactor.rs.
     typeAliases:
-        IgnisCompletion: "array{kind: 'error', message: string}|array{kind: 'cancel', age_us: int}|array{kind: 'offload_cb', job: int, seq: int, cb: int, args: string}"
+        IgnisCompletion: "array{kind: 'error', message: string}|array{kind: 'cancel', age_us: int}"
         IgnisRequest: "array{method: string, uri: string, headers: array<string, string>, body: string}"
 
     paths:
-        - packages/doctrine/src
         - packages/grpc/src
-        - packages/offload/src
         - packages/phpstan/src
         - packages/phpstan/tests
         - packages/runtime/src
@@ -49,11 +47,7 @@ parameters:
         - packages/temporal/src
         - packages/temporal-core-transport/src
         - packages/temporal-core-transport/tests
-        - packages/temporal-prototype/src
-        - packages/temporal-prototype/tests
-        - packages/doctrine/tests
         - packages/grpc/tests
-        - packages/offload/tests
         - packages/symfony-runtime/tests
         - packages/temporal/tests
         - packages/runtime/stubs
@@ -68,9 +62,8 @@ parameters:
     # Loop.php into "result unused" errors that are an artefact of the fake, not debt in the loop.
     # `composer lint` still parses the file and the suite still runs it.
     #
-    # Scanned, never bootstrapped. The stub bodies throw on purpose, and
-    # packages/offload/src/ignis-offload.php guards on function_exists('ignis_route_enable') —
-    # which a loaded stub satisfies — and then calls ignis_offload_stats(), which throws.
+    # Scanned, never bootstrapped: the stub bodies throw on purpose, and a package that guards on
+    # function_exists() would take a loaded stub for the real binary.
     scanFiles:
         - packages/runtime/stubs/ignis.php
         # The fake reactor declares Ignis\Tests\FakeReactor and StopLoop, which every Loop test
@@ -79,24 +72,14 @@ parameters:
         # discarded return values become result-unused findings -- does not apply to scanFiles.
         - tests/fake-reactor.php
 
-    # One entry, not a baseline: the incompatibility is upstream and no annotation satisfies both
-    # sides. Persistence\Mapping\ClassMetadataFactory is @template T of ClassMetadata (invariant)
-    # while ORM narrows it, so ObjectManager's phpdoc return and the native ORM return cannot both
-    # be honoured. Doctrine's own EntityManagerDecorator::getMetadataFactory() reports the identical
-    # error when analysed, which is what proves it is not ours. Named by identifier, path and count,
-    # so it cannot quietly grow to cover anything else.
-    #
-    # Second entry, same standard of proof. `Pipeline::prepare()` declares `@return self<T, mixed>`
+    # One entry, not a baseline, and named by identifier, path and count so it cannot quietly grow
+    # to cover anything else. `Pipeline::prepare()` declares `@return self<T, mixed>`
     # -- the second template parameter is hardcoded and never inferred -- while
     # `BaseClient::withInterceptorPipeline()` requires `Pipeline<GrpcClientInterceptor, object>`.
     # `mixed` is not `object`, so NO caller can satisfy it, sdk-php's own WorkerFactory and
     # WorkflowClient included. Four lines of vendor phpdoc contradict each other; nothing in this
     # repository can resolve it.
     ignoreErrors:
-        -
-            identifier: method.childReturnType
-            path: packages/doctrine/src/FiberEntityManager.php
-            count: 1
         -
             identifier: argument.type
             path: packages/temporal-core-transport/src/CoreServiceClient.php

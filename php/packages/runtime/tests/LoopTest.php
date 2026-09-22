@@ -484,30 +484,16 @@ final class LoopTest extends LoopTestCase
         self::call('dispatchUnawaited', 1, ['kind' => 'cancel']);
     }
 
-    public function testAnUnawaitedOffloadCallbackCompletionMissingAFieldIsRejected(): void
-    {
-        $this->expectException(\UnexpectedValueException::class);
-        $this->expectExceptionMessage('a malformed offload_cb completion');
-        self::call('dispatchUnawaited', 1, ['kind' => 'offload_cb', 'job' => 1, 'seq' => 1, 'cb' => 1]);
-    }
-
     /**
-     * A-SWALLOWED-RUST: `Ignis\Offload\Router::release()` submits its handle-free job
-     * fire-and-forget and awaits nothing, so a reactor-level failure for that op reaches
-     * `dispatchUnawaited()` tagged `kind => 'error'` — none of the three tags it dispatches on.
-     * Pinning that it is dropped, not just undocumented: nothing throws, nothing is cancelled, no
-     * request is dispatched and the offload callback handler is not invoked for it.
+     * A-SWALLOWED-RUST: a fire-and-forget op nobody awaits can fail at the reactor level, and that
+     * failure reaches `dispatchUnawaited()` tagged `kind => 'error'` — neither of the tags it
+     * dispatches on. Pinning that it is dropped, not just undocumented: nothing throws, nothing is
+     * cancelled and no request is dispatched for it.
      */
-    public function testAnUnawaitedCompletionMatchingNoneOfTheThreeTagsIsSilentlyDropped(): void
+    public function testAnUnawaitedCompletionMatchingNeitherTagIsSilentlyDropped(): void
     {
-        $offloadCallbacksSeen = 0;
-        Loop::$offloadCallbackHandler = static function () use (&$offloadCallbacksSeen): void {
-            ++$offloadCallbacksSeen;
-        };
-
         self::assertNull(self::call('dispatchUnawaited', 1, ['kind' => 'error', 'message' => 'op failed']));
 
-        self::assertSame(0, $offloadCallbacksSeen);
         self::assertSame(0, Loop::$cancelled);
         self::assertSame([], FakeReactor::responses());
     }

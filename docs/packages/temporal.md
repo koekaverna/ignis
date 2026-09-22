@@ -72,6 +72,6 @@ demo instead of fourteen.
 
 ## Limits
 
-Signals, queries and workflow cancellation are not covered yet (`R-10`). `ignis/temporal-prototype`
-— the workflow runtime we wrote before the SDK could be hosted (ADR-0013) — is frozen and kept only
-because the replay negative control is built on it; new work uses this package.
+Signals, queries and workflow cancellation are not covered yet (`R-10`). The replay gate
+(`bench/e9-temporal.sh`, `bin/replay.php`) runs on this package: the runtime fetches a run's
+history and `CoreSource::replay()` drives the same workflow code through it.

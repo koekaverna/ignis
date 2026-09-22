@@ -11,8 +11,6 @@ entry = "/opt/ignis/examples/hello_server.php"
 listen = "0.0.0.0:8080"
 
 # threads: default = the container's available parallelism (honours cgroup CPU limits).
-# offload: synchronous workers for curl_* / PDO / SQLite3; each is a full PHP thread. Default 0.
-# offload = 2
 
 [budget]
 fibers = 1024

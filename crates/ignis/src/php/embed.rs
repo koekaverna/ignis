@@ -170,7 +170,7 @@ pub struct WorkerThread {
 impl WorkerThread {
     /// Under NTS there is exactly one interpreter in the process and it belongs to the thread that
     /// started it, so there is no second context to allocate and this must never be reached: the
-    /// entry points that would call it are refused at startup (`--threads` above 1, `--offload`,
+    /// entry points that would call it are refused at startup (`--threads` above 1,
     /// `--supervise`). Answering with an error rather than a panic keeps that a startup diagnostic
     /// instead of a crash, and keeps the type identical across the two builds.
     #[cfg(php_nts)]
@@ -205,18 +205,6 @@ impl WorkerThread {
     /// Same as [`Engine::run_file`] but on this worker thread.
     pub fn run_file(&mut self, path: &Path) -> Result<i32> {
         run_file_on_current_thread(path)
-    }
-
-    /// Evaluate PHP source on this thread (E16 offload worker loop embedded in the binary).
-    pub fn eval(&mut self, code: &str, name: &str) -> Result<()> {
-        let code = CString::new(code.trim_start_matches("<?php"))?;
-        let name = CString::new(name)?;
-        // SAFETY: request is started on this thread; zend_eval_stringl compiles and runs the code.
-        let rc = unsafe { sys::zend_eval_stringl(code.as_ptr(), code.as_bytes().len(), std::ptr::null_mut(), name.as_ptr()) };
-        if rc != sys::SUCCESS {
-            bail!("eval failed");
-        }
-        Ok(())
     }
 }
 

@@ -8,7 +8,6 @@ mod grpc;
 mod http;
 mod lock;
 mod metrics;
-mod offload;
 mod php;
 mod reactor;
 mod watch;
@@ -25,7 +24,7 @@ pub static RESTARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-const USAGE: &str = "usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--offload N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version";
+const USAGE: &str = "usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version";
 
 fn main() -> ExitCode {
     let raw: Vec<String> = std::env::args().skip(1).collect();
@@ -79,14 +78,12 @@ fn main() -> ExitCode {
         return run_inline_code(engine, rt, &code, &name);
     }
 
-    let offload_handles = spawn_offload_workers(flags.offload);
     spawn_watchdog(&rt);
     let worst = if flags.supervise {
         supervise_workers(flags.threads, &script, rt.handle())
     } else {
         run_workers(flags.threads, &script, rt.handle(), &mut engine)
     };
-    stop_offload_workers(offload_handles);
     drop(engine);
     rt.shutdown_background();
     ExitCode::from(worst.clamp(0, 255) as u8)
@@ -118,27 +115,20 @@ fn initialize_logging() {
         .init();
 }
 
-/// `ignis [--threads N] [--offload N] [--supervise] <script.php>`; the IGNIS_THREADS and
-/// IGNIS_OFFLOAD environment variables are the defaults.
+/// `ignis [--threads N] [--supervise] <script.php>`; the IGNIS_THREADS environment variable is
+/// the default.
 struct RuntimeFlags {
     threads: usize,
-    offload: usize,
     supervise: bool,
 }
 
 /// Takes the leading runtime flags off `args`, leaving the script and its own arguments.
 fn parse_runtime_flags(args: &mut Vec<String>) -> RuntimeFlags {
-    let mut flags = RuntimeFlags {
-        threads: std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
-        offload: std::env::var("IGNIS_OFFLOAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
-        supervise: false,
-    };
+    let mut flags =
+        RuntimeFlags { threads: std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1), supervise: false };
     loop {
         if args.len() >= 2 && args[0] == "--threads" {
             flags.threads = args[1].parse().unwrap_or(1);
-            args.drain(0..2);
-        } else if args.len() >= 2 && args[0] == "--offload" {
-            flags.offload = args[1].parse().unwrap_or(0);
             args.drain(0..2);
         } else if !args.is_empty() && args[0] == "--supervise" {
             flags.supervise = true;
@@ -154,7 +144,7 @@ fn parse_runtime_flags(args: &mut Vec<String>) -> RuntimeFlags {
 /// A5: php-cli's `-r <code>` and `--` (script on stdin), returned as the code and the name PHP
 /// reports for it. Tests that re-exec PHP_BINARY use both and the embed SAPI has no such flags, so
 /// `scripts/ignis-php` had to hand those invocations to the stock CLI. Like php-cli they run one
-/// script on this thread: no worker threads, no offload pool, no supervisor.
+/// script on this thread: no worker threads, no supervisor.
 fn take_inline_code(args: &mut Vec<String>) -> Result<Option<(String, String)>, ExitCode> {
     if args.len() >= 2 && args[0] == "-r" {
         let code = args[1].clone();
@@ -243,15 +233,14 @@ fn initialize_php_engine(args: &[String]) -> Result<php::embed::Engine, ExitCode
 /// S-NTS-MODE: a non-thread-safe engine is one interpreter per process, and it belongs to the
 /// thread that started it.
 ///
-/// Three flags ask for a second PHP thread and each is refused here rather than half-working:
-/// `--threads` above 1 and `--supervise` both run the script on a spawned thread, and `--offload`
-/// is by construction "a second pool of PHP threads, each with its own TSRM context" — which is the
+/// Two flags ask for a second PHP thread and each is refused here rather than half-working:
+/// `--threads` above 1 and `--supervise` both run the script on a spawned thread — which is the
 /// thing NTS does not have. Refusing at startup with the usage exit code keeps this a diagnostic
-/// the operator reads, not a crash they have to bisect. The ZTS build accepts all three, so this
+/// the operator reads, not a crash they have to bisect. The ZTS build accepts both, so this
 /// costs nothing where it does not apply.
 #[cfg(php_nts)]
 fn check_single_interpreter_flags(flags: &RuntimeFlags) -> Result<(), ExitCode> {
-    let refused = [(flags.threads > 1, "--threads above 1"), (flags.offload > 0, "--offload"), (flags.supervise, "--supervise")];
+    let refused = [(flags.threads > 1, "--threads above 1"), (flags.supervise, "--supervise")];
     for (asked, what) in refused {
         if asked {
             eprintln!(
@@ -316,70 +305,6 @@ fn run_inline_code(mut engine: php::embed::Engine, rt: tokio::runtime::Runtime, 
     drop(engine);
     rt.shutdown_background();
     ExitCode::from(status.clamp(0, 255) as u8)
-}
-
-/// E16: offload workers — synchronous PHP threads (own TSRM context, no reactor) running the
-/// embedded worker loop; jobs arrive over channels, answers go back to the caller's reactor.
-///
-/// No reactor is deliberate (ADR-0016: these threads are the place blocking code is allowed to
-/// block) and two other mechanisms read the absence as the marker of such a thread — `route.rs`
-/// refuses to route from one, and `park.rs` falls through to the blocking call. The runtime
-/// functions that need a reactor therefore refuse in PHP here rather than reaching for one; see
-/// `module::reactor_or_throw`.
-fn spawn_offload_workers(offload: usize) -> Vec<std::thread::JoinHandle<()>> {
-    if offload == 0 {
-        return Vec::new();
-    }
-    offload::initialize(offload);
-    (0..offload)
-        .map(|i| {
-            std::thread::Builder::new()
-                .name(format!("ignis-offload-{i}"))
-                .spawn(move || run_offload_worker(i))
-                .expect("spawn offload thread")
-        })
-        .collect()
-}
-
-/// One offload worker's whole life: attach, run the worker loop until it ends (normally at the
-/// shutdown poison, or early on a PHP fatal), then release whatever job `JOBS` still shows it
-/// holding (A-LEAKS-RUST) — the ordinary case is that it holds nothing, because a job is only ever
-/// left running here by a fatal that unwound the loop before `WorkerRuntime::run`'s own `try`/`catch`
-/// and `done()` could.
-fn run_offload_worker(index: usize) {
-    php::module::OFFLOAD_WORKER.with(|c| c.set(Some(index)));
-    match php::embed::WorkerThread::attach() {
-        Ok(mut worker) => {
-            if let Err(e) = worker.eval(include_str!("../../../php/packages/offload/src/worker.php"), "ignis-offload-worker") {
-                eprintln!("offload thread {index}: {e:#}");
-            }
-        }
-        Err(e) => eprintln!("offload thread {index}: {e:#}"),
-    }
-    offload::worker_gone(index);
-}
-
-/// E16: the offload workers leave their PHP requests before the engine shuts down.
-fn stop_offload_workers(handles: Vec<std::thread::JoinHandle<()>>) {
-    offload::shutdown();
-    for (worker, handle) in handles.into_iter().enumerate() {
-        if let Err(panic) = handle.join() {
-            tracing::warn!(worker, panic = %offload_thread_panic_message(&panic), "offload thread panicked");
-        }
-    }
-}
-
-/// The payload `std::thread::JoinHandle::join` hands back on a panic is `Box<dyn Any>`; a panic
-/// raised with `panic!("{}", ..)` or a bare string literal is the only shape worth naming, so
-/// anything else says so rather than pretending to describe it.
-fn offload_thread_panic_message(panic: &(dyn std::any::Any + Send + 'static)) -> String {
-    if let Some(message) = panic.downcast_ref::<&str>() {
-        message.to_string()
-    } else if let Some(message) = panic.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "non-string panic payload".to_string()
-    }
 }
 
 /// One PHP worker thread: it attaches to TSRM, gets its own reactor and runs the same script. When
@@ -537,10 +462,9 @@ mod tests {
 
     #[test]
     fn runtime_flags_are_taken_in_any_order() {
-        let mut a = args(&["--supervise", "--offload", "3", "--threads", "4", "app.php", "--verbose"]);
+        let mut a = args(&["--supervise", "--threads", "4", "app.php", "--verbose"]);
         let flags = parse_runtime_flags(&mut a);
         assert_eq!(flags.threads, 4);
-        assert_eq!(flags.offload, 3);
         assert!(flags.supervise);
         assert_eq!(a, args(&["app.php", "--verbose"]));
     }

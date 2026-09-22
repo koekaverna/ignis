@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # E18-B driver: starts a hello_server target on IGNIS_LISTEN (default 127.0.0.1:8160, this box's
 # 8160-8169 range), runs bench/php/e18_curl.php, e18_pgsql.php, e18_dns.php and bench/e18-overhead.sh
-# with offload routing off (IGNIS_NO_OFFLOAD_ROUTE=1 -- see crates/ignis/src/php/route.rs), prints
-# the `e18: ...` lines, and kills everything it started. bench/e18-deadlock.sh is NOT this script's
+# prints the `e18: ...` lines, and kills everything it started. bench/e18-deadlock.sh is NOT this script's
 # job (it waits on research 27's lock shim).
 #
 # Usage: IGNIS_LISTEN=127.0.0.1:8160 PG_DSN="host=/tmp/ignis-pgsock user=ignis password=ignis dbname=ignis" bash bench/e18.sh
@@ -12,7 +11,6 @@ cd "$(dirname "$0")/.."
 
 ADDR="${IGNIS_LISTEN:-127.0.0.1:8160}"
 export IGNIS_LISTEN="$ADDR"
-export IGNIS_NO_OFFLOAD_ROUTE=1
 PG_DSN="${PG_DSN:-host=/tmp/ignis-pgsock user=ignis password=ignis dbname=ignis}"
 # pdo_pgsql wants `pgsql:key=val;key=val`; PG_DSN is libpq keyword format (space-separated) -- see
 # box facts / ADR-0020 kill-criterion note. Override with PG_PDO_DSN if this transform ever breaks.
@@ -35,10 +33,10 @@ if [ "$up" != 1 ] || ! kill -0 "$HS" 2>/dev/null; then
     exit 1
 fi
 
-echo "== 1. curl_exec (H32), IGNIS_NO_OFFLOAD_ROUTE=1"
+echo "== 1. curl_exec (H32)"
 timeout 60 $BIN bench/php/e18_curl.php "http://$ADDR/sleep?ms=200" 100
 
-echo "== 2. pdo_pgsql (H33), IGNIS_NO_OFFLOAD_ROUTE=1"
+echo "== 2. pdo_pgsql (H33)"
 timeout 60 $BIN bench/php/e18_pgsql.php "$PG_PDO_DSN" 100
 
 echo "== 3. getaddrinfo / libpq connect (H34), stub not wired -- see bench/php/e18_dns.php"

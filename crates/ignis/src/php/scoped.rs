@@ -127,7 +127,7 @@ pub unsafe fn install() {
 /// # Safety
 /// PHP thread with an initialised TSRM cache, after `install()`.
 pub unsafe fn allocate(class: &str) -> Result<*mut sys::zend_object, String> {
-    // SAFETY: the caller upholds `# Safety`. `route::string_zval` owns the name for the length of
+    // SAFETY: the caller upholds `# Safety`. `zval::string_zval` owns the name for the length of
     // this call and is released on both paths; `zend_lookup_class` runs the autoloader, which
     // matters because the container names a class as a string and need not have loaded it yet, and
     // returns null when it cannot be found.
@@ -135,7 +135,7 @@ pub unsafe fn allocate(class: &str) -> Result<*mut sys::zend_object, String> {
         let Some(handlers) = HANDLERS.get() else {
             return Err("ignis: scoped objects are not installed in this build".into());
         };
-        let mut name = super::route::string_zval(class.as_bytes());
+        let mut name = super::zval::string_zval(class.as_bytes());
         let class_entry = sys::zend_lookup_class(name.value.str_);
         sys::zval_ptr_dtor(&raw mut name);
         if class_entry.is_null() {

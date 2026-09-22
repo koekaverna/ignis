@@ -96,8 +96,7 @@ final class Scope
      * request, so without this "per fiber" silently means "per fiber, forever" — measured in V-67,
      * where request n+1 read request n's value on the same fiber id. Anything holding a resource
      * releases through its destructor when the reference goes — and a resource caught in a reference
-     * cycle does not, which is why `ignis/doctrine` keeps its connection behind a handle that is in
-     * none (V-85).
+     * cycle does not, so a scoped holder keeps its connection behind a handle that is in none (V-85).
      *
      * Also drops this fiber's `Scope::create()`-allocated property rows (`ignis_scope_rows_clear()`),
      * for the identical reason: a scoped object built through `create()` lives in the same per-fiber

@@ -236,7 +236,7 @@ pub unsafe extern "C" fn zif_capture_take(_ex: *mut sys::zend_execute_data, rv: 
         out
     });
     // SAFETY: `rv` is the VM's return slot; `string_zval` hands back an owned string zval.
-    unsafe { *rv = super::route::string_zval(&taken.unwrap_or_default()) };
+    unsafe { *rv = zval::string_zval(&taken.unwrap_or_default()) };
 }
 
 /// `sapi_module.flush`: PHP's `flush()` — push whatever this fiber has pending as a frame now.

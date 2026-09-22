@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds PHP 8.5.x (ZTS, embed, opcache, minimal extensions) into /opt/php85-zts.
-# E16 adds pdo_pgsql/pgsql/curl (offload auto-routing targets) and openssl (curl https, E6' ssl://).
+# pdo_pgsql/pgsql/curl park under universal park; openssl is for curl https and E6' ssl://.
 # The xml family, phar, fileinfo and posix are here for the toolchain, not the runtime: without phar
 # composer and the phars cannot run under this engine at all, and without dom/libxml PHPUnit cannot
 # even read a phpunit.xml. Their absence is what forced every PHP tool through docker.

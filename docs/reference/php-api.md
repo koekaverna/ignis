@@ -4,23 +4,19 @@ Every public function, class and method a script or framework integration is mea
 Sources: `php/packages/runtime/src/ignis.php` (the userland scheduler — `Ignis\Loop`, `Future`, `async()`, `all()`,
 `sleep()`, `deadline()`, `Scope`, `serve()`, `Ignis\Http\Request`/`Response`), `php/packages/runtime/src/classic.php`
 (`Ignis\Classic`), `php/packages/runtime/src/Output.php` (`Ignis\Output`),
-`php/packages/offload/src/ignis-offload.php` (`Ignis\Offload`, `Ignis\offload()`),
 `php/packages/revolt/src/IgnisDriver.php` (`Ignis\Revolt\IgnisDriver`), `php/packages/symfony-runtime/src/*`
-(`Ignis\Symfony`), `php/packages/doctrine/src/*` (`Ignis\Doctrine`), `php/packages/temporal/src/*`
+(`Ignis\Symfony`), `php/packages/temporal/src/*`
 (`Ignis\Temporal`), and the internal `ignis_*` function table registered from `crates/ignis/src/php/module.rs`.
 Also cross-checked against `php/packages/runtime/stubs/ignis.php`, the static-analysis-only declaration file
 (`scanFiles`, never executed — see below), and `examples/app.php`, the API spec.
 
 The userland ships as one composer package per integration under `php/packages/` — `ignis/runtime`
-is the scheduler and everything else `require`s it. Ten packages exist today (`composer.json`
+is the scheduler and everything else `require`s it. Seven packages exist today (`composer.json`
 names in parentheses): `runtime` (`ignis/runtime`), `symfony-runtime` (`ignis/symfony-runtime`),
-`offload` (`ignis/offload`), `grpc` (`ignis/grpc`), `revolt` (`ignis/revolt`),
-`swoole` (`ignis/swoole`), `doctrine` (`ignis/doctrine`), and three for Temporal:
+`grpc` (`ignis/grpc`), `revolt` (`ignis/revolt`), `phpstan` (`ignis/phpstan`), and two for Temporal:
 `temporal-core-transport` (`ignis/temporal-core-transport`, host-agnostic — no dependency on
-Ignis), `temporal` (`ignis/temporal`, ADR-0040: the current, supported host for the official
-`temporalio/sdk-php`), and `temporal-prototype` (`ignis/temporal-prototype`, ADR-0013: the
-pre-ADR-0040 workflow runtime, frozen — kept only because the replay test is built on it; new work
-uses `ignis/temporal`). The list, and how to install them into an application, is in
+Ignis) and `temporal` (`ignis/temporal`, ADR-0040: the host for the official
+`temporalio/sdk-php`). The list, and how to install them into an application, is in
 [`php/README.md`](https://github.com/koekaverna/ignis/blob/main/php/README.md).
 
 ## `namespace Ignis` — the scheduler (`php/packages/runtime/src/ignis.php`)
@@ -34,7 +30,6 @@ uses `ignis/temporal`). The list, and how to install them into an application, i
 | `all(iterable<Future> $futures): array` | Awaits every future, returning their values in the same order/keys as given. Each `await()` can throw — a rejected future's exception propagates from here. |
 | `deadline(int $ms): void` | Sets a wall-clock deadline for the **current request**: after `$ms`, the request's fiber and every fiber it spawned via `async()` receive a `DeadlineExceededException` at their suspension point. Must be called from inside a request (throws `LogicException` otherwise — there is no "current request" outside one). |
 | `serve(callable(Http\Request):Http\Response $handler, string $addr = '127.0.0.1:8080'): void` | Worker mode: listens on `$addr`, runs `$handler` in a pooled fiber per request, forever. Wraps `Loop::serve()`. |
-| `offload(string $fn, mixed ...$args): mixed` | See `Ignis\Offload` below — runs `$fn(...$args)` on a synchronous offload worker thread; the current fiber parks. Declared in `php/packages/offload/src/ignis-offload.php`, not `php/packages/runtime/src/ignis.php`. |
 
 ```php
 Ignis\serve(function (Ignis\Http\Request $req): Ignis\Http\Response {
@@ -51,8 +46,8 @@ Ignis\serve(function (Ignis\Http\Request $req): Ignis\Http\Response {
 
 The scheduler class behind every function above; shaped so it can become a Revolt driver
 (`activate`/`dispatch`/`deactivate`/`now` — see `IgnisDriver` below). Most applications never call
-`Loop` directly and use the top-level functions instead; integrations (`Ignis\Offload`, `ignis/doctrine`)
-call `Loop::awaitOp()` and `Loop::spawn()` directly.
+`Loop` directly and use the top-level functions instead; integrations (`ignis/grpc`,
+`ignis/temporal`) call `Loop::awaitOp()` and `Loop::spawn()` directly.
 
 | Member | What it does |
 |---|---|
@@ -67,10 +62,9 @@ call `Loop::awaitOp()` and `Loop::spawn()` directly.
 | `static int $fiberBudget`, `static int $queueDepth` | Read-only in practice (set from `IGNIS_FIBER_BUDGET`/`IGNIS_QUEUE_DEPTH` on first use); `0` means unlimited/unbounded. |
 | `static $rawRequestHandler` | `?callable(int $id, array $raw): void`. Set by `Ignis\Classic\listen()` to receive raw dispatched requests on the loop's own stack instead of a spawned fiber — see the "classic worker loop" note under `Ignis\Classic` below. Not something an application sets directly unless it is itself implementing an alternative request-dispatch mode. |
 
-`Loop::markReady()`, `Loop::$unobserved`, `Loop::$offloadCallbackHandler`, `Loop::$children`,
-`Loop::$deadlines`, `Loop::$parkedOn`, `Loop::$cancelled` etc. are marked `@internal` or are wiring
-for other parts of the runtime (`Ignis\Offload\Client` sets `$offloadCallbackHandler`) — not part of
-the application-facing surface, so not detailed here.
+`Loop::markReady()`, `Loop::$unobserved`, `Loop::$children`, `Loop::$deadlines`,
+`Loop::$parkedOn`, `Loop::$cancelled` etc. are marked `@internal` or are wiring for other parts of
+the runtime — not part of the application-facing surface, so not detailed here.
 
 Since commit `9077206`, a failure while *sending* the answer (as opposed to a failure inside the
 handler, which `runHandler()` already turns into a `500`/`499`/`504`) no longer silently drops the
@@ -99,7 +93,7 @@ is dropped when that fiber is garbage-collected (backed by a `WeakMap`). Outside
 | `static get(string $key, mixed $default = null): mixed` | Reads it back; `$default` if unset. |
 
 Used internally for `ignis.request` (the current request id, for cancellation/deadline routing) and
-by `ignis/doctrine` (one entity manager and one connection per fiber) and, since ADR-0042, by any service the container marks `scoped` — including Symfony's own `RequestStack` and `TokenStorage`.
+and, since ADR-0042, by any service the container marks `scoped` — including Symfony's own `RequestStack` and `TokenStorage`, and anything of yours that holds per-request state such as an entity manager or a database connection.
 
 ### `Ignis\Output` (`php/packages/runtime/src/Output.php`)
 
@@ -175,26 +169,6 @@ Also declared (global namespace, only if not already defined — e.g. under `Ign
 `getallheaders()`, `apache_request_headers()`, `apache_response_headers()` polyfills built from
 `$_SERVER`'s `HTTP_*` entries and the sent header list.
 
-## `namespace Ignis\Offload` (`php/packages/offload/src/ignis-offload.php`, E16/ADR-0016)
-
-| Signature | What it does |
-|---|---|
-| `Ignis\offload(string $fn, mixed ...$args): mixed` | The entry point: runs the named function (or `"Class::method"`) on a synchronous offload worker thread. Arguments are `serialize()`d in, the result is `serialize()`d back; the calling fiber parks meanwhile. A `\Closure` anywhere in `$args` becomes a callback the worker can invoke back on the calling thread (itself allowed to `await`, since it runs in its own spawned fiber). Throws `RuntimeException` if no offload pool exists (`ignis` wasn't started with `--offload N`). |
-| `Offload\Client::stats(): array` | `['workers', 'busy', 'done', 'queued', 'this']` (`ignis_offload_stats()` passthrough; `this` is the calling thread's own worker index, or `-1`). |
-| `Offload\Router::enable(): void` | Turns on E16 **auto-routing**: configured internal functions/classes (`IGNIS_OFFLOAD_FUNCTIONS`/`IGNIS_OFFLOAD_CLASSES`, see `configuration.md`) are transparently redirected to the offload pool when called inside a fiber. Called automatically at file-load time whenever `ignis_route_enable` exists and at least one offload worker is running — an application does not normally call this itself. |
-| `Offload\Handle` | What a routed call returns for a class with no generated proxy (e.g. a `final` class like `CurlHandle`): `__call()` forwards every method to the worker; released automatically on destruction. |
-| `Offload\RemoteException extends \RuntimeException` | Thrown when the offloaded call failed on the worker side; carries `$remoteClass`, the message/code, and `$remoteTrace`. |
-
-```php
-// ignis --offload 4 app.php
-$result = Ignis\offload('some_slow_c_extension_call', $arg1, $arg2);
-```
-
-With auto-routing on (the default whenever `--offload N > 0`), ordinary code is unaffected —
-`new SQLite3(...)`/`new PDO(...)` calls made *inside a fiber* run on an offload worker without any
-source change; the same calls made outside a fiber (worker thread 0, or an offload worker itself)
-run exactly as stock PHP.
-
 ## `Ignis\Revolt\IgnisDriver` (`php/packages/revolt/src/IgnisDriver.php`, ADR-0008/E7)
 
 A `Revolt\EventLoop\Internal\AbstractDriver` implementation over the Ignis reactor — lets
@@ -227,66 +201,6 @@ APP_RUNTIME=Ignis\Symfony\IgnisRuntime
 | `Scope::create(string $class, mixed ...$arguments): object` | A **fiber-scoped instance**: its declared properties resolve per fiber, so one singleton-shaped service answers each request with that request's state (ADR-0042, V-99). The class needs no attribute, no interface and no knowledge of this — binding happens at creation, so the same class can also be `new`ed normally and that instance is unaffected. What the constructor stores is process-wide; what a method reads is per-scope. Under Symfony you do not call this: the container calls it, the way it handles `lazy`. |
 | `Scope::seal(object $instance): void` | Promotes what this fiber holds for `$instance` into the row every other fiber inherits. `create()` does it for the constructor; anything that configures an object *afterwards* — a setter, an `init()`, a container's `addMethodCall` — has to do it again, or those values belong to the one fiber that did the building (V-105). Sealing twice is sound. Under Symfony the container's configurator calls it and you do not. |
 
-## `namespace Ignis\Doctrine` (`php/packages/doctrine/src/*`)
-
-Doctrine ORM under fibers: one `EntityManager` **and one database connection** per fiber instead of
-one per process, so two overlapping requests never share an identity map, a transaction the other
-one left open, or a PostgreSQL socket. **Two connection modes**, chosen in `config/packages/ignis_doctrine.yaml` — `pool.size: 0` (or no `pool` key) for per-fiber, `pool.size: N` for the pool. Not an environment variable: the numbers are service arguments like any other, and a deployment that wants them outside the code writes `%env(int:DB_POOL)%` there. (`IGNIS_DOCTRINE_POOL` was documented here until 2026-09-18 and never existed in the code.)
-
-- **per fiber** (default): every request that touches the database opens its own connection and
-  closes it at request end — about 1 ms of TCP plus SCRAM per request, which is what php-fpm does
-  without `pconnect`, and no ceiling on how many connections a burst opens.
-- **pool**: a fixed set per thread, opened while the thread boots and leased one fiber at a time.
-  The process opens `threads × size` connections and no more; a request that arrives when every
-  connection is leased parks until one comes back, and is refused after `wait_ms` rather than
-  waiting behind a stuck request.
-
-The mode is set per Doctrine connection, in the shape `doctrine.dbal` uses: one block for all of
-them, and names for the ones that differ.
-
-```yaml
-# config/packages/ignis_doctrine.yaml — the default is a connection per fiber
-ignis_doctrine:
-    pool:
-        size: 10          # connections per thread; 0 keeps the per-fiber mode
-        warm: 10          # opened at boot; defaults to size, 0 fills lazily
-        wait_ms: 5000     # before Ignis\Doctrine\Pool\PoolTimeoutException
-
-    connections:          # every key falls back to the block above
-        reporting:
-            pool: { size: 2, wait_ms: 500 }
-        archive:
-            pool: { size: 0 }        # this one stays a connection per fiber
-```
-
-The names are Doctrine's own (`doctrine.dbal.connections`); one that matches none of them fails the
-container build rather than silently doing nothing. Measured in `bench/e24`: in one application with
-`default` at 4 and `reporting` at 1, four concurrent queries spread over **4** backends on the first
-connection and **1** on the second.
-
-Deployment-time numbers stay deployment-time without the package reading the environment itself:
-`size: '%env(int:DB_POOL)%'` is Symfony's own mechanism and resolves at runtime, so a warmed
-container cache does not pin it.
-
-Requires
-`ignis/symfony-runtime`. Register `IgnisDoctrineBundle` **after** `DoctrineBundle` in
-`config/bundles.php`:
-
-```php
-Ignis\Doctrine\IgnisDoctrineBundle::class => ['all' => true],
-```
-
-| Class | What it does |
-|---|---|
-| `IgnisDoctrineBundle extends Bundle` | Adds `DoctrineFiberScopePass`, a compiler pass that rewrites the `EntityManager` service definition so every fiber resolves its own instance from a non-shared inner definition, and marks every connection in `doctrine.connections` non-shared so the fiber's manager opens its own. Without this bundle Doctrine's `EntityManager` stays one shared object across every fiber on the thread, **and so does its database connection** — which under PostgreSQL means two overlapping requests inside one socket: measured as one request receiving another's row with a 200, plus `SQLSTATE[HY000] 7 timeout expired` for the rest (V-85). |
-| `Pool\PoolingMiddleware implements Doctrine\DBAL\Driver\Middleware` | The switch between the two connection modes, registered per Doctrine connection by `DoctrinePoolPass` (tagged `doctrine.middleware` with that connection's name). With its size at 0 it hands the driver back untouched — a connection per fiber, opened and closed per request. With a size it wraps the driver so `connect()` leases from a per-thread `ConnectionPool` instead. Its three numbers are ordinary constructor arguments, which is what makes them configurable in code. |
-| `Pool\ConnectionPool` | At most `pool.size` connections per thread, each leased to exactly one fiber at a time. Fills itself to `pool.warm` when created (at boot, via the bundle), parks a fiber that finds every connection leased — `pool.wait_ms`, then `PoolTimeoutException` — and clears the session (`ROLLBACK; CLOSE ALL; RESET ALL; …`, the V-21 expansion of `DISCARD ALL`) before a connection is handed on. PostgreSQL only: other drivers get no reset, so a reused connection carries its session settings into the next request. |
-| *(deleted 2026-09-20)* `FiberRequestStack`, `FiberTokenStorage` | Hand-written per-fiber façades over `RequestStack` and `TokenStorage`. Both are gone: marking the container definition `scoped` makes Symfony's own classes do it, measured identically (V-100). |
-| `FiberManager` | What the fiber's scope actually holds: the manager plus a destructor that rolls back an open transaction, closes the connection and clears the manager. It exists because `EntityManager` and `UnitOfWork` reference each other, so dropping the manager frees nothing until a cycle collection — measured as 8 to 31 PostgreSQL backends still open after 30 sequential requests (V-85). The handle is in no cycle, so `Scope::clear()` at request end releases the connection there and then. |
-| `FiberEntityManager implements EntityManagerInterface, ResetInterface` | The shared object every application service keeps injected; each of its ~35 interface methods forwards to `Ignis\Scope`'s per-fiber real `EntityManager`, resolved on every call rather than fixed at construction — the decorator itself is not extended from Doctrine's own `EntityManagerDecorator`, which reads `$this->wrapped` directly, exactly the thing that must stay dynamic. Not constructed directly by application code. |
-
-Not covered in full here: `DependencyInjection\DoctrineFiberScopePass`, the compiler pass itself.
-
 ## `namespace Ignis\Temporal` (`php/packages/temporal/src/*`, ADR-0040)
 
 The current, supported host for the official `temporalio/sdk-php` — runs its worker as one
@@ -300,10 +214,6 @@ not itself covered here) and `ignis/grpc`.
 |---|---|
 | `CoreSource` | Implements `Temporal\Worker\Transport\Core\ActivationSource` over the eight `ignis_temporal_*` primitives above (`ignis_temporal_connect`/`poll`/`poll_activity`/`complete`/`complete_activity`/`heartbeat`/`shutdown`) and starts the workflow/activity worker fibers. Not constructed directly by application code — it is the transport `CoreWorkerFactory` is given. |
 | `GrpcServiceCall` | Answers sdk-php's own gRPC client calls (used by `WorkflowClient` to start/signal/query workflows) through `ignis_grpc_call()` — "there is no new Rust for this", per the file's own docblock, since `ignis_grpc_call()` was already a generic unary call by path. |
-
-`ignis/temporal-prototype` (`php/packages/temporal-prototype/src/ignis-temporal.php`, ADR-0013) is
-the pre-ADR-0040 workflow runtime of our own that `Ignis\Temporal` replaces for new work — frozen,
-kept only because the replay negative-control test is built on it, and not covered in full here.
 
 ## Internal `ignis_*` functions (`crates/ignis/src/php/module.rs`)
 
@@ -329,9 +239,7 @@ except for the two noted below.
 | `ignis_set_superglobals(array, array, array, array): void` | `Ignis\Loop`'s request dispatch (ADR-0006) |
 | `ignis_cancel_parked_any(\Fiber, \Throwable): bool` | `Ignis\Loop::throwInto()` (ADR-0009 cancellation) |
 | `ignis_grpc_send`/`_end`/`_call`/`_recv` | `php/packages/grpc/src/ignis-grpc.php` (E10; not covered in full by this reference) |
-| `ignis_offload_submit`/`_next`/`_done`/`_callback`/`_cb_result`/`_stats` | `Ignis\Offload\Client`/`offload()` above |
-| `ignis_route_enable`/`_route_pass` | `Ignis\Offload\Router` above |
-| `ignis_temporal_*` (8 functions — `connect`, `replay`, `poll`, `complete`, `poll_activity`, `complete_activity`, `heartbeat`, `shutdown`; `feature = "temporal"` builds only) | Two consumers, neither covered in full by this reference: `php/packages/temporal-prototype/src/ignis-temporal.php` (the frozen ADR-0013 workflow runtime of our own) and `Ignis\Temporal\CoreSource` (`php/packages/temporal/src/CoreSource.php`, ADR-0040 — the current, supported host, which drives the official `temporalio/sdk-php` over the same primitives via `ignis/temporal-core-transport`'s `ActivationSource`). |
+| `ignis_temporal_*` (8 functions — `connect`, `replay`, `poll`, `complete`, `poll_activity`, `complete_activity`, `heartbeat`, `shutdown`; `feature = "temporal"` builds only) | One consumer, not covered in full by this reference: `Ignis\Temporal\CoreSource` (`php/packages/temporal/src/CoreSource.php`, ADR-0040 — the supported host, which drives the official `temporalio/sdk-php` over the same primitives via `ignis/temporal-core-transport`'s `ActivationSource`). |
 
 **Two exceptions a custom event-loop integration legitimately calls directly** (as `IgnisDriver`
 does): `ignis_watch(resource $stream, int $mode): int` (one-shot readiness watch, mode `1` =

@@ -872,3 +872,38 @@ compiles, and their verdict does not depend on the runner's speed.
 
 **Kill criterion.** If a throughput regression ships in a tagged release and the V-n covering it
 was not re-measured before the tag, this decision was wrong and the A/B form above is the fix.
+
+## 2026-09-22 — the MVP cut: what the product is, and what left the tree today
+
+The owner asked what else is superfluous for the MVP and asked for an interview before anything
+was decided. The interview, in two rounds, gave these answers, and they are the scope from here:
+
+**The MVP.** An asynchronous platform for Symfony: HTTP, gRPC, server-sent events and websockets
+as the protocols; Symfony Messenger running asynchronously; Temporal. Integrations kept: gRPC
+(E10) and Temporal (E9/E20 on the official `temporalio/sdk-php`). Also kept: the Revolt driver
+(E7), development reload, classic mode, the NTS mode, and the E15 compat gates php-src phpt,
+Revolt DriverTest, FrankenPHP testdata and the chaos suites (the last one entered CI today as
+`e15-chaos`). Laravel is not in the MVP.
+
+**Deleted today, code, tests, benches and CI jobs alike** (documents keep the history, marked):
+
+| what | why it went | what replaces it |
+|---|---|---|
+| the offload pool (E16, ADR-0016: `offload.rs`, `route.rs`, `ignis/offload`, `--offload`) | park had already taken every socket-backed call off its table (V-59 addendum); a second pool of PHP threads existed for `SQLite3` alone, and the owner does not want to maintain it | a call that cannot park blocks its thread, and that is documented (ADR-0024) |
+| the Swoole shim (`ignis/swoole`, E15d) | research 45 had recommended it: a partial API compatibility layer, not a mechanism; its CI leg measured its own pre-existing failures | nothing; Swoole compatibility is not an MVP goal |
+| the Doctrine package (`ignis/doctrine`: per-fiber EntityManager, connection pool, `bench/e21`, `bench/e24`) | 1,063 lines of framework integration the owner did not select | ADR-0042 `scoped` services: the container marks the manager or connection service `scoped` and it resolves per fiber |
+| backend (b), the true-async fork (ADR-0003's second backend, `backend-b.yml`) | a separate engine build, a patch to a fork, a workflow and `cfg` branches through the FFI layer, for an ABI that is not merged upstream | one engine ABI family: PHP 8.5 ZTS and its NTS mode |
+| `ignis/temporal-prototype` | frozen since ADR-0040 and kept only because the E9 replay test ran on it | the replay gate on the official SDK: `CoreSource::replay()` + `bin/replay.php`, `bench/e9-temporal.sh` |
+| the nightly perf job | the first entry of this date | the VALIDATION discipline |
+
+**One exception, decided here rather than by the interview.** Classic mode was not selected as
+kept, but the FrankenPHP testdata gate was, and that gate runs through classic mode
+(`examples/classic_server.php`); classic is also what `InputStream` and `Loop::enterRequest()`
+share their request-cycle code with. It stays, at 500 lines of userland PHP and no mechanism of
+its own. If the FrankenPHP gate is ever dropped, classic mode goes with it.
+
+**The mechanism budget** (CLAUDE.md, ADR-0037) is two mechanisms and one table: park and context.
+
+**Kill criterion.** If an MVP application needs a blocking call that cannot park and cannot be
+made a `scoped` per-fiber resource — a CPU-bound extension call on the request path is the likely
+shape — the offload pool comes back from `git log` as a table row, per ADR-0037, not as a hook.
