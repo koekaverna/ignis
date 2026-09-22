@@ -78,8 +78,8 @@ entry. Owner action: the Packagist account. `main` because it is a publication, 
 ### M3-7 `/stats` is per-example; make it part of the runtime `main` `open`
 **What.** Every example builds its own `/stats` array by hand (hello_server, a3-soak, app.php).
 Move the counters behind `/_ignis/stats`, answered like `/_ignis/health` — the runtime's own
-counters from Rust (threads, stalled, restarts, in-flight per thread, reactor in-flight ops,
-offload queue) merged with the scheduler's (`Ignis\Loop::budgetStats()`, resumes, fibers, idle,
+counters from Rust (threads, stalled, restarts, in-flight per thread, reactor in-flight ops)
+merged with the scheduler's (`Ignis\Loop::budgetStats()`, resumes, fibers, idle,
 cancelled) through one `ignis_stats()` call. Then delete the hand-built arrays.
 **Why.** M4 metrics need one source of truth; today `/stats` queues behind the load it reports
 unless exempted by hand.
@@ -282,7 +282,6 @@ diffuse --
 | `temporal-core-transport/src/CoreCodec.php` | 108 |
 | `temporal-prototype/src/ignis-temporal.php` | 59 |
 | `temporal-core-transport/tests/conformance.php` | 27 |
-| `offload/src/ignis-offload.php` + `worker.php` | 40 |
 | `runtime/src/Loop.php` | 13 |
 
 -- and the top two are the protojson decoders, i.e. documents off the network indexed without
@@ -323,8 +322,8 @@ fails at the only moment it is for, and the only trace is a watchdog line and th
 library rather than making the real call — the library then unwinds its own state machine and the
 exception surfaces at the next PHP boundary with a sound frame. `EINTR` makes libpq retry, so the
 error has to be a connection-fatal one (`ECONNRESET`), which poisons the pooled connection — arguably
-correct, since a cancelled query's connection must be discarded anyway, and that is what
-`PooledConnection::reset()` already exists for.
+correct, since a cancelled query's connection must be discarded anyway (the `ignis/doctrine` pool
+that used to do that is gone since 2026-09-22; a `scoped` holder's destructor is where it happens now).
 (b) **Defer the throw.** Mark the fiber cancel-requested and raise only once it is back in PHP. That
 fixes the unanswered request and the frame damage and does **not** free the thread, so it is the
 smaller half of the problem.
@@ -332,7 +331,7 @@ smaller half of the problem.
 delivered, zero warnings, and the pooled connection either healthy or explicitly discarded. Plus the
 `Ignis\sleep` arm unchanged at 503 ms, so the fix does not pay for itself out of the working path.
 **Constraints.** `main` — `crates/ignis/src/php/park.rs`, `wait.rs` and the `Loop` cancel path.
-**Related.** `M4-9` (cancellation reaching PG/offload at all) is the feature; this is the defect
+**Related.** `M4-9` (closed 2026-09-22 with the offload pool) was the feature; this is the defect
 underneath it. `S-POOL-LEASE-AGE` fix (3) proposes a watchdog that throws into stuck fibers — which
 would hit exactly this path and must not land before it.
 
@@ -481,10 +480,10 @@ that touch the loop only through `$inflightRequests`, the most nearly separable 
 nine. Unstarted. Note that this is the concern V-107's defect lived in: rejection wrote an HTTP
 status from inside the scheduler, and a gRPC call rejected that way was never answered. The transport
 now maps the refusal, so the defect is closed, but the vocabulary is still the scheduler's.
-**A third, smaller one: two public statics used as a registration API.**
-`Loop::$rawRequestHandler` (set by `Classic\functions.php:26`) and `Loop::$offloadCallbackHandler`
-(set by `offload/src/ignis-offload.php:385`) are how two packages install themselves into the
-scheduler's dispatch. `docs/reference/php-api.md` already says they are not public API, but PHP says
+**A third, smaller one: a public static used as a registration API.**
+`Loop::$rawRequestHandler` (set by `Classic\functions.php:26`) is how classic mode installs itself
+into the scheduler's dispatch (`$offloadCallbackHandler`, the second such static, went with the
+offload pool on 2026-09-22). `docs/reference/php-api.md` already says they are not public API, but PHP says
 they are: there is no guard against a second registrant silently replacing the first, no way to
 unregister, and `isIdle()` reads one of them, so setting it changes the loop's idle behaviour for the
 rest of the process. A `Loop::onRawRequest()` / `onOffloadCallback()` pair with a guard is a small,
@@ -510,8 +509,8 @@ server at 20/20 concurrent. No speed difference this box can resolve.
 `scripts/nts-checks.sh` is the acceptance: the engine really is non-thread-safe, fibers park, ADR-0042
 holds, `waitpid` parks, the three threading flags are refused with exit 2 *and* say why, and a stale
 `LD_LIBRARY_PATH` fails loudly in the loader. Falsified against the ZTS binary — 8 failures, exit 1.
-(b) **No offload replacement.** Everything that cannot park — every regular file, `SQLite3` — blocks
-the single PHP thread instead of a worker. On one thread per process that is one request of M
+(b) **File I/O blocks.** Everything that cannot park — every regular file, `SQLite3` — blocks
+the single PHP thread (as it does on the ZTS build too since the offload pool went, 2026-09-22). On one thread per process that is one request of M
 fibers, not N threads, but it is strictly worse than the ZTS build for file I/O and nothing measures
 how much.
 (c) **No supervision.** The ZTS build respawns a dead PHP thread inside 50 ms with the process still
@@ -595,7 +594,8 @@ exit.
 the next one; a test in `runtime/tests/Classic/` pins it, and `docs/classic-mode.md` shows whichever
 shape is correct.
 
-### A-DESTRUCTOR-IO `PooledConnection::__destruct` makes a database round trip `main` `open — 2026-09-18`
+### A-DESTRUCTOR-IO `PooledConnection::__destruct` makes a database round trip `main` `CLOSED 2026-09-22 — the class went with the ignis/doctrine package (DECISIONS); the rule it violated stays in ADR-0034: a destructor must never park`
+The class is gone; the shape — a destructor that does I/O under loop-scheduled GC — is ADR-0034's rule and applies to any `scoped` holder an application writes.
 **What.** `doctrine/src/Pool/PooledConnection.php:200` → `ConnectionPool::release()` → `reset()` →
 `$connection->exec('ROLLBACK; CLOSE ALL; …')`. A destructor firing during cycle collection — which
 `Loop::collectGarbage()` schedules at the loop's idle point — therefore executes a query, and under
@@ -676,7 +676,7 @@ crate: `module.rs` has ~20 abbreviated names (`ex`, `rv`, `ht`, `zv`, and a six-
 one-letter names at `:552`), `route.rs` ~11, `embed.rs` ~10, `park.rs` ~9, `temporal.rs` ~8; non-SAFETY
 comments inside function bodies number 26 in `park.rs`, 21 in `module.rs`, 20 in `embed.rs`, 11 in
 `main.rs`, 10 in `output.rs`, 8 in `superglobals.rs`. Clean by both rules: `main.rs` naming,
-`offload.rs`, `metrics.rs`, `watch.rs`, `php/wait.rs`.
+`metrics.rs`, `watch.rs`, `php/wait.rs` (`offload.rs` was deleted on 2026-09-22).
 **Why it is a separate item.** It is a mechanical diff across the files most likely to be edited for
 substance, and it buys no behaviour. Doing it *with* a correctness change hides the correctness change.
 **Acceptance.** One commit per file, no behaviour change, `cargo nextest` and the gate green at each
@@ -713,7 +713,7 @@ the tag on the E21 fixture and **two** are candidates:
 |---|---|---|
 | must stay shared — 9 | `cache.app`, `cache.system`, `cache.validator`, `cache.serializer`, `cache.property_info`, `cache.security_expression_language`, `cache.security_is_csrf_token_valid_attribute_expression_language`, `cache.security_is_granted_attribute_expression_language`, `container.env_var_processor` | their `reset()` is `clear()` — the whole cache. Per fiber, every request would start with an empty cache and the memory would multiply: scoping these defeats the thing they are |
 | nothing to scope — 1 | `controller.cache_attribute_listener` | its `reset()` body is empty (`http-kernel/EventListener/CacheAttributeListener.php:131`) |
-| already handled — 2 | `security.untracked_token_storage`, `doctrine` | `FiberScopePass` replaces the first (V-68); `ignis/doctrine` gives the second a manager per fiber (V-69, V-85) |
+| already handled — 2 | `security.untracked_token_storage`, `doctrine` | `FiberScopePass` replaces the first (V-68); the second is a `scoped` service since the `ignis/doctrine` package went (2026-09-22, ADR-0042) |
 | a test double — 1 | `App\Service\ResetWitness` | exists only to make the reset observable (V-95) |
 | **done — 1** | **`security.logout_url_generator`** — `reset()` clears `currentFirewallName`/`currentFirewallContext` (`security-http/Logout/LogoutUrlGenerator.php:159`), which the firewall sets **per request** | scoped 2026-09-20, but only after the arm said the opposite: authenticated it does **not** leak, because `getListener()` resolves through the already-scoped `security.token_storage` first. The anonymous request reaches the property and throws, 2 of 2 — and scoping it then exposed a general defect in the seal (V-105) |
 | **candidates — 1** | **`doctrine.debug_data_holder`** — `reset()` clears `$data`, every query of every request, and it is registered in debug only | mixes requests' queries in the profiler and grows without bound now that the reset is gone. No arm yet: E21 runs `APP_ENV=prod`, so measuring it needs a debug arm first |
@@ -945,6 +945,7 @@ an investigation — is in [`BACKLOG-CLOSED.md`](BACKLOG-CLOSED.md).
 
 | item | outcome |
 |---|---|
+| **A-DESTRUCTOR-IO** | `PooledConnection::__destruct` does a round trip `main` `CLOSED 2026-09-22 — the class went with ignis/doctrine; ADR-0034's rule stays` |
 | **M3-5a** | Laravel in classic mode `agent` `CLOSED 2026-09-22 — out of the MVP (owner interview, DECISIONS)` |
 | **M3-5b** | Fiber-scoped `Container::$instance` `main` `CLOSED 2026-09-22 — out of the MVP` |
 | **M4-9** | Cancellation of offload jobs on disconnect `main` `CLOSED 2026-09-22 — the offload pool is deleted` |
