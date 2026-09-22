@@ -157,6 +157,10 @@ fn tick(settings: &'static Settings, episodes: &mut HashMap<usize, Episode>) {
                 fields: f,
             });
         }
+        if episode.killed && !episode.abandoned && slot.kill_pending.load(Ordering::Acquire) == 1 && state == STATE_BLOCKING {
+            slot.signals_redelivered.fetch_add(1, Ordering::Relaxed);
+            crate::php::kill::deliver(slot);
+        }
         if !episode.abandoned && abandon_ms > 0 && age_ms >= abandon_ms {
             episode.abandoned = true;
             abandon(index, &reactor, &subject, &route, age_ms);
@@ -169,8 +173,9 @@ fn tick(settings: &'static Settings, episodes: &mut HashMap<usize, Episode>) {
 fn abandon(index: usize, reactor: &std::sync::Arc<crate::reactor::Reactor>, subject: &str, route: &str, age_ms: u64) {
     let Some(slot) = scoreboard::slot(index) else { return };
     slot.state.store(STATE_ABANDONED, Ordering::Release);
-    let failed = reactor.fail_pending();
     crate::http::leave_dispatch(reactor);
+    reactor.abandon();
+    let failed = reactor.fail_pending();
     let leaked = LEAKED.fetch_add(1, Ordering::Relaxed) + 1;
     let fields = vec![
         ("worker", index.to_string()),
@@ -186,9 +191,14 @@ fn abandon(index: usize, reactor: &std::sync::Arc<crate::reactor::Reactor>, subj
         value_us: age_ms * 1000,
         fields,
     });
-    if cfg!(php_nts) {
-        tracing::error!(worker = index, "the only interpreter of this process is stuck; exiting 3 for the external supervisor");
+    let unsupervised_main_thread = slot.worker_no.load(Ordering::Relaxed) == 0;
+    if cfg!(php_nts) || unsupervised_main_thread {
+        tracing::error!(
+            worker = index,
+            "a PHP thread nobody can respawn is stuck; exiting 3 for the process supervisor (ADR-0044 master or external)"
+        );
         crate::php::detector::write_report();
+        std::thread::sleep(Duration::from_millis(200));
         std::process::exit(3);
     }
     ABANDONED.lock_unpoisoned().push(index);

@@ -212,6 +212,13 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
         };
         let timeout = if timeout_ms < 0 { None } else { Some(Duration::from_millis(timeout_ms as u64)) };
         let Some(reactor) = reactor_or_throw() else { return };
+        if crate::scoreboard::current().is_some_and(crate::scoreboard::WorkerSlot::is_abandoned) {
+            sys::zend_throw_error(
+                ptr::null_mut(),
+                c"Ignis: this worker was abandoned by the stall watchdog; its script ends here".as_ptr(),
+            );
+            return;
+        }
         crate::scoreboard::enter_poll();
         let done: Vec<Completion> = reactor.poll(timeout);
         crate::scoreboard::leave_poll();

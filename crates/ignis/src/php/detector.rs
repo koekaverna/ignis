@@ -92,7 +92,9 @@ pub unsafe fn observe(site: u32, duration_us: u64, errno: c_int) {
         stats.count += 1;
         stats.max_us = stats.max_us.max(duration_us);
         stats.total_us += duration_us;
-        *stats.routes.entry(route.clone()).or_default() += 1;
+        let route_key =
+            if stats.routes.len() >= ROUTES_PER_SITE && !stats.routes.contains_key(&route) { "{other}".to_string() } else { route.clone() };
+        *stats.routes.entry(route_key).or_default() += 1;
         stats.allowed = allowed;
         if stats.first_frames.is_empty() && !frames.is_empty() {
             stats.first_frames = frames.clone();
@@ -123,10 +125,24 @@ pub unsafe fn observe(site: u32, duration_us: u64, errno: c_int) {
     }
 }
 
-/// The path without its query, which is what an alert key and the report group by.
-fn route_of(uri: &str) -> String {
-    uri.split_once('?').map_or(uri, |(p, _)| p).to_string()
+/// The path without its query and with identifier-like segments folded to `{id}`, which is what
+/// an alert key and the report group by — a route, not one request's path.
+pub fn route_of(uri: &str) -> String {
+    let path = uri.split_once('?').map_or(uri, |(p, _)| p);
+    path.split('/').map(|segment| if looks_like_identifier(segment) { "{id}" } else { segment }).collect::<Vec<_>>().join("/")
 }
+
+fn looks_like_identifier(segment: &str) -> bool {
+    if segment.is_empty() {
+        return false;
+    }
+    let digits = segment.chars().all(|c| c.is_ascii_digit());
+    let hexish = segment.len() >= 16 && segment.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    digits || hexish
+}
+
+/// Distinct routes remembered per site in the report; past it they are folded into one entry.
+const ROUTES_PER_SITE: usize = 32;
 
 /// Up to `limit` user frames of the running fiber, innermost first, as `file:line`.
 ///
@@ -272,9 +288,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_route_drops_the_query() {
+    fn the_route_drops_the_query_and_folds_identifiers() {
         assert_eq!(route_of("/a/b?x=1"), "/a/b");
         assert_eq!(route_of("/a"), "/a");
+        assert_eq!(route_of("/users/1234/orders/42?page=2"), "/users/{id}/orders/{id}");
+        assert_eq!(route_of("/files/3f2504e04f8911d39a0c0305e82c3301"), "/files/{id}");
+        assert_eq!(route_of("/v2/report"), "/v2/report");
     }
 
     #[test]

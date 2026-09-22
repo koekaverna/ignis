@@ -154,6 +154,9 @@ pub struct Reactor {
     uris: Mutex<HashMap<u64, String>>,
     /// This thread's scoreboard slot (`scoreboard.rs`), `usize::MAX` until the worker registered.
     slot: AtomicUsize,
+    /// ADR-0043 L5: set by the ticker when this thread was given up; a request delivered after
+    /// that is refused at once instead of joining a queue nobody drains.
+    abandoned: AtomicBool,
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
     last_active_us: AtomicU64,
     created: std::time::Instant,
@@ -284,6 +287,7 @@ impl Reactor {
             answers: Mutex::new(HashMap::new()),
             uris: Mutex::new(HashMap::new()),
             slot: AtomicUsize::new(usize::MAX),
+            abandoned: AtomicBool::new(false),
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
             spin_us: std::env::var("IGNIS_POLL_SPIN_US").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -336,6 +340,9 @@ impl Reactor {
     pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
+        if self.is_abandoned() {
+            return (id, rx);
+        }
         self.uris.lock_unpoisoned().insert(id, req.uri.clone());
         self.answers.lock_unpoisoned().insert(id, Answer::Whole(tx));
         self.inflight.fetch_add(1, Ordering::Relaxed);
@@ -387,6 +394,14 @@ impl Reactor {
             return None;
         }
         self.uris.lock_unpoisoned().get(&id).cloned()
+    }
+
+    pub fn abandon(&self) {
+        self.abandoned.store(true, Ordering::Release);
+    }
+
+    pub fn is_abandoned(&self) -> bool {
+        self.abandoned.load(Ordering::Acquire)
     }
 
     pub fn set_slot(&self, slot: usize) {

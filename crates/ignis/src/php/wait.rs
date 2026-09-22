@@ -63,6 +63,20 @@ unsafe fn closing(fiber: *mut sys::zend_fiber) -> bool {
     }
 }
 
+/// True when the running fiber would be refused a park: the caller then answers `ECANCELED`
+/// without submitting an op that nothing will wait for.
+///
+/// # Safety
+/// PHP thread.
+#[cfg(feature = "universal-park")]
+pub(crate) unsafe fn refuses_park() -> bool {
+    // SAFETY: active_fiber is a plain pointer field; `closing` reads the fiber's own bytes.
+    unsafe {
+        let fiber = (*tsrm::executor_globals()).active_fiber;
+        !fiber.is_null() && closing(fiber)
+    }
+}
+
 /// Takes the reference that keeps the fiber object alive while it is parked here.
 ///
 /// # Safety
@@ -200,6 +214,11 @@ pub unsafe fn resume_parked(id: u64, outcome: Outcome) -> bool {
     // reference `hold` took is dropped only after the resume returned.
     unsafe {
         let Some(fiber) = PARKED.with(|p| p.borrow_mut().remove(&id)) else { return false };
+        if (*fiber).context.status != sys::ZEND_FIBER_STATUS_SUSPENDED {
+            tracing::error!(id, "a completion arrived for a fiber that is not suspended; the resume is refused");
+            release(fiber);
+            return true;
+        }
         RESULTS.with(|r| r.borrow_mut().insert(id, outcome));
         let mut ret: sys::zval = std::mem::zeroed();
         sys::zend_fiber_resume(fiber, ptr::null_mut(), &mut ret);

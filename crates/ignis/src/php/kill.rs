@@ -11,7 +11,10 @@
 //! interrupts the wait with `EINTR` and the interposer answers `ECANCELED` (L4, `park.rs`).
 //!
 //! FFI contract: `zend_interrupt_function` is process-global and chained; the handler is installed
-//! once per process with `SA_RESTART`, so nothing outside the shim's waits observes it.
+//! once per process with `SA_RESTART`, so nothing outside the shim's waits observes it. Waits the
+//! kernel restarts (`read` without a timeout, `flock`, `waitpid`) do not return on the signal;
+//! for those the shim's own re-entry check and the ticker's re-delivery every tick are what land
+//! the kill, and abandonment is what ends the ones nothing reaches.
 use std::ffi::c_int;
 use std::ptr;
 use std::sync::OnceLock;
@@ -82,6 +85,10 @@ unsafe extern "C" fn on_interrupt(execute_data: *mut sys::zend_execute_data) {
         if let Some(Some(previous)) = PREVIOUS_INTERRUPT.get() {
             previous(execute_data);
         }
+        if !(*tsrm::executor_globals()).exception.is_null() {
+            AtomicU8::from_ptr(interrupt_flag_address() as *mut u8).store(1, Ordering::Release);
+            return;
+        }
         let fiber = (*tsrm::executor_globals()).active_fiber;
         if fiber.is_null() || !scoreboard::kill_wanted_for(fiber as usize) {
             if scoreboard::current().is_some_and(|s| s.kill_pending.load(Ordering::Acquire) == 1) {
@@ -89,8 +96,16 @@ unsafe extern "C" fn on_interrupt(execute_data: *mut sys::zend_execute_data) {
             }
             return;
         }
+        let request_id = scoreboard::current().map_or(0, |s| s.request_id.load(Ordering::Relaxed));
         force_close(fiber);
         scoreboard::acknowledge_kill(true);
+        answer_killed(request_id);
+        crate::alerts::report(crate::alerts::Event {
+            key: crate::alerts::Key::new("fiber_killed", "interrupt", route_of_request(request_id)),
+            level: crate::alerts::Level::Error,
+            value_us: 0,
+            fields: vec![("request", request_id.to_string()), ("fiber", format!("{:#x}", fiber as usize))],
+        });
     }
 }
 
@@ -121,6 +136,28 @@ unsafe fn force_close(fiber: *mut sys::zend_fiber) {
     }
 }
 
+/// A killed request is answered 504 from here, so the client is not left waiting on a fiber that
+/// no longer runs; the loop's own `finally` answer, when it lands first, makes this a no-op.
+fn answer_killed(request_id: u64) {
+    if request_id == 0 {
+        return;
+    }
+    if let Some(reactor) = super::module::try_reactor() {
+        reactor.respond(
+            request_id,
+            crate::reactor::HttpResponse {
+                status: 504,
+                headers: vec![("content-type".into(), "text/plain".into())],
+                body: crate::reactor::ResponseBody::Full(bytes::Bytes::from_static(b"504 fiber killed by the stall watchdog\n")),
+            },
+        );
+    }
+}
+
+fn route_of_request(request_id: u64) -> String {
+    super::module::try_reactor().and_then(|r| r.uri_of(request_id)).map(|u| super::detector::route_of(&u)).unwrap_or_default()
+}
+
 /// `Ignis\KilledException` when the runtime package is loaded, else `\Error`.
 unsafe fn killed_exception_class() -> *mut sys::zend_class_entry {
     // SAFETY: on the PHP thread at an opcode boundary; a class lookup may autoload, which is
@@ -140,6 +177,8 @@ unsafe fn killed_exception_class() -> *mut sys::zend_class_entry {
 /// L3/L4 delivery from the ticker: record the fiber and signal the worker.
 pub fn deliver(slot: &scoreboard::WorkerSlot) -> bool {
     slot.kill_fiber.store(slot.fiber.load(Ordering::Relaxed), Ordering::Relaxed);
+    slot.kill_episode.store(slot.php_since_ns.load(Ordering::Relaxed), Ordering::Relaxed);
+    slot.kill_request.store(slot.request_id.load(Ordering::Relaxed), Ordering::Relaxed);
     slot.kill_pending.store(1, Ordering::Release);
     let pid = slot.pid.load(Ordering::Relaxed);
     // SAFETY: getpid takes nothing; pthread_kill/kill are given a thread handle or pid the worker

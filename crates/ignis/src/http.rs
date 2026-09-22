@@ -354,7 +354,7 @@ fn health() -> Response<tonic::body::Body> {
     let unhealthy = crate::alerts::global().unhealthy_workers().len();
     let blocked = crate::watchdog::blocked_workers();
     let leaked_max = crate::recovery::Settings::global().leaked_workers_max;
-    let ok = total > 0 && stalled < total && !is_draining() && leaked < leaked_max;
+    let ok = total > 0 && stalled < total && !is_draining() && (leaked_max == 0 || leaked < leaked_max);
     let body = format!(
         "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts},\"blocked_workers\":{blocked},\"leaked_workers\":{leaked},\"unhealthy_workers\":{unhealthy}}}\n",
         if ok {

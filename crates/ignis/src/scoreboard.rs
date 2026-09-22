@@ -49,17 +49,33 @@ pub struct WorkerSlot {
     /// `EG(active_fiber)` at the last switch, as an address; never dereferenced by a reader.
     pub fiber: AtomicUsize,
     pub kill_fiber: AtomicUsize,
+    /// The stall episode (`php_since_ns`) and request the kill was asked for: a kill applies only
+    /// while both still match, so a fiber that yielded, or a pooled fiber that took the next
+    /// request, is never killed for the previous one.
+    pub kill_episode: AtomicU64,
+    pub kill_request: AtomicU64,
     /// `&EG(vm_interrupt)` of this worker: the one byte the kill signal's handler stores to.
     pub interrupt_flag: AtomicUsize,
     pub pthread: AtomicU64,
     pub interrupt_acks: AtomicU64,
     pub kills: AtomicU64,
     pub signals: AtomicU64,
+    pub signals_redelivered: AtomicU64,
     pub blocking_calls: AtomicU64,
     pub blocking_us_max: AtomicU64,
 }
 
 impl WorkerSlot {
+    /// A state store that never overwrites `STATE_ABANDONED`: once the ticker gave a worker up,
+    /// nothing the worker itself does brings it back into the board.
+    fn move_to(&self, state: u8) {
+        let _ = self.state.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| (current != STATE_ABANDONED).then_some(state));
+    }
+
+    pub fn is_abandoned(&self) -> bool {
+        self.state.load(Ordering::Acquire) == STATE_ABANDONED
+    }
+
     const fn empty() -> WorkerSlot {
         WorkerSlot {
             live: AtomicU8::new(0),
@@ -75,11 +91,14 @@ impl WorkerSlot {
             request_id: AtomicU64::new(0),
             fiber: AtomicUsize::new(0),
             kill_fiber: AtomicUsize::new(0),
+            kill_episode: AtomicU64::new(0),
+            kill_request: AtomicU64::new(0),
             interrupt_flag: AtomicUsize::new(0),
             pthread: AtomicU64::new(0),
             interrupt_acks: AtomicU64::new(0),
             kills: AtomicU64::new(0),
             signals: AtomicU64::new(0),
+            signals_redelivered: AtomicU64::new(0),
             blocking_calls: AtomicU64::new(0),
             blocking_us_max: AtomicU64::new(0),
         }
@@ -166,7 +185,7 @@ pub fn enter_poll() {
         let now = monotonic_ns();
         s.heartbeat_ns.store(now, Ordering::Relaxed);
         s.state_since_ns.store(now, Ordering::Relaxed);
-        s.state.store(STATE_IDLE, Ordering::Release);
+        s.move_to(STATE_IDLE);
         s.kill_pending.store(0, Ordering::Relaxed);
         s.kill_fiber.store(0, Ordering::Relaxed);
     }
@@ -179,7 +198,7 @@ pub fn leave_poll() {
         s.heartbeat_ns.store(now, Ordering::Relaxed);
         s.php_since_ns.store(now, Ordering::Relaxed);
         s.state_since_ns.store(now, Ordering::Relaxed);
-        s.state.store(STATE_PHP, Ordering::Release);
+        s.move_to(STATE_PHP);
     }
 }
 
@@ -190,7 +209,7 @@ pub fn enter_blocking(site: u32) -> u64 {
     if let Some(s) = current() {
         s.site.store(site, Ordering::Relaxed);
         s.state_since_ns.store(now, Ordering::Relaxed);
-        s.state.store(STATE_BLOCKING, Ordering::Release);
+        s.move_to(STATE_BLOCKING);
     }
     now
 }
@@ -204,7 +223,7 @@ pub fn leave_blocking(started: u64) -> u64 {
     if let Some(s) = current() {
         s.site.store(0, Ordering::Relaxed);
         s.state_since_ns.store(now, Ordering::Relaxed);
-        s.state.store(STATE_PHP, Ordering::Release);
+        s.move_to(STATE_PHP);
         s.blocking_calls.fetch_add(1, Ordering::Relaxed);
         s.blocking_us_max.fetch_max(us, Ordering::Relaxed);
     }
@@ -238,9 +257,15 @@ pub fn acknowledge_kill(killed: bool) {
     }
 }
 
-/// True while the ticker wants the fiber at `fiber` killed on this worker.
+/// True while the ticker wants the fiber at `fiber` killed on this worker — for the stall
+/// episode and the request it was asked for, no other.
 pub fn kill_wanted_for(fiber: usize) -> bool {
-    current().is_some_and(|s| s.kill_pending.load(Ordering::Acquire) == 1 && s.kill_fiber.load(Ordering::Relaxed) == fiber)
+    current().is_some_and(|s| {
+        s.kill_pending.load(Ordering::Acquire) == 1
+            && s.kill_fiber.load(Ordering::Relaxed) == fiber
+            && s.kill_episode.load(Ordering::Relaxed) == s.php_since_ns.load(Ordering::Relaxed)
+            && s.kill_request.load(Ordering::Relaxed) == s.request_id.load(Ordering::Relaxed)
+    })
 }
 
 /// Blocking-forward sites, named `library:symbol`, indexed from 1.
@@ -349,6 +374,12 @@ mod tests {
         let s = &SLOTS[i];
         s.kill_pending.store(1, Ordering::Relaxed);
         s.kill_fiber.store(42, Ordering::Relaxed);
+        s.kill_episode.store(s.php_since_ns.load(Ordering::Relaxed), Ordering::Relaxed);
+        s.kill_request.store(s.request_id.load(Ordering::Relaxed), Ordering::Relaxed);
+        assert!(kill_wanted_for(42));
+        set_current_request(7);
+        assert!(!kill_wanted_for(42), "a kill asked for another request never applies");
+        set_current_request(0);
         assert!(kill_wanted_for(42));
         enter_poll();
         assert_eq!(s.state.load(Ordering::Relaxed), STATE_IDLE);

@@ -249,8 +249,11 @@ impl Alerts {
         inner.bucket_at = now;
         let mut kept = Vec::with_capacity(lines.len());
         for line in lines {
-            if inner.bucket >= 1.0 {
-                inner.bucket -= 1.0;
+            let must_pass = line.level == Level::Critical || line.what == "escalated";
+            if must_pass || inner.bucket >= 1.0 {
+                if !must_pass {
+                    inner.bucket -= 1.0;
+                }
                 kept.push(line);
             } else {
                 inner.dropped += 1;

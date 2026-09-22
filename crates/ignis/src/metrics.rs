@@ -193,7 +193,7 @@ pub fn render() -> String {
 
 /// A Prometheus label value: quotes and backslashes escaped.
 fn label(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
 }
 
 /// Everything summed over the registered threads, gathered in one pass.

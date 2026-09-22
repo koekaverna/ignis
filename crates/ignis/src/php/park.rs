@@ -42,7 +42,7 @@ use std::sync::{Mutex, OnceLock};
 use super::tsrm;
 use ignis_sys as sys;
 
-use super::wait::{Parked, await_any, await_op};
+use super::wait::{Parked, await_any, await_op, refuses_park};
 use crate::lock::LockUnpoisoned;
 use crate::reactor::{Op, Outcome};
 
@@ -96,7 +96,12 @@ pub static PARK_FAILED: AtomicU64 = AtomicU64::new(0);
 /// syscall. Logged at `warn` because this is not supposed to happen on a worker thread.
 fn park_failed(what: &str) {
     PARK_FAILED.fetch_add(1, Ordering::Relaxed);
-    tracing::warn!(what, "universal park: policy says park but the call could not park — it blocked the thread");
+    crate::alerts::report(crate::alerts::Event {
+        key: crate::alerts::Key::new("park_failed", what, ""),
+        level: crate::alerts::Level::Error,
+        value_us: 0,
+        fields: vec![("what", "policy says park but the call could not park; it blocked the thread".into())],
+    });
 }
 
 /// `IGNIS_PARK_TRACE=1`: one stderr line per decision, for diagnosing a library that misbehaves
@@ -236,12 +241,17 @@ unsafe fn gate(ret: *const c_void, sym: &str) -> Gate {
 /// runtime's own probes. Those calls are not the application's and are neither parked nor timed.
 const SELF_SITE: u32 = 0;
 
-/// The basename of this executable, which `dladdr` reports for call sites inside it.
-fn self_basename() -> &'static str {
-    static NAME: OnceLock<String> = OnceLock::new();
-    NAME.get_or_init(|| {
-        std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default()
-    })
+/// The load base of this executable, which `dladdr` reports for every call site inside it — the
+/// address, not a name, so a renamed or symlinked binary is still recognised.
+fn self_base() -> *mut c_void {
+    static BASE: OnceLock<usize> = OnceLock::new();
+    *BASE.get_or_init(|| {
+        // SAFETY: dladdr on the address of a function in this binary; Dl_info is plain C data.
+        unsafe {
+            let mut info: libc::Dl_info = std::mem::zeroed();
+            if libc::dladdr(self_base as *const c_void, &mut info) != 0 { info.dli_fbase as usize } else { 0 }
+        }
+    }) as *mut c_void
 }
 
 unsafe fn resolve_site(ret: *const c_void, sym: &str) -> Site {
@@ -255,7 +265,7 @@ unsafe fn resolve_site(ret: *const c_void, sym: &str) -> Site {
         if libc::dladdr(ret, &mut info) != 0 && !info.dli_fname.is_null() {
             let name = CStr::from_ptr(info.dli_fname).to_string_lossy();
             let base = name.rsplit('/').next().unwrap_or(&name).to_string();
-            if !base.is_empty() && base == self_basename() {
+            if info.dli_fbase == self_base() {
                 trace(&format!("site {key:#x} {sym} from the executable itself: outside"));
                 let site = Site { parks: false, index: SELF_SITE };
                 SITES.with(|s| s.borrow_mut().insert(key, site));
@@ -327,6 +337,11 @@ impl SyscallResult for c_uint {
 /// detector, and — if a kill is pending for this fiber and the wait came back `EINTR` — answered
 /// `ECANCELED` instead of being retried by the library (ADR-0043 §7 L4).
 unsafe fn forward<T: SyscallResult>(site: Site, real: impl FnOnce() -> T) -> T {
+    // SAFETY: on a PHP thread inside a fiber (the gate said so); the meta helpers only read EG.
+    if unsafe { kill_cancels_this_fiber() } {
+        // SAFETY: only errno of this thread is written.
+        return unsafe { cancelled() };
+    }
     let started = crate::scoreboard::enter_blocking(site.index);
     let mut result = real();
     // SAFETY: errno of the thread that just made the call.
@@ -345,7 +360,9 @@ unsafe fn forward<T: SyscallResult>(site: Site, real: impl FnOnce() -> T) -> T {
 }
 
 /// True when the ticker asked for the running fiber to die (L4), or the loop marked it for
-/// force-close (L2): either way this fiber gets no more waits.
+/// force-close (L2): either way this fiber gets no more waits. The kill itself is not acknowledged
+/// here: `vm_interrupt` is already set, and the interrupt function force-closes the fiber at its
+/// next opcode, which is where the acknowledgement belongs.
 unsafe fn kill_cancels_this_fiber() -> bool {
     // SAFETY: PHP thread inside a fiber; active_fiber is a plain pointer field.
     unsafe {
@@ -358,7 +375,6 @@ unsafe fn kill_cancels_this_fiber() -> bool {
             if !meta.is_null() {
                 (*meta).kill_pending = true;
             }
-            crate::scoreboard::acknowledge_kill(true);
             return true;
         }
         !meta.is_null() && (*meta).kill_pending
@@ -502,6 +518,10 @@ enum Park {
 
 /// Park until `fd` is ready in `dir`.
 unsafe fn park_on(fd: c_int, write: bool) -> Park {
+    // SAFETY: PHP thread inside a fiber, the caller's contract.
+    if unsafe { refuses_park() } {
+        return Park::Cancelled;
+    }
     let Some(r) = super::module::try_reactor() else {
         park_failed("park_on: no reactor");
         return Park::Unavailable;
@@ -514,8 +534,12 @@ unsafe fn park_on(fd: c_int, write: bool) -> Park {
     trace(&format!("park_on fd={fd} resumed {outcome:?}"));
     match outcome {
         Parked::Done(_) => Park::Ready,
-        Parked::Cancelled => Park::Cancelled,
+        Parked::Cancelled => {
+            r.submit(Op::CancelWatch { target: id });
+            Park::Cancelled
+        }
         Parked::Unavailable => {
+            r.submit(Op::CancelWatch { target: id });
             park_failed("park_on: the fiber could not suspend (switch blocked)");
             Park::Unavailable
         }
@@ -567,6 +591,10 @@ unsafe fn park_io(fd: c_int, write: bool) -> Wait {
 }
 
 unsafe fn park_sleep(us: u64) -> Park {
+    // SAFETY: PHP thread inside a fiber, the caller's contract.
+    if unsafe { refuses_park() } {
+        return Park::Cancelled;
+    }
     let Some(r) = super::module::try_reactor() else {
         park_failed("park_sleep: no reactor");
         return Park::Unavailable;
@@ -576,8 +604,14 @@ unsafe fn park_sleep(us: u64) -> Park {
     match unsafe { await_op(id) } {
         Parked::Done(Outcome::Slept { .. }) => Park::Ready,
         Parked::Done(_) => Park::Unavailable,
-        Parked::Cancelled => Park::Cancelled,
-        Parked::Unavailable => Park::Unavailable,
+        Parked::Cancelled => {
+            r.submit(Op::CancelWatch { target: id });
+            Park::Cancelled
+        }
+        Parked::Unavailable => {
+            r.submit(Op::CancelWatch { target: id });
+            Park::Unavailable
+        }
     }
 }
 
@@ -591,7 +625,10 @@ unsafe fn data_call<T: SyscallResult>(g: Gate, fd: c_int, write: bool, events: i
             Gate::Outside => real(),
             Gate::Block(_g, site) => forward(site, real),
             Gate::Park(_g, site) => {
-                if !would_block(fd) || ready_now(fd, events) {
+                if is_nonblocking(fd) || ready_now(fd, events) {
+                    return real();
+                }
+                if !would_block(fd) {
                     return forward(site, real);
                 }
                 match park_io(fd, write) {
@@ -681,12 +718,19 @@ pub unsafe extern "C" fn ignis_park_sendto(
     }
 }
 
-/// A call whose flags say "do not wait" never parks; it is still timed when inside a fiber.
+/// A call whose flags say "do not wait" neither parks nor blocks: it is made raw.
 fn without_park(g: Gate) -> Gate {
     match g {
-        Gate::Park(guard, site) => Gate::Block(guard, site),
+        Gate::Park(..) | Gate::Block(..) => Gate::Outside,
         other => other,
     }
+}
+
+/// `O_NONBLOCK` is set: the call answers at once, so there is nothing to park on or to time.
+unsafe fn is_nonblocking(fd: c_int) -> bool {
+    // SAFETY: F_GETFL takes no pointer and validates the descriptor itself.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    flags >= 0 && flags & libc::O_NONBLOCK != 0
 }
 
 /// How `park_pollfds` came back.
@@ -701,6 +745,10 @@ enum PollPark {
 /// The parking core behind poll/ppoll/select: one watch per interest, the caller's timeout as a
 /// timer in the same race.
 unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> PollPark {
+    // SAFETY: PHP thread inside a fiber, the caller's contract.
+    if unsafe { refuses_park() } {
+        return PollPark::Cancelled;
+    }
     let Some(reactor) = super::module::try_reactor() else {
         park_failed("park_pollfds: no reactor");
         return PollPark::Unavailable;
@@ -795,10 +843,10 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
     // exactly the call the program made.
     unsafe {
         let real = |t: c_int| libc::syscall(libc::SYS_poll, fds, n as usize, t) as c_int;
-        let site = match gate(ret, sym) {
+        let (site, _guard) = match gate(ret, sym) {
             Gate::Outside => return real(timeout),
             Gate::Block(_g, site) => return if timeout == 0 { real(0) } else { forward(site, || real(timeout)) },
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
         if timeout == 0 || n == 0 {
             return real(timeout);
@@ -918,10 +966,10 @@ pub unsafe extern "C" fn ignis_park_select(
         let caller_ts = ts_of(tv);
         let real = |r, w, e| sel(r, w, e, caller_ts.as_ref().map_or(std::ptr::null(), |t| t as *const _));
         let timeout = caller_ts.as_ref().map_or(-1, ms_ceil);
-        let site = match gate(ret, "select") {
+        let (site, _guard) = match gate(ret, "select") {
             Gate::Outside => return real(r, w, e),
             Gate::Block(_g, site) => return if timeout == 0 { real(r, w, e) } else { forward(site, || real(r, w, e)) },
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
         if n <= 0 || timeout == 0 {
             return real(r, w, e);
@@ -982,10 +1030,10 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
     // the program already made; parking only delays it.
     unsafe {
         let real = || libc::syscall(libc::SYS_connect, fd, addr, alen as usize) as c_int;
-        let site = match gate(ret, "connect") {
+        let (site, _guard) = match gate(ret, "connect") {
             Gate::Outside => return real(),
             Gate::Block(_g, site) => return forward(site, real),
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
         let flags = libc::fcntl(fd, libc::F_GETFL);
         if flags < 0 || flags & libc::O_NONBLOCK != 0 {
@@ -1038,10 +1086,10 @@ pub unsafe extern "C" fn ignis_park_nanosleep(ret: *const c_void, req: *const li
     // `rem` is written only on the success path, where the full interval elapsed.
     unsafe {
         let real = || libc::syscall(libc::SYS_nanosleep, req, rem) as c_int;
-        let site = match gate(ret, "nanosleep") {
+        let (site, _guard) = match gate(ret, "nanosleep") {
             Gate::Outside => return real(),
             Gate::Block(_g, site) => return forward(site, real),
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
         let Some(us) = (!req.is_null()).then(|| microseconds_of(&*req)).flatten() else { return real() };
         match park_sleep(us) {
@@ -1067,10 +1115,10 @@ pub unsafe extern "C" fn ignis_park_usleep(ret: *const c_void, us: c_uint) -> c_
     unsafe {
         let ts = libc::timespec { tv_sec: (us / 1_000_000) as libc::time_t, tv_nsec: ((us % 1_000_000) * 1000) as libc::c_long };
         let real = || libc::syscall(libc::SYS_nanosleep, &ts as *const libc::timespec, std::ptr::null_mut::<libc::timespec>()) as c_int;
-        let site = match gate(ret, "usleep") {
+        let (site, _guard) = match gate(ret, "usleep") {
             Gate::Outside => return real(),
             Gate::Block(_g, site) => return forward(site, real),
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
         match park_sleep(us as u64) {
             Park::Ready => 0,
@@ -1093,10 +1141,10 @@ pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_ui
             let rc = libc::syscall(libc::SYS_nanosleep, &requested as *const libc::timespec, &mut remaining as *mut libc::timespec);
             unslept_seconds(rc as c_int, &remaining)
         };
-        let site = match gate(ret, "sleep") {
+        let (site, _guard) = match gate(ret, "sleep") {
             Gate::Outside => return real(),
             Gate::Block(_g, site) => return forward(site, real),
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
         match park_sleep((s as u64).saturating_mul(1_000_000)) {
             Park::Ready => 0,
@@ -1173,11 +1221,11 @@ pub unsafe extern "C" fn ignis_park_flock(ret: *const c_void, fd: c_int, operati
     unsafe {
         let real = || libc::syscall(libc::SYS_flock, fd, operation) as c_int;
         let blocking = operation & libc::LOCK_NB == 0 && operation & libc::LOCK_UN == 0;
-        let site = match gate(ret, "flock") {
+        let (site, _guard) = match gate(ret, "flock") {
             Gate::Outside => return real(),
             Gate::Block(_g, site) => return if blocking { forward(site, real) } else { real() },
             Gate::Park(_g, _) if !blocking => return real(),
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
 
         let mut wait_us = FLOCK_RETRY_FIRST_US;
@@ -1245,11 +1293,11 @@ pub unsafe extern "C" fn ignis_park_waitpid(ret: *const c_void, pid: c_int, stat
     unsafe {
         let real = || libc::syscall(libc::SYS_wait4, pid, status, options, std::ptr::null_mut::<c_void>()) as c_int;
         let waits = options & libc::WNOHANG == 0 && pid > 0;
-        let site = match gate(ret, "waitpid") {
+        let (site, _guard) = match gate(ret, "waitpid") {
             Gate::Outside => return real(),
             Gate::Block(_g, site) => return if waits { forward(site, real) } else { real() },
             Gate::Park(_g, _) if !waits => return real(),
-            Gate::Park(_g, site) => site,
+            Gate::Park(guard, site) => (site, guard),
         };
         let pidfd = libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) as c_int;
         if pidfd < 0 {
