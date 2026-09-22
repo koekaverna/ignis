@@ -182,7 +182,7 @@ with `SUITES=symfony-http-foundation` finishes in bounded time with a hung test 
 by a fixture that parks a fiber forever. Then, and not before, the `e15-chaos` job returns to
 `ci.yml` (its last shape is in `git log` at `7c1c48e`).
 
-### S-STALL-ALERTS Scoreboard, ticker, alert module with dedup — the warning/error scheme (ADR-0043 §3, §4, §6) `main` `open — owner, 2026-09-23`
+### S-STALL-ALERTS Scoreboard, ticker, alert module with dedup — the warning/error scheme (ADR-0043 §3, §4, §6) `main` `built 2026-09-23 (V-124): S-1, S-4, S-9 done; S-14 storm and S-16 shared page open`
 **What.** A per-worker slot of atomics (state, since, request id, site, acks), a 100 ms ticker in
 the master that turns slot age into `stall` events by `busy_warn_ms`/`stall_kill_ms`/
 `stall_abandon_ms` and classifies the worker from `/proc/<pid>/task/<tid>/{syscall,wchan,stat}`, and
@@ -197,7 +197,7 @@ per key per window ≤ 3, escalation once, drops counted), S-14 (storm: ≤ `max
 **Constraints.** `alerts.rs` and its tests: `agent`. Slot writers in `module.rs`/`park.rs`, the
 NTS page and the ticker's `/proc` reads: `main`. Nothing in a signal handler.
 
-### S-BLOCKING-DETECTOR Every blocking forward inside a fiber is timed, reported once per site, and can fail a test (ADR-0043 §5) `main` `open — owner, 2026-09-23`
+### S-BLOCKING-DETECTOR Every blocking forward inside a fiber is timed, reported once per site, and can fail a test (ADR-0043 §5) `main` `built 2026-09-23 (V-124): S-2 audit and S-13 done; S-3 on a Symfony suite and S-11 at 1 % resolution open`
 **What.** In the interposer, on the path that already forwards blockingly inside a fiber: two
 `clock_gettime`, a `blocking_call` event over `blocking.threshold_us` with library, symbol,
 duration, fd kind, request id, and on the first occurrence per site (`blocking.trace`) a PHP
@@ -215,7 +215,7 @@ unchanged), S-13 (the `flock` backoff park is not a site).
 **Constraints.** `park.rs` timing and the backtrace: `main`. `Testing/`, the audit script, the
 report format: `agent`. The detector never times a park, only a forward that blocks.
 
-### S-FIBER-RECOVERY The ladder L0–L5 with flexible configuration, one delivery for both carriers (ADR-0043 §7, §8; research 49) `main` `open — owner, 2026-09-23; absorbs S-FIBER-TIMEOUT's mechanism and M4-7's naming`
+### S-FIBER-RECOVERY The ladder L0–L5 with flexible configuration, one delivery for both carriers (ADR-0043 §7, §8; research 49) `main` `built 2026-09-23 (V-124): S-5, S-6, S-7, S-8, S-10 done on ZTS and inside a forked worker; S-12 (ASAN) and the master-side NTS half open`
 **What.** L0 `fiber_timeout_ms` per request with per-route override, armed through `deadline()`'s
 timer, the expiry naming the park's file:line from `zend_fiber.execute_data`. L2 force-close: after
 a swallowed cancellation the loop answers 504, drops every reference and `unset`s the fiber; the

@@ -1,6 +1,6 @@
 # ADR-0043 — Stall detection, stuck-fiber recovery and blocking alerts, on both carriers (ZTS threads and NTS prefork)
 
-Status: **proposed** (main agent, 2026-09-23, owner brief of the same day: "must work on NTS and
+Status: **accepted as built** (2026-09-23, V-124: the ladder S-1/S-5–S-10 passes on the release binary, the audit runs, hello-world within noise of `main`; open: S-12 under ASAN, the master-side shared scoreboard for ADR-0044 workers, S-11 at 1 % resolution). Written the same morning as **proposed** (main agent, owner brief of the same day: "must work on NTS and
 ZTS — another agent is finishing the NTS process fork, FPM-style, for a shared opcache; warn when
 a thread/process is blocked, by timer, deduplicated, with a warning/error scheme; under load tests
 and live runs blocking logic must be detected at once and logged — that is how every blocking site

@@ -6352,3 +6352,67 @@ Kill criterion of ADR-0044: ≥ 90 % on both routes (90 % and 93 %) and memory u
 Pss, 2.7× by the double-counting sum). Both hold; the ADR is accepted. Not measured: more workers
 than cores, the master's respawn latency under load, and the shape on a box where `wrk` has its own
 cores — hello's absolute numbers here are the VM's (V-122).
+
+## V-124 — ADR-0043 built: the stall ladder, the blocking detector and the alert module measured on both carrier shapes (research 50 S-1, S-5–S-10, S-2 audit, S-11 cost)
+
+Date: 2026-09-23. Tree: this branch at the commit that carries this entry; PHP 8.5.10 ZTS built on
+this box by `scripts/build-php.sh` (4 vCPU cloud VM, kernel 6.18, glibc 2.39). Method: every
+scenario is a fixture under `bench/php/stall/` driven by `bench/stall-ladder.sh` (written by a
+Sonnet agent, run by the orchestrator on `target/release/ignis`, `--threads 4`, three workers
+pinned by parked `/sleep` requests so the stuck request lands on the fourth, thresholds
+`IGNIS_BUSY_WARN_MS=100 IGNIS_STALL_KILL_MS=1000 IGNIS_STALL_ABANDON_MS=3000`). The agent's own run
+and this re-run agree on every line; the numbers below are the re-run.
+
+**The ladder (`bench/stall-ladder.sh`, exit 0, 0 failing scenarios):**
+
+| scenario | fixture | result |
+|---|---|---|
+| S-1 detection names the request | `spin.php` | one warn line at **124 ms** (`busy_warn_ms=100`, tick 100 ms): `kind="stall" subject="php" route="/stuck" request=1 uri=/stuck classification=proc=running state=R`; no second line in the window |
+| S-1 blocked | `block-sleep.php` (`IGNIS_PARK=`) | `subject="blocking_forward:libphp.so:sleep" classification=proc=35 wchan=hrtimer_nanosleep` — the syscall number and the kernel wait, from `/proc` |
+| S-7 L3 kill of a spinning fiber | `spin.php` | **504 in 1 102 ms** (`stall_kill_ms=1000`); all 6 sibling `/hello` probes answered; `kind="fiber_killed" subject="interrupt"`; the worker keeps serving |
+| S-8 L4 signal into a shimmed wait | `block-sleep.php`, 30 s requested | cancelled in **1 109 ms**: `blocking_call libphp.so:sleep duration_us≈1 006 000 errno=125` (`ECANCELED`), then force-closed at the next opcode, **504**, `/hello` still answers |
+| S-9 classification | spin / block-sleep / c-loop | `proc=running state=R` + `level=L3` / `proc=35 wchan=hrtimer_nanosleep` + `level=L4` / `proc=running` + no ack → L5. `/proc` alone cannot tell a VM loop from a C loop; the missing acknowledgement after the signal is what does |
+| S-10 L5 abandon a live worker | `c-loop.php` (`password_hash` cost 20 ≈ 61 s here) | `worker_abandoned age_ms=3029 failed_requests=1 leaked_workers=1`; the supervisor's replacement served `/hello`; health `leaked_workers=1` |
+| S-5 L0 fiber timeout | `park-forever.php`, `IGNIS_FIBER_TIMEOUT_MS=2000` | **504 in 2 012 ms**, `/hello` afterwards |
+| S-6 L2 swallowed cancellation | `swallow-cancel.php` + early disconnect | the worker survived; `/hello` answers |
+
+**The detector (S-2 shape, `bench/blocking-audit.sh examples/app.php`, `profile=load-test`,
+`threshold_us=200`, `DURATION=9 CONCURRENCY=6`, `wrk`):** exit 0, `blocking_sites` empty, the
+allow file stays empty — `examples/app.php` has no blocking site above 200 µs on this box. On the
+orchestrator's own fixture (a 200 MB file read in 1 MiB `fread`s, `threshold_us=50`) the report
+lists `libphp.so:read` (count 4 over 50 µs, max 161 µs) with the PHP frame (`detect.php:3 readBig()`),
+one warn line for all of them, and **no** site for the `flock` backoff park and **no** site for the
+runtime's own stderr `write` (the executable's call sites are outside the gate; a first version
+reported `ignis:write` at 1.3 ms, which is what the load-base check fixed).
+
+**End to end under `--workers 2 --threads 1` (ADR-0044 prefork):** the ladder runs inside a forked
+worker unchanged; a stuck main thread (`c-loop`) exits the worker with status 3 after
+`worker_abandoned` and the master's other worker keeps answering.
+
+**S-11 cost, hello-world on one thread (`examples/hello_server.php`, `wrk -t1 -c32 -d8s`, three
+alternating pairs, `origin/main`'s release binary built into a separate target dir against this
+branch's):**
+
+```
+main  74 063 req/s  p99 1.56 ms      ours  69 890 req/s  p99 1.91 ms
+main  71 088 req/s  p99 2.22 ms      ours  70 102 req/s  p99 1.90 ms
+main  72 018 req/s  p99 1.53 ms      ours  73 443 req/s  p99 1.92 ms
+```
+
+Means 72.4k against 71.1k (−1.8 %), inside the run-to-run spread of either binary (71.1k → 74.1k
+on `main` alone, ±2 %) — so the instruments are not measurable at this box's resolution, and ADR-0043
+§11's 1 % criterion cannot be decided here either way. A quieter box with `-t2 -c64 -d30s` and ten
+pairs is what settles it; until then the detector's per-call cost stays where it is (two
+`clock_gettime` on a path that already blocks the thread, none on a park).
+
+**Unit level (`cargo nextest run --workspace`): 101 passed** — among them the alert module's
+dedup, summary, escalation-once, recovery and rate-limit rules and the property "≤ 3 lines per key
+per window" over 50 random sequences (S-4), the profile/precedence/route tests (S-15), the
+scoreboard transitions and the `/proc` parser. `cargo clippy -D warnings`, `cargo fmt --check`,
+the off build and `cargo deny` are clean.
+
+**Not run here:** S-12 (the destructor-fiber fixture under ASAN/valgrind — no ASAN arm on this
+box), S-3 with a Symfony test suite (no composer here; the `Ignis\Testing` traits are written), S-14
+(a storm on all workers), S-16 (NTS scoreboard across forked children — the ladder ran inside a
+forked worker, but the per-process board is not the shared page ADR-0043 §3 describes; that part
+waits for the master-side ticker).

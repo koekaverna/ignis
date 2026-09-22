@@ -97,11 +97,12 @@ unsafe extern "C" fn on_interrupt(execute_data: *mut sys::zend_execute_data) {
             return;
         }
         let request_id = scoreboard::current().map_or(0, |s| s.request_id.load(Ordering::Relaxed));
+        let route = route_of_request(request_id);
         force_close(fiber);
         scoreboard::acknowledge_kill(true);
         answer_killed(request_id);
         crate::alerts::report(crate::alerts::Event {
-            key: crate::alerts::Key::new("fiber_killed", "interrupt", route_of_request(request_id)),
+            key: crate::alerts::Key::new("fiber_killed", "interrupt", route),
             level: crate::alerts::Level::Error,
             value_us: 0,
             fields: vec![("request", request_id.to_string()), ("fiber", format!("{:#x}", fiber as usize))],
