@@ -206,7 +206,7 @@ pub fn report_json() -> String {
             json_string(name),
             s.count,
             s.max_us,
-            if s.count == 0 { 0 } else { s.total_us / s.count },
+            s.total_us.checked_div(s.count).unwrap_or(0),
             s.allowed
         ));
     }

@@ -296,7 +296,7 @@ pub fn parse_routes(text: &str) -> Vec<(String, RouteOverride)> {
             Some((prefix.to_string(), o))
         })
         .collect();
-    routes.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    routes.sort_by_key(|route| std::cmp::Reverse(route.0.len()));
     routes
 }
 
