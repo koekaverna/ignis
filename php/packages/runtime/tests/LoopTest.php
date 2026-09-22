@@ -736,10 +736,14 @@ final class LoopTest extends LoopTestCase
         FakeReactor::inject(7, self::rawRequest());
         self::drive();
 
-        FakeReactor::inject(7, ['kind' => 'cancel', 'age_us' => 500]);
-        self::drive();
+        $logged = self::withErrorLog(static function (): void {
+            FakeReactor::inject(7, ['kind' => 'cancel', 'age_us' => 500]);
+            self::drive();
+        });
 
         self::assertTrue($finallyRan, 'the handler\'s own finally ran during the forced unwind');
+        self::assertMatchesRegularExpression('/Ignis\\\\Loop: fiber \d+ parked again after its cancellation and is force-closed \(L2\)/', $logged, 'L2 says so once: the ladder\'s S-6 evidence line');
+        self::assertSame(1, substr_count($logged, 'force-closed (L2)'), 'one line, not one per turn');
         self::assertSame([], self::get('waiting'), 'nothing is left parked for a fiber that no longer exists');
         self::assertSame([], self::get('killPending'));
         self::assertSame(
@@ -812,8 +816,9 @@ final class LoopTest extends LoopTestCase
             return \WeakReference::create($fiber);
         })();
 
-        self::call('forceClosePending');
+        $logged = self::withErrorLog(static fn() => self::call('forceClosePending'));
 
+        self::assertStringContainsString('force-closed (L2)', $logged);
         self::assertNull($weakFiberReference->get(), 'the job fiber\'s self-reference cycle was actually collected, not merely dereferenced');
         self::assertTrue($future->isDone());
         self::assertSame([], self::get('idle'), 'a killed fiber never goes back to the pool');
