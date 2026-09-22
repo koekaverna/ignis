@@ -65,6 +65,7 @@ fn main() -> ExitCode {
     if let Err(code) = check_park_interposers() {
         return code;
     }
+    workers::reclaim_shutdown_signals();
     if serving {
         print_ready_banner(&flags);
     }

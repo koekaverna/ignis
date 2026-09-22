@@ -202,6 +202,18 @@ fn drain_timeout() -> Duration {
     Duration::from_millis(std::env::var("IGNIS_DRAIN_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(10_000))
 }
 
+/// The engine's RINIT wraps `SIGTERM`/`SIGINT`/`SIGHUP` in Zend's deferring handler, which re-raises
+/// the default action when nothing was registered before it — and nothing was, because the
+/// runtime that owns those signals is built after the engine (a fork needs a single-threaded
+/// process). Hand them back to the default so tokio's handler is the only one (E23 on NTS).
+pub fn reclaim_shutdown_signals() {
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        // SAFETY: restoring the default disposition of a signal this process owns, on one thread,
+        // before any runtime or worker exists.
+        unsafe { libc::signal(signal, libc::SIG_DFL) };
+    }
+}
+
 extern "C" fn remember_signal(signal: libc::c_int) {
     PENDING_SIGNAL.store(signal, Ordering::SeqCst);
 }
