@@ -844,3 +844,31 @@ libraries in its report — is not in this commit. The owner stopped it to be an
 the answer it is the smaller half of a question that wants an ADR: `S-PARK-PROBE-COVERAGE` carries
 both, and the boot check keeps over-claiming `ok` until that is settled. Recorded here so the
 over-claim is a known open defect and not an oversight.
+
+## 2026-09-22 — the nightly perf job is deleted, not calibrated
+
+The owner, on the first real nightly tables: "По мне дак выглядит вообще бесполезным, тем более что
+железо арендуемое" and then "Я бы вообще удалил, пользы не вижу". Taken.
+
+**What the numbers said.** Once the job ran at all (V-119: six scheduled runs had died on `sh`),
+three runs of one binary within 25 minutes read E1 1256.6 / 1155.1 / 1550.1 ms against a 1200 ms
+threshold taken from the developer box (V-28: 1144–1178), and hello 58k / 81k / 59k rps. Nothing in
+the runtime changed between those runs. An absolute threshold on a shared 2-vCPU runner measures the
+neighbour, and ADR-0023 had already said so ("runners are shared, the numbers are not comparable")
+while the job kept dev-box thresholds anyway.
+
+**Why delete rather than fix.** The salvageable form is an A/B in one job (previous point against
+head on the same machine, gate on the ratio — the shape `B1 p99 pair` already had and that held at
+950/970 and 1500/1510). It costs a second build per night and a week of runs to trust, and the
+owner does not see the use: performance claims in this project are VALIDATION entries taken on one
+known machine with its state recorded, and that discipline is what catches a regression — a V-n is
+re-measured when the code it covers changes. A gate that cries on the neighbour's load would be
+read for a week and then ignored, which is worse than no gate.
+
+**What was removed.** `.github/workflows/nightly.yml`, `bench/results/nightly-baseline.txt`, the
+ROADMAP Phase D item (struck through, with the reason), M5-4 closed as deleted, issue #1 closed as
+not planned. `backend-b.yml` and `nts.yml` stay: they are correctness gates for code nothing else
+compiles, and their verdict does not depend on the runner's speed.
+
+**Kill criterion.** If a throughput regression ships in a tagged release and the V-n covering it
+was not re-measured before the tag, this decision was wrong and the A/B form above is the fix.

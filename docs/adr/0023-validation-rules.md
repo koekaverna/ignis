@@ -16,7 +16,7 @@ and the 1-based `zval::arg` in the sockets hook (A4, JOURNAL 2026-09-16).
 ## Options considered
 
 Benches in CI (rejected: runners are shared, the numbers are not comparable — the nightly job
-records and gates only against 50 % of its own last value, M5-4); trusting agents' numbers with a
+records and gates only against 50 % of its own last value, M5-4 — and on 2026-09-22 the job itself was deleted for the same reason, V-119); trusting agents' numbers with a
 tolerance (rejected: the tolerance would have to be chosen per quantity and would hide the
 machine-state problem); endpoint-pair soak criteria (rejected by V-35).
 

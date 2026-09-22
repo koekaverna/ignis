@@ -4,7 +4,7 @@
 # distribution ships is NTS: deb.sury.org has no thread-safe build of any version, embed included,
 # and its 85 extension packages cannot be loaded by a thread-safe engine at all (V-113).
 #
-# Correctness, not performance, so not nightly.yml. Not ci.yml either, because building php-src
+# Correctness, not performance. Not ci.yml, because building php-src
 # takes minutes and this ABI changes on PHP's schedule, not on ours. Scheduled, with
 # workflow_dispatch for when someone is working on it.
 name: nts

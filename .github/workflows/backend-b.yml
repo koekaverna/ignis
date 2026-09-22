@@ -4,8 +4,7 @@
 # 2026-09-19 there was no checkout anywhere to read the fork's headers against, so an owner note
 # about upstream had to be verified over the network instead.
 #
-# This is correctness, not performance, so it does not belong in nightly.yml (whose own header
-# says correctness lives in ci.yml). It is not in ci.yml either, because building php-src takes
+# This is correctness, not performance. It is not in ci.yml, because building php-src takes
 # minutes and this backend changes on the fork's schedule, not on ours. Scheduled, with
 # workflow_dispatch so R-TA-CONTEXT and R-TA-REQUEST-SCOPE can get a checkout on demand.
 name: backend-b
