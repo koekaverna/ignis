@@ -1,0 +1,30 @@
+# Builds the documentation site (mkdocs-material) and publishes it to GitHub Pages — only when the
+# site's inputs change (owner, 2026-09-23: images on image inputs, checks on code, the site on
+# docs). `--strict` first: a broken link or a page missing from the nav fails the run instead of
+# publishing quietly, which is why the previous docs.yml went on 2026-09-22 (DECISIONS).
+name: docs
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mkdocs.yml"
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install mkdocs-material
+      - run: mkdocs build --strict
+      - run: mkdocs gh-deploy --force
