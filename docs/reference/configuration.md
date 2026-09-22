@@ -7,7 +7,7 @@ env vars that exist only on the Rust side (no config-file equivalent).
 (`crates/ignis/src/config.rs`, doc comment on `Config`.) `ignis serve` is what implements this: it
 loads the file (if any), then calls `default_env(NAME, value)` for each key — which sets the
 environment variable **only if it is not already set** — before rewriting itself into the legacy
-`[--supervise] [--threads N] [--offload N] <entry.php>` argument form the rest of `main` has always
+`[--supervise] [--threads N] <entry.php>` argument form the rest of `main` has always
 understood. Because `default_env` never overwrites, an `IGNIS_THREADS=8` already in the process
 environment beats whatever `ignis.toml` says, and a `--threads` flag on the plain `ignis` binary
 (see `cli.md`) beats both — the plain binary reads its flags after the file/env bridge would have
@@ -31,7 +31,6 @@ defaults with no file at all). Reference copies: `ignis.toml.example` (repo root
 | `entry` | *(none — becomes the positional arg)* | none; the resolved entry file must exist | PHP script every worker thread runs. Also accepted as `ignis serve app.php`, which wins over the file's `entry`. | Missing entirely (`entry` absent from the file *and* no positional arg): `serve` exits 2 with "serve needs an entry script...". Entry present but not a real file: exits 2 with "entry script … does not exist". |
 | `listen` | `IGNIS_LISTEN` | `127.0.0.1:8080` | `host:port` the HTTP/gRPC listener binds. | The Rust binary itself never reads `IGNIS_LISTEN` back out — it only *sets* it. An entry script has to call `getenv('IGNIS_LISTEN')` itself and pass it to `Ignis\serve()`/`Ignis\Classic\serve()` (every example script and the Symfony runtime does this); a script that hardcodes an address ignores `listen`/`IGNIS_LISTEN` entirely. |
 | `threads` | `IGNIS_THREADS` | machine's available parallelism (`std::thread::available_parallelism()`) | PHP worker OS threads. | 0 or unparseable is not validated by `config.rs`; the consuming side (`main.rs`) does `threads.max(1)`, so anything ≤ 0 silently becomes 1. This default (available parallelism) applies **only** under `ignis serve` — the plain `ignis <script>` binary's own fallback is `1` (see `cli.md`). |
-| `offload` | `IGNIS_OFFLOAD` | `0` (off) | Synchronous offload worker threads for calls that **cannot** park — `SQLite3` and file-backed `PDO` (a regular file is not epoll-able, ADR-0024) and CPU-bound work. `curl_*` no longer routes here: it parks (V-59) (ADR-0016/E16). Each costs a full PHP thread. | Unlike `threads`/`budget.*`/`listen`, there is **no unconditional `default_env` call** for `offload` in `config.rs` — if the file is silent and `IGNIS_OFFLOAD` is unset, the env var is simply never set, and `main.rs`'s own `unwrap_or(0)` supplies the 0. Net effect is the same default, reached by a different path. |
 | `supervise` | *(none — becomes the `--supervise` flag)* | `true` under `ignis serve`; `false` on the plain `ignis` binary unless `--supervise` is passed | Respawn a worker whose script ends (fatal error or normal exit), ADR-0012. | `ignis serve`'s default is `true` even if the key is absent from the file — `cfg.supervise.unwrap_or(true)`. This is the one setting where `serve` and the raw binary disagree on the out-of-the-box behavior. |
 | `php_ini` | `IGNIS_PHP_INI` | unset (engine's compiled-in php.ini search path) | Extra php.ini path; the embed SAPI has no `-c`/`-d` flags of its own. | No unconditional default — absent key + absent env means `IGNIS_PHP_INI` is never set and `embed.rs` passes `None` to the engine init. |
 | `log` | `RUST_LOG` | unset → `tracing_subscriber` falls back to `warn` | Log filter in `RUST_LOG`/`tracing_subscriber::EnvFilter` syntax. | No unconditional default here either; `main.rs` supplies `"warn"` itself if `RUST_LOG` ends up unset by any path. `warn` is a deliberate floor (comment in `main.rs`): it's what makes worker respawns and stalled-thread warnings visible without opting in. |
@@ -49,6 +48,11 @@ comment on `$fiberBudget` says "~34 KB (V-5)". Both are cited to different VALID
 flagging the discrepancy rather than picking one, since neither is something this pass can
 re-measure.
 
+The `offload` key is gone from this table: the offload pool it sized was deleted on 2026-09-22
+with the MVP cut (DECISIONS.md), together with `IGNIS_OFFLOAD`, `IGNIS_OFFLOAD_FUNCTIONS`,
+`IGNIS_OFFLOAD_CLASSES`, `IGNIS_OFFLOAD_PRELUDE` and `IGNIS_NO_OFFLOAD_ROUTE`. An unknown key is an
+error, so an older `ignis.toml` that still carries `offload = N` has to drop the line.
+
 ## Environment variables outside `ignis.toml`
 
 Everything below is read directly with `std::env::var`/`var_os` somewhere in `crates/ignis/src/**`
@@ -60,10 +64,6 @@ Everything below is read directly with `std::env::var`/`var_os` somewhere in `cr
 | Env var | Read in | Default | What it does |
 |---|---|---|---|
 | `IGNIS_PARK` | `crates/ignis/src/php/park.rs` | the built-in seed (see below) | Universal-park policy table: which libraries/symbols may park a fiber instead of blocking the OS thread. See its own subsection below. |
-| `IGNIS_OFFLOAD_FUNCTIONS` | `crates/ignis/src/php/route.rs` | **empty** (was the `curl_*` list until 2026-09-17; curl parks now — V-59, and setting the old list back restores routing) | Comma-separated internal function names auto-routed to the offload pool (E16 auto-routing) when running inside a fiber and the extension is loaded; unset means "the default list", not "nothing". |
-| `IGNIS_OFFLOAD_CLASSES` | `crates/ignis/src/php/route.rs` | `SQLite3` (was `PDO,SQLite3` until 2026-09-17: routing every `PDO` sent `pgsql` to a worker too, 9× slower than parking — V-59 addendum. Add `PDO` back for a `pdo_sqlite` app) | Comma-separated class names whose `new` is auto-routed to the offload pool inside a fiber. |
-| `IGNIS_OFFLOAD_PRELUDE` | `php/packages/offload/src/worker.php` | unset | A PHP file `require`d once on every offload thread before it takes its first job, so the functions a job names exist there. The worker is evaluated with nothing else loaded, which is why a job cannot simply reach for the caller's autoloader. |
-| `IGNIS_NO_OFFLOAD_ROUTE` | `crates/ignis/src/php/route.rs` | unset (routing installed) | Any value disables auto-routing installation entirely (`route::install()` returns immediately) — the E16 hook-off control. |
 | `IGNIS_STREAM_CHUNKS` | `crates/ignis/src/php/module.rs` | `2` | How many chunks of a streamed response (`Ignis\Http\StreamedResponse`/`Ignis\write()`, R-STREAM) may sit in the channel between PHP and the socket before the producing fiber's `ignis_respond_chunk`/`ignis_stream_write` has to wait. Read once per process. |
 | `IGNIS_STREAM_FRAME_BYTES` | `crates/ignis/src/php/output.rs` | `8192` | Bytes a streaming fiber accumulates before a frame is pushed to the socket rather than held for the next `echo`/`Ignis\write()` call. Read once per process. |
 | `IGNIS_LOCKLIB` | `crates/ignis/src/php/locklib.rs` | unset (the `ignis_locklib_*` functions are never registered) | Path to the H36 lock-hazard test shim (`bench/e18/locklib.c`), `dlopen`ed with `RTLD_GLOBAL`. Exists only to prove that `park` deadlocks a library holding a non-recursive mutex across a blocking syscall while `block` does not (ADR-0037 §5) — not something an application ever sets. Listed here rather than under diagnostics because it gates whether a whole function family exists, not just a runtime behavior. |
@@ -96,15 +96,6 @@ is the one limit with no `ignis.toml` key at all — the file cannot express it 
 Measured behaviour: 413 on an oversized body, connections closed on both timeouts, 76,969 `503`s
 under `wrk -c64` against a cap of 8 with the server still healthy afterwards, and a `SIGTERM` drain
 that finished five 1.5 s requests while refusing new connections (V-55, V-56).
-
-!!! note "`IGNIS_OFFLOAD_CLASSES` is per class, not per driver"
-
-    The runtime picks the mechanism when the VM executes `new`, where only the class name exists —
-    the driver is in the DSN, which the constructor has not seen yet. So `PDO` is all-or-nothing:
-    routing it sends `pgsql` to a worker too (2,753 ms against 303 ms for 100 × 200 ms queries),
-    and leaving it alone makes `new PDO('sqlite:…')` block the thread for the file access. Pick by
-    what your application actually uses — the cases are worked through in
-    [Compatibility](../compatibility.md#databases-what-parks-what-is-pooled-and-the-one-choice-you-have-to-make).
 
 ### `IGNIS_PARK` — universal-park policy table
 
@@ -176,7 +167,7 @@ mechanism itself:
 | `IGNIS_CHAOS_SEED` | `php/packages/runtime/src/ignis.php` | current `hrtime()` | Seeds `mt_srand()`, so the chaos decisions are drawn from a known sequence. It does **not** make a run reproducible, and used to say it did: the loop is driven by real timers, so the order completions arrive in still varies and the same seed maps its draws onto a different schedule. Measured 2026-09-20 — five runs of one script at seed 1 gave 3, 3, 3, 5, 3 extra yields. It narrows a re-run; it does not pin one. |
 
 `crates/ignis/src/php/` currently has `embed.rs`, `locklib.rs`, `mod.rs`, `module.rs`, `output.rs`,
-`park.rs`, `route.rs`, `superglobals.rs`, `tsrm.rs`, `wait.rs`, `zval.rs` — the old per-mechanism
+`park.rs`, `post.rs`, `scoped.rs`, `superglobals.rs`, `tsrm.rs`, `wait.rs`, `zval.rs` — the old per-mechanism
 `IGNIS_NO_STREAM_HOOK`/`IGNIS_NO_SLEEP_HOOK` hooks this project's `CLAUDE.md` used to mention are
 gone from both the source and `CLAUDE.md` itself; `IGNIS_NO_UNIVERSAL_PARK` above is the single
 "hook off" control for all of read/write/connect/sleep/etc. today (ADR-0020).

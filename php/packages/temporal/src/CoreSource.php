@@ -105,7 +105,8 @@ final class CoreSource implements ActivationSource, HeartbeatSink
         $jobs = \is_array($activation) ? ($activation['jobs'] ?? []) : [];
         $count = 0;
         foreach (\is_array($jobs) ? $jobs : [] as $job) {
-            $reason = \is_array($job) ? ($job['removeFromCache']['reason'] ?? null) : null;
+            $removal = \is_array($job) ? ($job['removeFromCache'] ?? null) : null;
+            $reason = \is_array($removal) ? ($removal['reason'] ?? null) : null;
             if ($reason === 3 || (\is_string($reason) && \strtoupper($reason) === 'NONDETERMINISM')) {
                 ++$count;
             }

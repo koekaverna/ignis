@@ -33,7 +33,7 @@ Concurrency starts exactly where the script says there is a second thing to do.
 
 Nothing is rewritten. `sleep()`, `file_get_contents()`, `curl_exec()`, `fsockopen()`, `PDO` over
 PostgreSQL or MySQL are the ordinary blocking calls; inside a fiber their syscalls are interposed
-and the fiber parks instead of the thread ([the three mechanisms](../concept/mechanisms.md)).
+and the fiber parks instead of the thread ([the two mechanisms](../concept/mechanisms.md)).
 
 Measured on one thread (V-60, `examples/cli.php`):
 
@@ -48,8 +48,9 @@ else.
 
 ## What you do not get
 
-- **Parallel CPU.** All the fibers share one thread. Ten busy loops still run one after another —
-  `--offload N` for blocking or CPU-bound calls, `--threads N` for a script that should run N times.
+- **Parallel CPU.** All the fibers share one thread. Ten busy loops still run one after another,
+  and so does anything that cannot park — a regular file, `SQLite3`, a CPU-bound extension call.
+  `--threads N` for a script that should run N times; separate processes for anything else.
 - **Concurrent DNS.** `getaddrinfo` is not interposed, so twenty `file_get_contents()` calls to a
   *hostname* resolve one at a time before their sockets ever open. Resolve once and reuse, or use an
   IP, until this is fixed.
@@ -65,7 +66,7 @@ Split by the shape of the work, not by "CLI versus server":
 | A consumer loop — `messenger:consume`, a queue worker, a poller | Yes. It is a server in a trench coat, and it waits for nearly all of its life. |
 | A fan-out job — import, crawl, reindex, "call this API for 50k rows" | Yes, and this is where it pays most. |
 | `doctrine:migrations:migrate`, `cache:clear`, a one-off report | No. One thing at a time, nothing to overlap. Run it however you already do. |
-| Anything CPU-bound | No, not from parking. `--offload` or more processes. |
+| Anything CPU-bound | No, not from parking. More threads, or more processes. |
 
 A Symfony Console command needs no adapter to benefit: the command body is ordinary PHP, so wrapping
 the per-item work in `Ignis\async()` and awaiting with `Ignis\all()` is the whole change.

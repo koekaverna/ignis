@@ -96,6 +96,8 @@ lines arrives with three.
 
 A kernel is booted per thread, so `threads × kernel` is the memory floor, and anything an
 application stores in its own statics is shared across the requests on that thread — the bundle
-fixes Symfony's own state, not yours. Doctrine needs [its own package](doctrine.md); without it the
-EntityManager and its database connection are shared by every fiber on the thread, which is a data
-leak rather than a slowdown (V-69, V-85).
+fixes Symfony's own state, not yours. An entity manager and its database connection are among the
+services that stay shared by every fiber on the thread until you mark them `scoped`
+([ADR-0042](../adr/0042-fiber-scoped-objects.md)) — sharing them is a data leak rather than a
+slowdown: two overlapping requests end up inside one PostgreSQL socket, one reading the other's row
+(V-69, V-85).

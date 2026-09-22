@@ -5,11 +5,10 @@ requests per OS thread on native Fibers. Every wait — a timer, a socket, TLS, 
 is owned by a tokio reactor, so the thread serves other requests while one is stuck waiting.
 Unmodified synchronous PHP becomes non-blocking: `file_get_contents`, `fsockopen`, `sleep()` and
 `ext/sockets` and `curl_*` park the fiber instead of the thread — libcurl's own blocking calls are
-interposed too, so there is no worker thread and no copy. What genuinely cannot be parked because
-`epoll` refuses regular files — `SQLite3` — is routed to a pool of synchronous worker threads with
-no code change; a file-backed `PDO` (`sqlite:`) blocks the OS thread by default instead, because the
-driver only appears in the DSN, after routing has already decided — set
-`IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to route it too. It replaces php-fpm, FrankenPHP or RoadRunner
+interposed too, so there is no copy and no second thread. What genuinely cannot be parked because
+`epoll` refuses regular files — `SQLite3`, a file-backed `PDO` (`sqlite:`), any read of a regular
+file — blocks its PHP thread for the length of the call (see
+[What it is not](concept/non-goals.md)). It replaces php-fpm, FrankenPHP or RoadRunner
 in front of a Symfony app today; Laravel support is on the roadmap, not yet built.
 
 ## The pitch

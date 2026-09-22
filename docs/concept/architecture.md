@@ -6,17 +6,16 @@ One process, two worlds that only ever exchange plain data over channels.
   tonic gRPC on the same listener, and every timer and socket readiness wait in the process. The listener itself is plaintext; inbound TLS termination
   is deferred ([ADR-0032](../adr/0032-inbound-tls-and-http3.md)), and outbound TLS (`ssl://`,
   `https://`) is PHP's own `ext/openssl`, parked like any other syscall (rustls and the Rust-side
-  TLS actor it used are gone — [The three mechanisms](mechanisms.md), ADR-0037 §6 step 4, V-49).
+  TLS actor it used are gone — [The two mechanisms](mechanisms.md), ADR-0037 §6 step 4, V-49).
 - **The PHP side** — N OS threads (`--threads`, default: cores), each with its own embedded ZTS
   engine context and *its own* `Reactor` handle. Requests are dispatched to the least-inflight
   thread (ADR-0010).
 
 `reactor.rs` is the only bridge between the two worlds. PHP calls one of a small set of
-`ignis_*()` functions — `ignis_submit_sleep()`, `ignis_watch()`, `ignis_grpc_*()`,
-`ignis_offload_*()` — each packaging an `Op` (`Sleep`, `Watch`, `CancelWatch`, `Custom`) as plain
-data, no pointers, and then `ignis_poll(timeout)`. HTTP requests, gRPC calls, timer completions and
-offload answers all arrive on that one completion channel, so a PHP thread has **exactly one wait
-point**.
+`ignis_*()` functions — `ignis_submit_sleep()`, `ignis_watch()`, `ignis_grpc_*()` — each packaging
+an `Op` (`Sleep`, `Watch`, `CancelWatch`, `Custom`) as plain data, no pointers, and then
+`ignis_poll(timeout)`. HTTP requests, gRPC calls and timer completions all arrive on that one
+completion channel, so a PHP thread has **exactly one wait point**.
 
 ```mermaid
 flowchart LR
@@ -78,7 +77,7 @@ flowchart TD
     got -- "none, and idle" --> done
     got -- "yes" --> dispatch["dispatchEvents()\nmatch each id to the fiber waiting on it"]
 
-    dispatch --> kinds["a new HTTP request → admit, take a pooled fiber\na timer, a readiness, an offload answer → mark its fiber ready\na deadline → throw into the request's fiber\nan id nobody awaits → the unawaited path"]
+    dispatch --> kinds["a new HTTP request → admit, take a pooled fiber\na timer, a readiness → mark its fiber ready\na deadline → throw into the request's fiber\nan id nobody awaits → the unawaited path"]
     kinds --> turn
 ```
 
@@ -168,10 +167,11 @@ neither has anything to do it sits in `ignis_poll()` — one wait point for ever
 completions. A php-fpm worker would have been unavailable for the whole of A's 300 ms.
 
 What makes it safe is that each fiber's request state is its own: `$_SERVER`/`$_GET`/`$_POST` are
-swapped at the fiber switch, `Ignis\Scope` is keyed by the fiber, and the integrations keep
-Symfony's request stack, its security token, Doctrine's entity manager and its database connection
-per fiber too — every one of those was a measured leak before it was a design ([Symfony](../packages/symfony.md),
-[Doctrine](../packages/doctrine.md)).
+swapped at the fiber switch, `Ignis\Scope` is keyed by the fiber, and the Symfony integration keeps
+the request stack and the security token per fiber too — both were a measured leak before they were
+a design ([Symfony](../packages/symfony.md)). Any other container service holding per-request state,
+an entity manager or a database connection among them, is marked `scoped` and resolves per fiber the
+same way ([ADR-0042](../adr/0042-fiber-scoped-objects.md)).
 
 ## Invariants
 
@@ -225,7 +225,7 @@ as a few hundred bytes of data rather than as a fiber: 4,000 held requests cost 
 outlives the request that used it, so *per fiber* is not *per request*. Anything kept in
 `Ignis\Scope` — or in a service keyed by it — must be cleared at the request boundary, which is what
 `Loop` does in its `finally`. Before it did, request B could read request A's security token
-(V-68) and Doctrine's identity map carried entities between them (V-69).
+(V-68); the same shape reaches any service that keeps per-request state and is not scoped.
 
 ## Why the scheduler is in PHP userland, not Rust
 
@@ -236,7 +236,7 @@ deliberately shaped like a [Revolt](https://revolt.run) event-loop driver
 10,000-fiber benchmark put the Rust side at 0.3% of PHP-thread samples — the userland scheduler is
 not the bottleneck (fiber lifecycle, the mmap'd C stack per Fiber, is), so there is no performance
 case for moving it into Rust, and keeping it in userland means Revolt, `symfony/runtime`, gRPC,
-Temporal and the Doctrine integration are all adapters over the same primitives rather than separate mechanisms.
+Temporal are all adapters over the same primitives rather than separate mechanisms.
 
 ## Where this is decided
 
@@ -246,5 +246,5 @@ Temporal and the Doctrine integration are all adapters over the same primitives 
   the fiber pool, plus its addendum: "the network path never waits for PHP" — nothing on the
   network path ever enters Zend.
 
-See [The three mechanisms](mechanisms.md) for how a specific blocking call — `curl_exec`, a
+See [The two mechanisms](mechanisms.md) for how a specific blocking call — `curl_exec`, a
 `PDO` query, `fsockopen` — actually gets from PHP to that reactor.

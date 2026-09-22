@@ -5,12 +5,12 @@ A PHPStan rule for the one defect fiber scope cannot fix by itself.
 ## What it catches
 
 Under fibers the container's singletons are shared by every request on the thread. The answer to that
-is a per-fiber **façade**: a `scoped`-marked `RequestStack` and `FiberEntityManager` are single objects whose every
-method reads `Ignis\Scope`, so a service that holds one resolves per request. That shape is correct
-and measured — six interleaved requests, each saw its own, with a different database connection each
-time (V-96).
+is to mark the service `scoped` (ADR-0042): a `scoped`-marked `RequestStack`, or a service of yours
+holding a database connection, stays one object whose state resolves per fiber, so a singleton that
+holds it answers each request with that request's state. That shape is correct and measured — six
+interleaved requests, each saw its own, with a different database connection each time (V-96).
 
-What a façade cannot fix is a value taken *out* of it and kept:
+What a scoped service cannot fix is a value taken *out* of it and kept:
 
 ```php
 final class Report
@@ -23,8 +23,8 @@ final class Report
 ```
 
 The constructor runs once for the process. From then on the object answers with whichever request
-happened to build it — in the same measurement, a captured `Connection` was one socket, the first
-request's, while every live request had its own. No compiler pass can see this: it is an assignment
+happened to build it — in the same measurement, a captured database connection was one socket, the
+first request's, while every live request had its own. No compiler pass can see this: it is an assignment
 in a method body, not a wiring decision.
 
 The rule reports it, naming the property and the call the value came from. It does **not** complain

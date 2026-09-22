@@ -46,9 +46,11 @@ a real-time scheduler.
 Epoll refuses regular files, so universal park forwards a plain `read`/`write`/`fsync` on one and
 the OS thread waits for it. This covers `file_get_contents()` reading a local file and the opcache
 file cache. (`flock()` is the exception with a mechanism of its own — see "Locks on files", below.)
-It is not a gap that got missed — making file I/O itself async needs a fourth mechanism (io_uring,
-or an offload route for file I/O specifically) and would get its own ADR before landing; see
-[The three mechanisms](mechanisms.md) for what the existing three already cover.
+It is not a gap that got missed — making file I/O itself async needs a third mechanism (io_uring,
+or a pool of synchronous worker threads to run file I/O on) and would get its own ADR before
+landing; see [The two mechanisms](mechanisms.md) for what the existing two already cover. Such a
+pool existed until 2026-09-22 and was deleted with the MVP cut (DECISIONS.md), so today a regular
+file, `SQLite3`, a file-backed `PDO` or a CPU-bound extension call blocks its PHP thread.
 
 ## Linux-only
 

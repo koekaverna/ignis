@@ -11,10 +11,9 @@ VALIDATION.md entry that measured it. Nothing here is a claim without a number b
 | `sleep()`, `usleep()` | park the fiber | V-22 |
 | `stream_select()` on hooked streams | answered without blocking | V-26 (TLS read-ahead: open, B7) |
 | `curl_*` (including `CURLOPT_WRITEFUNCTION` and `curl_multi_*`) | **parks the fiber** — libcurl's own blocking calls are interposed, no worker thread and no copy, and the write callback runs in the calling fiber | V-45, V-59 |
-| `PDO` on a socket-backed driver (`pgsql`; `mysql` is not compiled into this build) | **parks the fiber** — 303 ms for 100 × 200 ms queries on one thread, against 2,753 ms through an 8-worker offload pool | V-45, V-59 |
-| `SQLite3` | routed to the offload pool, the fiber sleeps — a regular file cannot be parked (ADR-0024), so offload is the only mechanism it has | V-24 |
-| `PDO` on `sqlite:` | **blocks the OS thread** for the length of the file access, like every other regular-file call (ADR-0024). Routing is by class name and the driver is in the DSN, which the runtime cannot see when it decides — set `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` to send every `PDO` to the pool instead | V-59 addendum |
-| PostgreSQL | `pdo_pgsql` and `ext/pgsql` unchanged — the driver's socket parks the fiber; under Symfony, `ignis/doctrine` gives every fiber its own connection and can pool them per thread | V-85, V-86 |
+| `PDO` on a socket-backed driver (`pgsql`; `mysql` is not compiled into this build) | **parks the fiber** — 303 ms for 100 × 200 ms queries on one thread | V-45, V-59 |
+| `SQLite3`, `PDO` on `sqlite:`, any regular-file read or write | **blocks the OS thread** for the length of the call — `epoll` refuses regular files, so there is nothing to park on (ADR-0024) | ADR-0024 |
+| PostgreSQL | `pdo_pgsql` and `ext/pgsql` unchanged — the driver's socket parks the fiber. One connection handle belongs to one fiber: mark the service that holds it `scoped` (ADR-0042) | V-45, V-85 |
 | `$_SERVER`, `$_GET`, `$_POST`, `$_COOKIE` | fiber-scoped; two interleaved requests never see each other's | V-11 |
 | a client disconnect | cancels the request fiber and its children within 1 ms; `Ignis\deadline()` per request | V-14, V-30 |
 | a fatal error in a handler | ends one worker thread, which is respawned; other threads keep serving | V-17 |
@@ -32,7 +31,7 @@ VALIDATION.md entry that measured it. Nothing here is a claim without a number b
 ## Hook-off controls
 
 Every hook has an off switch — a claim about a hook is only made against a run with that hook
-disabled, never assumed: `IGNIS_NO_UNIVERSAL_PARK`, `IGNIS_NO_SUPERGLOBALS`, `IGNIS_NO_OFFLOAD_ROUTE`.
+disabled, never assumed: `IGNIS_NO_UNIVERSAL_PARK` and `IGNIS_NO_SUPERGLOBALS`.
 (`IGNIS_NO_STREAM_HOOK` and `IGNIS_NO_SLEEP_HOOK` stood here until 2026-09-18; the hooks they turned
 off are deleted — V-46 and V-49 — and `IGNIS_NO_UNIVERSAL_PARK` is the one control for all of
 read/write/connect/sleep today.) `IGNIS_PARK` is the universal-park policy
@@ -98,41 +97,44 @@ final class MongoConnection
         );
     }
 }
+```
 
-## Databases: what parks, what is pooled, and the one choice you have to make
+## Databases: what parks, what does not, and the one connection rule
 
 | driver | mechanism | why |
 |---|---|---|
-| `pdo_pgsql`, `ext/pgsql` | **parks the fiber** | a socket — there is readiness to wait for. 100 concurrent 200 ms queries on one thread: **303 ms** (V-45, V-59). One handle must belong to one fiber: libpq is not reentrant per connection, and two fibers inside one connection swap result sets (V-85) — under Symfony that is what `IgnisDoctrineBundle` guarantees |
+| `pdo_pgsql`, `ext/pgsql` | **parks the fiber** | a socket — there is readiness to wait for. 100 concurrent 200 ms queries on one thread: **303 ms** (V-45, V-59) |
 | `pdo_mysql`, `mysqli` | **parks the fiber**, by construction | also a socket, and `mysqlnd` goes through `php_stream`. **Not compiled into the current build**, so this is design, not measurement |
-| `SQLite3` | **offload pool** | a regular file. `epoll` refuses regular files, so nothing can park it ([ADR-0024](concept/non-goals.md)); a worker thread blocks instead of your request thread |
-| `PDO` on `sqlite:` | **blocks the OS thread** by default | see below — this is the one case the runtime cannot decide for you |
+| `SQLite3`, `PDO` on `sqlite:` | **blocks the OS thread** | a regular file. `epoll` refuses regular files, so nothing can park it ([ADR-0024](concept/non-goals.md)) |
 
-### Why `PDO` on SQLite is different
+### One handle, one fiber
 
-The runtime chooses the mechanism when the VM executes `new`, and it only knows the **class name**
-at that moment: the driver lives in the DSN, which does not exist yet. `SQLite3` is always
-file-backed, so it is routed; `PDO` is not, so routing it would send `pgsql` to a worker as well —
-nine times slower than parking (2,753 ms against 303 ms for the same 100 queries).
+libpq is not reentrant per connection: two fibers inside one connection swap result sets — one
+request reads another's row with a `200` while the rest fail with `SQLSTATE[HY000] 7 timeout
+expired` (V-85). So a connection, and anything holding one (an entity manager, a repository that
+caches it), belongs to exactly one fiber. Mark the service `scoped` and its properties resolve per
+fiber, which is what gives each request its own connection
+([ADR-0042](adr/0042-fiber-scoped-objects.md), [Symfony](getting-started/symfony.md)). Avoiding the
+sharing is the application's job: the runtime cannot tell a shared handle from a deliberate one.
 
-So the default routes `SQLite3` and leaves `PDO` alone, and an application that uses
-`new PDO('sqlite:…')` blocks its thread for the length of the file access. That is the same rule
-already in force for `file_get_contents()`, opcache and file sessions — SQLite is not special, it
-was merely exempt by accident until 2026-09-17.
+### SQLite, and anything else on a regular file
 
-**What to do, depending on your application:**
+A regular file cannot be registered with `epoll`, so there is no readiness to park on. `SQLite3`,
+`new PDO('sqlite:…')`, `file_get_contents()` of a local path, the opcache file cache and a
+CPU-bound extension call all **block the PHP thread that makes them** for as long as they take;
+the other threads keep serving. The pool of synchronous worker threads that used to take `SQLite3`
+off the request thread was deleted on 2026-09-22 with the MVP cut (DECISIONS.md), so there is one
+answer for all of them now, and it is a stated non-goal
+([ADR-0024](concept/non-goals.md)) rather than a gap waiting on a fix.
 
-- **SQLite only in tests, PostgreSQL/MySQL in production** — change nothing. The default is right:
-  production parks, and a blocked thread in a test run costs nothing.
-- **SQLite in production, no socket database** — set `IGNIS_OFFLOAD_CLASSES=PDO,SQLite3` and give
-  the pool some workers (`offload = 4`). Every `PDO` then goes to a worker, which is what you want
-  when every `PDO` is SQLite.
-- **Both, under concurrency** — there is no configuration that is right for both, because the
-  setting is per class and not per driver. Use the `SQLite3` class for the SQLite side where you
-  can (it is routed on its own), or accept the blocking on the SQLite side. This is the one real
-  gap, and the fix for it — teaching the proxy to decide from the DSN inside the constructor — is
-  designed but not built (BACKLOG R-PDO-SQLITE).
-- **Read-heavy SQLite on a warm page cache** — measure before you configure anything. A read served
+**What that means for an application:**
+
+- **SQLite only in tests, PostgreSQL/MySQL in production** — nothing to do. Production parks, and a
+  blocked thread in a test run costs nothing.
+- **SQLite in production** — concurrency comes from threads there, as it does in php-fpm: each call
+  holds its thread for its duration, so size `threads` for that work rather than expecting fibers
+  to overlap it.
+- **Read-heavy SQLite on a warm page cache** — measure before you change anything. A read served
   from the page cache takes microseconds; the blocking that hurts is `fsync` on write under
   concurrency.
 

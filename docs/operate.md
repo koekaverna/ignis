@@ -11,7 +11,7 @@ where nothing has been measured or wired up yet, this file says "not yet exposed
 ```
 $ ignis serve --config ignis.toml           # entry script + flags come from the file
 $ ignis serve app.php                       # entry script as a positional arg, defaults for the rest
-$ ignis [--threads N] [--offload M] [--supervise] script.php [args...]   # the pre-config form
+$ ignis [--threads N] [--supervise] script.php [args...]   # the pre-config form
 $ ignis --version
 ```
 
@@ -100,9 +100,10 @@ file is the one exception, parked rather than blocked since V-81, see the next r
 whose policy row is deliberately `block` because it holds a lock across the call (ADR-0020; H36/V-51
 proved the alternative — `park` — deadlocks such a library). Action: this thread is not crashed, so
 the supervisor does not help; identify the call with `IGNIS_PARK_TRACE=1` on a reproduction (one
-stderr line per park decision — expensive, use off of production traffic), then either move the call
-to an offload worker, avoid the blocking resource, or accept the stall as a known limit of that code
-path.
+stderr line per park decision — expensive, use off of production traffic), then either avoid the
+blocking resource, move that work out of the request (a queue, a separate process), or accept the
+stall as a known limit of that code path. There is no worker pool to hand it to: the offload pool
+was deleted on 2026-09-22 (DECISIONS.md).
 
 **A blocking file lock parks instead of stalling a thread — with one policy caveat.** `flock` is
 interposed since V-81: a genuinely blocking `LOCK_EX` becomes `LOCK_NB` plus a parked retry (200 µs
@@ -221,7 +222,6 @@ not a silently ignored one).
 | `entry` | — (positional arg to `ignis serve`) | none, required | PHP entry script every worker thread runs |
 | `listen` | `IGNIS_LISTEN` | `127.0.0.1:8080` | listener address |
 | `threads` | `IGNIS_THREADS` | available parallelism (cores) | PHP worker threads |
-| `offload` | `IGNIS_OFFLOAD` | `0` | synchronous workers for what cannot park — `SQLite3` and CPU-bound work; `curl_*` and socket-backed `PDO` park (V-59) |
 | `supervise` | — (bridged to the `--supervise` CLI flag, no env var) | `true` | respawn a worker whose script ends |
 | `php_ini` | `IGNIS_PHP_INI` | none | extra php.ini (the embed SAPI has no `-c`/`-d`) |
 | `log` | `RUST_LOG` | `warn` | log filter (`tracing_subscriber::EnvFilter` syntax) |

@@ -98,38 +98,26 @@ earlier the same day). The gate is deliberately left red rather than re-baseline
 number above is the last one with a known-good cause, not a claim that the fiber-mode gate is clean
 today.
 
-## Offload pool bound, vs an unbounded blocking call (V-24)
+## Universal park against the same calls unparked (V-45)
 
-Not a comparison with another server, but the number that makes the offload pool's purpose
-concrete: 100 concurrent 200 ms blocking calls (`SQLite3`-shaped work, i.e. the file-backed kind park
-cannot reach) through a pool of size N are bounded by the pool, never by the fiber thread:
+`curl_exec` and `pdo_pgsql`, 100 concurrent 200 ms operations, one PHP thread. The call parks
+directly at the syscall boundary, with no PHP-level hook; the control is the same run with
+`IGNIS_NO_UNIVERSAL_PARK=1`, where each call blocks the thread in turn:
 
-| offload pool size | wall time for 100 × 200 ms | bound |
+| workload | park | neither (control) |
 |---|---|---|
-| 8 workers | 2,604–2,608 ms | ceil(100/8) × 200 = 2,600 ms |
-| 100 workers | 243–291 ms | 200 ms |
+| `curl_exec` × 100 | **279–328 ms** | 20,337 ms |
+| `pdo_pgsql` × 100 | **296–333 ms** | 20,558 ms |
 
-Copy-in/copy-out cost: 13 µs (no args) to 67 µs (1 KB array) per call, both ways.
-
-## Universal park vs the offload path it can replace, for the same libraries (V-45)
-
-`curl_exec` and `pdo_pgsql`, 100 concurrent 200 ms operations, one PHP thread, **no offload pool
-configured at all** — the call parks directly at the syscall boundary instead:
-
-| workload | park | offload, 8 workers | neither (control) |
-|---|---|---|---|
-| `curl_exec` × 100 | **279–328 ms** | 2,697–2,707 ms | 20,337 ms |
-| `pdo_pgsql` × 100 | **296–333 ms** | — | 20,558 ms |
-
-This is why `curl_*` stopped being auto-routed to the offload pool in 2026-09-17 (V-59): park is
-**8× faster** than offload here, costs no worker thread and no argument copy, and keeps
-`CURLOPT_WRITEFUNCTION` running in the calling fiber (`same_fiber=yes`) instead of on a worker.
-Offload keeps what park cannot reach: `SQLite3`, a file-backed `PDO`, and CPU-bound calls.
+Park costs no second thread and no argument copy, and keeps `CURLOPT_WRITEFUNCTION` running in the
+calling fiber (`same_fiber=yes`). What park cannot reach — `SQLite3`, a file-backed `PDO`, a
+CPU-bound call — blocks its PHP thread, as the control column does, since the offload pool that
+used to take such calls was deleted on 2026-09-22 (DECISIONS.md).
 
 ## A real Symfony app, not a synthetic route (V-53)
 
-The owner's own Symfony 8.1 app, unmodified, on the three-mechanism binary (`--threads 4`, load
-average 1.2 on the box, JSON route not a template render — a floor, not a peak benchmark):
+The owner's own Symfony 8.1 app, unmodified (`--threads 4`, load average 1.2 on the box, JSON
+route not a template render — a floor, not a peak benchmark):
 
 | metric | value |
 |---|---|

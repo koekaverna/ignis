@@ -13,11 +13,6 @@ listen = "127.0.0.1:8080"
 # PHP worker threads. Default: the machine's available parallelism.
 # threads = 4
 
-# Synchronous offload workers for what cannot park: SQLite3 (a regular file is not epoll-able) and
-# CPU-bound calls. curl_* and PDO on pgsql/mysql park and need none; IGNIS_OFFLOAD_CLASSES=PDO,SQLite3
-# adds PDO back for a pdo_sqlite app. Each is a full PHP thread; 0 off.
-# offload = 4
-
 # Respawn a worker whose script ends (fatal error, exit). Default true.
 # supervise = true
 

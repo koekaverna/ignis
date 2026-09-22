@@ -105,8 +105,11 @@ ignis:
     those would give every request its own cache and destroy the thing it is for. Anything else of
     yours needs the attribute or the setting above.
 
-    Doctrine is covered by [its own package](../packages/doctrine.md) — a manager and a connection
-    per fiber (V-69, V-85) — and not by this bundle.
+    An entity manager and a database connection are **not** in that list and are exactly the kind
+    of service that needs marking: a manager holds a unit of work and a connection holds a socket,
+    both per-request objects. Share one PostgreSQL connection between overlapping requests and one
+    request reads another's row while the rest time out (V-85). Mark the service `scoped` — the
+    attribute or `scoped_ids` above — and every fiber resolves its own.
 
     `$_SESSION` is **not** one of the four superglobals the runtime swaps per fiber, but that turns
     out not to matter in practice: `session_start()` fails on every request under the embed SAPI

@@ -92,7 +92,7 @@ is dropped when that fiber is garbage-collected (backed by a `WeakMap`). Outside
 | `static set(string $key, mixed $value): void` | Stores `$value` under `$key`, scoped to the current fiber (or `{main}`). |
 | `static get(string $key, mixed $default = null): mixed` | Reads it back; `$default` if unset. |
 
-Used internally for `ignis.request` (the current request id, for cancellation/deadline routing) and
+Used internally for `ignis.request` (the current request id, for cancellation/deadline routing)
 and, since ADR-0042, by any service the container marks `scoped` — including Symfony's own `RequestStack` and `TokenStorage`, and anything of yours that holds per-request state such as an entity manager or a database connection.
 
 ### `Ignis\Output` (`php/packages/runtime/src/Output.php`)

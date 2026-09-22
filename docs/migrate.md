@@ -49,7 +49,7 @@ Point `entry` in `ignis.toml` at your app's front controller to serve it instead
 | memory-limit restarts + `gc_collect_cycles()` called per request to control leaks | runtime PHP heap stays flat without a per-request GC call; a per-thread supervisor restarts a dead worker instead of a memory-limit trip | V-10 (heap byte-identical across 1.5M requests, no `gc_collect_cycles()` call); V-17 (supervisor respawn) |
 | opcache reset on worker restart | thread respawn without opcache reset, same as php-fpm above | V-17; ADR-0012 |
 | shared state via RPC to Go (a KV round trip for anything shared between workers) | not yet available in-process — see "not supported yet" below | pain-map "RoadRunner" item 4 (NOT STARTED) |
-| `ignore_user_abort` / worker-mode discipline (close descriptors, avoid state pollution) | a disconnect cancels the fiber and its children, and per-request state is fiber-scoped rather than yours to reset; a database connection belongs to `ignis/doctrine`'s pool (V-85), which resets it on return. Nothing to close by hand for PostgreSQL or the auto-routed `PDO`/`SQLite3`/`curl_*` handles | V-14 (a disconnect cancels the fiber and its children); V-85 (a connection per fiber, reset on return); V-24 addendum (offload auto-routing, no code change). V-21 stood here for the runtime-owned pool, which is deleted (V-87) |
+| `ignore_user_abort` / worker-mode discipline (close descriptors, avoid state pollution) | a disconnect cancels the fiber and its children, and per-request state is fiber-scoped rather than yours to reset. A database connection is still the application's to own: give each fiber its own by marking the service that holds it `scoped` (ADR-0042), since two fibers inside one connection swap result sets (V-85) | V-14 (a disconnect cancels the fiber and its children); V-85 (what a shared connection does). V-21 stood here for the runtime-owned pool, which is deleted (V-87) |
 
 ## What stays the same
 
@@ -61,14 +61,15 @@ Ordinary, unmodified PHP keeps working — no code change to adopt Ignis:
   `ext/sockets` — park the fiber, STARTTLS supported (V-12, V-25, V-29).
 - `curl_*` — parks the fiber, no worker and no copy, the write callback stays in the calling fiber (V-45, V-59);
 - `PDO` on `pgsql` — parks the fiber (V-45, V-59);
-- `SQLite3` — auto-routed to a synchronous offload worker pool with no code change (a regular file cannot be parked); `pdo_sqlite` blocks the thread unless you add `PDO` to `IGNIS_OFFLOAD_CLASSES`;
-  proxies keep `instanceof` and class constants correct (V-24 addendum).
+- `SQLite3` and `pdo_sqlite` — **block the PHP thread** for the length of the call: a regular file
+  cannot be parked (ADR-0024), and the worker pool that used to take such calls off the request
+  thread was deleted on 2026-09-22 (DECISIONS.md). Other threads keep serving.
 - PostgreSQL — `pdo_pgsql` parks like any other syscall, so an unmodified query suspends the fiber
-  instead of the thread (V-45, V-59 addendum: 303 ms parked against 2,753 ms routed through workers).
-  Pooling is the application's, not the runtime's: `ignis/doctrine` gives a connection per fiber, or a
-  per-thread pool with a bounded wait, configured in `config/packages/ignis_doctrine.yaml` (V-85). The
-  runtime-owned pool described here until 2026-09-18 is deleted — V-86 measured it against parked
-  `pdo_pgsql` and the speed case did not survive (ADR-0015 closed, V-87).
+  instead of the thread (V-45, V-59 addendum: 303 ms for 100 × 200 ms queries on one thread).
+  Connections are the application's, not the runtime's: one handle belongs to one fiber, so mark the
+  service holding it `scoped` (ADR-0042) — sharing one connection between fibers swaps result sets
+  (V-85). The runtime-owned pool described here until 2026-09-18 is deleted — V-86 measured it
+  against parked `pdo_pgsql` and the speed case did not survive (ADR-0015 closed, V-87).
 - `$_SERVER`, `$_GET`, `$_POST`, `$_COOKIE` — fiber-scoped; two interleaved requests never see each
   other's (V-11: 0 mismatches across 300 checks and over HTTP).
 - Symfony via `symfony/runtime`, Revolt/AMPHP via `Ignis\Revolt\IgnisDriver` — unchanged skeletons

@@ -62,7 +62,7 @@ nav:
   - Concept:
       - Why Ignis: concept/why.md
       - Architecture: concept/architecture.md
-      - The three mechanisms: concept/mechanisms.md
+      - The two mechanisms: concept/mechanisms.md
       - What it is not: concept/non-goals.md
   - Getting started:
       - Install: getting-started/install.md

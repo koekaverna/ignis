@@ -1,6 +1,6 @@
 # CLI reference
 
-Source: `crates/ignis/src/main.rs` (argument parsing, thread/offload spawn, exit codes) and
+Source: `crates/ignis/src/main.rs` (argument parsing, thread spawn, exit codes) and
 `crates/ignis/src/config.rs` (`ignis serve`'s file/env bridge). There is one binary, `ignis`, with
 two front ends that share everything past argument parsing: `ignis serve` (product mode, reads
 `ignis.toml`) and the lower-level `ignis <script.php>` form serve rewrites itself into.
@@ -14,9 +14,9 @@ using fibers in a console command at all.
 ```
 ignis --version | -V
 ignis serve [--config ignis.toml] [entry.php] [args...]
-ignis [--threads N] [--offload N] [--supervise] <script.php> [args...]
-ignis [--threads N] [--offload N] [--supervise] -r <code>
-ignis [--threads N] [--offload N] [--supervise] -- [args...]      # script read from stdin
+ignis [--threads N] [--supervise] <script.php> [args...]
+ignis [--threads N] [--supervise] -r <code>
+ignis [--threads N] [--supervise] -- [args...]      # script read from stdin
 ```
 
 `--version`/`-V` must be the very first argument; it prints `ignis <CARGO_PKG_VERSION>` and exits
@@ -25,7 +25,7 @@ ignis [--threads N] [--offload N] [--supervise] -- [args...]      # script read 
 
 **There is no `--help`.** `main.rs` only special-cases `--version`/`-V` before the usage message; any
 other unrecognised leading token — `--help` included — falls through to `parse_runtime_flags` (which
-ignores it, since it is not `--threads`/`--offload`/`--supervise`) and is then treated as the script
+ignores it, since it is not `--threads`/`--supervise`) and is then treated as the script
 path. `ignis --help` therefore tries to run a PHP script literally named `--help`, fails to open it,
 prints a PHP fatal error and **exits 255**; `ignis serve --help` fails the entry-resolution step
 instead and **exits 2** with `entry script --help does not exist`. Verified directly:
@@ -52,34 +52,32 @@ looks for `./ignis.toml` and falls back to built-in defaults if that isn't there
    (these become the script's own `$argv[1..]`, untouched).
 4. Falls through into the exact same code path as `ignis <script.php>` below.
 
-Note `serve` does **not** accept `--threads`/`--offload`/`--supervise` as its own CLI flags — those
-are `ignis.toml` keys (`threads`, `offload`, `supervise`) or `IGNIS_THREADS`/`IGNIS_OFFLOAD`
-environment variables under `serve`. They're CLI flags only on the raw form below.
+Note `serve` does **not** accept `--threads`/`--supervise` as its own CLI flags — those are
+`ignis.toml` keys (`threads`, `supervise`) or the `IGNIS_THREADS` environment variable under
+`serve`. They're CLI flags only on the raw form below.
 
 Once the engine is up and the boot self-check (below) has passed, `ignis serve` prints one line to
 stderr: `ignis <version> — threads=<N> listen=<addr> park=<summary> — ready` (`main.rs`,
 `print_ready_banner`). The raw `ignis <script.php>` form prints nothing on a clean start — this
 banner exists specifically so `serve` has a visible sign of life at the default `warn` log floor.
 
-### `ignis [--threads N] [--offload N] [--supervise] <script.php> [args...]`
+### `ignis [--threads N] [--supervise] <script.php> [args...]`
 
 The form every other entry point (including `serve`, after its rewrite) ends up running. Flags are
 parsed left to right, in any combination/order, stopping at the first token that isn't one of the
-three — that token and everything after it is the script name plus its own `$argv`.
+two — that token and everything after it is the script name plus its own `$argv`.
 
 `-r <code>` and `--` (script piped on stdin) are also accepted here, mirroring `php-cli`'s `-r` and
-`--`: both run as a single script on the main thread only — no worker threads, no offload pool, no
-supervisor — because the embed SAPI (unlike CLI) has neither `-c` nor `-d`, so these two exist
+`--`: both run as a single script on the main thread only — no worker threads, no supervisor —
+because the embed SAPI (unlike CLI) has neither `-c` nor `-d`, so these two exist
 purely to let test harnesses that re-exec `PHP_BINARY -r ...`/`... -- ` keep working under
 `scripts/ignis-php`. Exit status is the script's own return value from `engine.eval()`, clamped to
 `0..=255`.
 
 For the normal `<script.php>` form: the script path is canonicalized if possible (falls back to the
 given path if that fails), `threads` is floored at `1` regardless of what `--threads`/`IGNIS_THREADS`
-said, and `offload` worker threads (if `> 0`) are spawned first, each running
-`php/packages/offload/src/worker.php` on its own attached engine context. Then `threads` PHP worker threads are
-spawned (`ignis-php-<i>`), each with its own `Reactor` and its own `WorkerThread::attach()`, all
-running the *same* script file. If `--supervise` is set, thread slot 0 (the main thread) becomes a
+said, and `threads` PHP worker threads are spawned (`ignis-php-<i>`), each with its own `Reactor`
+and its own `WorkerThread::attach()`, all running the *same* script file. If `--supervise` is set, thread slot 0 (the main thread) becomes a
 pure supervisor loop — it runs no PHP itself — and worker slots `1..=threads` are respawned
 whenever their script ends (fatal error or normal completion), up to 10 restarts per rolling
 60-second window per slot; past that the slot is logged (`tracing::error!`) and left dead rather
@@ -92,11 +90,16 @@ alongside `threads - 1` additional worker threads, and the process exits once al
 |---|---|---|---|
 | `--config PATH` | `ignis serve` only | `./ignis.toml` if present, else built-in defaults | Explicit `ignis.toml` path; must be the first two tokens after `serve`. |
 | `--threads N` | raw `ignis <script>` form | `IGNIS_THREADS` env if set, else `1` (floored at `1` either way) | PHP worker OS threads. Parsed with `.parse().unwrap_or(1)` — a non-numeric `N` silently becomes `1`, not an error. |
-| `--offload N` | raw `ignis <script>` form | `IGNIS_OFFLOAD` env if set, else `0` | Synchronous offload worker threads for what cannot park (E16: `SQLite3`, file-backed `PDO`, CPU-bound work; `curl_*` parks — V-59). `.parse().unwrap_or(0)` — same silent-fallback behavior as `--threads`. |
 | `--supervise` | raw `ignis <script>` form | off (present only if passed, or added by `serve`'s rewrite) | Enables the respawn supervisor described above. |
 | `-r <code>` | raw `ignis <script>` form | — | Runs `<code>` as PHP on the main thread only, like `php -r`, then exits with its status. |
 | `--` | raw `ignis <script>` form | — | Reads the script from stdin, like `php --`, runs it on the main thread only. |
 | `--version` / `-V` | any invocation, first token only | — | Prints the version and exits 0. |
+
+**`--offload N` is gone.** It started a pool of synchronous worker threads for what cannot park;
+the pool was deleted on 2026-09-22 with the MVP cut (DECISIONS.md), and the flag, the `offload`
+`ignis.toml` key and `IGNIS_OFFLOAD` went with it. A call that cannot park — a regular file,
+`SQLite3`, a file-backed `PDO`, CPU-bound work — now blocks its PHP thread for the length of the
+call; `curl_*`, `pdo_pgsql`, sockets and `sleep()` park as before.
 
 ## Signals
 
@@ -117,7 +120,7 @@ alongside `threads - 1` additional worker threads, and the process exits once al
 
 ## Not a flag: `ignis.toml` / environment
 
-Everything that isn't `--threads`/`--offload`/`--supervise`/`--config`/`-r`/`--`/`--version` is
+Everything that isn't `--threads`/`--supervise`/`--config`/`-r`/`--`/`--version` is
 configured through `ignis.toml` and `IGNIS_*` environment variables, documented in full in
 `configuration.md` — including the listen address (`listen` / `IGNIS_LISTEN`, which is actually
 read back out by the PHP entry script via `getenv()`, not by the Rust binary), the fiber/queue

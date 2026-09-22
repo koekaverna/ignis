@@ -9,9 +9,9 @@ than rebuilt, which is the single biggest win the project has measured (V-4). Ar
 things an application actually calls — `Ignis\async()`, `all()`, `sleep()`, `deadline()`,
 `serve()`, `Ignis\Scope` for per-fiber state, and `Ignis\Http\Request`/`Response`/`StreamedResponse`.
 
-A PHP thread has exactly one wait point. Everything that waits — a timer, a socket, an offload
-answer, a gRPC call — arrives on the same completion channel, which is what keeps the scheduler
-small enough to read.
+A PHP thread has exactly one wait point. Everything that waits — a timer, a socket, a gRPC
+call — arrives on the same completion channel, which is what keeps the scheduler small enough to
+read.
 
 ## Install
 
@@ -99,6 +99,6 @@ a shared entity manager, a leaked token — has to be reproducible on a developm
 `Ignis\Scope` is keyed by the fiber, and fibers are reused, so anything stored there is cleared at
 request end — that is what makes "per fiber" mean "per request" (V-67). State you keep anywhere
 else (a static, a container singleton) is shared by every request on the thread, which is the whole
-subject of the [Symfony](symfony.md) and [Doctrine](doctrine.md) pages.
+subject of the [Symfony](symfony.md) page.
 
 The full class-by-class surface is the [PHP API reference](../reference/php-api.md).
