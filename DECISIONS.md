@@ -954,3 +954,7 @@ behind every number in STATUS.
 against `examples/grpc_server.php` with the runtime's own client: unary, server-streaming in order,
 and ten concurrent Proxy calls that each park on a 200 ms client call and must finish in under a
 second on one thread — the arm that fails if the client ever blocks the thread instead of parking.
+
+**Addendum, owner 2026-09-23: "Оставляем".** Classic mode (with the FrankenPHP gate it serves)
+and the history — `docs/research`, the ADRs, VALIDATION, BACKLOG-CLOSED — stay. The cleanup list
+of 2026-09-22 is closed; nothing else on it is pending.
