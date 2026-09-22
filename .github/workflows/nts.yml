@@ -1,6 +1,6 @@
 # S-NTS-MODE: the non-thread-safe engine ABI is behind `cfg(php_nts)`, so nothing in ci.yml
-# compiles it and nothing on a developer's box does either — the exact shape that let backend (b)
-# stop compiling silently (see backend-b.yml's own header). It exists because every PHP a
+# compiles it and nothing on a developer's box does either — the shape that once let a
+# feature-gated backend stop compiling silently. It exists because every PHP a
 # distribution ships is NTS: deb.sury.org has no thread-safe build of any version, embed included,
 # and its 85 extension packages cannot be loaded by a thread-safe engine at all (V-113).
 #

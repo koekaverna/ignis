@@ -31,7 +31,7 @@ final class RequestScopedValueInPropertyRuleTest extends RuleTestCase
     /**
      * The derived cases at the end matter most: they are what the rule missed in its first version.
      * What a singleton stores is rarely the `Request` — it is a locale, a tag, a connection hash —
-     * and each of those pins the object just as surely (V-96, `bench/e21` `SingletonCapture`).
+     * and each of those pins the object just as surely (V-96, the `SingletonCapture` fixture in `tests/data`).
      */
     public function testItFlagsTheCaptureAndLeavesTheFacadeAlone(): void
     {
