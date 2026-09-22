@@ -746,7 +746,7 @@ final class LoopTest extends LoopTestCase
             [['id' => 7, 'status' => 504, 'headers' => ['content-type' => 'text/plain'], 'body' => "504 fiber killed\n"]],
             FakeReactor::responses(),
         );
-        self::assertArrayNotHasKey(7, self::get('requestFibers'));
+        self::assertArrayNotHasKey(7, (array) self::get('requestFibers'));
     }
 
     /** IGNIS_ON_SWALLOWED_CANCEL=log: the fiber is left alone, one warn line, and it is forgotten. */
@@ -780,7 +780,7 @@ final class LoopTest extends LoopTestCase
         self::assertSame(1, substr_count($logged, 'swallowed its cancellation'), 'one line, not one per turn');
         self::assertSame([], self::get('killPending'));
         self::assertSame([], self::get('logSwallowedPending'), 'forgotten once logged');
-        self::assertArrayHasKey(9702, self::get('waiting'), 'still parked, not force-closed');
+        self::assertArrayHasKey(9702, (array) self::get('waiting'), 'still parked, not force-closed');
     }
 
     // ---- ADR-0043 §7, L2/L3: poolBody() wakes an awaiter of a force-closed job -------------

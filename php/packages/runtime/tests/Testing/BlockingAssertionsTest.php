@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Ignis\Tests\Testing;
 
 use Ignis\Testing\BlockingAssertions;
-use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
  * do anything beyond running the callable: this suite is the no-op contract a test case gets
  * under a plain `php` CLI, without which PHPStan reports the trait as unused (research 50 S-3).
  */
-#[CoversClass(BlockingAssertions::class)]
+#[CoversTrait(BlockingAssertions::class)]
 final class BlockingAssertionsTest extends TestCase
 {
     use BlockingAssertions;

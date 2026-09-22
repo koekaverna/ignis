@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Ignis\Tests\Testing;
 
 use Ignis\Testing\DetectsBlocking;
-use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
  * this suite is the no-op contract a test case gets under a plain `php` CLI, without which
  * PHPStan reports the trait as unused (research 50 S-3, C-2).
  */
-#[CoversClass(DetectsBlocking::class)]
+#[CoversTrait(DetectsBlocking::class)]
 final class DetectsBlockingTest extends TestCase
 {
     use DetectsBlocking;
@@ -25,6 +25,6 @@ final class DetectsBlockingTest extends TestCase
         $this->ignisStartBlockingWatch();
         $this->ignisAssertNoBlockingCalls();
 
-        self::assertTrue(true, 'neither hook threw or failed the test');
+        self::assertSame(0, $this->ignisBlockingWatchSequence, 'without the detector the watch starts at sequence 0 and the hooks change nothing');
     }
 }

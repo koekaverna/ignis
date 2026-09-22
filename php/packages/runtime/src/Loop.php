@@ -1139,6 +1139,7 @@ final class Loop
      * ordinary "waiting for a new job" one every idle fiber sits in, not a swallowed cancellation,
      * so it must not be force-closed: `Loop::spawn()` would otherwise be handed a fiber the engine
      * is mid-way through destroying the moment a later request reuses it.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function hasReturnedToThePoolIdle(\Fiber $fiber): bool
     {
@@ -1174,10 +1175,10 @@ final class Loop
     {
         $foundOneToClose = false;
         foreach (\array_keys(self::$killPending) as $fiberId) {
-            $fiber = self::$killPending[$fiberId] ?? null;
-            if ($fiber === null) {
+            if (!\array_key_exists($fiberId, self::$killPending)) {
                 continue;
             }
+            $fiber = self::$killPending[$fiberId];
             if ($fiber->isTerminated()) {
                 unset(self::$killPending[$fiberId]);
                 continue;
