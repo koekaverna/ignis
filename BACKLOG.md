@@ -182,6 +182,66 @@ with `SUITES=symfony-http-foundation` finishes in bounded time with a hung test 
 by a fixture that parks a fiber forever. Then, and not before, the `e15-chaos` job returns to
 `ci.yml` (its last shape is in `git log` at `7c1c48e`).
 
+### S-STALL-ALERTS Scoreboard, ticker, alert module with dedup — the warning/error scheme (ADR-0043 §3, §4, §6) `main` `open — owner, 2026-09-23`
+**What.** A per-worker slot of atomics (state, since, request id, site, acks), a 100 ms ticker in
+the master that turns slot age into `stall` events by `busy_warn_ms`/`stall_kill_ms`/
+`stall_abandon_ms` and classifies the worker from `/proc/<pid>/task/<tid>/{syscall,wchan,stat}`, and
+`alerts.rs` (pure Rust, no `unsafe` — the `agent` half): first occurrence logged, repeats counted,
+one summary per key per window, escalation warn → error → critical, token-bucket rate limit,
+Prometheus counters, health fields, `ignis_stats()` entries. Under ZTS the slots are a static
+array; under NTS prefork one `MAP_SHARED|MAP_ANONYMOUS` page mapped before the first fork.
+**Acceptance.** Research 50 S-1 (one warn line naming worker, state, age, request id, uri and the
+`/proc` classification within 1.5 s; no second line in the window), S-4 (dedup unit tests: lines
+per key per window ≤ 3, escalation once, drops counted), S-14 (storm: ≤ `max_lines_per_s`, one
+`recovered` per key), S-16 (NTS: a killed child's slot reported stale once, page address stable).
+**Constraints.** `alerts.rs` and its tests: `agent`. Slot writers in `module.rs`/`park.rs`, the
+NTS page and the ticker's `/proc` reads: `main`. Nothing in a signal handler.
+
+### S-BLOCKING-DETECTOR Every blocking forward inside a fiber is timed, reported once per site, and can fail a test (ADR-0043 §5) `main` `open — owner, 2026-09-23`
+**What.** In the interposer, on the path that already forwards blockingly inside a fiber: two
+`clock_gettime`, a `blocking_call` event over `blocking.threshold_us` with library, symbol,
+duration, fd kind, request id, and on the first occurrence per site (`blocking.trace`) a PHP
+backtrace taken on the PHP thread after the syscall returned. Modes `off|warn|strict|fatal`,
+`blocking.allow` patterns, `Ignis\allowBlocking(callable)`, the JSON report at shutdown and on
+`SIGUSR2`. `php/packages/runtime/src/Testing/`: `BlockingAssertions::assertNoBlockingCalls` and
+the PHPUnit extension for `KernelBrowser::request()`; `bench/blocking-audit.sh` runs `wrk` over a
+route list under `profile = load-test` and diffs the report against an allow file.
+**Acceptance.** Research 50 S-2 (the audit lists every site of `examples/app.php` and the Symfony
+skeleton once each, counters equal the report, exit non-zero on a site outside the allow file;
+hook-off control sees every socket read as a site), S-3 (`assertNoBlockingCalls` fails on a
+regular-file read and passes on a parked fetch; the skeleton's own tests report N controller
+sites without the allow file and 0 with it), S-11 (E4 within noise with `mode = warn`; E6
+unchanged), S-13 (the `flock` backoff park is not a site).
+**Constraints.** `park.rs` timing and the backtrace: `main`. `Testing/`, the audit script, the
+report format: `agent`. The detector never times a park, only a forward that blocks.
+
+### S-FIBER-RECOVERY The ladder L0–L5 with flexible configuration, one delivery for both carriers (ADR-0043 §7, §8; research 49) `main` `open — owner, 2026-09-23; absorbs S-FIBER-TIMEOUT's mechanism and M4-7's naming`
+**What.** L0 `fiber_timeout_ms` per request with per-route override, armed through `deadline()`'s
+timer, the expiry naming the park's file:line from `zend_fiber.execute_data`. L2 force-close: after
+a swallowed cancellation the loop answers 504, drops every reference and `unset`s the fiber; the
+engine's graceful exit unwinds it; `wait.rs` takes a reference while parked (research 49 H1) and
+refuses to park a `DESTROYED` fiber, answering `ECANCELED` through the shim (H2/H3). L3: a
+`SIGRTMIN+2` handler (`SA_SIGINFO|SA_RESTART|SA_ONSTACK`, `tsrm_is_managed_thread()` under ZTS)
+that stores `kill_pending` and `EG(vm_interrupt)` and nothing else; a chained
+`zend_interrupt_function` that force-closes `EG(active_fiber)` when it is the recorded one and
+counts the ack; delivery `pthread_kill(tid)` under ZTS, `kill(pid)` under NTS. L4: the shim maps
+`EINTR` with `kill_pending` set to `-1/ECANCELED` on re-entry. L5: abandon a live thread (deregister,
+504 in-flight via the E12' path, respawn, leak, `leaked_workers_max` → health 503) / `SIGKILL` +
+reap + respawn a child. Keys: `kill = graceful|exception`, `on_swallowed_cancel`, the four
+durations, `profile`, `[recovery.routes."…"]`.
+**Acceptance.** Research 50 S-5 (bounded chaos run, 504 naming file:line, per-route override), S-6
+(force-close at the next park within 1 ms, `finally` once, `ECANCELED` not blocking, worker alive),
+S-7 (spin killed within 2 s on VM and JIT, siblings complete, `catch (Throwable)` bypassed,
+`kill=exception` catchable; NTS via `kill(pid)`), S-8 (blocked `curl_exec`/`sleep` returns within
+10 ms of the signal; `SA_RESTART` control), S-9 (`/proc` classification picks L3/L4/L5), S-10
+(live worker abandoned within 2.5 s, in-flight 504 within 0.5 s, replacement within 1 s; NTS child
+killed while holding the opcache lock, next child serves), S-12 (dtor fixture ASAN/valgrind clean,
+control at `e909c86` fails), S-15 (precedence and profiles). Kill criteria: ADR-0043 §11.
+**Constraints.** `main` throughout (`wait.rs`, `park.rs`, `park.c`, `module.rs`, `main.rs`,
+`http.rs`); `Loop.php` and `config.rs` parts may be prepared by an agent and handed over. Build
+L0/L2 first, L3/L4 second, L5 last; the NTS half of L5 waits for the prefork branch. The graceful
+exit must never reach the loop's frame (S-6/S-7 assert the worker's script is alive).
+
 ### M4-9 Cancellation of offload jobs and PG queries on disconnect (E11') `main` `CLOSED 2026-09-22 — the offload pool is deleted (DECISIONS); the pgsql half stays a question under ROADMAP E11'`
 Nothing left to cancel on a worker thread: there are no worker threads.
 **What.** ROADMAP E11': today a client disconnect cancels the fiber (V-14) but a query already sent

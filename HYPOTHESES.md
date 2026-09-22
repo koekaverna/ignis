@@ -187,3 +187,21 @@ world: it has an acceptance command, not a time box and an expected number.
 Stating it here rather than leaving the gap unexplained, because `CLAUDE.md` still describes
 `HYPOTHESES.md` as a link in the chain. It is, for R&D questions; a new one gets an H-n. The rule
 that did not change is the one that matters: every claim still needs a V-n.
+
+## H-INT (ADR-0043, research 49/50) — stall detection, stuck-fiber recovery, blocking alerts
+
+Added 2026-09-23 at the owner's request. Each is one scenario of research 50; each gets a V-n
+when run, on the ZTS binary and, where the carrier matters, on the NTS prefork binary.
+
+| id | statement | decided by | expected | time box | status |
+|---|---|---|---|---|---|
+| H-INT-0 | A fiber parked forever is cut by `fiber_timeout_ms` with a 504 naming the park's file:line, and the chaos suite finishes in bounded time | research 50 S-5 | 504 ≤ 2.5 s at 2 000 ms; chaos run bounded; control (`0`) hangs | 60 min | OPEN |
+| H-INT-1 | A spinning fiber (VM and JIT) is killed by `vm_interrupt` + graceful exit within 2 × `stall_kill_ms`; `finally` runs; `catch (Throwable)` does not intercept; siblings on the worker complete; the worker's script survives | S-7 | ≤ 2 s at 1 000 ms; acks = 1; both carriers | 90 min | OPEN |
+| H-INT-2 | A swallowed cancellation is force-closed at the fiber's next park within 1 ms; `finally` runs once; the C op answers `ECANCELED` instead of blocking | S-6 | 1 ms; no "could not park, blocking" trace | 60 min | OPEN |
+| H-INT-3 | A fiber blocked in a shimmed syscall under policy `block` returns an error within 10 ms of `SIGRTMIN+2`; a regular-file read elsewhere is not disturbed (`SA_RESTART`) | S-8 | ≤ 10 ms; per library: retry re-entered the shim | 90 min | OPEN |
+| H-INT-4 | `/proc/<pid>/task/<tid>/{syscall,wchan,stat}` classifies spin / blocked / C-loop within 1.5 s and the ladder picks L3 / L4 / L5 | S-9 | 3/3 correct on both carriers | 45 min | OPEN |
+| H-INT-5 | The GC destructor fiber can park and be collected without a use-after-free once `wait.rs` holds a reference | S-12 | 0 ASAN/valgrind reports over 10 000 cycles; control at `e909c86` fails | 60 min | OPEN |
+| H-INT-6 | A live stuck worker is abandoned (ZTS) or killed (NTS) within `stall_abandon_ms`, its in-flight requests get 504, a replacement serves within 1 s; a child killed holding the opcache lock does not poison the next | S-10, S-16 | 2.5 s / 0.5 s / 1 s; opcache no restart pending | 90 min | OPEN |
+| H-INT-7 | Every blocking site of `examples/app.php` and the Symfony skeleton appears exactly once in the audit report under load, with route and backtrace, and a site outside the allow file fails the audit | S-2, S-3 | sites listed = sites planted; 1 warn line per site; exit ≠ 0 on an unlisted site | 90 min | OPEN |
+| H-INT-8 | The alert module emits ≤ 3 lines per key per window (first, escalation, summary), escalates once, drops beyond `max_lines_per_s` and counts the drops | S-4, S-14 | property test green; storm ≤ 20 lines/s | 45 min | OPEN |
+| H-INT-9 | The scoreboard stores and the detector's two `clock_gettime` cost nothing measurable on E4 with `mode = warn` and no blocking sites | S-11 | within V-122's 11 % noise; no new syscalls per request | 45 min | OPEN |
