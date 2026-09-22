@@ -149,4 +149,3 @@ Ignis\serve(static function (Request $req) use ($pdo, $listen): Response {
         default      => Response::text("not found\n", 404),
     };
 }, $listen);
-
