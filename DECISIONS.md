@@ -973,3 +973,14 @@ reactor and adopts the inherited socket. `serve` defaults follow the engine — 
 process, NTS one thread and workers = cores. Numbers: V-123 (E26). CI runs `unit` and `smoke` on both
 engines out of one image from now on (the NTS prefix joins `docker/php.Dockerfile`); `nts.yml` and
 `scripts/nts-checks.sh` are folded into `scripts/smoke.sh`'s NTS leg.
+
+## 2026-09-23 — CI steps answer with their own status, and documentation does not run the gate
+
+Owner: "там из изменений только документация, зачем нужен полный прогон тестов и сборка образов?"
+Two findings. `ci.yml` had no path filter, so a JOURNAL line ran eleven jobs; `push` and
+`pull_request` now ignore `**.md` and `docs/**`. Worse: a container job's default shell is `sh -e`
+without pipefail, and every `… | tee /tmp/x.log` step — nextest, miri, smoke, the php coverage, E9,
+E20 — answered with tee's status. The first nts smoke leg printed "PHP not built" and passed in 0 s;
+the zts legs were green on their own merit, but nothing in the workflow could have said otherwise.
+`defaults.run.shell: bash` (`bash -eo pipefail`) makes the piped command's status the step's. The
+image build itself was necessary: the nts legs need `/opt/php85-nts`, which only the image carries.
