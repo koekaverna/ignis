@@ -11,6 +11,7 @@ mod metrics;
 mod php;
 mod reactor;
 mod watch;
+mod workers;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -24,7 +25,7 @@ pub static RESTARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-const USAGE: &str = "usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--threads N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version";
+const USAGE: &str = "usage: ignis serve [--config ignis.toml] [entry.php]\n       ignis [--workers N] [--threads N] [--supervise] (<script.php> | -r <code> | --) [args...]\n       ignis --version";
 
 fn main() -> ExitCode {
     let raw: Vec<String> = std::env::args().skip(1).collect();
@@ -50,15 +51,9 @@ fn main() -> ExitCode {
     };
     let script = script.canonicalize().unwrap_or(script);
 
-    let rt = tokio_runtime();
-    php::module::install_runtime(rt.handle().clone());
-    install_signal_drain(&rt);
-    php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
-
     // Before the engine: `Engine::start` adds an ini entry when development reload is on, and an
     // ini entry has to exist before anything is compiled.
     watch::set_supervised(flags.supervise);
-    install_reload_signal(&rt, flags.supervise);
     if let Err(code) = check_single_interpreter_flags(&flags) {
         return code;
     }
@@ -71,22 +66,57 @@ fn main() -> ExitCode {
         return code;
     }
     if serving {
-        print_ready_banner();
+        print_ready_banner(&flags);
     }
 
     if let Some((code, name)) = inline {
+        let rt = tokio_runtime();
         return run_inline_code(engine, rt, &code, &name);
     }
 
+    if flags.workers > 1 {
+        return run_worker_processes(&flags, &script, serving, &mut engine);
+    }
+    ExitCode::from(run_worker(&flags, &script, &mut engine).clamp(0, 255) as u8)
+}
+
+/// ADR-0044: the listener is bound here, once, before the master forks, so every worker accepts
+/// on the same socket; the master itself never runs PHP after this point. Under `serve` a worker
+/// that ends is respawned; a plain script run waits for all of them and answers with the worst
+/// status, like `--threads` does for threads.
+fn run_worker_processes(flags: &RuntimeFlags, script: &Path, serving: bool, engine: &mut php::embed::Engine) -> ExitCode {
+    let address = std::env::var("IGNIS_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into());
+    let listener = match workers::bind_shared_listener(&address) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("ignis: {error:#}");
+            return ExitCode::from(2);
+        }
+    };
+    let worst = workers::run(flags.workers, serving || flags.supervise, |_slot| {
+        http::adopt_listener(listener.try_clone().expect("clone the inherited listener"));
+        run_worker(flags, script, engine)
+    });
+    ExitCode::from(worst.clamp(0, 255) as u8)
+}
+
+/// One worker process, which is also the whole of a single-process run: the tokio runtime and this
+/// thread's reactor exist only from here on, so a fork before this point is a fork of a
+/// single-threaded process.
+fn run_worker(flags: &RuntimeFlags, script: &Path, engine: &mut php::embed::Engine) -> i32 {
+    let rt = tokio_runtime();
+    php::module::install_runtime(rt.handle().clone());
+    install_signal_drain(&rt);
+    php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
+    install_reload_signal(&rt, flags.supervise);
     spawn_watchdog(&rt);
     let worst = if flags.supervise {
-        supervise_workers(flags.threads, &script, rt.handle())
+        supervise_workers(flags.threads, script, rt.handle())
     } else {
-        run_workers(flags.threads, &script, rt.handle(), &mut engine)
+        run_workers(flags.threads, script, rt.handle(), engine)
     };
-    drop(engine);
     rt.shutdown_background();
-    ExitCode::from(worst.clamp(0, 255) as u8)
+    worst
 }
 
 /// M1: `ignis serve` is handled before anything else, because it bridges ignis.toml into the
@@ -115,19 +145,26 @@ fn initialize_logging() {
         .init();
 }
 
-/// `ignis [--threads N] [--supervise] <script.php>`; the IGNIS_THREADS environment variable is
-/// the default.
+/// `ignis [--workers N] [--threads N] [--supervise] <script.php>`; the IGNIS_WORKERS and
+/// IGNIS_THREADS environment variables are the defaults.
 struct RuntimeFlags {
+    workers: usize,
     threads: usize,
     supervise: bool,
 }
 
 /// Takes the leading runtime flags off `args`, leaving the script and its own arguments.
 fn parse_runtime_flags(args: &mut Vec<String>) -> RuntimeFlags {
-    let mut flags =
-        RuntimeFlags { threads: std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1), supervise: false };
+    let mut flags = RuntimeFlags {
+        workers: std::env::var("IGNIS_WORKERS").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
+        threads: std::env::var("IGNIS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
+        supervise: false,
+    };
     loop {
-        if args.len() >= 2 && args[0] == "--threads" {
+        if args.len() >= 2 && args[0] == "--workers" {
+            flags.workers = args[1].parse().unwrap_or(1);
+            args.drain(0..2);
+        } else if args.len() >= 2 && args[0] == "--threads" {
             flags.threads = args[1].parse().unwrap_or(1);
             args.drain(0..2);
         } else if !args.is_empty() && args[0] == "--supervise" {
@@ -138,6 +175,7 @@ fn parse_runtime_flags(args: &mut Vec<String>) -> RuntimeFlags {
         }
     }
     flags.threads = flags.threads.max(1);
+    flags.workers = flags.workers.max(1);
     flags
 }
 
@@ -276,11 +314,12 @@ fn check_park_interposers() -> Result<(), ExitCode> {
 /// run gets nothing, because the phpt harness treats a single stderr line as a test failure and the
 /// default log floor is `warn` — which is why a clean start was otherwise invisible to an operator
 /// (found while rewriting docs/operate.md).
-fn print_ready_banner() {
+fn print_ready_banner(flags: &RuntimeFlags) {
     eprintln!(
-        "ignis {} — threads={} listen={} park={} — ready",
+        "ignis {} — workers={} threads={} listen={} park={} — ready",
         env!("CARGO_PKG_VERSION"),
-        std::env::var("IGNIS_THREADS").unwrap_or_else(|_| std::thread::available_parallelism().map_or("?".into(), |n| n.to_string())),
+        flags.workers,
+        flags.threads,
         std::env::var("IGNIS_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into()),
         php::park::policy_summary(),
     );
@@ -462,11 +501,18 @@ mod tests {
 
     #[test]
     fn runtime_flags_are_taken_in_any_order() {
-        let mut a = args(&["--supervise", "--threads", "4", "app.php", "--verbose"]);
+        let mut a = args(&["--supervise", "--workers", "3", "--threads", "4", "app.php", "--verbose"]);
         let flags = parse_runtime_flags(&mut a);
+        assert_eq!(flags.workers, 3);
         assert_eq!(flags.threads, 4);
         assert!(flags.supervise);
         assert_eq!(a, args(&["app.php", "--verbose"]));
+    }
+
+    #[test]
+    fn zero_workers_means_one() {
+        let mut a = args(&["--workers", "0", "app.php"]);
+        assert_eq!(parse_runtime_flags(&mut a).workers, 1);
     }
 
     #[test]

@@ -19,8 +19,13 @@ pub struct Config {
     pub entry: Option<PathBuf>,
     /// `host:port` the listener binds. Default `127.0.0.1:8080`.
     pub listen: Option<String>,
-    /// PHP worker threads. Default: the machine's available parallelism.
+    /// PHP worker threads per process. Default: the machine's available parallelism on the
+    /// thread-safe build, 1 on the non-thread-safe one.
     pub threads: Option<usize>,
+    /// Worker processes forked by a master (ADR-0044). Default: 1 on the thread-safe build, the
+    /// machine's available parallelism on the non-thread-safe one, where a process is the only
+    /// way to use a second core.
+    pub workers: Option<usize>,
     /// Respawn a worker whose script ends (ADR-0012). Default true under `serve`.
     pub supervise: Option<bool>,
     /// Extra php.ini; the embed SAPI has no `-c`/`-d`.
@@ -138,8 +143,12 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
     if let Some(v) = cfg.threads {
         default_env("IGNIS_THREADS", &v.to_string());
     }
+    if let Some(v) = cfg.workers {
+        default_env("IGNIS_WORKERS", &v.to_string());
+    }
     let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    default_env("IGNIS_THREADS", &cores.to_string());
+    default_env("IGNIS_THREADS", &default_threads(cores).to_string());
+    default_env("IGNIS_WORKERS", &default_workers(cores).to_string());
     if let Some(v) = &cfg.php_ini {
         default_env("IGNIS_PHP_INI", &v.to_string_lossy());
     }
@@ -184,12 +193,42 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
     }
 
     let mut out = Vec::new();
-    if cfg.supervise.unwrap_or(true) {
+    if cfg.supervise.unwrap_or(supervises_threads_by_default()) {
         out.push("--supervise".to_string());
     }
     out.push(entry.to_string_lossy().into_owned());
     out.extend(args.into_iter().skip(1)); // anything after the entry goes to `$argv`
     Ok(out)
+}
+
+/// The thread-safe build fills the cores with threads in one process; the non-thread-safe one
+/// cannot have a second PHP thread, so it fills them with worker processes (ADR-0044).
+#[cfg(not(php_nts))]
+fn default_threads(cores: usize) -> usize {
+    cores
+}
+#[cfg(php_nts)]
+fn default_threads(_cores: usize) -> usize {
+    1
+}
+#[cfg(not(php_nts))]
+fn default_workers(_cores: usize) -> usize {
+    1
+}
+#[cfg(php_nts)]
+fn default_workers(cores: usize) -> usize {
+    cores
+}
+
+/// `--supervise` respawns threads, which the non-thread-safe build refuses; there the master
+/// process is the supervisor, so `serve` must not ask for the thread one.
+#[cfg(not(php_nts))]
+fn supervises_threads_by_default() -> bool {
+    true
+}
+#[cfg(php_nts)]
+fn supervises_threads_by_default() -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -278,11 +317,20 @@ mod tests {
     }
 
     #[test]
-    fn supervise_is_on_by_default_and_can_be_turned_off() {
-        let on = serve_with(&format!("entry = {EXISTING_FILE:?}\n"), &[]);
-        assert_eq!(on.first().unwrap(), "--supervise");
+    fn supervise_follows_the_engine_by_default_and_the_file_decides_otherwise() {
+        let by_default = serve_with(&format!("entry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(by_default.first().unwrap() == "--supervise", supervises_threads_by_default());
         let off = serve_with(&format!("supervise = false\nentry = {EXISTING_FILE:?}\n"), &[]);
         assert_ne!(off.first().unwrap(), "--supervise");
+        let on = serve_with(&format!("supervise = true\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(on.first().unwrap(), "--supervise");
+    }
+
+    #[test]
+    fn the_workers_key_reaches_the_master_and_the_engine_picks_the_default() {
+        serve_with(&format!("workers = 3\nentry = {EXISTING_FILE:?}\n"), &[]);
+        assert_eq!(std::env::var("IGNIS_WORKERS").unwrap(), "3");
+        assert_eq!(default_workers(8) * default_threads(8), 8);
     }
 
     #[test]

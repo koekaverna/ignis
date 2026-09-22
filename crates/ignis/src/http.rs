@@ -62,6 +62,13 @@ static REGISTRY: OnceLock<Arc<Registry>> = OnceLock::new();
 /// Bind-once state, held under a mutex so concurrent `ignis_serve` calls from
 /// several PHP threads cannot race (the second would fail with EADDRINUSE).
 static BOUND: Mutex<Option<SocketAddr>> = Mutex::new(None);
+/// A listener the master bound before forking (ADR-0044); `start` adopts it instead of binding.
+static INHERITED: Mutex<Option<std::net::TcpListener>> = Mutex::new(None);
+
+/// Hands `start` the socket every worker inherited, so N processes accept on one port.
+pub fn adopt_listener(listener: std::net::TcpListener) {
+    *INHERITED.lock_unpoisoned() = Some(listener);
+}
 
 impl Registry {
     fn pick(&self) -> Option<Arc<Reactor>> {
@@ -207,7 +214,10 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, address: &str) 
         return Ok(b);
     }
     let address: SocketAddr = address.parse().with_context(|| format!("bad listen address {address:?}"))?;
-    let listener = rt.block_on(TcpListener::bind(address)).with_context(|| format!("bind {address}"))?;
+    let listener = match INHERITED.lock_unpoisoned().take() {
+        Some(inherited) => adopt_inherited(rt, inherited, address)?,
+        None => rt.block_on(TcpListener::bind(address)).with_context(|| format!("bind {address}"))?,
+    };
     let local = listener.local_addr()?;
     *bound = Some(local);
     drop(bound);
@@ -215,6 +225,18 @@ pub fn start(rt: &tokio::runtime::Handle, reactor: Arc<Reactor>, address: &str) 
     registry.reactors.lock_unpoisoned().push(reactor);
     rt.spawn(accept_loop(listener, registry.clone()));
     Ok(local)
+}
+
+/// The inherited socket is already bound, so the address PHP asks for can only be checked against
+/// it: a mismatch is the operator's mistake, named rather than silently overridden.
+fn adopt_inherited(rt: &tokio::runtime::Handle, inherited: std::net::TcpListener, asked: SocketAddr) -> Result<TcpListener> {
+    let bound = inherited.local_addr()?;
+    if bound != asked {
+        anyhow::bail!("the workers' listener is bound to {bound} but the script asked to serve on {asked}");
+    }
+    inherited.set_nonblocking(true)?;
+    let _enter = rt.enter();
+    TcpListener::from_std(inherited).context("adopting the inherited listener")
 }
 
 /// The connection cap is this process's RSS bound, so the number has to be honest (ADR-0025):
