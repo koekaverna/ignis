@@ -1,15 +1,9 @@
 <?php
 
 /**
- * Research 50 §A `dtor-park.php`: GC destructor fiber parks (research 49 H1/H2).
- *
- * `ParkingDestructor` objects that reference each other are a reference cycle plain refcounting
- * never frees; `gc_collect_cycles()` frees them and runs `__destruct()`, and `usleep()` inside a
- * destructor is one of the interposed calls, so it tries to park the fiber that happens to be
- * running when the collector runs -- which may not be the fiber the objects were built on. This is
- * the hazard research 49 H1/H2 names: S-12 expects zero ASAN/valgrind reports and a flat memory
- * curve over 10,000 cycles; the tree at `e909c86` is the control that is expected to report a
- * use-after-free or leak the fiber under the same fixture.
+ * Research 50 §A `dtor-park.php`: S-12, GC destructor fiber parks (research 49 H1/H2).
+ * A destructor's `usleep()` tries to park whichever fiber happens to be running when the
+ * collector runs; expects zero ASAN/valgrind reports and flat memory over 10,000 cycles.
  */
 
 declare(strict_types=1);

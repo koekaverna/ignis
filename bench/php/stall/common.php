@@ -1,13 +1,8 @@
 <?php
 
 /**
- * Shared wiring for every research-50 §A fixture (`bench/stall-ladder.sh`).
- *
- * Each fixture requires this file and calls `serveStallFixture()` with the handler for `/stuck` --
- * the one route that produces the stuck state under test. `/hello` and `/sleep` are the same on
- * every fixture: `/hello` is what proves the *other* fibers on the same worker keep answering while
- * `/stuck` is wedged, and `/sleep?ms=N` is how the harness pins a request to every other worker
- * before it fires `/stuck` at the remaining one (the technique `bench/e12-isolation.sh` uses).
+ * Shared wiring for every research-50 §A fixture (`bench/stall-ladder.sh`): each requires this
+ * file and calls `serveStallFixture()` with the `/stuck` handler that produces the stuck state under test.
  */
 
 declare(strict_types=1);
