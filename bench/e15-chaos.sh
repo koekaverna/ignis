@@ -17,8 +17,10 @@
 # IGNIS_NOISE=N spawns N fibers looping on Ignis\sleep(1) so those batches have >1 entry and the
 # shuffle is not a no-op; noiseTicks in the trailing IGNIS line says how often they got to run.
 #
-# Every phpunit invocation is wrapped in `timeout 900`. Raw output + the failing test names of
-# each run land in $TMP/<suite>-<mode>.txt.
+# Every phpunit invocation is wrapped in `timeout 900`, and under IGNIS_CHAOS every single park
+# is bounded by IGNIS_PARK_TIMEOUT_MS (30 s by default there): a hung test ends as an
+# `IGNIS HUNG: park timeout after N ms, parked at file:line` line and rc=124, not as the timeout.
+# Raw output + the failing test names of each run land in $TMP/<suite>-<mode>.txt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
@@ -74,10 +76,18 @@ for ($i = 0; $i < $noise; $i++) {
         }
     });
 }
-$rc = Ignis\async(static function () use ($run): int {
+$suite = Ignis\async(static function () use ($run): int {
     Ignis\sleep(0);          // Chaos::init() is lazy: it runs on the first Loop::awaitOp()
     return $run();
-})->await();
+});
+try {
+    $rc = $suite->await();
+} catch (Ignis\DeadlineExceededException $hung) {
+    // The park ceiling (IGNIS_PARK_TIMEOUT_MS, 30 s under IGNIS_CHAOS): the suite's fiber parked
+    // longer than that, and the message names where. PHPUnit's own progress line above says which test.
+    fwrite(STDERR, "IGNIS HUNG: " . $hung->getMessage() . "\n");
+    $rc = 124;
+}
 $stop->v = true;
 $chaos = Ignis\Chaos::report();
 fwrite(STDERR, sprintf(
@@ -143,12 +153,18 @@ install_doctrine() {   # $1 = dbal|orm  $2 = packages to strip from require-dev
     write_entry_point "$TMP/$1"
 }
 
+wants() {   # $1 = a SUITES prefix: symfony- | dbal | orm
+    case " $SUITES " in *" $1"*) return 0;; esac
+    return 1
+}
+
+# Only what $SUITES needs: the install is the cost (symfony alone is ~5 min from source), the runs are seconds.
 install() {
     mkdir -p "$TMP"
-    install_symfony
-    install_doctrine dbal "doctrine/coding-standard,jetbrains/phpstorm-stubs,phpstan/phpstan,phpstan/phpstan-phpunit,phpstan/phpstan-strict-rules,slevomat/coding-standard,squizlabs/php_codesniffer"
-    install_doctrine orm  "doctrine/coding-standard,phpbench/phpbench,phpstan/extension-installer,phpstan/phpstan,phpstan/phpstan-deprecation-rules"
-    if [ ! -f "$TMP/orm/bootstrap.php" ]; then
+    wants symfony- && install_symfony
+    wants dbal && install_doctrine dbal "doctrine/coding-standard,jetbrains/phpstorm-stubs,phpstan/phpstan,phpstan/phpstan-phpunit,phpstan/phpstan-strict-rules,slevomat/coding-standard,squizlabs/php_codesniffer"
+    wants orm && install_doctrine orm  "doctrine/coding-standard,phpbench/phpbench,phpstan/extension-installer,phpstan/phpstan,phpstan/phpstan-deprecation-rules"
+    if wants orm && [ ! -f "$TMP/orm/bootstrap.php" ]; then
         cat > "$TMP/orm/bootstrap.php" <<'EOF'
 <?php declare(strict_types=1);
 // Stands in for the <php><var .../></php> block of phpunit.xml.dist: reading an XML config needs

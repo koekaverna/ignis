@@ -364,6 +364,50 @@ jobs:
           name: e9-logs
           path: /tmp/*.log
 
+  # http-foundation is the one suite where chaos both acts (14k yields per mode) and finishes in
+  # seconds; dbal, orm and http-kernel never enter the loop (1–4 yields) and httpcache is five
+  # minutes of real sleep() per mode, so they stay a manual run (`bench/e15-chaos.sh`). The vendor
+  # tree is the cost (~5 min from source), so it is cached on the suite's own install recipe.
+  e15-chaos:
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
+    name: E15 chaos (http-foundation under shuffled scheduling, park ceiling on)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/koekaverna/ignis-php:8.5.10-zts
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: timeout 1800 cargo build --release -p ignis
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/e15-chaos/symfony
+          key: e15-chaos-symfony-${{ hashFiles('bench/e15-chaos.sh') }}
+      # The bench reports; this step decides. A test that fails under ignis or under chaos and not
+      # under stock PHP is a regression, a park past the ceiling is a hang (PHPUnit reports the
+      # exception itself and exits 255, so the message is matched, not the entry point's line), and
+      # a mode with no `Tests:` line never finished: any of the three fails the job.
+      - name: chaos suite, zero new failures against stock PHP, no park past the ceiling
+        run: |
+          SUITES=symfony-http-foundation timeout 1500 bench/e15-chaos.sh 2>&1 | tee /tmp/e15-chaos.log
+          ! grep -E 'new under (ignis|chaos) vs stock : [^[:space:]]' /tmp/e15-chaos.log
+          ! grep -qE 'park timeout after [0-9]+ ms' /tmp/e15-chaos/*.txt
+          [ "$(grep -c '^suite=' /tmp/e15-chaos.log)" = 4 ]
+          ! grep '^suite=' /tmp/e15-chaos.log | grep -vE 'tests=[1-9][0-9]*'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e15-chaos-logs
+          path: |
+            /tmp/*.log
+            /tmp/e15-chaos/*.txt
+
   e15:
     needs: changes
     if: needs.changes.outputs.runtime == 'true'

@@ -146,11 +146,20 @@ fn route_of_request(request_id: u64) -> String {
 
 /// `Ignis\KilledException` when the runtime package is loaded, else `\Error`.
 unsafe fn killed_exception_class() -> *mut sys::zend_class_entry {
-    // SAFETY: at an opcode boundary a class lookup may autoload; the interned name lives for the request.
+    // SAFETY: the caller is at an opcode boundary, as `runtime_class_or_error` requires.
+    unsafe { runtime_class_or_error(c"Ignis\\KilledException") }
+}
+
+/// The runtime package's class `name` when it is loaded, else `\Error`.
+///
+/// # Safety
+/// PHP thread at an opcode boundary: a class lookup may autoload.
+pub(crate) unsafe fn runtime_class_or_error(name: &std::ffi::CStr) -> *mut sys::zend_class_entry {
+    // SAFETY: the interned name lives for the request; a null lookup falls back to the engine's own class.
     unsafe {
         if let Some(intern) = sys::zend_string_init_interned {
-            let name = intern(c"Ignis\\KilledException".as_ptr(), 21, false);
-            let ce = sys::zend_lookup_class(name);
+            let interned = intern(name.as_ptr(), name.to_bytes().len(), false);
+            let ce = sys::zend_lookup_class(interned);
             if !ce.is_null() {
                 return ce;
             }

@@ -204,22 +204,50 @@ pub unsafe extern "C" fn zif_ignis_fiber_where(ex: *mut sys::zend_execute_data, 
     }
 }
 
-/// The first user frame from `frame` outwards, as `file:line`.
-unsafe fn suspension_point(mut frame: *mut sys::zend_execute_data) -> Option<String> {
+/// The park site as the application sees it: the first user frame outwards that is not the
+/// runtime's own (`Ignis\` namespace), else the innermost user frame, as `file:line`.
+pub(super) unsafe fn suspension_point(mut frame: *mut sys::zend_execute_data) -> Option<String> {
     // SAFETY: the caller hands a frame chain of a suspended fiber; every dereference is guarded.
     unsafe {
+        let mut innermost = None;
         while !frame.is_null() {
-            let func = (*frame).func;
-            if !func.is_null() && (*func).type_ as u32 == sys::ZEND_USER_FUNCTION {
-                let op_array = &(*func).op_array;
-                let opline = (*frame).opline;
-                if !op_array.filename.is_null() && !opline.is_null() {
-                    let file = std::ffi::CStr::from_ptr((*op_array.filename).val.as_ptr() as *const c_char).to_string_lossy();
-                    return Some(format!("{file}:{}", (*opline).lineno));
+            if let Some(site) = user_site(frame) {
+                if !belongs_to_the_runtime((*frame).func) {
+                    return Some(site);
                 }
+                innermost.get_or_insert(site);
             }
             frame = (*frame).prev_execute_data;
         }
-        None
+        innermost
+    }
+}
+
+/// `file:line` of a user-code frame; None for an internal function's frame.
+unsafe fn user_site(frame: *mut sys::zend_execute_data) -> Option<String> {
+    // SAFETY: as `suspension_point`; a user function's `op_array` is the live member of the union.
+    unsafe {
+        let func = (*frame).func;
+        if func.is_null() || (*func).type_ as u32 != sys::ZEND_USER_FUNCTION {
+            return None;
+        }
+        let op_array = &(*func).op_array;
+        let opline = (*frame).opline;
+        if op_array.filename.is_null() || opline.is_null() {
+            return None;
+        }
+        let file = std::ffi::CStr::from_ptr((*op_array.filename).val.as_ptr() as *const c_char).to_string_lossy();
+        Some(format!("{file}:{}", (*opline).lineno))
+    }
+}
+
+/// Whether a user function is the runtime's (`Ignis\Loop::parkOn`, `Ignis\sleep`, ...) rather than the application's.
+unsafe fn belongs_to_the_runtime(func: *const sys::zend_function) -> bool {
+    // SAFETY: `func` is a user function (checked by `user_site`), so `op_array` is live and its
+    // scope and name are interned strings that outlive this read.
+    unsafe {
+        let scope = (*func).op_array.scope;
+        let name = if scope.is_null() { (*func).op_array.function_name } else { (*scope).name };
+        !name.is_null() && zval::zstr_to_string(name).starts_with("Ignis\\")
     }
 }

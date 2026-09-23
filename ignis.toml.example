@@ -62,6 +62,7 @@ drain_timeout_ms = 10000
 # [recovery]
 # profile = "production"        # production | load-test | test
 # fiber_timeout_ms = 0          # L0: wall-clock ceiling per request, inherited by children
+# park_timeout_ms = 0           # a single park (Ignis\sleep, await, a hooked read) may not outlast this; 30000 under IGNIS_CHAOS
 # busy_warn_ms = 500            # warn when a worker runs PHP or blocks this long without yielding
 # stall_kill_ms = 10000         # L3/L4: kill the fiber a stalled worker is running (SIGRTMIN+2)
 # stall_abandon_ms = 30000      # L5: abandon the worker, fail its requests, spawn a replacement

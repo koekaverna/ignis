@@ -1028,3 +1028,22 @@ abandonment refuses and drains under the one admission lock, over HTTP and gRPC 
 collection; `Recovery.php` keeps timeout-less routes in the longest-prefix match and parses
 unsigned like Rust; `waitpid(-1|0)` is timed; the audit accepts double-quoted route keys and warns
 when it finds none.
+
+## 2026-09-23 — the fiber timeout is a ceiling on a park, not on a fiber's life
+
+S-FIBER-TIMEOUT asked for "a per-fiber wall-clock ceiling". The chaos entry point runs the whole
+PHPUnit application inside one `Ignis\async` fiber for 17 s, and a production job may legitimately
+live for the process's lifetime, so a lifetime ceiling would either be useless (set past the
+suite) or wrong (killing long-lived workers). What a hang actually looks like is one park that
+never ends. So the mechanism is `park_timeout_ms`: one timer per park, armed and cancelled around
+the suspension in both places a fiber can park (`Loop::parkOn` and `wait.rs`), and it fires into
+whichever fiber is parked — a request's or a spawned job's, which L0 (per request) could not reach.
+Consequences accepted: a deliberate `Ignis\sleep(60_000)` under a 30 s ceiling is reported as a
+hang, so the ceiling is 0 in production and 30 s only under `IGNIS_CHAOS` (the variable wins over
+both); a `Future` nobody resolves is not a park and stays L0's problem; and the message names the
+first frame outside the `Ignis\` namespace, because "parked at Loop.php:95" tells nobody anything.
+The C-parked case is answered the same way rather than refused (S-CANCEL-IN-C's question), since
+`wait.rs` already holds the fiber and `zend_fiber_resume_exception` is the L1 path. With that,
+`e15-chaos` returns to `ci.yml` in the shape it left (`7c1c48e`), http-foundation only, plus the
+vendor cache and two more failure conditions: a park past the ceiling and a mode with no `Tests:`
+line. The rest of the suites stay manual for the reasons the job's comment gives.

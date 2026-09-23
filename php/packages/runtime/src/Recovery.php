@@ -6,13 +6,14 @@ namespace Ignis;
 
 /**
  * ADR-0043 §8: the recovery settings the PHP loop needs, resolved with the same precedence as
- * `crates/ignis/src/recovery.rs`. Only `fiber_timeout_ms` (L0) matters to PHP.
+ * `crates/ignis/src/recovery.rs`. Only `fiber_timeout_ms` (L0) and `park_timeout_ms` matter to PHP.
  */
 final class Recovery
 {
     private const PRODUCTION_FIBER_TIMEOUT_MS = 0;
     private const LOAD_TEST_FIBER_TIMEOUT_MS = 30_000;
     private const TEST_FIBER_TIMEOUT_MS = 5_000;
+    private const CHAOS_PARK_TIMEOUT_MS = 30_000;
 
     /** The `fiber_timeout_ms` product default for a profile name, unrecognised names falling back to production's. */
     public static function profileDefault(string $profile): int
@@ -87,6 +88,13 @@ final class Recovery
         $milliseconds = (int) $value;
 
         return (string) $milliseconds === \ltrim($value, '0') || $milliseconds === 0 && \trim($value, '0') === '' ? $milliseconds : null;
+    }
+
+    /** The ceiling on one park: `IGNIS_PARK_TIMEOUT_MS`, else 30 s under `IGNIS_CHAOS`, else 0 (off), as `recovery.rs` resolves it. */
+    public static function parkTimeoutMilliseconds(): int
+    {
+        return self::unsignedMilliseconds(Env::text('IGNIS_PARK_TIMEOUT_MS', ''))
+            ?? (Env::flag('IGNIS_CHAOS') ? self::CHAOS_PARK_TIMEOUT_MS : 0);
     }
 
     /**

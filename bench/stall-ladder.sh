@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ADR-0043 / research 50: the stall-detection-and-recovery ladder against a real server.
 # Run: bench/stall-ladder.sh (uses target/release or target/debug ignis; IGNIS_BIN overrides).
-# Env: IGNIS_LADDER_PHP=0 skips S-5/S-6 (their PHP-side work may not have landed yet);
+# Env: IGNIS_LADDER_PHP=0 skips S-5/S-5b/S-6 (their PHP-side work may not have landed yet);
 #      IGNIS_LADDER_BASE_PORT picks the port range (default 18090).
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -182,6 +182,36 @@ scenario_s5() {
   else
     fail "S-5: got http=$code after ${elapsed_ms} ms (expected 504 <= 2500 ms) -- SKIP-able via IGNIS_LADDER_PHP=0 if L0 is not landed yet; log tail: $(strip_ansi | tail -5)"
   fi
+}
+
+# --- S-5b: the park ceiling ends a spawned job's park, userland and C-side alike (gated) ---------
+# L0 only reaches the request fiber; a job it spawned parks under `IGNIS_PARK_TIMEOUT_MS`, the
+# ceiling the chaos suites run under (IGNIS_CHAOS defaults it to 30 s).
+scenario_s5b() {
+  echo "== S-5b: park ceiling bounds park-forever-job.php (userland and C park) =="
+  local address="127.0.0.1:$((BASE_PORT + 15))"
+  start_server bench/php/stall/park-forever-job.php "$address" IGNIS_PARK_TIMEOUT_MS=1000
+  if ! wait_for_body "http://$address/hello" "hello" 10; then
+    fail "S-5b: server never became ready"
+    stop_server
+    return
+  fi
+  local kind
+  for kind in userland c; do
+    local t0 body
+    t0=$(date +%s%N)
+    body=$(curl -s -m 5 "http://$address/stuck?kind=$kind" 2>/dev/null || echo "curl-timeout")
+    local elapsed_ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+    if [ "${body#caught: park timeout after 1000 ms}" != "$body" ] && [ "$elapsed_ms" -le 1500 ]; then
+      pass "S-5b($kind): '$body' in ${elapsed_ms} ms (<= 1500 ms)"
+    else
+      fail "S-5b($kind): body='$body' after ${elapsed_ms} ms (expected 'caught: park timeout after 1000 ms...' <= 1500 ms); log tail: $(strip_ansi | tail -5)"
+    fi
+  done
+  local hello_ok
+  hello_ok=$(curl -s -m 2 "http://$address/hello" 2>/dev/null || true)
+  stop_server
+  [ "$hello_ok" = "hello" ] || fail "S-5b: /hello afterwards='$hello_ok'"
 }
 
 # --- S-6: L2 a swallowed cancellation is force-closed (gated) -----------------------------------
@@ -381,9 +411,10 @@ scenario_s9
 scenario_s10
 if [ "$RUN_PHP_SCENARIOS" = "1" ]; then
   scenario_s5
+  scenario_s5b
   scenario_s6
 else
-  echo "SKIP: S-5, S-6 (IGNIS_LADDER_PHP=0)"
+  echo "SKIP: S-5, S-5b, S-6 (IGNIS_LADDER_PHP=0)"
 fi
 
 echo "== summary: $FAILURES failing scenario(s) =="

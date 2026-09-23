@@ -20,6 +20,8 @@ use std::ptr;
 use super::tsrm;
 use ignis_sys as sys;
 
+#[cfg(feature = "universal-park")]
+use crate::reactor::Op;
 use crate::reactor::Outcome;
 
 thread_local! {
@@ -30,6 +32,10 @@ thread_local! {
     /// cancellation arriving after the completion left one entry per cancelled park behind for the
     /// life of the thread.
     static RESULTS: RefCell<HashMap<u64, Outcome>> = RefCell::new(HashMap::new());
+    /// timer op id → the parked op it bounds (`park_timeout_ms`, S-FIBER-TIMEOUT).
+    static PARK_TIMERS: RefCell<HashMap<u64, u64>> = RefCell::new(HashMap::new());
+    /// parked op id → its timer, so a resume can call the timer off.
+    static TIMER_OF: RefCell<HashMap<u64, u64>> = RefCell::new(HashMap::new());
 }
 
 /// How a C-side park came back.
@@ -117,12 +123,11 @@ pub(crate) unsafe fn await_op(id: u64) -> Parked<Outcome> {
         }
         hold(fiber);
         PARKED.with(|p| p.borrow_mut().insert(id, fiber));
+        arm_park_timeout(id);
         let mut ret: sys::zval = std::mem::zeroed();
-        // Hands control to whoever resumed us (the loop). Returns when
-        // resume_parked() calls zend_fiber_resume, or when the fiber is
-        // being destroyed (then EG(exception) carries an unwind exit).
         sys::zend_fiber_suspend(fiber, ptr::null_mut(), &mut ret);
         sys::zval_ptr_dtor(&mut ret);
+        disarm_park_timeout(id);
         if !(*tsrm::executor_globals()).exception.is_null() {
             PARKED.with(|p| p.borrow_mut().remove(&id));
             RESULTS.with(|r| r.borrow_mut().remove(&id));
@@ -159,9 +164,11 @@ pub(crate) unsafe fn await_any(ids: &[u64]) -> Parked<(u64, Outcome)> {
                 p.insert(*id, fiber);
             }
         });
+        arm_park_timeout(ids[0]);
         let mut ret: sys::zval = std::mem::zeroed();
         sys::zend_fiber_suspend(fiber, ptr::null_mut(), &mut ret);
         sys::zval_ptr_dtor(&mut ret);
+        disarm_park_timeout(ids[0]);
         // Whichever id resumed us left its outcome in RESULTS; unpark the rest.
         PARKED.with(|p| {
             let mut p = p.borrow_mut();
@@ -217,6 +224,76 @@ pub unsafe fn resume_parked(id: u64, outcome: Outcome) -> bool {
         sys::zval_ptr_dtor(&mut ret);
         release(fiber);
         true
+    }
+}
+
+#[cfg(feature = "universal-park")]
+/// Bounds the park on `id` with a reactor timer when `park_timeout_ms` is set.
+fn arm_park_timeout(id: u64) {
+    let milliseconds = crate::recovery::Settings::global().park_timeout_ms;
+    if milliseconds == 0 {
+        return;
+    }
+    let Some(reactor) = super::module::try_reactor() else { return };
+    let timer = reactor.submit(Op::Sleep { us: milliseconds.saturating_mul(1000) });
+    PARK_TIMERS.with(|t| t.borrow_mut().insert(timer, id));
+    TIMER_OF.with(|t| t.borrow_mut().insert(id, timer));
+}
+
+#[cfg(feature = "universal-park")]
+/// Calls the park's timer off once the park ended on its own.
+fn disarm_park_timeout(id: u64) {
+    let Some(timer) = TIMER_OF.with(|t| t.borrow_mut().remove(&id)) else { return };
+    PARK_TIMERS.with(|t| t.borrow_mut().remove(&timer));
+    if let Some(reactor) = super::module::try_reactor() {
+        reactor.submit(Op::CancelWatch { target: timer });
+    }
+}
+
+/// `ignis_poll`'s first question about a `Slept` completion: was it a park's timer? True when it
+/// was, and the fiber still parked on that op has been resumed with `Ignis\DeadlineExceededException`.
+///
+/// # Safety
+/// Inside `ignis_poll`, on the PHP thread, with a valid resumer frame.
+pub unsafe fn expire_park_timer(timer: u64) -> bool {
+    let Some(id) = PARK_TIMERS.with(|t| t.borrow_mut().remove(&timer)) else { return false };
+    TIMER_OF.with(|t| t.borrow_mut().remove(&id));
+    let Some(fiber) = PARKED.with(|p| p.borrow_mut().remove(&id)) else { return true };
+    // SAFETY: as `resume_parked`; the exception object is ours until the resume copied it.
+    unsafe {
+        if (*fiber).context.status != sys::ZEND_FIBER_STATUS_SUSPENDED {
+            release(fiber);
+            return true;
+        }
+        let mut exception = park_timeout_exception(
+            crate::recovery::Settings::global().park_timeout_ms,
+            super::fibermeta::suspension_point((*fiber).execute_data),
+        );
+        let mut ret: sys::zval = std::mem::zeroed();
+        sys::zend_fiber_resume_exception(fiber, &mut exception, &mut ret);
+        sys::zval_ptr_dtor(&mut ret);
+        sys::zval_ptr_dtor(&mut exception);
+        release(fiber);
+    }
+    true
+}
+
+/// A new `Ignis\DeadlineExceededException` (or `\Error` without the runtime package) naming the ceiling and the park site.
+///
+/// # Safety
+/// PHP thread at an opcode boundary; the returned zval owns one reference the caller drops.
+unsafe fn park_timeout_exception(milliseconds: u64, parked_at: Option<String>) -> sys::zval {
+    let text = match parked_at {
+        Some(site) => format!("park timeout after {milliseconds} ms, parked at {site}"),
+        None => format!("park timeout after {milliseconds} ms"),
+    };
+    // SAFETY: object_init_ex fills the zval we own; the message is copied into the object.
+    unsafe {
+        let mut zv: sys::zval = std::mem::zeroed();
+        sys::object_init_ex(&mut zv, super::kill::runtime_class_or_error(c"Ignis\\DeadlineExceededException"));
+        let message = std::ffi::CString::new(text).unwrap_or_default();
+        sys::zend_update_property_string(sys::zend_ce_exception, zv.value.obj, c"message".as_ptr(), 7, message.as_ptr());
+        zv
     }
 }
 

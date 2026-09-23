@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ignis\Tests;
 
 use Ignis\CancelledException;
+use Ignis\DeadlineExceededException;
 use Ignis\Http\Request;
 use Ignis\Http\Response;
 use Ignis\Http\StreamedResponse;
@@ -624,6 +625,53 @@ final class LoopTest extends LoopTestCase
             FakeReactor::responses(),
         );
         self::assertSame(30, FakeReactor::clockMilliseconds(), 'the fiber timeout fired, not any longer default');
+    }
+
+    public function testTheParkCeilingThrowsIntoTheFiberStillParkedWhenItFires(): void
+    {
+        self::set('parkTimeoutMilliseconds', 50);
+        $caught = null;
+        Loop::spawn(static function () use (&$caught): void {
+            try {
+                Loop::awaitOp(9300);
+            } catch (DeadlineExceededException $exception) {
+                $caught = $exception;
+            }
+        });
+        self::drive();
+
+        self::assertInstanceOf(DeadlineExceededException::class, $caught);
+        self::assertSame('park timeout after 50 ms', $caught->getMessage());
+        self::assertSame(50, FakeReactor::clockMilliseconds(), 'the ceiling fired, nothing later');
+        self::assertSame([], self::get('parkTimers'));
+        self::assertSame([], self::get('waiting'), 'the op nobody waits for any more is forgotten');
+    }
+
+    public function testAParkThatEndsInTimeCallsItsCeilingOff(): void
+    {
+        self::set('parkTimeoutMilliseconds', 50);
+        FakeReactor::inject(9301, 'the payload');
+        $received = null;
+        Loop::spawn(static function () use (&$received): void {
+            $received = Loop::awaitOp(9301);
+        });
+        self::drive();
+
+        self::assertSame('the payload', $received);
+        self::assertSame([], self::get('parkTimers'));
+        self::assertSame(0, FakeReactor::clockMilliseconds(), 'the cancelled timer never fired');
+    }
+
+    public function testAParkCeilingOfZeroArmsNothing(): void
+    {
+        self::set('parkTimeoutMilliseconds', 0);
+        Loop::spawn(static function (): void {
+            Loop::awaitOp(9302);
+        });
+        self::drive();
+
+        self::assertSame([], self::get('parkTimers'));
+        self::assertSame(0, FakeReactor::inflight(), 'no timer, so nothing is in flight for the parked fiber');
     }
 
     public function testAFiberTimeoutOfZeroIsOff(): void

@@ -23,6 +23,9 @@ final class Loop
     private static array $queued = [];
     /** @var array<int,int> fiber object id => op id it is parked on (userland parks) */
     private static array $parkedOn = [];
+    /** @var array<int,int> park-timer op => the op it bounds (ADR-0043 §7, the park ceiling). */
+    private static array $parkTimers = [];
+    private static int $parkTimeoutMilliseconds = 0;
     public static int $cancelled = 0;
     public static int $cancelAgeUsMax = 0;
     public static int $cancelLatencyUsMax = 0;
@@ -87,11 +90,35 @@ final class Loop
     {
         self::$waiting[$op] = $fiber;
         self::$parkedOn[\spl_object_id($fiber)] = $op;
+        $timer = self::armParkTimeout($op);
         try {
             return \Fiber::suspend();
         } finally {
             unset(self::$parkedOn[\spl_object_id($fiber)]);
+            self::disarmParkTimeout($timer);
         }
+    }
+
+    /** Bounds one park with a timer when the park ceiling is on; null when it is off. */
+    private static function armParkTimeout(int $op): ?int
+    {
+        if (self::$parkTimeoutMilliseconds <= 0) {
+            return null;
+        }
+        $timer = \ignis_submit_sleep(self::$parkTimeoutMilliseconds);
+        self::$parkTimers[$timer] = $op;
+
+        return $timer;
+    }
+
+    /** Calls a park's ceiling off once the park ended on its own; a fired one is already gone. */
+    private static function disarmParkTimeout(?int $timer): void
+    {
+        if ($timer === null || !isset(self::$parkTimers[$timer])) {
+            return;
+        }
+        unset(self::$parkTimers[$timer]);
+        \ignis_cancel($timer);
     }
 
     /** {main} has no fiber to park, so park a throwaway one on the op and drive the loop. */
@@ -305,6 +332,7 @@ final class Loop
         self::gcInit();
         self::budgetInit();
         self::$forceCloseOnSwallowedCancel = \trim(Env::text('IGNIS_ON_SWALLOWED_CANCEL', 'force-close')) !== 'log';
+        self::$parkTimeoutMilliseconds = Recovery::parkTimeoutMilliseconds();
         // boot() runs on the first turn of every mode, including classic `listen()`, which never
         // calls serve() and would otherwise watch nothing at all.
         self::$watching = Env::flag('IGNIS_WATCH');
@@ -407,6 +435,10 @@ final class Loop
         foreach ($events as $id => $payload) {
             if (\is_array($payload) && !isset(self::$waiting[$id])) {
                 self::dispatchUnawaited($id, $payload);
+                continue;
+            }
+            if (isset(self::$parkTimers[$id])) {
+                self::expireParkTimer($id);
                 continue;
             }
             if (isset(self::$deadlines[$id])) {
@@ -1090,6 +1122,30 @@ final class Loop
         }
         unset(self::$deadlineOf[$requestId], self::$deadlines[$op]);
         \ignis_cancel($op);
+    }
+
+    /** The park ceiling fired: the fiber still parked on the timer's op gets `DeadlineExceededException` naming its park. */
+    private static function expireParkTimer(int $timer): void
+    {
+        $op = self::$parkTimers[$timer];
+        unset(self::$parkTimers[$timer]);
+        $fiber = self::$waiting[$op] ?? null;
+        if ($fiber === null) {
+            return;
+        }
+        unset(self::$waiting[$op]);
+        ++self::$resumes;
+        self::throwAndAbsorb($fiber, new DeadlineExceededException(self::parkTimeoutMessage($fiber)));
+    }
+
+    /** @param \Fiber<mixed,mixed,mixed,mixed> $fiber */
+    private static function parkTimeoutMessage(\Fiber $fiber): string
+    {
+        $parkedAt = \ignis_fiber_where($fiber);
+
+        return $parkedAt === null
+            ? \sprintf('park timeout after %d ms', self::$parkTimeoutMilliseconds)
+            : \sprintf('park timeout after %d ms, parked at %s', self::$parkTimeoutMilliseconds, $parkedAt);
     }
 
     /** The L0 504 text, naming the park's file:line when the engine can say (ADR-0043 §7). */

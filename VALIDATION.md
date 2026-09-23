@@ -6478,3 +6478,54 @@ request, so a test that parks that fiber for ever still hangs the run until the 
 refuses HTTP and gRPC admission alike, the drain and the refusal under one lock); clippy, fmt, the
 off build clean. `php -l` on every touched PHP file; the PHP suites run in CI's `php-unit` job (no
 composer here).
+
+### V-124 addendum 2 (2026-09-23) — the park ceiling: S-5b, the chaos suite bounded, the 1 ms falsifier
+
+**What changed.** `park_timeout_ms` (`IGNIS_PARK_TIMEOUT_MS`; 0 in production, 30 000 under
+`IGNIS_CHAOS`) bounds every reactor park with its own timer, in `Loop::parkOn` for a userland park
+and in `wait.rs` (`await_op`, `await_any`) for a C-side one; the fiber past it is resumed with
+`DeadlineExceededException("park timeout after N ms, parked at file:line")`, the site being the
+first frame outside the `Ignis\` namespace (DECISIONS). Same box and binary as the addendum above.
+
+**S-5b, `bench/stall-ladder.sh` (`bench/php/stall/park-forever-job.php`, `IGNIS_PARK_TIMEOUT_MS=1000`,
+no L0):** the request spawns a job that parks for ever and awaits it.
+
+```
+S-5b(userland): 'caught: park timeout after 1000 ms, parked at .../bench/php/stall/park-forever-job.php:17'  in 1011 ms (<= 1500 ms)
+S-5b(c):        'caught: park timeout after 1000 ms, parked at .../bench/php/stall/park-forever-job.php:29'  in 1011 ms (<= 1500 ms)
+```
+
+Line 17 is the closure around `Ignis\sleep(3_600_000)`, line 29 the `fread` on a silent
+`stream_socket_pair`; the full ladder (S-1, S-5, S-5b, S-6–S-10) passes 0 failing scenarios on
+this run. `/hello` answers afterwards; the standalone probe (`Ignis\sleep(60_000)` and `fread` on a silent
+`stream_socket_pair`, ceiling 500 ms) returns both exceptions in **502 ms**.
+
+**The chaos suite with the ceiling on (`SUITES=symfony-http-foundation bench/e15-chaos.sh`, the
+symfony tree already installed):**
+
+```
+stock                 tests=1881 failures=0 errors=61 skipped=117  secs=16
+ignis                 tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=0      fibers=1
+chaos-seed-1          tests=1881 failures=0 errors=61 skipped=117  secs=18  chaosYields=14283  noiseTicks=28513 resumes=42802
+chaos-seed-20260916   tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=14384  noiseTicks=28752 resumes=43142
+new under ignis vs stock : (none)      new under chaos vs stock : (none)     script rc=0
+```
+
+Unchanged from the run without the ceiling: no park in the suite reaches 30 s.
+
+**The falsifier (same suite, `IGNIS_MODE=1 IGNIS_PARK_TIMEOUT_MS=1`, no chaos):** the run ends at
+test **1 403 of 1 881** — the first park longer than 1 ms — with PHPUnit's own report,
+`An error occurred inside PHPUnit. Message: park timeout after 1 ms, parked at
+/tmp/e15-chaos/symfony/vendor/sebastian/environment/src/Runtime.php:435` (a `proc_open` read,
+errno=125 on the way out), exit 255, in seconds rather than at the script's `timeout 900`. PHPUnit
+catches the exception before the entry point's own `IGNIS HUNG` line can print, which is why the
+`e15-chaos` job greps the message and also requires a `Tests:` line per mode. Note for the reader:
+1 402 tests park for under a millisecond each, which is how little of this suite the ceiling
+touches.
+
+**Unit level:** `cargo nextest run --workspace` **103 passed** (new: a park has no ceiling unless
+chaos or the variable says so); clippy, fmt, the off build clean (the timer helpers are gated on
+`universal-park` with their callers). `php -l` on every touched file; through the PHPUnit shim 42
+`LoopTest` (three new: the ceiling fires into the parked fiber and forgets its op, a park that ends
+in time cancels its timer, a ceiling of 0 arms nothing) and 17 `RecoveryTest` (four new) pass; the
+real suites run in CI's `php-unit` job.

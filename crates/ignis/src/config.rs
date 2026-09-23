@@ -57,6 +57,8 @@ pub struct Recovery {
     pub profile: Option<String>,
     /// L0: wall-clock ceiling per request, inherited by children; 0 = off.
     pub fiber_timeout_ms: Option<u64>,
+    /// A single park may not outlast this; 0 = off (30 s under IGNIS_CHAOS).
+    pub park_timeout_ms: Option<u64>,
     /// Warn when a worker runs PHP or a blocking forward this long without yielding.
     pub busy_warn_ms: Option<u64>,
     /// L3/L4: kill the fiber a stalled worker is running; 0 = off.
@@ -309,6 +311,7 @@ fn bridge_recovery(cfg: &Config) -> anyhow::Result<()> {
     }
     for (name, value) in [
         ("IGNIS_FIBER_TIMEOUT_MS", r.fiber_timeout_ms),
+        ("IGNIS_PARK_TIMEOUT_MS", r.park_timeout_ms),
         ("IGNIS_BUSY_WARN_MS", r.busy_warn_ms),
         ("IGNIS_STALL_KILL_MS", r.stall_kill_ms),
         ("IGNIS_STALL_ABANDON_MS", r.stall_abandon_ms),

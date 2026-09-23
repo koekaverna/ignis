@@ -160,28 +160,6 @@ inside one worker; with `--workers` the operator's reload is `SIGHUP` to the mas
 which the watcher does not send yet. Neither blocks the MVP: the master is the supervisor and the
 numbers are per process, as php-fpm's are.
 
-### S-FIBER-TIMEOUT A fiber that never resumes has no timeout, and the chaos gate cannot be a gate until it does `main` `open — owner, 2026-09-22`
-**What.** `bench/e15-chaos.sh` entered CI on 2026-09-22 and was switched off the same evening (owner:
-"Chaos лучше выключить с пометкой нужно сделать таймауты на файберы"). Under chaos scheduling a
-suite that hangs one fiber hangs the whole run until the job's wall-clock timeout — 30 to 60 minutes
-of runner time with nothing to read at the end — because nothing in the runtime bounds how long a
-fiber may stay parked or suspended. The request deadline (ADR-0009, `Ignis\deadline()`) is opt-in
-and per request; a fiber the scheduler itself parks has no ceiling at all, and the watchdog only
-names the thread (M4-7).
-**Why it matters.** The same gap is behind three closed or open items: S-POOL-LEASE-AGE's fix (3)
-(a hung fiber keeps its resource forever), S-CANCEL-IN-C (a deadline cannot reach a fiber inside
-C), and M4-7 (the watchdog cannot say which fiber). A per-fiber timeout is the one mechanism that
-turns "the run hangs" into "this test failed, here is the fiber", and it is what makes chaos
-affordable as a gate.
-**Acceptance.** (1) A configurable per-fiber wall-clock ceiling in the runtime (default off in
-production, on under `IGNIS_CHAOS` and in the compat benches), enforced at the loop's poll point:
-a fiber past it is thrown into with a `DeadlineExceededException` naming the fiber and where it
-was parked, and its request answers 504 — the ADR-0009 path, not a new one. (2) The C-parked case
-is answered or explicitly refused (S-CANCEL-IN-C's ADR decides which). (3) `bench/e15-chaos.sh`
-with `SUITES=symfony-http-foundation` finishes in bounded time with a hung test named, falsified
-by a fixture that parks a fiber forever. Then, and not before, the `e15-chaos` job returns to
-`ci.yml` (its last shape is in `git log` at `7c1c48e`).
-
 ### S-STALL-ALERTS Scoreboard, ticker, alert module with dedup — the warning/error scheme (ADR-0043 §3, §4, §6) `main` `built 2026-09-23 (V-124): S-1, S-4, S-9 done; S-14 storm and S-16 shared page open`
 **What.** A per-worker slot of atomics (state, since, request id, site, acks), a 100 ms ticker in
 the master that turns slot age into `stall` events by `busy_warn_ms`/`stall_kill_ms`/
@@ -1126,3 +1104,4 @@ an investigation — is in [`BACKLOG-CLOSED.md`](BACKLOG-CLOSED.md).
 | **S-OWNERSHIP** | Every value a fiber-scoped service hands out carries its owner `main` `KILLED 2026-09-20` — a fourth mechanism, which ADR-0037 forbids; the three reds it targeted stay open with their cheaper fixes |
 | **S-SCOPED-CLASS** | An object's declared properties live per fiber `main` `DONE 2026-09-20 (V-97, V-99–V-101, V-105)` — ADR-0042; the container marks a definition the way it marks `lazy`, `FiberRequestStack` and `FiberTokenStorage` deleted. Per-switch cost stays unmeasured by owner decision (V-98, `S-SCOPED-UNKNOWNS`) |
 | **S-SAPI-REQUEST-INFO** | A form body on PUT/PATCH never reaches the framework `main` `DONE 2026-09-20 (V-102)` — the SAPI's own `read_post` plus `SG(request_info)`, per fiber; gated as its own E21 arm |
+| **S-FIBER-TIMEOUT** | A fiber that never resumes has no timeout `main` `DONE 2026-09-23 (V-124 addendum 2)` — a ceiling on every park (`park_timeout_ms`, 30 s under `IGNIS_CHAOS`), userland and C-side, that reaches a spawned fiber as well as a request's; S-5b in the ladder, the http-foundation chaos suite bounded and `e15-chaos` back in `ci.yml` with the vendor tree cached |

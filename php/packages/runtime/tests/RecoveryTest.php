@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(Recovery::class)]
 final class RecoveryTest extends TestCase
 {
-    private const VARIABLES = ['IGNIS_PROFILE', 'IGNIS_FIBER_TIMEOUT_MS', 'IGNIS_RECOVERY_ROUTES'];
+    private const VARIABLES = ['IGNIS_PROFILE', 'IGNIS_FIBER_TIMEOUT_MS', 'IGNIS_RECOVERY_ROUTES', 'IGNIS_PARK_TIMEOUT_MS', 'IGNIS_CHAOS'];
 
     /** @var array<string, string|false> */
     private array $before = [];
@@ -151,5 +151,35 @@ final class RecoveryTest extends TestCase
         putenv('IGNIS_RECOVERY_ROUTES');
 
         self::assertSame(30_000, Recovery::fiberTimeoutFor('/anything'), 'a value Rust refuses must not turn the PHP timeout off');
+    }
+
+    public function testAParkHasNoCeilingUnlessChaosOrTheVariableSaysSo(): void
+    {
+        putenv('IGNIS_PARK_TIMEOUT_MS');
+        putenv('IGNIS_CHAOS');
+        self::assertSame(0, Recovery::parkTimeoutMilliseconds());
+    }
+
+    public function testChaosBoundsEveryParkAtThirtySeconds(): void
+    {
+        putenv('IGNIS_PARK_TIMEOUT_MS');
+        putenv('IGNIS_CHAOS=1');
+        self::assertSame(30_000, Recovery::parkTimeoutMilliseconds());
+    }
+
+    public function testTheParkTimeoutVariableWinsOverTheChaosDefaultEvenWhenItSaysOff(): void
+    {
+        putenv('IGNIS_CHAOS=1');
+        putenv('IGNIS_PARK_TIMEOUT_MS=0');
+        self::assertSame(0, Recovery::parkTimeoutMilliseconds());
+        putenv('IGNIS_PARK_TIMEOUT_MS=750');
+        self::assertSame(750, Recovery::parkTimeoutMilliseconds());
+    }
+
+    public function testAnUnparsableParkTimeoutFallsBackLikeAnUnsetOne(): void
+    {
+        putenv('IGNIS_CHAOS=1');
+        putenv('IGNIS_PARK_TIMEOUT_MS=-1');
+        self::assertSame(30_000, Recovery::parkTimeoutMilliseconds());
     }
 }

@@ -1026,6 +1026,42 @@ probe does not fail — it **hangs**, `exit=124`, because the calling fiber wait
 nothing will ever send. That is the defect, reproduced on demand, so the timeout is part of the
 assertion rather than a safety net around it.
 
+### S-FIBER-TIMEOUT A fiber that never resumes has no timeout, and the chaos gate cannot be a gate until it does `main` `DONE 2026-09-23 (V-124 addendum 2)`
+**What.** `bench/e15-chaos.sh` entered CI on 2026-09-22 and was switched off the same evening (owner:
+"Chaos лучше выключить с пометкой нужно сделать таймауты на файберы"). Under chaos scheduling a
+suite that hangs one fiber hangs the whole run until the job's wall-clock timeout — 30 to 60 minutes
+of runner time with nothing to read at the end — because nothing in the runtime bounds how long a
+fiber may stay parked or suspended. The request deadline (ADR-0009, `Ignis\deadline()`) is opt-in
+and per request; a fiber the scheduler itself parks has no ceiling at all, and the watchdog only
+names the thread (M4-7).
+**Why it matters.** The same gap is behind three closed or open items: S-POOL-LEASE-AGE's fix (3)
+(a hung fiber keeps its resource forever), S-CANCEL-IN-C (a deadline cannot reach a fiber inside
+C), and M4-7 (the watchdog cannot say which fiber). A per-fiber timeout is the one mechanism that
+turns "the run hangs" into "this test failed, here is the fiber", and it is what makes chaos
+affordable as a gate.
+**Acceptance.** (1) A configurable per-fiber wall-clock ceiling in the runtime (default off in
+production, on under `IGNIS_CHAOS` and in the compat benches), enforced at the loop's poll point:
+a fiber past it is thrown into with a `DeadlineExceededException` naming the fiber and where it
+was parked, and its request answers 504 — the ADR-0009 path, not a new one. (2) The C-parked case
+is answered or explicitly refused (S-CANCEL-IN-C's ADR decides which). (3) `bench/e15-chaos.sh`
+with `SUITES=symfony-http-foundation` finishes in bounded time with a hung test named, falsified
+by a fixture that parks a fiber forever. Then, and not before, the `e15-chaos` job returns to
+`ci.yml` (its last shape is in `git log` at `7c1c48e`).
+**Delivered (2026-09-23).** Not a per-fiber lifetime but a ceiling on every park: `park_timeout_ms`
+(`IGNIS_PARK_TIMEOUT_MS`, `[recovery]` in `ignis.toml`), 0 in production and 30 000 under
+`IGNIS_CHAOS` unless the variable says otherwise. `Loop::parkOn` arms one reactor timer per park
+and cancels it when the park ends; `wait.rs` does the same for a C-side park (`await_op`,
+`await_any`), so (2) is answered, not refused. Past the ceiling the fiber — a request's or a job's,
+which is what L0 could not reach — is resumed with `DeadlineExceededException("park timeout after
+N ms, parked at file:line")`, the site being the first frame outside the runtime's own. A `Future`
+nobody resolves is not a reactor park and stays L0's. Evidence: ladder S-5b (`park-forever-job.php`,
+userland and C park both caught in 1 011 ms at a 1 000 ms ceiling), the http-foundation
+suite under both chaos seeds unchanged at 0 new failures with the ceiling on, and the falsifier —
+the same suite at `IGNIS_PARK_TIMEOUT_MS=1` ends at test 1 403 of 1 881 naming
+`sebastian/environment/src/Runtime.php:435` (a `proc_open` read) instead of running to the script's
+`timeout 900`. The `e15-chaos` job is back in `ci.yml` (http-foundation only, vendor tree cached on
+the install recipe; a regression, a park past the ceiling, or a mode with no `Tests:` line fails it).
+
 ### S-SAPI-REQUEST-INFO A form body on PUT/PATCH never reaches the framework `main` `DONE 2026-09-20 — V-102, gated as its own E21 arm`
 **What.** The embed SAPI's `SG(request_info)` is not filled from the request, so PHP's own
 `request_parse_body()` refuses: **`RequestParseBodyException: Request does not provide a content

@@ -165,6 +165,7 @@ atomic in the slot); store `EG(vm_interrupt) = 1`. Nothing else, ever.
 | level | trigger | ZTS | NTS prefork |
 |---|---|---|---|
 | **L0** fiber timeout | `fiber_timeout_ms` per request (route override), armed by `admitRequest` via `deadline()`'s timer; children inherit | same code | same code |
+| **L0b** park ceiling | `park_timeout_ms` per park (0 = off; 30 s under `IGNIS_CHAOS`): every reactor park, userland (`Loop::parkOn`) or C-side (`wait.rs`), is bounded by its own timer; past it the parked fiber — a request's or a spawned job's — is resumed with `DeadlineExceededException` naming the park site (the first non-runtime frame). A `Future` nobody resolves is not a park and stays L0's | same code | same code |
 | **L1** cancel | disconnect / deadline / L0 → `Fiber::throw` or `ignis_cancel_parked_any` (built, V-14) | same | same |
 | **L2** force-close | the fiber parks again after L1, or L0 fires twice: 504 answered by the loop, references dropped, `unset` → engine graceful exit (research 49 E1); `wait.rs` refuses to park a `DESTROYED` fiber and answers `ECANCELED` through the shim | same | same |
 | **L3** kill running PHP | ticker: `stall_kill_ms`, state PHP, `/proc` says `running` | `pthread_kill(tid, SIGRTMIN+2)` | `kill(pid, SIGRTMIN+2)` |
@@ -186,6 +187,7 @@ signal is what L4 needs anyway. Cost: one signal per escalation, none in steady 
 [recovery]
 profile = "production"        # production | load-test | test — sets every default below; explicit keys win
 fiber_timeout_ms = 0          # L0 per request; 0 = off. Children inherit. Ignis\deadline() overrides per request
+park_timeout_ms = 0           # L0b per park, any fiber; 0 = off. IGNIS_CHAOS defaults it to 30000
 busy_warn_ms = 500            # warn when a worker runs PHP or a blocking forward this long without yielding
 stall_kill_ms = 10000         # L3/L4; 0 = off
 stall_abandon_ms = 30000      # L5; 0 = off

@@ -82,6 +82,8 @@ pub struct Settings {
     pub profile: Profile,
     /// L0, per request; 0 = off.
     pub fiber_timeout_ms: u64,
+    /// A single park, userland or C-side, may not outlast this; 0 = off, 30 s under `IGNIS_CHAOS`.
+    pub park_timeout_ms: u64,
     /// A worker running PHP or a blocking forward this long without yielding is a `stall` warn.
     pub busy_warn_ms: u64,
     /// L3/L4; 0 = off.
@@ -152,6 +154,13 @@ fn defaults_of(profile: Profile) -> ProfileDefaults {
     }
 }
 
+/// Chaos scheduling is a gate tool, and a gate needs a floor under a hung park (S-FIBER-TIMEOUT).
+pub const CHAOS_PARK_TIMEOUT_MS: u64 = 30_000;
+
+fn chaos_park_timeout_ms(lookup: &dyn Fn(&str) -> Option<String>) -> u64 {
+    if flag(lookup, "IGNIS_CHAOS", false) { CHAOS_PARK_TIMEOUT_MS } else { 0 }
+}
+
 /// Read a variable through `lookup`; unset or unparsable keeps `default` (a typo must not move a limit).
 fn number(lookup: &dyn Fn(&str) -> Option<String>, name: &str, default: u64) -> u64 {
     lookup(name).and_then(|v| v.trim().parse().ok()).unwrap_or(default)
@@ -180,6 +189,7 @@ impl Settings {
         Settings {
             profile,
             fiber_timeout_ms: number(lookup, "IGNIS_FIBER_TIMEOUT_MS", d.fiber_timeout_ms),
+            park_timeout_ms: number(lookup, "IGNIS_PARK_TIMEOUT_MS", chaos_park_timeout_ms(lookup)),
             busy_warn_ms: number(lookup, "IGNIS_BUSY_WARN_MS", d.busy_warn_ms),
             stall_kill_ms: number(lookup, "IGNIS_STALL_KILL_MS", d.stall_kill_ms),
             stall_abandon_ms: number(lookup, "IGNIS_STALL_ABANDON_MS", d.stall_abandon_ms),
@@ -238,9 +248,10 @@ impl Settings {
     /// One line for the startup banner.
     pub fn summary(&self) -> String {
         format!(
-            "profile={} fiber_timeout={}ms busy_warn={}ms stall_kill={}ms stall_abandon={}ms kill={} swallowed_cancel={} blocking={}@{}us{}",
+            "profile={} fiber_timeout={}ms park_timeout={}ms busy_warn={}ms stall_kill={}ms stall_abandon={}ms kill={} swallowed_cancel={} blocking={}@{}us{}",
             self.profile.name(),
             self.fiber_timeout_ms,
+            self.park_timeout_ms,
             self.busy_warn_ms,
             self.stall_kill_ms,
             self.stall_abandon_ms,
@@ -324,6 +335,20 @@ pub fn format_routes(routes: &[(String, RouteOverride)]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_park_has_no_ceiling_unless_chaos_or_the_variable_says_so() {
+        let none = |_: &str| None;
+        assert_eq!(Settings::from_lookup(&none).park_timeout_ms, 0);
+        let chaos = |name: &str| (name == "IGNIS_CHAOS").then(|| "1".to_string());
+        assert_eq!(Settings::from_lookup(&chaos).park_timeout_ms, CHAOS_PARK_TIMEOUT_MS);
+        let explicit = |name: &str| match name {
+            "IGNIS_CHAOS" => Some("1".to_string()),
+            "IGNIS_PARK_TIMEOUT_MS" => Some("2000".to_string()),
+            _ => None,
+        };
+        assert_eq!(Settings::from_lookup(&explicit).park_timeout_ms, 2000, "an explicit value beats the chaos default");
+    }
+
     use super::*;
     use std::collections::HashMap;
 

@@ -224,6 +224,9 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
         crate::scoreboard::leave_poll();
         zval::set_new_array(rv);
         for c in done {
+            if matches!(c.outcome, Outcome::Slept { .. }) && super::wait::expire_park_timer(c.id) {
+                continue;
+            }
             match c.outcome {
                 // An error for a fiber parked C-side (universal park, ADR-0020) is consumed here:
                 // the fiber is resumed and runs until its next suspension before we continue.
