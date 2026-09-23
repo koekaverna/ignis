@@ -1,20 +1,9 @@
-//! ADR-0043 §7, L3/L4: the delivery of a kill to a worker, and what the worker does with it.
+//! ADR-0043 §7, L3/L4: a kill is one real-time signal to the worker; its handler stores
+//! `EG(vm_interrupt)`, the chained `zend_interrupt_function` force-closes the fiber at the next
+//! opcode, and a wait in the shim returns `EINTR`, which `park.rs` answers `ECANCELED`.
 //!
-//! The ticker (`watchdog.rs`) records the fiber it wants dead in the worker's scoreboard slot and
-//! sends `KILL_SIGNAL` to that thread (`pthread_kill` under ZTS; the NTS prefork master will
-//! `kill(pid)` the same signal). The handler stores one byte — `EG(vm_interrupt)` — and counts;
-//! nothing else is async-signal-safe and nothing else is needed. The engine then calls
-//! `on_interrupt` at the next opcode boundary (research 49 E2), where it is a normal PHP thread
-//! again: if the running fiber is still the one asked for, it is force-closed exactly the way the
-//! engine force-closes a destroyed fiber (research 49 E3), or thrown `Ignis\KilledException` when
-//! configured so. A fiber blocked in a shimmed syscall never reaches an opcode: the same signal
-//! interrupts the wait with `EINTR` and the interposer answers `ECANCELED` (L4, `park.rs`).
-//!
-//! FFI contract: `zend_interrupt_function` is process-global and chained; the handler is installed
-//! once per process with `SA_RESTART`, so nothing outside the shim's waits observes it. Waits the
-//! kernel restarts (`read` without a timeout, `flock`, `waitpid`) do not return on the signal;
-//! for those the shim's own re-entry check and the ticker's re-delivery every tick are what land
-//! the kill, and abandonment is what ends the ones nothing reaches.
+//! FFI contract: the handler is installed once per process with `SA_RESTART`, so only the shim's
+//! own waits observe the signal; `zend_interrupt_function` is process-global and chained.
 use std::ffi::c_int;
 use std::ptr;
 use std::sync::OnceLock;
@@ -39,9 +28,8 @@ extern "C" fn on_kill_signal(_sig: c_int, _info: *mut libc::siginfo_t, _ctx: *mu
     slot.signals.fetch_add(1, Ordering::Relaxed);
     let flag = slot.interrupt_flag.load(Ordering::Relaxed);
     if flag != 0 {
-        // SAFETY: the address was taken from this thread's live executor globals at registration
-        // and the globals outlive the thread's PHP work; zend_atomic_bool is one byte the engine
-        // itself stores to from a signal handler (zend_timeout_handler).
+        // SAFETY: the address is this thread's live `EG(vm_interrupt)`, a byte the engine itself
+        // stores to from a signal handler.
         unsafe { AtomicU8::from_ptr(flag as *mut u8).store(1, Ordering::Release) };
     }
 }
@@ -51,9 +39,8 @@ extern "C" fn on_kill_signal(_sig: c_int, _info: *mut libc::siginfo_t, _ctx: *mu
 /// # Safety
 /// MINIT on the main thread.
 pub unsafe fn install() {
-    // SAFETY: sigaction on a real-time signal nothing else in the process uses; the handler only
-    // stores to atomics. The interrupt function pointer is a plain global the engine reads at
-    // opcode boundaries, written here before any worker thread exists.
+    // SAFETY: sigaction on a real-time signal nothing else uses; the interrupt function pointer is
+    // written before any worker thread exists.
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = on_kill_signal as *const () as usize;
@@ -110,15 +97,13 @@ unsafe extern "C" fn on_interrupt(execute_data: *mut sys::zend_execute_data) {
     }
 }
 
-/// Force-closes the running fiber: the engine's own DESTROYED flag plus its graceful exit, so
-/// `finally` runs, `catch (Throwable)` cannot intercept, a further suspend throws `FiberError`, and
-/// the resumer sees a quiet termination — or `Ignis\KilledException` when configured.
+/// Force-closes the running fiber the way the engine destroys one (`finally` runs, nothing catches
+/// it), or throws `Ignis\KilledException` when configured so.
 ///
 /// # Safety
 /// PHP thread at an opcode boundary, `fiber` = `EG(active_fiber)`.
 unsafe fn force_close(fiber: *mut sys::zend_fiber) {
-    // SAFETY: the caller upholds the contract; the flag is the engine's own and the throw is the
-    // engine's own, both exactly as zend_fiber_object_destroy uses them (research 49 E1/E3).
+    // SAFETY: the flag and the throw are the engine's own, as zend_fiber_object_destroy uses them.
     unsafe {
         let meta = super::fibermeta::of(fiber);
         if !meta.is_null() {
@@ -161,8 +146,7 @@ fn route_of_request(request_id: u64) -> String {
 
 /// `Ignis\KilledException` when the runtime package is loaded, else `\Error`.
 unsafe fn killed_exception_class() -> *mut sys::zend_class_entry {
-    // SAFETY: on the PHP thread at an opcode boundary; a class lookup may autoload, which is
-    // permitted there. The interned name lives for the request.
+    // SAFETY: at an opcode boundary a class lookup may autoload; the interned name lives for the request.
     unsafe {
         if let Some(intern) = sys::zend_string_init_interned {
             let name = intern(c"Ignis\\KilledException".as_ptr(), 21, false);
@@ -182,8 +166,7 @@ pub fn deliver(slot: &scoreboard::WorkerSlot) -> bool {
     slot.kill_request.store(slot.request_id.load(Ordering::Relaxed), Ordering::Relaxed);
     slot.kill_pending.store(1, Ordering::Release);
     let pid = slot.pid.load(Ordering::Relaxed);
-    // SAFETY: getpid takes nothing; pthread_kill/kill are given a thread handle or pid the worker
-    // published about itself, and a signal to a thread that is gone returns ESRCH, not UB.
+    // SAFETY: the thread handle and pid are the worker's own; a gone thread answers ESRCH, not UB.
     unsafe {
         let rc = if pid == libc::getpid() as u32 {
             libc::pthread_kill(slot.pthread.load(Ordering::Relaxed) as libc::pthread_t, kill_signal())

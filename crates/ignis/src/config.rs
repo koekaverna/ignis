@@ -299,9 +299,8 @@ fn supervises_threads_by_default() -> bool {
     false
 }
 
-/// ADR-0043 §8: the three tables reach the runtime and the PHP loop as `IGNIS_*` variables; the
-/// profile is bridged by name and resolved by `recovery::Settings`, so a profile set only in the
-/// environment behaves the same as one set here.
+/// ADR-0043 §8: the three tables reach the runtime and the PHP loop as `IGNIS_*` variables, the
+/// profile by name.
 fn bridge_recovery(cfg: &Config) -> anyhow::Result<()> {
     let r = &cfg.recovery;
     if let Some(p) = &r.profile {

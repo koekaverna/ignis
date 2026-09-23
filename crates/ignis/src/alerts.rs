@@ -1,10 +1,5 @@
-//! ADR-0043 §6: the alert module. Every emitter (the ticker, the blocking detector, the recovery
-//! ladder) hands events here; this decides what becomes a log line. The rules: the first event of
-//! a key is logged with every field; repeats inside the window are counted; at the window's end one
-//! summary per key with two or more events; a key escalates once per level step, and once when its
-//! count reaches the escalation threshold; a key silent for `recover_windows` windows gets one
-//! `recovered` line and is forgotten; a token bucket bounds lines per second and counts what it
-//! dropped. Pure Rust, no `unsafe`, time injected so every rule is a unit test.
+//! ADR-0043 §6: every emitter hands events here and this decides what becomes a log line — first
+//! per key, one summary per window, escalation once, recovery, a token bucket. Time is injected.
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};

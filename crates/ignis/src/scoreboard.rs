@@ -1,8 +1,5 @@
-//! ADR-0043 §3: the scoreboard — one slot of plain atomics per worker, written only by that
-//! worker, read by the ticker (`watchdog.rs`). Under ZTS the slots are this static array; the NTS
-//! prefork model maps the same struct into a `MAP_SHARED` page before the first fork, which is why
-//! nothing here is a pointer the reader dereferences: a fiber is an address compared for equality,
-//! a request is an id, a site is an index into a string table the events carry by name.
+//! ADR-0043 §3: one slot of plain atomics per worker, written by that worker and read by the
+//! ticker; nothing in a slot is a pointer the reader dereferences.
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -49,9 +46,8 @@ pub struct WorkerSlot {
     /// `EG(active_fiber)` at the last switch, as an address; never dereferenced by a reader.
     pub fiber: AtomicUsize,
     pub kill_fiber: AtomicUsize,
-    /// The stall episode (`php_since_ns`) and request the kill was asked for: a kill applies only
-    /// while both still match, so a fiber that yielded, or a pooled fiber that took the next
-    /// request, is never killed for the previous one.
+    /// The stall episode (`php_since_ns`) and request the kill was asked for: it applies only while
+    /// both still match, so a pooled fiber is never killed for its previous request.
     pub kill_episode: AtomicU64,
     pub kill_request: AtomicU64,
     /// `&EG(vm_interrupt)` of this worker: the one byte the kill signal's handler stores to.

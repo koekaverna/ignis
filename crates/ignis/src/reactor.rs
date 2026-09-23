@@ -349,10 +349,8 @@ impl Reactor {
         (id, rx)
     }
 
-    /// Registers the answer a request is owed, unless the worker was abandoned: the check and the
-    /// insert happen under the one lock `abandon` drains under, so a request admitted is a request
-    /// the drain saw or will see, never one that slips in between the two. False refuses it, and
-    /// the dropped answer channel is what turns the connection into a 500.
+    /// Registers the answer a request is owed under the lock `abandon` drains under, so nothing is
+    /// admitted after the drain; false refuses it and the dropped channel becomes the 500.
     fn admit(&self, id: u64, uri: &str, answer: Answer) -> bool {
         let mut answers = self.answers.lock_unpoisoned();
         if self.is_abandoned() {

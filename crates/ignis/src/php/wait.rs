@@ -5,16 +5,13 @@
 //!
 //! FFI contract:
 //! - Suspension: an op registers `(op id → EG(active_fiber))` in a thread-local table and calls
-//!   `zend_fiber_suspend`. The fiber object is kept alive by a reference this table takes for the
-//!   duration of the park (research 49 H1: the GC's destructor fiber may otherwise be collected
-//!   while parked here) and releases on the loop's side, after the resume returned — never from
-//!   inside the fiber, whose stack the release could free.
+//!   `zend_fiber_suspend`. This table holds a reference to the fiber for the length of the park
+//!   and releases it on the loop's side after the resume returned, never from inside the fiber.
 //! - Results cross through a thread-local table keyed by op id, so no Rust reference crosses the
 //!   fiber switch.
 //! - Outside a fiber (`EG(active_fiber) == NULL`) nothing here applies: the caller blocks as stock.
-//! - A fiber the loop is force-closing (ADR-0043 L2: `kill_pending`, or the engine's own
-//!   `DESTROYED` flag, research 49 H2) is refused any park and answered `Parked::Cancelled`, which
-//!   the interposer turns into `ECANCELED`.
+//! - A fiber being force-closed (`kill_pending` or the engine's `DESTROYED` flag) is refused any
+//!   park and answered `Parked::Cancelled`.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr;
@@ -87,15 +84,12 @@ unsafe fn hold(fiber: *mut sys::zend_fiber) {
     unsafe { (*fiber).std.gc.refcount += 1 };
 }
 
-/// Drops the reference `hold` took. Called after the fiber's resume returned, so the fiber is
-/// suspended elsewhere (the loop holds it) or terminated (its context is already destroyed) —
-/// never running on the stack a free would take away.
+/// Drops the reference `hold` took, once the fiber is no longer running on the stack a free could take away.
 ///
 /// # Safety
 /// On the loop's side, after `zend_fiber_resume` / `zend_fiber_resume_exception` returned.
 unsafe fn release(fiber: *mut sys::zend_fiber) {
-    // SAFETY: the caller upholds the contract; zval_ptr_dtor drops one reference and frees the
-    // object when it was the last, through the engine's own destroy and free handlers.
+    // SAFETY: zval_ptr_dtor drops one reference through the engine's own destroy and free handlers.
     unsafe {
         let mut zv: sys::zval = std::mem::zeroed();
         zv.value.obj = &raw mut (*fiber).std;
@@ -208,10 +202,8 @@ pub fn is_parked(id: u64) -> bool {
 /// PHP thread, from inside `ignis_poll` (an internal function frame on the
 /// loop's stack), which is a valid resumer context.
 pub unsafe fn resume_parked(id: u64, outcome: Outcome) -> bool {
-    // SAFETY: the caller upholds `# Safety` above (inside ignis_poll, a valid resumer frame). The
-    // fiber pointer comes out of PARKED, which only this thread writes and only while that fiber is
-    // suspended, so it is live and resumable exactly once -- the remove() makes it once. The
-    // reference `hold` took is dropped only after the resume returned.
+    // SAFETY: inside ignis_poll; the fiber comes out of PARKED, which only this thread writes while
+    // the fiber is suspended, and the remove() makes the resume happen exactly once.
     unsafe {
         let Some(fiber) = PARKED.with(|p| p.borrow_mut().remove(&id)) else { return false };
         if (*fiber).context.status != sys::ZEND_FIBER_STATUS_SUSPENDED {

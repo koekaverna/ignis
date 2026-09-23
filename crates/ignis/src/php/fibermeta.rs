@@ -1,12 +1,8 @@
-//! ADR-0043: what the runtime knows about a fiber, kept *on* the fiber in a reserved slot of its
-//! `zend_fiber_context` (the same mechanism `superglobals.rs` uses, research 49 E5): the request it
-//! serves, whether the loop wants it force-closed, whether its blocking calls are accepted. The
-//! interposer reads it through `EG(active_fiber)` — which is how a C-level event can name the
-//! request, the thing ADR-0020 said no PHP-level identity would reach.
+//! ADR-0043: what the runtime knows about a fiber, kept in a reserved slot of its
+//! `zend_fiber_context` and read by the interposer through `EG(active_fiber)`.
 //!
-//! FFI contract: one `Box<FiberMeta>` per fiber context, allocated in the init observer (per fiber
-//! creation, never per switch — ADR-0037's rule), freed in the destroy observer; the switch
-//! observer only copies two integers into the scoreboard. Nothing here outlives its context.
+//! FFI contract: one `Box<FiberMeta>` per context, allocated in the init observer, freed in the
+//! destroy observer; nothing here outlives its context.
 use std::ffi::c_char;
 use std::ptr;
 use std::sync::OnceLock;
@@ -38,8 +34,7 @@ unsafe fn meta_of(ctx: *mut sys::zend_fiber_context) -> *mut FiberMeta {
     if ctx.is_null() {
         return ptr::null_mut();
     }
-    // SAFETY: `reserved` is a fixed array of ZEND_MAX_RESERVED_RESOURCES pointers and `index` came
-    // from zend_get_resource_handle, which only hands out indexes inside it.
+    // SAFETY: `index` came from zend_get_resource_handle, so it is inside `reserved`.
     unsafe { (*ctx).reserved[*index] as *mut FiberMeta }
 }
 
@@ -69,8 +64,7 @@ pub unsafe fn of(fiber: *mut sys::zend_fiber) -> *mut FiberMeta {
 
 /// The `zend_fiber` a context belongs to (it is embedded in the object), or null for {main}.
 unsafe fn fiber_of_context(ctx: *mut sys::zend_fiber_context) -> *mut sys::zend_fiber {
-    // SAFETY: a non-main context is the `context` field of a zend_fiber, so subtracting the field's
-    // offset lands on the object; the main context is a bare allocation and is answered null.
+    // SAFETY: a non-main context is the `context` field of a zend_fiber; the main one is answered null.
     unsafe {
         let main = (*tsrm::executor_globals()).main_fiber_context;
         if ctx.is_null() || ctx == main {
@@ -82,9 +76,7 @@ unsafe fn fiber_of_context(ctx: *mut sys::zend_fiber_context) -> *mut sys::zend_
 
 unsafe extern "C" fn on_init(ctx: *mut sys::zend_fiber_context) {
     let Some(index) = SLOT.get() else { return };
-    // SAFETY: called by zend_fiber_init_context on the owning thread with a live context; the slot
-    // index is ours. The box is released in on_destroy, which the engine calls for every context
-    // that was initialised.
+    // SAFETY: called by zend_fiber_init_context with a live context; the box is released in on_destroy.
     unsafe {
         (*ctx).reserved[*index] = Box::into_raw(Box::new(FiberMeta::default())) as *mut std::ffi::c_void;
     }
@@ -92,8 +84,7 @@ unsafe extern "C" fn on_init(ctx: *mut sys::zend_fiber_context) {
 
 unsafe extern "C" fn on_destroy(ctx: *mut sys::zend_fiber_context) {
     let Some(index) = SLOT.get() else { return };
-    // SAFETY: called by zend_fiber_destroy_context on the owning thread; the pointer was written by
-    // on_init or is null, and it is taken out before being freed so nothing can see it twice.
+    // SAFETY: called by zend_fiber_destroy_context; the pointer is on_init's or null, taken out before freeing.
     unsafe {
         let meta = (*ctx).reserved[*index] as *mut FiberMeta;
         (*ctx).reserved[*index] = ptr::null_mut();
@@ -118,8 +109,7 @@ unsafe extern "C" fn on_switch(_from: *mut sys::zend_fiber_context, to: *mut sys
 /// # Safety
 /// MINIT on the main thread, after `zend_observer_startup`.
 pub unsafe fn install() {
-    // SAFETY: the caller upholds the contract; zend_get_resource_handle hands out one of the
-    // per-context reserved slots or -1 when the table is exhausted.
+    // SAFETY: MINIT on the main thread; zend_get_resource_handle answers a slot index or -1.
     unsafe {
         let h = sys::zend_get_resource_handle(c"ignis-fiber-meta".as_ptr());
         if h < 0 {
@@ -133,9 +123,8 @@ pub unsafe fn install() {
     }
 }
 
-/// `ignis_fiber_request(int $id): void` — the request the current fiber serves (0 = none). A new
-/// request on a pooled fiber starts with a clean slate: a kill that cancelled the previous
-/// request's waits must not refuse this one's.
+/// `ignis_fiber_request(int $id): void` — the request the current fiber serves (0 = none); a new
+/// request on a pooled fiber clears the previous one's kill and allow flags.
 pub unsafe extern "C" fn zif_ignis_fiber_request(ex: *mut sys::zend_execute_data, _rv: *mut sys::zval) {
     // SAFETY: VM frame on the PHP thread.
     unsafe {
@@ -153,9 +142,8 @@ pub unsafe extern "C" fn zif_ignis_fiber_request(ex: *mut sys::zend_execute_data
     }
 }
 
-/// `ignis_fiber_kill_pending(Fiber $fiber, bool $on): bool` — marks `$fiber` for force-close: from
-/// now on no park is granted to it (a C park answers `ECANCELED`), so the loop can `unset` it at
-/// its next userland park. Returns false when the fiber has no metadata.
+/// `ignis_fiber_kill_pending(Fiber $fiber, bool $on): bool` — marks `$fiber` for force-close, so no
+/// park is granted to it any more. False when the fiber has no metadata.
 pub unsafe extern "C" fn zif_ignis_fiber_kill_pending(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
     // SAFETY: VM frame on the PHP thread; the object pointer is VM-owned for the call.
     unsafe {
@@ -194,12 +182,11 @@ pub unsafe extern "C" fn zif_ignis_allow_blocking(ex: *mut sys::zend_execute_dat
     }
 }
 
-/// `ignis_fiber_where(Fiber $fiber): ?string` — `file:line` of a suspended fiber's suspension
-/// point, from its saved frame (research 49 E6), without resuming it. Null when it is not
-/// suspended or the frame has no user code in it.
+/// `ignis_fiber_where(Fiber $fiber): ?string` — `file:line` of a suspended fiber's suspension point,
+/// read from its saved frame; null when it is not suspended or has no user frame.
 pub unsafe extern "C" fn zif_ignis_fiber_where(ex: *mut sys::zend_execute_data, rv: *mut sys::zval) {
-    // SAFETY: VM frame on the PHP thread. The saved frames of a suspended fiber are on its own VM
-    // stack, which stays allocated until it terminates; every pointer is null-checked and only read.
+    // SAFETY: VM frame on the PHP thread; a suspended fiber's saved frames stay allocated until it
+    // terminates and are only read here.
     unsafe {
         let mut zfiber: *mut sys::zval = ptr::null_mut();
         if sys::zend_parse_parameters(zval::num_args(ex), c"O".as_ptr(), &mut zfiber, sys::zend_ce_fiber) != sys::SUCCESS {

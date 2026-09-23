@@ -1,12 +1,6 @@
-//! ADR-0043 §5: the blocking detector. The interposer times every call that blocks a PHP thread
-//! inside a fiber and hands the site and the duration here; this decides whether it is worth a
-//! word — by mode, threshold and the allow list — names the request and the route, takes a PHP
-//! backtrace on the first occurrence per site, keeps the per-site statistics the shutdown report
-//! is written from, and keeps a short ring of records the test helpers read back.
-//!
-//! Everything here runs on the PHP thread after the syscall returned and before any fiber switch,
-//! so reading `EG(current_execute_data)` is sound; nothing here allocates on the path that stays
-//! under the threshold.
+//! ADR-0043 §5: the blocking detector decides which timed blocking forward is worth a record, by
+//! mode, threshold and allow list, and keeps the per-site statistics the report is written from.
+//! Everything runs on the PHP thread after the syscall returned and before any fiber switch.
 #![cfg_attr(not(feature = "universal-park"), allow(dead_code))]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};

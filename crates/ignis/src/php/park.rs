@@ -63,18 +63,8 @@ static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 /// has no fd and stays blocking.
 const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libphp:flock,libphp:waitpid,libcurl,libpq,libssl,libcrypto";
 
-/// Every `(library, symbol)` pair that has actually made an interposed call in this process, and
-/// whether the policy let it park.
-///
-/// The policy is a whitelist of shared objects, so a library nobody listed blocks the OS thread and
-/// says nothing about it — and which libraries an application even has is a property of its
-/// deployment, not of this repository: a PECL extension is its own `.so`, and `deb.sury.org` ships
-/// 85 of them for PHP 8.5. Guessing the list is therefore not possible and reading it off a running
-/// process is, because `resolve_site` already resolves the calling object through `dladdr`. This is
-/// that resolution, kept.
-///
-/// Written on the cache-miss path only — once per distinct call site, never per call — so the cost
-/// is the same `dladdr` that was already being paid.
+/// Every `(library, symbol)` pair that has made an interposed call in this process and whether the
+/// policy let it park: the deployment's own library list, read off the process instead of guessed.
 static INVENTORY: Mutex<BTreeMap<String, BTreeMap<String, bool>>> = Mutex::new(BTreeMap::new());
 
 /// What has called us so far, library by library. `false` means the call blocked the thread.
@@ -318,9 +308,7 @@ impl SyscallResult for c_int {
     }
 }
 
-/// `sleep()` returns what is left to sleep: non-zero only when a signal interrupted it, which is
-/// the case the kill needs to see. Its "failure" value is what an interrupted sleep already
-/// returned, so the caller keeps the remaining seconds and `errno` says `ECANCELED`.
+/// `sleep()` fails by returning the unslept seconds, which an interrupted call already did.
 impl SyscallResult for c_uint {
     fn failed(self) -> bool {
         self != 0
@@ -333,9 +321,8 @@ impl SyscallResult for c_uint {
     }
 }
 
-/// A call that blocks this thread inside a fiber: timed on the scoreboard, reported by the
-/// detector, and — if a kill is pending for this fiber and the wait came back `EINTR` — answered
-/// `ECANCELED` instead of being retried by the library (ADR-0043 §7 L4).
+/// A call that blocks this thread inside a fiber: timed, reported, and answered `ECANCELED` when a
+/// pending kill interrupted it (ADR-0043 §7 L4).
 unsafe fn forward<T: SyscallResult>(site: Site, real: impl FnOnce() -> T) -> T {
     // SAFETY: on a PHP thread inside a fiber (the gate said so); the meta helpers only read EG.
     if unsafe { kill_cancels_this_fiber() } {
@@ -359,10 +346,8 @@ unsafe fn forward<T: SyscallResult>(site: Site, real: impl FnOnce() -> T) -> T {
     result
 }
 
-/// True when the ticker asked for the running fiber to die (L4), or the loop marked it for
-/// force-close (L2): either way this fiber gets no more waits. The kill itself is not acknowledged
-/// here: `vm_interrupt` is already set, and the interrupt function force-closes the fiber at its
-/// next opcode, which is where the acknowledgement belongs.
+/// True when the ticker (L4) or the loop (L2) wants the running fiber dead: it gets no more waits.
+/// The acknowledgement belongs to the interrupt function at the next opcode, not here.
 unsafe fn kill_cancels_this_fiber() -> bool {
     // SAFETY: PHP thread inside a fiber; active_fiber is a plain pointer field.
     unsafe {
@@ -1025,6 +1010,16 @@ pub unsafe extern "C" fn ignis_park_select(
     }
 }
 
+/// A connect that could not park finishes the way a blocking one would: waiting for writability.
+///
+/// # Safety
+/// PHP thread; `fd` is the socket the caller is connecting.
+unsafe fn wait_for_writability_like_a_blocking_connect(site: Site, fd: c_int) {
+    let mut pollfd = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+    // SAFETY: `pollfd` is a live local handed to the kernel for the length of the call.
+    unsafe { forward(site, || libc::syscall(libc::SYS_poll, &mut pollfd as *mut libc::pollfd, 1usize, -1) as c_int) };
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr: *const c_void, alen: c_uint) -> c_int {
     // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
@@ -1058,11 +1053,7 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
         match parked {
             Park::Ready => {}
             Park::Cancelled => return cancelled(),
-            Park::Unavailable => {
-                // Could not park: finish the way a blocking connect would, by waiting for writability.
-                let mut p = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
-                forward(site, || libc::syscall(libc::SYS_poll, &mut p as *mut libc::pollfd, 1usize, -1) as c_int);
-            }
+            Park::Unavailable => wait_for_writability_like_a_blocking_connect(site, fd),
         }
         let mut so_err: c_int = 0;
         let mut len = size_of::<c_int>() as libc::socklen_t;
@@ -1164,9 +1155,8 @@ pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_ui
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_accept4(ret: *const c_void, fd: c_int, addr: *mut c_void, alen: *mut c_uint, flags: c_int) -> c_int {
-    // SAFETY: as `ignis_park_read`; `addr`/`alen` go to the kernel unchanged. A listening socket
-    // is readable when a connection is pending; the real accept4 follows either way, so "readable"
-    // that is not "would succeed" ends as it does in stock PHP.
+    // SAFETY: as `ignis_park_read`; `addr`/`alen` go to the kernel unchanged, and the real accept4
+    // follows either way.
     unsafe { data_call(gate(ret, "accept"), fd, false, libc::POLLIN, || libc::syscall(libc::SYS_accept4, fd, addr, alen, flags) as c_int) }
 }
 
@@ -1193,16 +1183,9 @@ pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: 
 /// How long a fiber waits between `flock(LOCK_NB)` attempts, doubling from the first to the second.
 /// Short enough that an uncontended-by-the-time-we-look lock costs little, long enough that a lock
 /// held for a whole request is not polled hundreds of times.
-// ponytail: this retry loop has no overall deadline, and deliberately so. A blocking `flock()`
-// has no timeout in POSIX -- the caller asked to wait until the lock is theirs -- so returning
-// EWOULDBLOCK after some interval of our choosing would be an error no caller is written to
-// expect. The ceiling that remains is real and named here: a lock whose holder died without
-// releasing it parks this fiber for the life of the process. That is strictly better than the
-// behaviour it replaced, where the same case blocked the whole OS thread and every fiber on it
-// (R-SESS, V-58), and it is visible rather than silent, because each retry is an `Op::Sleep` on
-// this thread's reactor and research 42 proposes `ignis_op_oldest_age_seconds` over exactly that
-// id space. Upgrade path: ADR-0043's per-request ceiling (L0) throws into a fiber that has not
-// progressed and releases this the same way it releases every other held resource.
+// ponytail: the retry loop has no deadline of its own, because a blocking `flock()` has none in
+// POSIX; a lock whose holder died parks this fiber for the life of the process (better than the
+// blocked OS thread it replaced, R-SESS/V-58). ADR-0043's per-request ceiling (L0) is what ends it.
 const FLOCK_RETRY_FIRST_US: u64 = 200;
 const FLOCK_RETRY_MAX_US: u64 = 20_000;
 
@@ -1244,8 +1227,6 @@ pub unsafe extern "C" fn ignis_park_flock(ret: *const c_void, fd: c_int, operati
                 Park::Ready => {}
                 Park::Cancelled => return cancelled(),
                 Park::Unavailable => {
-                    // Nothing to park on (no reactor, not in a fiber): do what the caller asked for and
-                    // let the thread block, which is at least the behaviour it had before this existed.
                     park_failed("flock");
                     return forward(site, real);
                 }
@@ -1287,12 +1268,8 @@ pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *
 ///   right errno by itself, exactly as it did before this existed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_waitpid(ret: *const c_void, pid: c_int, status: *mut c_int, options: c_int) -> c_int {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with the arguments libc was given.
-    // `status` is never dereferenced here — it is handed to the real `waitpid`, which is the same
-    // call the program already made; parking only delays it. The pidfd is opened and closed here and
-    // escapes nowhere. The raw syscall, never `libc::waitpid` — that is the symbol this function
-    // interposes, and calling it here would re-enter this handler for ever. `waitpid(p, s, o)` is
-    // `wait4(p, s, o, NULL)`.
+    // SAFETY: as `ignis_park_read`; `status` is handed to the kernel unchanged, the pidfd never
+    // escapes, and the raw `wait4` syscall (not `libc::waitpid`) is what keeps this from re-entering.
     unsafe {
         let real = || libc::syscall(libc::SYS_wait4, pid, status, options, std::ptr::null_mut::<c_void>()) as c_int;
         let blocks = options & libc::WNOHANG == 0;
@@ -1504,16 +1481,12 @@ mod tests {
         assert_eq!(unslept_seconds(-1, &timespec(0, 0)), 0);
     }
 
-    /// The wiring, not the arithmetic: outside a fiber the gate declines, so the shim must hand
-    /// the call to the kernel unchanged and return exactly what libc would. Without this the two
-    /// fixes above were covered only as pure functions — the gate would not have noticed an
-    /// interposer that computed the right number and then delegated wrongly.
+    /// Outside a fiber the gate declines and the shim must return exactly what libc would.
     #[test]
     fn outside_a_fiber_the_shims_delegate_and_answer_as_libc_does() {
         let here = core::ptr::null::<c_void>();
         let valid = timespec(0, 1_000_000);
-        // SAFETY: not in a fiber and no reactor on this thread, so the gate declines and the only
-        // call made is the real nanosleep with a live, well-formed interval of our own.
+        // SAFETY: no fiber and no reactor here, so the only call made is the real nanosleep.
         let slept = unsafe { ignis_park_nanosleep(here, &valid, core::ptr::null_mut()) };
         assert_eq!(slept, 0, "a 1 ms sleep outside a fiber succeeds through the kernel");
 
