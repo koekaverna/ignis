@@ -96,6 +96,52 @@ pub fn render() -> String {
     metric(&mut out, "ignis_threads_stalled", "gauge", "Threads with pending requests that have not entered the reactor for 1 s.", stalled);
     metric(
         &mut out,
+        "ignis_workers_blocked",
+        "gauge",
+        "Workers past busy_warn_ms without yielding at the last tick (ADR-0043).",
+        crate::watchdog::blocked_workers(),
+    );
+    metric(
+        &mut out,
+        "ignis_workers_leaked_total",
+        "counter",
+        "Workers abandoned by the stall watchdog (ADR-0043 L5).",
+        crate::watchdog::leaked_workers(),
+    );
+    let (killed, blocking_calls) = crate::watchdog::slot_totals();
+    metric(&mut out, "ignis_fibers_killed_total", "counter", "Fibers force-closed by the stall watchdog (ADR-0043 L3/L4).", killed);
+    metric(
+        &mut out,
+        "ignis_blocking_calls_total",
+        "counter",
+        "Calls that blocked a PHP thread inside a fiber (ADR-0043 detector).",
+        blocking_calls,
+    );
+    metric(&mut out, "ignis_alerts_dropped_total", "counter", "Alert lines the rate limit dropped.", crate::alerts::global().dropped());
+    let totals = crate::alerts::global().totals();
+    if !totals.is_empty() {
+        let labels = |t: &crate::alerts::Total| {
+            format!(
+                "kind=\"{}\",subject=\"{}\",route=\"{}\",level=\"{}\"",
+                t.key.kind,
+                label(&t.key.subject),
+                label(&t.key.route),
+                t.level.name()
+            )
+        };
+        let _ = writeln!(out, "# HELP ignis_alert_events_total Alert events by kind, subject and route (ADR-0043).");
+        let _ = writeln!(out, "# TYPE ignis_alert_events_total counter");
+        for t in &totals {
+            let _ = writeln!(out, "ignis_alert_events_total{{{}}} {}", labels(t), t.count);
+        }
+        let _ = writeln!(out, "# HELP ignis_alert_max_seconds Largest magnitude seen for the alert key.");
+        let _ = writeln!(out, "# TYPE ignis_alert_max_seconds gauge");
+        for t in &totals {
+            let _ = writeln!(out, "ignis_alert_max_seconds{{{}}} {}", labels(t), t.max_us as f64 / 1e6);
+        }
+    }
+    metric(
+        &mut out,
         "ignis_thread_restarts_total",
         "counter",
         "Worker threads respawned by the supervisor (ADR-0012).",
@@ -143,6 +189,11 @@ pub fn render() -> String {
     metric(&mut out, "ignis_fiber_resumes_total", "counter", "Fiber starts and resumes performed by the loops.", t.resumes);
 
     out
+}
+
+/// A Prometheus label value: quotes and backslashes escaped.
+fn label(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
 }
 
 /// Everything summed over the registered threads, gathered in one pass.
@@ -199,12 +250,15 @@ mod tests {
             .collect()
     }
 
+    /// One name per family: a labelled family (the alert series) has one sample per label set.
     fn sample_names(document: &str) -> Vec<String> {
-        document
+        let mut names: Vec<String> = document
             .lines()
             .filter(|line| !line.starts_with('#') && !line.is_empty())
             .map(|line| line.split(['{', ' ']).next().unwrap().to_string())
-            .collect()
+            .collect();
+        names.dedup();
+        names
     }
 
     /// A scrape is rejected outright by Prometheus if these do not hold.
@@ -216,7 +270,7 @@ mod tests {
         let samples = sample_names(&document);
 
         assert_eq!(help, types, "every metric needs both a HELP and a TYPE, in order");
-        assert_eq!(help, samples, "every declared metric needs exactly one sample, in order");
+        assert_eq!(help, samples, "every declared metric needs its samples right after it, in order");
         assert!(!help.is_empty());
 
         let mut unique = help.clone();
@@ -226,6 +280,24 @@ mod tests {
 
         assert!(help.iter().all(|name| name.starts_with("ignis_")), "{help:?}");
         assert!(document.contains("ignis_build_info{version=\""), "{document}");
+    }
+
+    /// The labelled alert families appear only once a key exists, and then with one sample per key.
+    #[test]
+    fn alert_families_render_one_sample_per_key() {
+        use crate::alerts::{Event, Key, Level};
+        let alerts = crate::alerts::global();
+        for route in ["/a", "/b"] {
+            alerts.emit(
+                Event { key: Key::new("blocking_call", "libphp.so:read", route), level: Level::Warn, value_us: 5, fields: vec![] },
+                Instant::now(),
+            );
+        }
+        let document = render();
+        assert_eq!(document.matches("ignis_alert_events_total{").count(), 2, "{document}");
+        assert!(document.contains("route=\"/a\""));
+        let help = metric_names(&document, "# HELP ");
+        assert_eq!(help, sample_names(&document));
     }
 
     /// `Published::set` is called from PHP with a string; a typo must not silently drop a metric.

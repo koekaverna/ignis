@@ -50,7 +50,7 @@ fn main() {
         .clang_args(if zts { ["-DZTS=1"].as_slice() } else { [].as_slice() })
         .allowlist_function("(_php_stream.*|php|zend|sapi|ts|tsrm|_zend|_emalloc|_efree|_safe_emalloc|_estrndup|_ecalloc|_erealloc|add_|array_|object_|zval_|_zval|_call_user|convert_to).*")
         .allowlist_type("(_?zend|_?zval|_?php|sapi|_?ts|_?zif|_?HashTable|_?Bucket).*")
-        .allowlist_var("(socket_ce|file_globals_id|std_object_handlers|zend_string_init_interned|php_import_environment_variables|SAPI_OPTION_NO_CHDIR|zend_async_globals_offset|zend_async_[a-z_]*_fn|executor_globals_offset|executor_globals_id|compiler_globals_offset|core_globals_offset|sapi_globals_offset|executor_globals|compiler_globals|core_globals|sapi_globals|php_embed_module|zend_ce_.*|IS_.*|ZEND_.*|E_.*|PHP_.*|MODULE_.*|IGNIS_.*|GC_.*|Z_.*|USING_ZTS|TSRM.*|_ZEND.*|_ZSTR.*)")
+        .allowlist_var("(socket_ce|file_globals_id|std_object_handlers|zend_string_init_interned|php_import_environment_variables|SAPI_OPTION_NO_CHDIR|zend_async_globals_offset|zend_async_[a-z_]*_fn|executor_globals_offset|executor_globals_id|compiler_globals_offset|core_globals_offset|sapi_globals_offset|executor_globals|compiler_globals|core_globals|sapi_globals|zend_interrupt_function|php_embed_module|zend_ce_.*|IS_.*|ZEND_.*|E_.*|PHP_.*|MODULE_.*|IGNIS_.*|GC_.*|Z_.*|USING_ZTS|TSRM.*|_ZEND.*|_ZSTR.*)")
         .allowlist_type("max_align_t")
         .derive_default(true)
         .derive_debug(false)

@@ -2,6 +2,7 @@
 //!
 //! Cycle 0 binary: `ignis <script.php>` runs one script on the main thread
 //! with a tokio runtime on the side owning all timers/I/O.
+mod alerts;
 mod backend;
 mod config;
 mod grpc;
@@ -10,7 +11,10 @@ mod lock;
 mod metrics;
 mod php;
 mod reactor;
+mod recovery;
+mod scoreboard;
 mod watch;
+mod watchdog;
 mod workers;
 
 use std::path::{Path, PathBuf};
@@ -110,12 +114,13 @@ fn run_worker(flags: &RuntimeFlags, script: &Path, engine: &mut php::embed::Engi
     install_signal_drain(&rt);
     php::module::install_thread_reactor(reactor::Reactor::new(rt.handle()));
     install_reload_signal(&rt, flags.supervise);
-    spawn_watchdog(&rt);
+    watchdog::spawn(&rt);
     let worst = if flags.supervise {
         supervise_workers(flags.threads, script, rt.handle())
     } else {
         run_workers(flags.threads, script, rt.handle(), engine)
     };
+    php::detector::write_report();
     rt.shutdown_background();
     worst
 }
@@ -317,12 +322,13 @@ fn check_park_interposers() -> Result<(), ExitCode> {
 /// (found while rewriting docs/operate.md).
 fn print_ready_banner(flags: &RuntimeFlags) {
     eprintln!(
-        "ignis {} — workers={} threads={} listen={} park={} — ready",
+        "ignis {} — workers={} threads={} listen={} park={} recovery=[{}] — ready",
         env!("CARGO_PKG_VERSION"),
         flags.workers,
         flags.threads,
         std::env::var("IGNIS_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into()),
         php::park::policy_summary(),
+        recovery::Settings::global().summary(),
     );
 }
 
@@ -363,26 +369,13 @@ fn spawn_worker(index: usize, script: &Path, rt: &tokio::runtime::Handle) -> std
                     return 1;
                 }
             };
+            register_worker_slot(index as u32);
             let status = w.run_file(&script).unwrap_or(1);
             php::http_unregister_current();
+            scoreboard::unregister_current_thread();
             status
         })
         .expect("spawn php thread")
-}
-
-/// Watchdog: report threads stuck in PHP code (ADR-0012).
-fn spawn_watchdog(rt: &tokio::runtime::Runtime) {
-    rt.spawn(async {
-        let mut last = 0usize;
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            let (stalled, total) = http::stalled_threads(std::time::Duration::from_secs(1));
-            if stalled != last {
-                tracing::warn!(stalled, total, "php threads busy for > 1 s without polling");
-                last = stalled;
-            }
-        }
-    });
 }
 
 /// `--supervise` (ADR-0012): thread 0 stays idle, because it owns the SAPI and cannot be respawned;
@@ -394,6 +387,7 @@ fn supervise_workers(threads: usize, script: &Path, rt: &tokio::runtime::Handle)
     let mut minute = std::time::Instant::now();
     loop {
         std::thread::sleep(std::time::Duration::from_millis(50));
+        replace_abandoned_workers(&mut workers, script, rt);
         for worker in &mut workers {
             if let Some(retry_at) = worker.retry_at {
                 if std::time::Instant::now() < retry_at {
@@ -444,6 +438,25 @@ fn supervise_workers(threads: usize, script: &Path, rt: &tokio::runtime::Handle)
     }
 }
 
+/// ADR-0043 L5: a worker the ticker abandoned keeps running wherever it is stuck; its thread is
+/// detached and a replacement takes its slot. The leak is counted, never hidden.
+fn replace_abandoned_workers(workers: &mut [Worker], script: &Path, rt: &tokio::runtime::Handle) {
+    for index in watchdog::take_abandoned() {
+        let Some(slot) = scoreboard::slot(index) else { continue };
+        let worker_no = slot.worker_no.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let Some(worker) = workers.iter_mut().find(|w| w.slot == worker_no) else { continue };
+        drop(worker.handle.take());
+        RESTARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tracing::error!(
+            slot = worker_no,
+            scoreboard_slot = index,
+            "worker abandoned by the stall watchdog; a replacement is spawned, the stuck thread is leaked"
+        );
+        worker.respawn(script, rt);
+        alerts::global().worker_recovered(&index.to_string());
+    }
+}
+
 /// One supervised worker slot. It keeps the generation the thread was spawned with, which is what
 /// separates "returned because a file changed" from "died".
 struct Worker {
@@ -478,10 +491,21 @@ impl Worker {
     }
 }
 
+/// ADR-0043 §3: the calling PHP thread takes a scoreboard slot and tells its reactor which one.
+fn register_worker_slot(worker_no: u32) {
+    // SAFETY: on a PHP thread after php_embed_init / WorkerThread::attach, so EG is live.
+    let flag = unsafe { php::kill::interrupt_flag_address() };
+    match scoreboard::register_current_thread(worker_no, flag) {
+        Some(index) => php::module::reactor().set_slot(index),
+        None => tracing::warn!(worker_no, "no free scoreboard slot; this worker is invisible to the stall watchdog"),
+    }
+}
+
 /// The unsupervised run: threads 1..N run the script beside thread 0, and the worst exit status of
 /// all of them is the process's.
 fn run_workers(threads: usize, script: &Path, rt: &tokio::runtime::Handle, engine: &mut php::embed::Engine) -> i32 {
     let handles: Vec<_> = (1..threads).map(|i| spawn_worker(i, script, rt)).collect();
+    register_worker_slot(0);
     let status = match engine.run_file(script) {
         Ok(s) => s,
         Err(e) => {
@@ -489,6 +513,7 @@ fn run_workers(threads: usize, script: &Path, rt: &tokio::runtime::Handle, engin
             1
         }
     };
+    scoreboard::unregister_current_thread();
     handles.into_iter().fold(status, |worst, h| worst.max(h.join().unwrap_or(1)))
 }
 

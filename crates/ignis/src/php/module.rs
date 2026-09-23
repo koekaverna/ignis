@@ -141,6 +141,11 @@ arginfo!(ARGINFO_TEMPORAL_HEARTBEAT, 2, c"worker", c"json");
 arginfo!(ARGINFO_SCOPE_ALLOCATE, 1, c"class");
 arginfo!(ARGINFO_SCOPE_SEAL, 1, c"instance");
 arginfo!(ARGINFO_REQUEST_INFO, 3, c"method", c"content_type", c"body");
+arginfo!(ARGINFO_FIBER_REQUEST, 1, c"id");
+arginfo!(ARGINFO_FIBER_KILL_PENDING, 2, c"fiber", c"on");
+arginfo!(ARGINFO_ALLOW_BLOCKING, 1, c"on");
+arginfo!(ARGINFO_FIBER_WHERE, 1, c"fiber");
+arginfo!(ARGINFO_BLOCKING_RECORDS, 1, c"since");
 static ARGINFO_NONE: SyncStatic<[sys::zend_internal_arg_info; 1]> = SyncStatic([arg_info_head(0)]);
 static ARGINFO_SUPERGLOBALS: SyncStatic<[sys::zend_internal_arg_info; 5]> =
     SyncStatic([arg_info_head(4), arg_info(c"server"), arg_info(c"get"), arg_info(c"post"), arg_info(c"cookie")]);
@@ -207,9 +212,21 @@ unsafe extern "C" fn zif_ignis_poll(ex: *mut sys::zend_execute_data, rv: *mut sy
         };
         let timeout = if timeout_ms < 0 { None } else { Some(Duration::from_millis(timeout_ms as u64)) };
         let Some(reactor) = reactor_or_throw() else { return };
+        if crate::scoreboard::current().is_some_and(crate::scoreboard::WorkerSlot::is_abandoned) {
+            sys::zend_throw_error(
+                ptr::null_mut(),
+                c"Ignis: this worker was abandoned by the stall watchdog; its script ends here".as_ptr(),
+            );
+            return;
+        }
+        crate::scoreboard::enter_poll();
         let done: Vec<Completion> = reactor.poll(timeout);
+        crate::scoreboard::leave_poll();
         zval::set_new_array(rv);
         for c in done {
+            if matches!(c.outcome, Outcome::Slept { .. }) && super::wait::expire_park_timer(c.id) {
+                continue;
+            }
             match c.outcome {
                 // An error for a fiber parked C-side (universal park, ADR-0020) is consumed here:
                 // the fiber is resumed and runs until its next suspension before we continue.
@@ -324,6 +341,12 @@ unsafe extern "C" fn zif_ignis_stats(_ex: *mut sys::zend_execute_data, rv: *mut 
         sys::add_assoc_long_ex(rv, c"threads".as_ptr(), 7, threads as i64);
         sys::add_assoc_long_ex(rv, c"stalled".as_ptr(), 7, stalled as i64);
         sys::add_assoc_long_ex(rv, c"restarts".as_ptr(), 8, crate::RESTARTS.load(std::sync::atomic::Ordering::Relaxed) as i64);
+        let (killed, blocking_calls) = crate::watchdog::slot_totals();
+        sys::add_assoc_long_ex(rv, c"killed".as_ptr(), 6, killed as i64);
+        sys::add_assoc_long_ex(rv, c"blocking_calls".as_ptr(), 14, blocking_calls as i64);
+        sys::add_assoc_long_ex(rv, c"leaked_workers".as_ptr(), 14, crate::watchdog::leaked_workers() as i64);
+        sys::add_assoc_long_ex(rv, c"blocked_workers".as_ptr(), 15, crate::watchdog::blocked_workers() as i64);
+        sys::add_assoc_long_ex(rv, c"alerts_dropped".as_ptr(), 14, crate::alerts::global().dropped() as i64);
     }
 }
 
@@ -878,12 +901,19 @@ const fn fe_end() -> sys::zend_function_entry {
 }
 
 #[cfg(not(feature = "temporal"))]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 36]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 43]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
     fe(c"ignis_scope_rows_clear", zif_ignis_scope_rows_clear, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_seal", zif_ignis_scope_seal, ARGINFO_SCOPE_SEAL.0.as_ptr(), 1),
+    fe(c"ignis_fiber_request", super::fibermeta::zif_ignis_fiber_request, ARGINFO_FIBER_REQUEST.0.as_ptr(), 1),
+    fe(c"ignis_fiber_kill_pending", super::fibermeta::zif_ignis_fiber_kill_pending, ARGINFO_FIBER_KILL_PENDING.0.as_ptr(), 2),
+    fe(c"ignis_allow_blocking", super::fibermeta::zif_ignis_allow_blocking, ARGINFO_ALLOW_BLOCKING.0.as_ptr(), 1),
+    fe(c"ignis_fiber_where", super::fibermeta::zif_ignis_fiber_where, ARGINFO_FIBER_WHERE.0.as_ptr(), 1),
+    fe(c"ignis_blocking_sequence", super::detector::zif_ignis_blocking_sequence, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_blocking_records", super::detector::zif_ignis_blocking_records, ARGINFO_BLOCKING_RECORDS.0.as_ptr(), 1),
+    fe(c"ignis_blocking_report", super::detector::zif_ignis_blocking_report, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_park_inventory", zif_ignis_park_inventory, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),
@@ -918,7 +948,7 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 36]> = SyncStatic([
 ]);
 /// With the `temporal` feature (ADR-0013): sdk-core worker primitives.
 #[cfg(feature = "temporal")]
-static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
+static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 51]> = SyncStatic([
     fe(c"ignis_set_request_info", zif_ignis_set_request_info, ARGINFO_REQUEST_INFO.0.as_ptr(), 3),
     fe(c"ignis_clear_request_info", zif_ignis_clear_request_info, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_scope_allocate", zif_ignis_scope_allocate, ARGINFO_SCOPE_ALLOCATE.0.as_ptr(), 1),
@@ -932,6 +962,13 @@ static FUNCTIONS: SyncStatic<[sys::zend_function_entry; 44]> = SyncStatic([
     fe(c"ignis_temporal_complete_activity", crate::backend::temporal::zif_complete_activity, ARGINFO_TEMPORAL_COMPLETE.0.as_ptr(), 2),
     fe(c"ignis_temporal_heartbeat", crate::backend::temporal::zif_heartbeat, ARGINFO_TEMPORAL_HEARTBEAT.0.as_ptr(), 2),
     fe(c"ignis_temporal_shutdown", crate::backend::temporal::zif_shutdown, ARGINFO_TEMPORAL_WORKER.0.as_ptr(), 1),
+    fe(c"ignis_fiber_request", super::fibermeta::zif_ignis_fiber_request, ARGINFO_FIBER_REQUEST.0.as_ptr(), 1),
+    fe(c"ignis_fiber_kill_pending", super::fibermeta::zif_ignis_fiber_kill_pending, ARGINFO_FIBER_KILL_PENDING.0.as_ptr(), 2),
+    fe(c"ignis_allow_blocking", super::fibermeta::zif_ignis_allow_blocking, ARGINFO_ALLOW_BLOCKING.0.as_ptr(), 1),
+    fe(c"ignis_fiber_where", super::fibermeta::zif_ignis_fiber_where, ARGINFO_FIBER_WHERE.0.as_ptr(), 1),
+    fe(c"ignis_blocking_sequence", super::detector::zif_ignis_blocking_sequence, ARGINFO_NONE.0.as_ptr(), 0),
+    fe(c"ignis_blocking_records", super::detector::zif_ignis_blocking_records, ARGINFO_BLOCKING_RECORDS.0.as_ptr(), 1),
+    fe(c"ignis_blocking_report", super::detector::zif_ignis_blocking_report, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_stats", zif_ignis_stats, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_park_inventory", zif_ignis_park_inventory, ARGINFO_NONE.0.as_ptr(), 0),
     fe(c"ignis_capture_start", super::output::zif_capture_start, ARGINFO_NONE.0.as_ptr(), 0),

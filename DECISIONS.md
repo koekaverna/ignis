@@ -993,3 +993,57 @@ runs `lint` and `unit`; `php` (php, examples, bench/php, bench/e22) runs `php-li
 the jobs that execute the binary. `workflow_dispatch` runs everything. The Revolt vendor tree
 (`--prefer-source`, three minutes of git clones per leg) is cached by its lock file in `smoke`
 and `e15`.
+
+## 2026-09-23 — the review round on ADR-0043: evidence per rung, and a target that was a constant
+
+CodeRabbit's full review of the ADR-0043 pull request (13 major, 8 minor) was taken finding by
+finding; three of them changed what the documents claim rather than what the code does, and those
+are decisions:
+
+- **H-INT-6's target was an absolute (2.5 s) for a mechanism whose bound is a setting.** The ladder
+  runs S-10 with `stall_abandon_ms=3000`, so "abandoned at 3 029 ms" could never have met 2.5 s and
+  had been marked CONFIRMED anyway. The target is now "within `stall_abandon_ms` + one tick", which
+  is what the ticker can promise at any setting; the measured overshoot is 12–47 ms at two settings
+  (V-124 addendum). The hypothesis is PARTIAL, because its NTS half (S-16) has not run.
+- **Every ladder scenario asserts the evidence of its own rung, not a side effect.** S-6 required
+  only that `/hello` still answered after the disconnect — true even when nothing was force-closed —
+  and S-9 accepted any classified line for any fixture. S-6 now needs the loop's `force-closed (L2)`
+  line (new: the loop says so when it drops a swallowed cancellation's fiber), S-7 fires its sibling
+  probes *during* the stall rather than after it, S-8 needs the `level=L4` delivery, the `errno=125`
+  record and the `fiber_killed` line together, and S-9 names the subject, level and `/proc` shape
+  each fixture must produce. The BACKLOG and V-124 lines that said "done" on the weaker checks say
+  what was actually shown.
+- **`DetectsBlocking` cannot audit a test body it does not run.** PHPUnit 12's `runTest()` is
+  private, an extension only observes, and the detector's gate is the fiber; so the trait's hooks
+  see the records the loop made during the test, and code the test drives itself goes through
+  `ignisAudited()`. Research 50's `WebTestCaseListener` promise is withdrawn in the text.
+
+Code findings in the same round, fixed as asked: the two `Fiber`-taking internal functions (and
+`ignis_cancel_parked_any`, same shape) parse with `O`/`zend_ce_fiber`, so a non-Fiber object is a
+`TypeError` rather than a read past a `zend_object`; the alert module keeps lifetime totals apart
+from the dedup state, so `ignis_alert_events_total` never restarts when a key recovers; the ticker
+tracks a busy worker with no request (boot, a background job) instead of dropping its episode;
+abandonment refuses and drains under the one admission lock, over HTTP and gRPC alike; the
+`worker_abandoned` key carries the worker index; L2 ends a C-side park before relying on cycle
+collection; `Recovery.php` keeps timeout-less routes in the longest-prefix match and parses
+unsigned like Rust; `waitpid(-1|0)` is timed; the audit accepts double-quoted route keys and warns
+when it finds none.
+
+## 2026-09-23 — the fiber timeout is a ceiling on a park, not on a fiber's life
+
+S-FIBER-TIMEOUT asked for "a per-fiber wall-clock ceiling". The chaos entry point runs the whole
+PHPUnit application inside one `Ignis\async` fiber for 17 s, and a production job may legitimately
+live for the process's lifetime, so a lifetime ceiling would either be useless (set past the
+suite) or wrong (killing long-lived workers). What a hang actually looks like is one park that
+never ends. So the mechanism is `park_timeout_ms`: one timer per park, armed and cancelled around
+the suspension in both places a fiber can park (`Loop::parkOn` and `wait.rs`), and it fires into
+whichever fiber is parked — a request's or a spawned job's, which L0 (per request) could not reach.
+Consequences accepted: a deliberate `Ignis\sleep(60_000)` under a 30 s ceiling is reported as a
+hang, so the ceiling is 0 in production and 30 s only under `IGNIS_CHAOS` (the variable wins over
+both); a `Future` nobody resolves is not a park and stays L0's problem; and the message names the
+first frame outside the `Ignis\` namespace, because "parked at Loop.php:95" tells nobody anything.
+The C-parked case is answered the same way rather than refused (S-CANCEL-IN-C's question), since
+`wait.rs` already holds the fiber and `zend_fiber_resume_exception` is the L1 path. With that,
+`e15-chaos` returns to `ci.yml` in the shape it left (`7c1c48e`), http-foundation only, plus the
+vendor cache and two more failure conditions: a park past the ceiling and a mode with no `Tests:`
+line. The rest of the suites stay manual for the reasons the job's comment gives.

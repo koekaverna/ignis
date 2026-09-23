@@ -6352,3 +6352,180 @@ Kill criterion of ADR-0044: ≥ 90 % on both routes (90 % and 93 %) and memory u
 Pss, 2.7× by the double-counting sum). Both hold; the ADR is accepted. Not measured: more workers
 than cores, the master's respawn latency under load, and the shape on a box where `wrk` has its own
 cores — hello's absolute numbers here are the VM's (V-122).
+
+## V-124 — ADR-0043 built: the stall ladder, the blocking detector and the alert module measured on both carrier shapes (research 50 S-1, S-5–S-10, S-2 audit, S-11 cost)
+
+Date: 2026-09-23. Tree: this branch at the commit that carries this entry; PHP 8.5.10 ZTS built on
+this box by `scripts/build-php.sh` (4 vCPU cloud VM, kernel 6.18, glibc 2.39). Method: every
+scenario is a fixture under `bench/php/stall/` driven by `bench/stall-ladder.sh` (written by a
+Sonnet agent, run by the orchestrator on `target/release/ignis`, `--threads 4`, three workers
+pinned by parked `/sleep` requests so the stuck request lands on the fourth, thresholds
+`IGNIS_BUSY_WARN_MS=100 IGNIS_STALL_KILL_MS=1000 IGNIS_STALL_ABANDON_MS=3000`). The agent's own run
+and this re-run agree on every line; the numbers below are the re-run.
+
+**The ladder (`bench/stall-ladder.sh`, exit 0, 0 failing scenarios):**
+
+| scenario | fixture | result |
+|---|---|---|
+| S-1 detection names the request | `spin.php` | one warn line at **124 ms** (`busy_warn_ms=100`, tick 100 ms): `kind="stall" subject="php" route="/stuck" request=1 uri=/stuck classification=proc=running state=R`; no second line in the window |
+| S-1 blocked | `block-sleep.php` (`IGNIS_PARK=`) | `subject="blocking_forward:libphp.so:sleep" classification=proc=35 wchan=hrtimer_nanosleep` — the syscall number and the kernel wait, from `/proc` |
+| S-7 L3 kill of a spinning fiber | `spin.php` | **504 in 1 102 ms** (`stall_kill_ms=1000`); all 6 sibling `/hello` probes answered; `kind="fiber_killed" subject="interrupt"`; the worker keeps serving |
+| S-8 L4 signal into a shimmed wait | `block-sleep.php`, 30 s requested | cancelled in **1 109 ms**: `blocking_call libphp.so:sleep duration_us≈1 006 000 errno=125` (`ECANCELED`), then force-closed at the next opcode, **504**, `/hello` still answers |
+| S-9 classification | spin / block-sleep / c-loop | `proc=running state=R` + `level=L3` / `proc=35 wchan=hrtimer_nanosleep` + `level=L4` / `proc=running` + no ack → L5. `/proc` alone cannot tell a VM loop from a C loop; the missing acknowledgement after the signal is what does |
+| S-10 L5 abandon a live worker | `c-loop.php` (`password_hash` cost 20 ≈ 61 s here) | `worker_abandoned age_ms=3029 failed_requests=1 leaked_workers=1`; the supervisor's replacement served `/hello`; health `leaked_workers=1` |
+| S-5 L0 fiber timeout | `park-forever.php`, `IGNIS_FIBER_TIMEOUT_MS=2000` | **504 in 2 012 ms**, `/hello` afterwards |
+| S-6 L2 swallowed cancellation | `swallow-cancel.php` + early disconnect | the worker survived; `/hello` answers |
+
+**The detector (S-2 shape, `bench/blocking-audit.sh examples/app.php`, `profile=load-test`,
+`threshold_us=200`, `DURATION=9 CONCURRENCY=6`, `wrk`):** exit 0, `blocking_sites` empty, the
+allow file stays empty — `examples/app.php` has no blocking site above 200 µs on this box. On the
+orchestrator's own fixture (a 200 MB file read in 1 MiB `fread`s, `threshold_us=50`) the report
+lists `libphp.so:read` (count 4 over 50 µs, max 161 µs) with the PHP frame (`detect.php:3 readBig()`),
+one warn line for all of them, and **no** site for the `flock` backoff park and **no** site for the
+runtime's own stderr `write` (the executable's call sites are outside the gate; a first version
+reported `ignis:write` at 1.3 ms, which is what the load-base check fixed).
+
+**End to end under `--workers 2 --threads 1` (ADR-0044 prefork):** the ladder runs inside a forked
+worker unchanged; a stuck main thread (`c-loop`) exits the worker with status 3 after
+`worker_abandoned` and the master's other worker keeps answering.
+
+**S-11 cost, hello-world on one thread (`examples/hello_server.php`, `wrk -t1 -c32 -d8s`, three
+alternating pairs, `origin/main`'s release binary built into a separate target dir against this
+branch's):**
+
+```
+main  74 063 req/s  p99 1.56 ms      ours  69 890 req/s  p99 1.91 ms
+main  71 088 req/s  p99 2.22 ms      ours  70 102 req/s  p99 1.90 ms
+main  72 018 req/s  p99 1.53 ms      ours  73 443 req/s  p99 1.92 ms
+```
+
+Means 72.4k against 71.1k (−1.8 %), inside the run-to-run spread of either binary (71.1k → 74.1k
+on `main` alone, ±2 %) — so the instruments are not measurable at this box's resolution, and ADR-0043
+§11's 1 % criterion cannot be decided here either way. A quieter box with `-t2 -c64 -d30s` and ten
+pairs is what settles it; until then the detector's per-call cost stays where it is (two
+`clock_gettime` on a path that already blocks the thread, none on a park).
+
+**Unit level (`cargo nextest run --workspace`): 101 passed** — among them the alert module's
+dedup, summary, escalation-once, recovery and rate-limit rules and the property "≤ 3 lines per key
+per window" over 50 random sequences (S-4), the profile/precedence/route tests (S-15), the
+scoreboard transitions and the `/proc` parser. `cargo clippy -D warnings`, `cargo fmt --check`,
+the off build and `cargo deny` are clean.
+
+**Not run here:** S-12 (the destructor-fiber fixture under ASAN/valgrind — no ASAN arm on this
+box), S-3 with a Symfony test suite (no composer here; the `Ignis\Testing` traits are written), S-14
+(a storm on all workers), S-16 (NTS scoreboard across forked children — the ladder ran inside a
+forked worker, but the per-process board is not the shared page ADR-0043 §3 describes; that part
+waits for the master-side ticker).
+
+### V-124 addendum (2026-09-23) — the review round: each rung by its own evidence, the planted-site audit, the abandonment bound
+
+Same box, same binary shape (`cargo build --release`, PHP 8.5.10 ZTS), after CodeRabbit's review of
+the pull request (DECISIONS 2026-09-23). The ladder's assertions were tightened so that every
+scenario needs the line its rung produces (S-6 the loop's `force-closed (L2)` line; S-7 sibling
+probes fired *during* the stall; S-8 the `level=L4 … kill signal delivered` line, the
+`blocking_call … errno=125` record and the `fiber_killed` line together; S-9 the subject, level and
+`/proc` shape per fixture) and S-10 runs under `--supervise`, because without it the pinning lands
+the stuck request on the main thread one time in four and the process exits 3 for an external
+supervisor instead — a different, also-correct path (the prefork paragraph above), not a coin to
+toss in a gate. Three consecutive runs; the third, with every change in, is the one below (`exit 0`,
+0 failing):
+
+| scenario | result |
+|---|---|
+| S-1 spin / block-sleep | warn at **age_ms=134** (spin) and **187** (block-sleep), `subject="blocking_forward:libphp.so:sleep"` for the latter |
+| S-7 L3 | 504 **1 736 ms** after the request was sent, all 6 `/hello` probes answered while the fiber spun, `fiber_killed subject="interrupt" route="/stuck"` |
+| S-8 L4 | 504 in **1 108 ms**: `level=L4 action=kill signal delivered`, `blocking_call libphp.so:sleep duration_us=1 095 243 errno=125`, `fiber_killed`; the body is the watchdog's own 504, because the interrupt function force-closes the fiber at the opcode after the interrupted `sleep()` returns (the fixture's `unslept_s` answer is what a run with `stall_kill_ms=0` and a hand-sent signal sees) |
+| S-9 | spin → `subject="php" level=L3 proc=running`; block-sleep → `subject="blocking_forward:libphp.so:sleep" level=L4 wchan=hrtimer_nanosleep`; c-loop → `subject="php" level=L3 proc=running` (then no ack, then L5) |
+| S-10 L5 (`--supervise`) | `worker_abandoned subject="worker0:php" age_ms=3026 failed_requests=1 leaked_workers=1`, the replacement served `/hello` |
+| S-5 L0 | 504 in **2 012 ms** |
+| S-6 L2 | `Ignis\Loop: fiber 11 parked again after its cancellation and is force-closed (L2)`, then `/hello` |
+
+**The abandonment bound (H-INT-6, revised target "within `stall_abandon_ms` + one tick"):** age at
+abandonment over the configured threshold, five runs at two settings — `3000`: 3 012, 3 016, 3 024,
+3 026, 3 029 ms (ladder runs, and the `--supervise` and unsupervised shapes alike); `1500`: 1 533,
+1 547 ms (`--threads 4 --supervise`, `IGNIS_STALL_KILL_MS=500`, the orchestrator's two hand runs,
+the stuck request answered 500 in 1.534 s / 1.548 s). Overshoot **12–47 ms** against a 100 ms tick.
+
+**S-2 on a planted site (`bench/blocking-audit.sh`, `DURATION=4 CONCURRENCY=8`, `wrk`, route file
+`/stuck`):** a fixture whose handler does `file_get_contents('/etc/hostname')` under
+`profile=load-test`/`strict`: the report lists `libphp.so:read count=139 max_us=3494 routes=/stuck:139`
+and the audit **exits 1** with `NOT in …: libphp.so:read@/stuck`; with the one line
+`libphp.so:read@/stuck` in the allow file, the same drive (79 records) **exits 0**; without a route
+file and with no route keys in the script it prints the new `WARNING: no route keys found …` and
+audits `/` alone. The Symfony-skeleton half of S-2 and S-3 still waits for a box with composer.
+
+**The chaos suite by hand (owner, 2026-09-23, `SUITES=symfony-http-foundation bench/e15-chaos.sh`
+on this branch's release binary; doctrine's installs skipped):** install from source **~5 min**,
+then each mode **17–18 s** for 1 881 tests:
+
+```
+stock                 tests=1881 failures=0 errors=61 skipped=117  secs=17
+ignis                 tests=1881 failures=0 errors=61 skipped=117  secs=18  chaosYields=0      fibers=1
+chaos-seed-1          tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=14172  noiseTicks=28503 resumes=42681
+chaos-seed-20260916   tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=14509  noiseTicks=28845 resumes=43360
+new under ignis vs stock : (none)      new under chaos vs stock : (none)
+```
+
+The 61 errors are the same tests in every mode, the stock CLI included (the build has no `ext-dom`
+and the functional tests want a `PHP_BINARY -S`). So the gate's own cost is the install, not the
+run: with the vendor tree cached, `ignis` plus one chaos seed is under a minute. What this run does
+**not** show is S-FIBER-TIMEOUT's acceptance (1): the L0 ceiling is armed per request in
+`dispatchRequest()`, and the chaos entry point runs PHPUnit inside one `Ignis\async` fiber with no
+request, so a test that parks that fiber for ever still hangs the run until the script's own
+`timeout 900`. The ceiling has to reach a spawned fiber before the job returns to `ci.yml`.
+
+**Unit level:** `cargo nextest run --workspace` **102 passed** (one new: an abandoned reactor
+refuses HTTP and gRPC admission alike, the drain and the refusal under one lock); clippy, fmt, the
+off build clean. `php -l` on every touched PHP file; the PHP suites run in CI's `php-unit` job (no
+composer here).
+
+### V-124 addendum 2 (2026-09-23) — the park ceiling: S-5b, the chaos suite bounded, the 1 ms falsifier
+
+**What changed.** `park_timeout_ms` (`IGNIS_PARK_TIMEOUT_MS`; 0 in production, 30 000 under
+`IGNIS_CHAOS`) bounds every reactor park with its own timer, in `Loop::parkOn` for a userland park
+and in `wait.rs` (`await_op`, `await_any`) for a C-side one; the fiber past it is resumed with
+`DeadlineExceededException("park timeout after N ms, parked at file:line")`, the site being the
+first frame outside the `Ignis\` namespace (DECISIONS). Same box and binary as the addendum above.
+
+**S-5b, `bench/stall-ladder.sh` (`bench/php/stall/park-forever-job.php`, `IGNIS_PARK_TIMEOUT_MS=1000`,
+no L0):** the request spawns a job that parks for ever and awaits it.
+
+```
+S-5b(userland): 'caught: park timeout after 1000 ms, parked at .../bench/php/stall/park-forever-job.php:17'  in 1011 ms (<= 1500 ms)
+S-5b(c):        'caught: park timeout after 1000 ms, parked at .../bench/php/stall/park-forever-job.php:29'  in 1011 ms (<= 1500 ms)
+```
+
+Line 17 is the closure around `Ignis\sleep(3_600_000)`, line 29 the `fread` on a silent
+`stream_socket_pair`; the full ladder (S-1, S-5, S-5b, S-6–S-10) passes 0 failing scenarios on
+this run. `/hello` answers afterwards; the standalone probe (`Ignis\sleep(60_000)` and `fread` on a silent
+`stream_socket_pair`, ceiling 500 ms) returns both exceptions in **502 ms**.
+
+**The chaos suite with the ceiling on (`SUITES=symfony-http-foundation bench/e15-chaos.sh`, the
+symfony tree already installed):**
+
+```
+stock                 tests=1881 failures=0 errors=61 skipped=117  secs=16
+ignis                 tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=0      fibers=1
+chaos-seed-1          tests=1881 failures=0 errors=61 skipped=117  secs=18  chaosYields=14283  noiseTicks=28513 resumes=42802
+chaos-seed-20260916   tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=14384  noiseTicks=28752 resumes=43142
+new under ignis vs stock : (none)      new under chaos vs stock : (none)     script rc=0
+```
+
+Unchanged from the run without the ceiling: no park in the suite reaches 30 s.
+
+**The falsifier (same suite, `IGNIS_MODE=1 IGNIS_PARK_TIMEOUT_MS=1`, no chaos):** the run ends at
+test **1 403 of 1 881** — the first park longer than 1 ms — with PHPUnit's own report,
+`An error occurred inside PHPUnit. Message: park timeout after 1 ms, parked at
+/tmp/e15-chaos/symfony/vendor/sebastian/environment/src/Runtime.php:435` (a `proc_open` read,
+errno=125 on the way out), exit 255, in seconds rather than at the script's `timeout 900`. PHPUnit
+catches the exception before the entry point's own `IGNIS HUNG` line can print, which is why the
+`e15-chaos` job greps the message and also requires a `Tests:` line per mode. Note for the reader:
+1 402 tests park for under a millisecond each, which is how little of this suite the ceiling
+touches.
+
+**Unit level:** `cargo nextest run --workspace` **103 passed** (new: a park has no ceiling unless
+chaos or the variable says so); clippy, fmt, the off build clean (the timer helpers are gated on
+`universal-park` with their callers). `php -l` on every touched file; through the PHPUnit shim 42
+`LoopTest` (three new: the ceiling fires into the parked fiber and forgets its op, a park that ends
+in time cancels its timer, a ceiling of 0 arms nothing) and 17 `RecoveryTest` (four new) pass; the
+real suites run in CI's `php-unit` job.

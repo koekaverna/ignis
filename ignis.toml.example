@@ -55,3 +55,31 @@ header_timeout_ms = 10000
 idle_timeout_ms = 60000
 # How long in-flight requests get after SIGTERM before the process exits (V-56).
 drain_timeout_ms = 10000
+
+# ---- ADR-0043: stall detection, stuck-fiber recovery, blocking alerts -------------------------
+# Every key below has a per-profile default; a key written here beats the profile and an
+# IGNIS_* variable beats this file. Durations are milliseconds; 0 turns a level off.
+# [recovery]
+# profile = "production"        # production | load-test | test
+# fiber_timeout_ms = 0          # L0: wall-clock ceiling per request, inherited by children
+# park_timeout_ms = 0           # a single park (Ignis\sleep, await, a hooked read) may not outlast this; 30000 under IGNIS_CHAOS
+# busy_warn_ms = 500            # warn when a worker runs PHP or blocks this long without yielding
+# stall_kill_ms = 10000         # L3/L4: kill the fiber a stalled worker is running (SIGRTMIN+2)
+# stall_abandon_ms = 30000      # L5: abandon the worker, fail its requests, spawn a replacement
+# leaked_workers_max = 3        # health answers 503 past this many abandoned workers
+# kill = "graceful"             # graceful (uncatchable engine exit) | exception (Ignis\KilledException)
+# on_swallowed_cancel = "force-close"   # force-close | log
+# [recovery.routes."/export/"]  # longest matching prefix wins
+# fiber_timeout_ms = 120000
+# stall_kill_ms = 0
+# [blocking]
+# mode = "warn"                 # off | warn | strict | fatal
+# threshold_us = 1000           # a call that blocks a fiber's thread longer than this is reported
+# trace = false                 # PHP backtrace on the first occurrence per site
+# report = "/var/log/ignis-blocking.json"   # written at exit and on SIGUSR2
+# allow = ["libphp:read@/config", "sqlite3.so"]
+# [alerts]
+# window_s = 60                 # one summary per key per window
+# escalate_count = 100          # warn -> error at this many events in one window
+# recover_windows = 5           # silent windows before a key is reported recovered
+# max_lines_per_s = 20          # log lines the alert module may emit per second

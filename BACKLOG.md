@@ -160,27 +160,65 @@ inside one worker; with `--workers` the operator's reload is `SIGHUP` to the mas
 which the watcher does not send yet. Neither blocks the MVP: the master is the supervisor and the
 numbers are per process, as php-fpm's are.
 
-### S-FIBER-TIMEOUT A fiber that never resumes has no timeout, and the chaos gate cannot be a gate until it does `main` `open — owner, 2026-09-22`
-**What.** `bench/e15-chaos.sh` entered CI on 2026-09-22 and was switched off the same evening (owner:
-"Chaos лучше выключить с пометкой нужно сделать таймауты на файберы"). Under chaos scheduling a
-suite that hangs one fiber hangs the whole run until the job's wall-clock timeout — 30 to 60 minutes
-of runner time with nothing to read at the end — because nothing in the runtime bounds how long a
-fiber may stay parked or suspended. The request deadline (ADR-0009, `Ignis\deadline()`) is opt-in
-and per request; a fiber the scheduler itself parks has no ceiling at all, and the watchdog only
-names the thread (M4-7).
-**Why it matters.** The same gap is behind three closed or open items: S-POOL-LEASE-AGE's fix (3)
-(a hung fiber keeps its resource forever), S-CANCEL-IN-C (a deadline cannot reach a fiber inside
-C), and M4-7 (the watchdog cannot say which fiber). A per-fiber timeout is the one mechanism that
-turns "the run hangs" into "this test failed, here is the fiber", and it is what makes chaos
-affordable as a gate.
-**Acceptance.** (1) A configurable per-fiber wall-clock ceiling in the runtime (default off in
-production, on under `IGNIS_CHAOS` and in the compat benches), enforced at the loop's poll point:
-a fiber past it is thrown into with a `DeadlineExceededException` naming the fiber and where it
-was parked, and its request answers 504 — the ADR-0009 path, not a new one. (2) The C-parked case
-is answered or explicitly refused (S-CANCEL-IN-C's ADR decides which). (3) `bench/e15-chaos.sh`
-with `SUITES=symfony-http-foundation` finishes in bounded time with a hung test named, falsified
-by a fixture that parks a fiber forever. Then, and not before, the `e15-chaos` job returns to
-`ci.yml` (its last shape is in `git log` at `7c1c48e`).
+### S-STALL-ALERTS Scoreboard, ticker, alert module with dedup — the warning/error scheme (ADR-0043 §3, §4, §6) `main` `built 2026-09-23 (V-124): S-1, S-4, S-9 done; S-14 storm and S-16 shared page open`
+**What.** A per-worker slot of atomics (state, since, request id, site, acks), a 100 ms ticker in
+the master that turns slot age into `stall` events by `busy_warn_ms`/`stall_kill_ms`/
+`stall_abandon_ms` and classifies the worker from `/proc/<pid>/task/<tid>/{syscall,wchan,stat}`, and
+`alerts.rs` (pure Rust, no `unsafe` — the `agent` half): first occurrence logged, repeats counted,
+one summary per key per window, escalation warn → error → critical, token-bucket rate limit,
+Prometheus counters, health fields, `ignis_stats()` entries. Under ZTS the slots are a static
+array; under NTS prefork one `MAP_SHARED|MAP_ANONYMOUS` page mapped before the first fork.
+**Acceptance.** Research 50 S-1 (one warn line naming worker, state, age, request id, uri and the
+`/proc` classification within 1.5 s; no second line in the window), S-4 (dedup unit tests: lines
+per key per window ≤ 3, escalation once, drops counted), S-14 (storm: ≤ `max_lines_per_s`, one
+`recovered` per key), S-16 (NTS: a killed child's slot reported stale once, page address stable).
+**Constraints.** `alerts.rs` and its tests: `agent`. Slot writers in `module.rs`/`park.rs`, the
+NTS page and the ticker's `/proc` reads: `main`. Nothing in a signal handler.
+
+### S-BLOCKING-DETECTOR Every blocking forward inside a fiber is timed, reported once per site, and can fail a test (ADR-0043 §5) `main` `built 2026-09-23 (V-124): S-2 on a planted fixture (a site outside the allow file fails the audit, the allow line passes it) and S-13 done; S-2's Symfony-skeleton half, S-3 on a Symfony suite and S-11 at 1 % resolution open`
+**What.** In the interposer, on the path that already forwards blockingly inside a fiber: two
+`clock_gettime`, a `blocking_call` event over `blocking.threshold_us` with library, symbol,
+duration, fd kind, request id, and on the first occurrence per site (`blocking.trace`) a PHP
+backtrace taken on the PHP thread after the syscall returned. Modes `off|warn|strict|fatal`,
+`blocking.allow` patterns, `Ignis\allowBlocking(callable)`, the JSON report at shutdown and on
+`SIGUSR2`. `php/packages/runtime/src/Testing/`: `BlockingAssertions::assertNoBlockingCalls` and
+the PHPUnit extension for `KernelBrowser::request()`; `bench/blocking-audit.sh` runs `wrk` over a
+route list under `profile = load-test` and diffs the report against an allow file.
+**Acceptance.** Research 50 S-2 (the audit lists every site of `examples/app.php` and the Symfony
+skeleton once each, counters equal the report, exit non-zero on a site outside the allow file;
+hook-off control sees every socket read as a site), S-3 (`assertNoBlockingCalls` fails on a
+regular-file read and passes on a parked fetch; the skeleton's own tests report N controller
+sites without the allow file and 0 with it), S-11 (E4 within noise with `mode = warn`; E6
+unchanged), S-13 (the `flock` backoff park is not a site).
+**Constraints.** `park.rs` timing and the backtrace: `main`. `Testing/`, the audit script, the
+report format: `agent`. The detector never times a park, only a forward that blocks.
+
+### S-FIBER-RECOVERY The ladder L0–L5 with flexible configuration, one delivery for both carriers (ADR-0043 §7, §8; research 49) `main` `built 2026-09-23 (V-124): S-5, S-6, S-7, S-8, S-9, S-10 pass on ZTS and inside a forked worker, each rung asserted by its own evidence line; partial: S-7's JIT arm, S-8's libcurl/libpq arms, S-12 (ASAN), S-16 (the master-side NTS half) open`
+**What.** L0 `fiber_timeout_ms` per request with per-route override, armed through `deadline()`'s
+timer, the expiry naming the park's file:line from `zend_fiber.execute_data`. L2 force-close: after
+a swallowed cancellation the loop answers 504, drops every reference and `unset`s the fiber; the
+engine's graceful exit unwinds it; `wait.rs` takes a reference while parked (research 49 H1) and
+refuses to park a `DESTROYED` fiber, answering `ECANCELED` through the shim (H2/H3). L3: a
+`SIGRTMIN+2` handler (`SA_SIGINFO|SA_RESTART|SA_ONSTACK`, `tsrm_is_managed_thread()` under ZTS)
+that stores `kill_pending` and `EG(vm_interrupt)` and nothing else; a chained
+`zend_interrupt_function` that force-closes `EG(active_fiber)` when it is the recorded one and
+counts the ack; delivery `pthread_kill(tid)` under ZTS, `kill(pid)` under NTS. L4: the shim maps
+`EINTR` with `kill_pending` set to `-1/ECANCELED` on re-entry. L5: abandon a live thread (deregister,
+504 in-flight via the E12' path, respawn, leak, `leaked_workers_max` → health 503) / `SIGKILL` +
+reap + respawn a child. Keys: `kill = graceful|exception`, `on_swallowed_cancel`, the four
+durations, `profile`, `[recovery.routes."…"]`.
+**Acceptance.** Research 50 S-5 (bounded chaos run, 504 naming file:line, per-route override), S-6
+(force-close at the next park within 1 ms, `finally` once, `ECANCELED` not blocking, worker alive),
+S-7 (spin killed within 2 s on VM and JIT, siblings complete, `catch (Throwable)` bypassed,
+`kill=exception` catchable; NTS via `kill(pid)`), S-8 (blocked `curl_exec`/`sleep` returns within
+10 ms of the signal; `SA_RESTART` control), S-9 (`/proc` classification picks L3/L4/L5), S-10
+(live worker abandoned within 2.5 s, in-flight 504 within 0.5 s, replacement within 1 s; NTS child
+killed while holding the opcache lock, next child serves), S-12 (dtor fixture ASAN/valgrind clean,
+control at `e909c86` fails), S-15 (precedence and profiles). Kill criteria: ADR-0043 §11.
+**Constraints.** `main` throughout (`wait.rs`, `park.rs`, `park.c`, `module.rs`, `main.rs`,
+`http.rs`); `Loop.php` and `config.rs` parts may be prepared by an agent and handed over. Build
+L0/L2 first, L3/L4 second, L5 last; the NTS half of L5 waits for the prefork branch. The graceful
+exit must never reach the loop's frame (S-6/S-7 assert the worker's script is alive).
 
 ### M4-9 Cancellation of offload jobs and PG queries on disconnect (E11') `main` `CLOSED 2026-09-22 — the offload pool is deleted (DECISIONS); the pgsql half stays a question under ROADMAP E11'`
 Nothing left to cancel on a worker thread: there are no worker threads.
@@ -1066,3 +1104,4 @@ an investigation — is in [`BACKLOG-CLOSED.md`](BACKLOG-CLOSED.md).
 | **S-OWNERSHIP** | Every value a fiber-scoped service hands out carries its owner `main` `KILLED 2026-09-20` — a fourth mechanism, which ADR-0037 forbids; the three reds it targeted stay open with their cheaper fixes |
 | **S-SCOPED-CLASS** | An object's declared properties live per fiber `main` `DONE 2026-09-20 (V-97, V-99–V-101, V-105)` — ADR-0042; the container marks a definition the way it marks `lazy`, `FiberRequestStack` and `FiberTokenStorage` deleted. Per-switch cost stays unmeasured by owner decision (V-98, `S-SCOPED-UNKNOWNS`) |
 | **S-SAPI-REQUEST-INFO** | A form body on PUT/PATCH never reaches the framework `main` `DONE 2026-09-20 (V-102)` — the SAPI's own `read_post` plus `SG(request_info)`, per fiber; gated as its own E21 arm |
+| **S-FIBER-TIMEOUT** | A fiber that never resumes has no timeout `main` `DONE 2026-09-23 (V-124 addendum 2)` — a ceiling on every park (`park_timeout_ms`, 30 s under `IGNIS_CHAOS`), userland and C-side, that reaches a spawned fiber as well as a request's; S-5b in the ladder, the http-foundation chaos suite bounded and `e15-chaos` back in `ci.yml` with the vendor tree cached |

@@ -5,7 +5,7 @@
 //! timeout. HTTP requests arrive on the same completion channel as timer
 //! completions, so the PHP loop has exactly one wait point.
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -149,6 +149,14 @@ pub struct Reactor {
     /// which is how `pending_requests` came to count two of them and let a graceful shutdown
     /// truncate a live download (V-75).
     answers: Mutex<HashMap<u64, Answer>>,
+    /// Request id → its uri, for the ticker's and the detector's lines (ADR-0043 §3: the master
+    /// owns the request map, so no worker has to publish strings). Kept in step with `answers`.
+    uris: Mutex<HashMap<u64, String>>,
+    /// This thread's scoreboard slot (`scoreboard.rs`), `usize::MAX` until the worker registered.
+    slot: AtomicUsize,
+    /// ADR-0043 L5: set by the ticker when this thread was given up; a request delivered after
+    /// that is refused at once instead of joining a queue nobody drains.
+    abandoned: AtomicBool,
     /// Microseconds (monotonic, since reactor creation) of the last `poll` by the PHP thread.
     last_active_us: AtomicU64,
     created: std::time::Instant,
@@ -277,6 +285,9 @@ impl Reactor {
             done_tx,
             from_tokio,
             answers: Mutex::new(HashMap::new()),
+            uris: Mutex::new(HashMap::new()),
+            slot: AtomicUsize::new(usize::MAX),
+            abandoned: AtomicBool::new(false),
             last_active_us: AtomicU64::new(0),
             created: std::time::Instant::now(),
             spin_us: std::env::var("IGNIS_POLL_SPIN_US").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -329,20 +340,35 @@ impl Reactor {
     pub fn deliver_request_with_id(&self, req: HttpRequest) -> (u64, oneshot::Receiver<HttpResponse>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.answers.lock_unpoisoned().insert(id, Answer::Whole(tx));
-        self.inflight.fetch_add(1, Ordering::Relaxed);
+        if !self.admit(id, &req.uri, Answer::Whole(tx)) {
+            return (id, rx);
+        }
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
             self.answers.lock_unpoisoned().remove(&id);
         }
         (id, rx)
     }
 
+    /// Registers the answer a request is owed under the lock `abandon` drains under, so nothing is
+    /// admitted after the drain; false refuses it and the dropped channel becomes the 500.
+    fn admit(&self, id: u64, uri: &str, answer: Answer) -> bool {
+        let mut answers = self.answers.lock_unpoisoned();
+        if self.is_abandoned() {
+            return false;
+        }
+        self.uris.lock_unpoisoned().insert(id, uri.to_string());
+        answers.insert(id, answer);
+        self.inflight.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
     /// Tokio side (E10): deliver a gRPC request; PHP fills the returned stream via `stream_send`/`stream_end`.
     pub fn deliver_stream_request(&self, req: HttpRequest) -> (u64, mpsc::UnboundedReceiver<GrpcMsg>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
-        self.answers.lock_unpoisoned().insert(id, Answer::Grpc(tx));
-        self.inflight.fetch_add(1, Ordering::Relaxed);
+        if !self.admit(id, &req.uri, Answer::Grpc(tx)) {
+            return (id, rx);
+        }
         if self.done_tx.send(Completion { id, outcome: Outcome::Request(req) }).is_err() {
             self.answers.lock_unpoisoned().remove(&id);
         }
@@ -364,7 +390,43 @@ impl Reactor {
     /// caller was not entitled to. The first version of this map did remove first and cost a test.
     fn take_answer(&self, id: u64, expected: fn(&Answer) -> bool) -> Option<Answer> {
         let mut answers = self.answers.lock_unpoisoned();
-        if answers.get(&id).is_some_and(expected) { answers.remove(&id) } else { None }
+        if answers.get(&id).is_some_and(expected) {
+            self.uris.lock_unpoisoned().remove(&id);
+            answers.remove(&id)
+        } else {
+            None
+        }
+    }
+
+    /// The uri of a request this thread still owes an answer for.
+    pub fn uri_of(&self, id: u64) -> Option<String> {
+        if id == 0 {
+            return None;
+        }
+        self.uris.lock_unpoisoned().get(&id).cloned()
+    }
+
+    /// L5 (ADR-0043): refuses every request from now on and fails the ones already owed, as one
+    /// step under the admission lock. Returns how many were failed.
+    pub fn abandon(&self) -> usize {
+        let mut answers = self.answers.lock_unpoisoned();
+        self.abandoned.store(true, Ordering::Release);
+        self.uris.lock_unpoisoned().clear();
+        answers.drain().count()
+    }
+
+    pub fn is_abandoned(&self) -> bool {
+        self.abandoned.load(Ordering::Acquire)
+    }
+
+    pub fn set_slot(&self, slot: usize) {
+        self.slot.store(slot, Ordering::Relaxed);
+    }
+
+    /// This thread's scoreboard slot, if the worker registered one.
+    pub fn slot(&self) -> Option<usize> {
+        let s = self.slot.load(Ordering::Relaxed);
+        (s != usize::MAX).then_some(s)
     }
 
     /// PHP-thread side (E10): finish the stream with a gRPC status (0 = OK).
@@ -389,6 +451,7 @@ impl Reactor {
     /// completion on the same id, not a replacement for the first.
     pub fn cancel_request(&self, id: u64) {
         let known = self.answers.lock_unpoisoned().remove(&id).is_some();
+        self.uris.lock_unpoisoned().remove(&id);
         if known {
             self.inflight.fetch_add(1, Ordering::Relaxed);
             let _ = self.done_tx.send(Completion { id, outcome: Outcome::Cancelled { dropped_at: std::time::Instant::now() } });
@@ -464,6 +527,7 @@ impl Reactor {
     /// A half-written stream is dropped with the rest: the client sees a truncated body rather than
     /// a connection that never finishes.
     pub fn fail_pending(&self) -> usize {
+        self.uris.lock_unpoisoned().clear();
         self.answers.lock_unpoisoned().drain().count()
     }
 
@@ -686,6 +750,25 @@ mod tests {
         assert_eq!(r.fail_pending(), 3, "one whole-body, one streamed, one gRPC");
         assert_eq!(r.pending_requests(), 0);
         assert!(!r.respond(whole, HttpResponse { status: 200, headers: vec![], body: ResponseBody::Full(Bytes::new()) }));
+    }
+
+    /// L5: once abandoned, a worker owes nothing new -- over HTTP or gRPC -- and the drain and the
+    /// refusal are one step, so nothing admitted is left unanswered (ADR-0043 §7).
+    #[test]
+    fn an_abandoned_reactor_refuses_http_and_grpc_alike() {
+        let rt = rt();
+        let r = Reactor::new(rt.handle());
+        let (_owed, mut owed_rx) = r.deliver_request_with_id(a_request());
+
+        assert_eq!(r.abandon(), 1, "the one owed answer is failed");
+        let (_http, mut http_rx) = r.deliver_request_with_id(a_request());
+        let (_grpc, mut grpc_rx) = r.deliver_stream_request(a_request());
+
+        assert!(r.is_abandoned());
+        assert_eq!(r.pending_requests(), 0, "nothing admitted after the drain");
+        assert!(owed_rx.try_recv().is_err(), "the owed answer channel is closed");
+        assert!(http_rx.try_recv().is_err(), "the refused HTTP answer channel is closed");
+        assert!(grpc_rx.try_recv().is_err(), "the refused gRPC stream is closed");
     }
 
     /// A refusal the scheduler issues before it knows the transport must still end a gRPC call.

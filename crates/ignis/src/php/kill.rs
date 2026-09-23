@@ -1,0 +1,187 @@
+//! ADR-0043 §7, L3/L4: a kill is one real-time signal to the worker; its handler stores
+//! `EG(vm_interrupt)`, the chained `zend_interrupt_function` force-closes the fiber at the next
+//! opcode, and a wait in the shim returns `EINTR`, which `park.rs` answers `ECANCELED`.
+//!
+//! FFI contract: the handler is installed once per process with `SA_RESTART`, so only the shim's
+//! own waits observe the signal; `zend_interrupt_function` is process-global and chained.
+use std::ffi::c_int;
+use std::ptr;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use ignis_sys as sys;
+
+use super::tsrm;
+use crate::recovery::{KillKind, Settings};
+use crate::scoreboard;
+
+/// `SIGRTMIN` is PHP's own timer signal (research 49 H4); this stays clear of it.
+pub fn kill_signal() -> c_int {
+    libc::SIGRTMIN() + 2
+}
+
+static PREVIOUS_INTERRUPT: OnceLock<Option<unsafe extern "C" fn(*mut sys::zend_execute_data)>> = OnceLock::new();
+
+/// The signal handler: the worker's own `EG(vm_interrupt)` byte, whose address the slot holds.
+extern "C" fn on_kill_signal(_sig: c_int, _info: *mut libc::siginfo_t, _ctx: *mut std::ffi::c_void) {
+    let Some(slot) = scoreboard::current() else { return };
+    slot.signals.fetch_add(1, Ordering::Relaxed);
+    let flag = slot.interrupt_flag.load(Ordering::Relaxed);
+    if flag != 0 {
+        // SAFETY: the address is this thread's live `EG(vm_interrupt)`, a byte the engine itself
+        // stores to from a signal handler.
+        unsafe { AtomicU8::from_ptr(flag as *mut u8).store(1, Ordering::Release) };
+    }
+}
+
+/// Installs the handler and chains the interrupt function. MINIT, main thread, once per process.
+///
+/// # Safety
+/// MINIT on the main thread.
+pub unsafe fn install() {
+    // SAFETY: sigaction on a real-time signal nothing else uses; the interrupt function pointer is
+    // written before any worker thread exists.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_kill_signal as *const () as usize;
+        action.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_ONSTACK;
+        libc::sigemptyset(&mut action.sa_mask);
+        if libc::sigaction(kill_signal(), &action, ptr::null_mut()) != 0 {
+            tracing::error!(error = %std::io::Error::last_os_error(), "kill signal handler not installed; L3/L4 recovery is off");
+            return;
+        }
+        let _ = PREVIOUS_INTERRUPT.set(sys::zend_interrupt_function);
+        sys::zend_interrupt_function = Some(on_interrupt);
+    }
+}
+
+/// The address of this thread's `EG(vm_interrupt)`, for the scoreboard slot.
+///
+/// # Safety
+/// PHP thread with a live TSRM context.
+pub unsafe fn interrupt_flag_address() -> usize {
+    // SAFETY: the caller upholds the contract; the field address is taken, not read.
+    unsafe { (&raw mut (*tsrm::executor_globals()).vm_interrupt.value) as usize }
+}
+
+/// Runs at an opcode boundary on the PHP thread after `vm_interrupt` was stored (by our signal
+/// handler, or by anyone else — hence the chain and the check).
+unsafe extern "C" fn on_interrupt(execute_data: *mut sys::zend_execute_data) {
+    // SAFETY: called by the engine on a PHP thread at an opcode boundary with EG valid.
+    unsafe {
+        if let Some(Some(previous)) = PREVIOUS_INTERRUPT.get() {
+            previous(execute_data);
+        }
+        if !(*tsrm::executor_globals()).exception.is_null() {
+            AtomicU8::from_ptr(interrupt_flag_address() as *mut u8).store(1, Ordering::Release);
+            return;
+        }
+        let fiber = (*tsrm::executor_globals()).active_fiber;
+        if fiber.is_null() || !scoreboard::kill_wanted_for(fiber as usize) {
+            if scoreboard::current().is_some_and(|s| s.kill_pending.load(Ordering::Acquire) == 1) {
+                scoreboard::acknowledge_kill(false);
+            }
+            return;
+        }
+        let request_id = scoreboard::current().map_or(0, |s| s.request_id.load(Ordering::Relaxed));
+        let route = route_of_request(request_id);
+        force_close(fiber);
+        scoreboard::acknowledge_kill(true);
+        answer_killed(request_id);
+        crate::alerts::report(crate::alerts::Event {
+            key: crate::alerts::Key::new("fiber_killed", "interrupt", route),
+            level: crate::alerts::Level::Error,
+            value_us: 0,
+            fields: vec![("request", request_id.to_string()), ("fiber", format!("{:#x}", fiber as usize))],
+        });
+    }
+}
+
+/// Force-closes the running fiber the way the engine destroys one (`finally` runs, nothing catches
+/// it), or throws `Ignis\KilledException` when configured so.
+///
+/// # Safety
+/// PHP thread at an opcode boundary, `fiber` = `EG(active_fiber)`.
+unsafe fn force_close(fiber: *mut sys::zend_fiber) {
+    // SAFETY: the flag and the throw are the engine's own, as zend_fiber_object_destroy uses them.
+    unsafe {
+        let meta = super::fibermeta::of(fiber);
+        if !meta.is_null() {
+            (*meta).kill_pending = true;
+        }
+        match Settings::global().kill {
+            KillKind::Graceful => {
+                (*fiber).flags |= sys::ZEND_FIBER_FLAG_DESTROYED as u8;
+                sys::zend_throw_graceful_exit();
+            }
+            KillKind::Exception => {
+                let ce = killed_exception_class();
+                sys::zend_throw_exception(ce, c"Ignis: fiber killed by the stall watchdog".as_ptr(), 0);
+            }
+        }
+    }
+}
+
+/// A killed request is answered 504 from here, so the client is not left waiting on a fiber that
+/// no longer runs; the loop's own `finally` answer, when it lands first, makes this a no-op.
+fn answer_killed(request_id: u64) {
+    if request_id == 0 {
+        return;
+    }
+    if let Some(reactor) = super::module::try_reactor() {
+        reactor.respond(
+            request_id,
+            crate::reactor::HttpResponse {
+                status: 504,
+                headers: vec![("content-type".into(), "text/plain".into())],
+                body: crate::reactor::ResponseBody::Full(bytes::Bytes::from_static(b"504 fiber killed by the stall watchdog\n")),
+            },
+        );
+    }
+}
+
+fn route_of_request(request_id: u64) -> String {
+    super::module::try_reactor().and_then(|r| r.uri_of(request_id)).map(|u| super::detector::route_of(&u)).unwrap_or_default()
+}
+
+/// `Ignis\KilledException` when the runtime package is loaded, else `\Error`.
+unsafe fn killed_exception_class() -> *mut sys::zend_class_entry {
+    // SAFETY: the caller is at an opcode boundary, as `runtime_class_or_error` requires.
+    unsafe { runtime_class_or_error(c"Ignis\\KilledException") }
+}
+
+/// The runtime package's class `name` when it is loaded, else `\Error`.
+///
+/// # Safety
+/// PHP thread at an opcode boundary: a class lookup may autoload.
+pub(crate) unsafe fn runtime_class_or_error(name: &std::ffi::CStr) -> *mut sys::zend_class_entry {
+    // SAFETY: the interned name lives for the request; a null lookup falls back to the engine's own class.
+    unsafe {
+        if let Some(intern) = sys::zend_string_init_interned {
+            let interned = intern(name.as_ptr(), name.to_bytes().len(), false);
+            let ce = sys::zend_lookup_class(interned);
+            if !ce.is_null() {
+                return ce;
+            }
+        }
+        sys::zend_ce_error
+    }
+}
+
+/// L3/L4 delivery from the ticker: record the fiber and signal the worker.
+pub fn deliver(slot: &scoreboard::WorkerSlot) -> bool {
+    slot.kill_fiber.store(slot.fiber.load(Ordering::Relaxed), Ordering::Relaxed);
+    slot.kill_episode.store(slot.php_since_ns.load(Ordering::Relaxed), Ordering::Relaxed);
+    slot.kill_request.store(slot.request_id.load(Ordering::Relaxed), Ordering::Relaxed);
+    slot.kill_pending.store(1, Ordering::Release);
+    let pid = slot.pid.load(Ordering::Relaxed);
+    // SAFETY: the thread handle and pid are the worker's own; a gone thread answers ESRCH, not UB.
+    unsafe {
+        let rc = if pid == libc::getpid() as u32 {
+            libc::pthread_kill(slot.pthread.load(Ordering::Relaxed) as libc::pthread_t, kill_signal())
+        } else {
+            libc::kill(pid as libc::pid_t, kill_signal())
+        };
+        rc == 0
+    }
+}

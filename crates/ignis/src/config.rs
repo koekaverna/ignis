@@ -40,6 +40,75 @@ pub struct Config {
     pub watch: Watch,
     /// Path prefixes admitted regardless of the budget (ADR-0019 §5). Default `["/_ignis/"]`.
     pub exempt: Option<Vec<String>>,
+    #[serde(default)]
+    pub recovery: Recovery,
+    #[serde(default)]
+    pub blocking: Blocking,
+    #[serde(default)]
+    pub alerts: Alerts,
+}
+
+/// ADR-0043 §8: stuck-fiber recovery. Every key has a profile default (`recovery.rs`); a key
+/// written here beats the profile, an `IGNIS_*` variable beats this file.
+#[derive(Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Recovery {
+    /// `production` (default), `load-test` or `test` — sets every default below.
+    pub profile: Option<String>,
+    /// L0: wall-clock ceiling per request, inherited by children; 0 = off.
+    pub fiber_timeout_ms: Option<u64>,
+    /// A single park may not outlast this; 0 = off (30 s under IGNIS_CHAOS).
+    pub park_timeout_ms: Option<u64>,
+    /// Warn when a worker runs PHP or a blocking forward this long without yielding.
+    pub busy_warn_ms: Option<u64>,
+    /// L3/L4: kill the fiber a stalled worker is running; 0 = off.
+    pub stall_kill_ms: Option<u64>,
+    /// L5: abandon a worker that did not react to the kill; 0 = off.
+    pub stall_abandon_ms: Option<u64>,
+    /// Health answers 503 past this many abandoned workers.
+    pub leaked_workers_max: Option<u64>,
+    /// `graceful` (uncatchable engine exit, default) or `exception` (`Ignis\KilledException`).
+    pub kill: Option<String>,
+    /// `force-close` (default) or `log`: what happens to a fiber that parks again after a cancellation.
+    pub on_swallowed_cancel: Option<String>,
+    /// Per-route overrides, longest prefix wins: `[recovery.routes."/export/"]`.
+    #[serde(default)]
+    pub routes: std::collections::BTreeMap<String, RecoveryRoute>,
+}
+
+#[derive(Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryRoute {
+    pub fiber_timeout_ms: Option<u64>,
+    pub busy_warn_ms: Option<u64>,
+    pub stall_kill_ms: Option<u64>,
+    pub stall_abandon_ms: Option<u64>,
+}
+
+/// ADR-0043 §5: the blocking detector.
+#[derive(Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Blocking {
+    /// `off`, `warn` (production default), `strict` (tests), `fatal` (CI benches).
+    pub mode: Option<String>,
+    /// A blocking forward inside a fiber longer than this is reported.
+    pub threshold_us: Option<u64>,
+    /// Attach a PHP backtrace to the first occurrence per site.
+    pub trace: Option<bool>,
+    /// JSON report path, written at shutdown and on SIGUSR2.
+    pub report: Option<PathBuf>,
+    /// `library[:symbol][@route-prefix]` patterns reported at info instead of the mode's level.
+    pub allow: Option<Vec<String>>,
+}
+
+/// ADR-0043 §6: deduplication and rate limiting of the alert lines.
+#[derive(Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Alerts {
+    pub window_s: Option<u64>,
+    pub escalate_count: Option<u64>,
+    pub recover_windows: Option<u64>,
+    pub max_lines_per_s: Option<u64>,
 }
 
 /// ADR-0019: admitted request fibers per thread, and how many requests may wait as data.
@@ -191,6 +260,7 @@ pub fn serve_to_legacy_args(mut args: Vec<String>) -> anyhow::Result<Vec<String>
     if let Some(v) = cfg.watch.reload_parallel {
         default_env("IGNIS_WATCH_RELOAD_PARALLEL", &v.to_string());
     }
+    bridge_recovery(&cfg)?;
 
     let mut out = Vec::new();
     if cfg.supervise.unwrap_or(supervises_threads_by_default()) {
@@ -229,6 +299,77 @@ fn supervises_threads_by_default() -> bool {
 #[cfg(php_nts)]
 fn supervises_threads_by_default() -> bool {
     false
+}
+
+/// ADR-0043 §8: the three tables reach the runtime and the PHP loop as `IGNIS_*` variables, the
+/// profile by name.
+fn bridge_recovery(cfg: &Config) -> anyhow::Result<()> {
+    let r = &cfg.recovery;
+    if let Some(p) = &r.profile {
+        crate::recovery::Profile::parse(p).with_context(|| format!("recovery.profile must be production, load-test or test, not {p:?}"))?;
+        default_env("IGNIS_PROFILE", p);
+    }
+    for (name, value) in [
+        ("IGNIS_FIBER_TIMEOUT_MS", r.fiber_timeout_ms),
+        ("IGNIS_PARK_TIMEOUT_MS", r.park_timeout_ms),
+        ("IGNIS_BUSY_WARN_MS", r.busy_warn_ms),
+        ("IGNIS_STALL_KILL_MS", r.stall_kill_ms),
+        ("IGNIS_STALL_ABANDON_MS", r.stall_abandon_ms),
+        ("IGNIS_LEAKED_WORKERS_MAX", r.leaked_workers_max),
+        ("IGNIS_BLOCKING_US", cfg.blocking.threshold_us),
+        ("IGNIS_ALERT_WINDOW_S", cfg.alerts.window_s),
+        ("IGNIS_ALERT_ESCALATE_COUNT", cfg.alerts.escalate_count),
+        ("IGNIS_ALERT_RECOVER_WINDOWS", cfg.alerts.recover_windows),
+        ("IGNIS_ALERT_MAX_LINES_PER_S", cfg.alerts.max_lines_per_s),
+    ] {
+        if let Some(v) = value {
+            default_env(name, &v.to_string());
+        }
+    }
+    if let Some(k) = &r.kill {
+        if k != "graceful" && k != "exception" {
+            anyhow::bail!("recovery.kill must be graceful or exception, not {k:?}");
+        }
+        default_env("IGNIS_KILL", k);
+    }
+    if let Some(v) = &r.on_swallowed_cancel {
+        if v != "force-close" && v != "log" {
+            anyhow::bail!("recovery.on_swallowed_cancel must be force-close or log, not {v:?}");
+        }
+        default_env("IGNIS_ON_SWALLOWED_CANCEL", v);
+    }
+    if !r.routes.is_empty() {
+        let routes: Vec<(String, crate::recovery::RouteOverride)> = r
+            .routes
+            .iter()
+            .map(|(prefix, o)| {
+                (
+                    prefix.clone(),
+                    crate::recovery::RouteOverride {
+                        fiber_timeout_ms: o.fiber_timeout_ms,
+                        stall_kill_ms: o.stall_kill_ms,
+                        stall_abandon_ms: o.stall_abandon_ms,
+                        busy_warn_ms: o.busy_warn_ms,
+                    },
+                )
+            })
+            .collect();
+        default_env("IGNIS_RECOVERY_ROUTES", &crate::recovery::format_routes(&routes));
+    }
+    if let Some(m) = &cfg.blocking.mode {
+        crate::recovery::BlockingMode::parse(m).with_context(|| format!("blocking.mode must be off, warn, strict or fatal, not {m:?}"))?;
+        default_env("IGNIS_BLOCKING", m);
+    }
+    if let Some(t) = cfg.blocking.trace {
+        default_env("IGNIS_BLOCKING_TRACE", if t { "1" } else { "0" });
+    }
+    if let Some(p) = &cfg.blocking.report {
+        default_env("IGNIS_BLOCKING_REPORT", &p.to_string_lossy());
+    }
+    if let Some(a) = &cfg.blocking.allow {
+        default_env("IGNIS_BLOCKING_ALLOW", &a.join(","));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -360,6 +501,37 @@ mod tests {
     fn a_misspelled_limits_key_fails_loudly() {
         let err = Config::parse("[limits]\nmax_connection = 1\n").unwrap_err().to_string();
         assert!(err.contains("max_connection"), "the error must name the key: {err}");
+    }
+
+    #[test]
+    fn the_recovery_tables_reach_the_environment() {
+        serve_with(
+            &format!(
+                "entry = {EXISTING_FILE:?}\n[recovery]\nprofile = \"test\"\nstall_kill_ms = 1500\nkill = \"exception\"\n[recovery.routes.\"/export/\"]\nfiber_timeout_ms = 120000\nstall_kill_ms = 0\n[blocking]\nmode = \"strict\"\ntrace = true\nallow = [\"libphp:read@/config\", \"sqlite3.so\"]\n[alerts]\nwindow_s = 30\n"
+            ),
+            &[],
+        );
+        assert_eq!(std::env::var("IGNIS_PROFILE").unwrap(), "test");
+        assert_eq!(std::env::var("IGNIS_STALL_KILL_MS").unwrap(), "1500");
+        assert_eq!(std::env::var("IGNIS_KILL").unwrap(), "exception");
+        assert_eq!(std::env::var("IGNIS_RECOVERY_ROUTES").unwrap(), "/export/=fiber_timeout_ms:120000;stall_kill_ms:0");
+        assert_eq!(std::env::var("IGNIS_BLOCKING").unwrap(), "strict");
+        assert_eq!(std::env::var("IGNIS_BLOCKING_TRACE").unwrap(), "1");
+        assert_eq!(std::env::var("IGNIS_BLOCKING_ALLOW").unwrap(), "libphp:read@/config,sqlite3.so");
+        assert_eq!(std::env::var("IGNIS_ALERT_WINDOW_S").unwrap(), "30");
+        assert!(std::env::var("IGNIS_BUSY_WARN_MS").is_err(), "a key the file does not set is left to the profile");
+    }
+
+    #[test]
+    fn an_unknown_recovery_key_or_value_fails_loudly() {
+        let err = Config::parse("[recovery]\nstall_kil_ms = 1\n").unwrap_err().to_string();
+        assert!(err.contains("stall_kil_ms"), "{err}");
+        let err = Config::parse("[recovery.routes.\"/x\"]\nkill = \"graceful\"\n").unwrap_err().to_string();
+        assert!(err.contains("kill"), "{err}");
+        let path = config_file(&format!("entry = {EXISTING_FILE:?}\n[recovery]\nprofile = \"staging\"\n"));
+        let err = serve_to_legacy_args(vec!["--config".into(), path.to_string_lossy().into_owned()]).unwrap_err().to_string();
+        std::fs::remove_file(&path).ok();
+        assert!(err.contains("staging"), "{err}");
     }
 
     #[test]

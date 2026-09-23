@@ -42,15 +42,15 @@ use std::sync::{Mutex, OnceLock};
 use super::tsrm;
 use ignis_sys as sys;
 
-use super::wait::{await_any, await_op};
+use super::wait::{Parked, await_any, await_op, refuses_park};
 use crate::lock::LockUnpoisoned;
 use crate::reactor::{Op, Outcome};
 
 thread_local! {
     /// 0 = no fiber, 1 = fiber active, 2 = inside a handler.
     static PARK: Cell<u8> = const { Cell::new(0) };
-    /// Return address → does this call site's library park? Filled by `dladdr` once per site.
-    static SITES: RefCell<HashMap<usize, bool>> = RefCell::new(HashMap::new());
+    /// Return address → the site's policy and its name index. Filled by `dladdr` once per site.
+    static SITES: RefCell<HashMap<usize, Site>> = RefCell::new(HashMap::new());
 }
 
 /// Policy rows from `IGNIS_PARK`: `lib` (every symbol) or `lib:symbol`, comma-separated basename
@@ -63,18 +63,8 @@ static LIBS: OnceLock<Vec<(String, Option<String>)>> = OnceLock::new();
 /// has no fd and stays blocking.
 const SEED: &str = "libphp:sleep,libphp:usleep,libphp:nanosleep,libphp:select,libphp:accept,libphp:poll,libphp:recv,libphp:send,libphp:recvfrom,libphp:sendto,libphp:recvmsg,libphp:sendmsg,libphp:connect,libphp:read,libphp:write,libphp:flock,libphp:waitpid,libcurl,libpq,libssl,libcrypto";
 
-/// Every `(library, symbol)` pair that has actually made an interposed call in this process, and
-/// whether the policy let it park.
-///
-/// The policy is a whitelist of shared objects, so a library nobody listed blocks the OS thread and
-/// says nothing about it — and which libraries an application even has is a property of its
-/// deployment, not of this repository: a PECL extension is its own `.so`, and `deb.sury.org` ships
-/// 85 of them for PHP 8.5. Guessing the list is therefore not possible and reading it off a running
-/// process is, because `site_parks` already resolves the calling object through `dladdr`. This is
-/// that resolution, kept.
-///
-/// Written on the cache-miss path only — once per distinct call site, never per call — so the cost
-/// is the same `dladdr` that was already being paid.
+/// Every `(library, symbol)` pair that has made an interposed call in this process and whether the
+/// policy let it park: the deployment's own library list, read off the process instead of guessed.
 static INVENTORY: Mutex<BTreeMap<String, BTreeMap<String, bool>>> = Mutex::new(BTreeMap::new());
 
 /// What has called us so far, library by library. `false` means the call blocked the thread.
@@ -82,7 +72,7 @@ pub fn inventory() -> BTreeMap<String, BTreeMap<String, bool>> {
     INVENTORY.lock_unpoisoned().clone()
 }
 
-/// Set only while the boot self-check probes: makes `site_parks` record which library each
+/// Set only while the boot self-check probes: makes `resolve_site` record which library each
 /// resolved call site came from, so the check can prove a third-party `.so` really binds to us.
 static PROBING: AtomicBool = AtomicBool::new(false);
 static PROBE_HITS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -96,7 +86,12 @@ pub static PARK_FAILED: AtomicU64 = AtomicU64::new(0);
 /// syscall. Logged at `warn` because this is not supposed to happen on a worker thread.
 fn park_failed(what: &str) {
     PARK_FAILED.fetch_add(1, Ordering::Relaxed);
-    tracing::warn!(what, "universal park: policy says park but the call could not park — it blocked the thread");
+    crate::alerts::report(crate::alerts::Event {
+        key: crate::alerts::Key::new("park_failed", what, ""),
+        level: crate::alerts::Level::Error,
+        value_us: 0,
+        fields: vec![("what", "policy says park but the call could not park; it blocked the thread".into())],
+    });
 }
 
 /// `IGNIS_PARK_TRACE=1`: one stderr line per decision, for diagnosing a library that misbehaves
@@ -198,44 +193,185 @@ impl Drop for InHandler {
     }
 }
 
-/// `Some(guard)` only when this call may park: gate at 1 and (caller's library, `sym`) on the list.
-unsafe fn may_park(ret: *const c_void, sym: &str) -> Option<InHandler> {
+/// A resolved call site: whether its policy row says park, and its `library:symbol` name's index
+/// in the scoreboard's site table (the detector and the ticker name it through that).
+#[derive(Clone, Copy)]
+struct Site {
+    parks: bool,
+    index: u32,
+}
+
+/// What the gate says about one interposed call.
+enum Gate {
+    /// Not on a PHP thread inside a fiber, or nested inside a handler: the raw call, untimed.
+    Outside,
+    /// Inside a fiber and the policy says `block` (or names no row): the raw call, timed by the
+    /// blocking detector (ADR-0043 §5).
+    Block(InHandler, Site),
+    /// Inside a fiber and the policy says `park`.
+    Park(InHandler, Site),
+}
+
+unsafe fn gate(ret: *const c_void, sym: &str) -> Gate {
     if PARK.with(|p| p.get()) != 1 {
-        return None;
+        return Gate::Outside;
     }
     PARK.with(|p| p.set(2));
     let guard = InHandler;
     // SAFETY: `ret` is a return address from the interposer, used only as a lookup key and passed to
-    // dladdr, which validates it itself. The gate is already at 2, so site_parks cannot re-enter.
-    if unsafe { site_parks(ret, sym) } { Some(guard) } else { None }
+    // dladdr, which validates it itself. The gate is already at 2, so resolve_site cannot re-enter.
+    let site = unsafe { resolve_site(ret, sym) };
+    if site.index == SELF_SITE {
+        return Gate::Outside;
+    }
+    if site.parks { Gate::Park(guard, site) } else { Gate::Block(guard, site) }
 }
 
-unsafe fn site_parks(ret: *const c_void, sym: &str) -> bool {
+/// The site index of the executable's own code: Rust std writing a log line, the reactor, the
+/// runtime's own probes. Those calls are not the application's and are neither parked nor timed.
+const SELF_SITE: u32 = 0;
+
+/// The load base of this executable, which `dladdr` reports for every call site inside it — the
+/// address, not a name, so a renamed or symlinked binary is still recognised.
+fn self_base() -> *mut c_void {
+    static BASE: OnceLock<usize> = OnceLock::new();
+    *BASE.get_or_init(|| {
+        // SAFETY: dladdr on the address of a function in this binary; Dl_info is plain C data.
+        unsafe {
+            let mut info: libc::Dl_info = std::mem::zeroed();
+            if libc::dladdr(self_base as *const c_void, &mut info) != 0 { info.dli_fbase as usize } else { 0 }
+        }
+    }) as *mut c_void
+}
+
+unsafe fn resolve_site(ret: *const c_void, sym: &str) -> Site {
     let key = ret as usize;
-    if let Some(b) = SITES.with(|s| s.borrow().get(&key).copied()) {
-        return b;
+    if let Some(site) = SITES.with(|s| s.borrow().get(&key).copied()) {
+        return site;
     }
     // SAFETY: dladdr only reads the loader's tables; Dl_info is plain C data.
-    let parks = unsafe {
+    let site = unsafe {
         let mut info: libc::Dl_info = std::mem::zeroed();
         if libc::dladdr(ret, &mut info) != 0 && !info.dli_fname.is_null() {
             let name = CStr::from_ptr(info.dli_fname).to_string_lossy();
             let base = name.rsplit('/').next().unwrap_or(&name).to_string();
+            if info.dli_fbase == self_base() {
+                trace(&format!("site {key:#x} {sym} from the executable itself: outside"));
+                let site = Site { parks: false, index: SELF_SITE };
+                SITES.with(|s| s.borrow_mut().insert(key, site));
+                return site;
+            }
             let parks = libs().iter().any(|(l, s)| base.starts_with(l.as_str()) && s.as_deref().is_none_or(|s| s == sym));
             if PROBING.load(Ordering::Relaxed) && parks {
                 PROBE_HITS.lock_unpoisoned().push(base.clone());
             }
             INVENTORY.lock_unpoisoned().entry(base.clone()).or_default().insert(sym.to_string(), parks);
             trace(&format!("site {key:#x} {sym} from {base}: parks={parks}"));
-            parks
+            Site { parks, index: crate::scoreboard::site_index(&format!("{base}:{sym}")) }
         } else {
             // Not in any loaded object (JIT'd code, a trampoline): nothing to key a policy on.
             trace(&format!("site {key:#x} {sym}: dladdr found no object, parks=false"));
-            false
+            Site { parks: false, index: crate::scoreboard::site_index(&format!("?:{sym}")) }
         }
     };
-    SITES.with(|s| s.borrow_mut().insert(key, parks));
-    parks
+    SITES.with(|s| s.borrow_mut().insert(key, site));
+    site
+}
+
+/// The value an interposed call returns, as far as the detector needs to know: did it fail.
+trait SyscallResult: Copy {
+    fn failed(self) -> bool;
+    fn failure() -> Self;
+    /// What the caller sees when a kill cancelled the call: the error value, except for `sleep()`,
+    /// which keeps its own answer (the seconds it did not sleep).
+    fn cancelled_value(interrupted: Self) -> Self {
+        let _ = interrupted;
+        Self::failure()
+    }
+}
+
+impl SyscallResult for isize {
+    fn failed(self) -> bool {
+        self == -1
+    }
+    fn failure() -> Self {
+        -1
+    }
+}
+
+impl SyscallResult for c_int {
+    fn failed(self) -> bool {
+        self == -1
+    }
+    fn failure() -> Self {
+        -1
+    }
+}
+
+/// `sleep()` fails by returning the unslept seconds, which an interrupted call already did.
+impl SyscallResult for c_uint {
+    fn failed(self) -> bool {
+        self != 0
+    }
+    fn failure() -> Self {
+        1
+    }
+    fn cancelled_value(interrupted: Self) -> Self {
+        interrupted
+    }
+}
+
+/// A call that blocks this thread inside a fiber: timed, reported, and answered `ECANCELED` when a
+/// pending kill interrupted it (ADR-0043 §7 L4).
+unsafe fn forward<T: SyscallResult>(site: Site, real: impl FnOnce() -> T) -> T {
+    // SAFETY: on a PHP thread inside a fiber (the gate said so); the meta helpers only read EG.
+    if unsafe { kill_cancels_this_fiber() } {
+        // SAFETY: only errno of this thread is written.
+        return unsafe { cancelled() };
+    }
+    let started = crate::scoreboard::enter_blocking(site.index);
+    let mut result = real();
+    // SAFETY: errno of the thread that just made the call.
+    let mut errno = unsafe { *libc::__errno_location() };
+    let us = crate::scoreboard::leave_blocking(started);
+    // SAFETY: on a PHP thread inside a fiber (the gate said so); the meta helpers only read EG.
+    if result.failed() && errno == libc::EINTR && unsafe { kill_cancels_this_fiber() } {
+        errno = libc::ECANCELED;
+        result = T::cancelled_value(result);
+    }
+    // SAFETY: the detector runs on this PHP thread and reads its own frames only.
+    unsafe { super::detector::observe(site.index, us, if result.failed() { errno } else { 0 }) };
+    // SAFETY: restoring errno for the caller after the detector's own calls may have changed it.
+    unsafe { *libc::__errno_location() = errno };
+    result
+}
+
+/// True when the ticker (L4) or the loop (L2) wants the running fiber dead: it gets no more waits.
+/// The acknowledgement belongs to the interrupt function at the next opcode, not here.
+unsafe fn kill_cancels_this_fiber() -> bool {
+    // SAFETY: PHP thread inside a fiber; active_fiber is a plain pointer field.
+    unsafe {
+        let fiber = (*tsrm::executor_globals()).active_fiber;
+        if fiber.is_null() {
+            return false;
+        }
+        let meta = super::fibermeta::of(fiber);
+        if crate::scoreboard::kill_wanted_for(fiber as usize) {
+            if !meta.is_null() {
+                (*meta).kill_pending = true;
+            }
+            return true;
+        }
+        !meta.is_null() && (*meta).kill_pending
+    }
+}
+
+/// The interposed call is refused: the fiber is being force-closed and gets no wait at all.
+unsafe fn cancelled<T: SyscallResult>() -> T {
+    trace("cancelled: the fiber is being force-closed, answering ECANCELED");
+    // SAFETY: errno of the calling thread.
+    unsafe { *libc::__errno_location() = libc::ECANCELED };
+    T::failure()
 }
 
 /// Would this call block in the kernel? Only then is parking a substitute for blocking.
@@ -355,23 +491,44 @@ unsafe fn ready_now(fd: c_int, events: i16) -> bool {
     unsafe { libc::syscall(libc::SYS_poll, &mut p as *mut libc::pollfd, 1usize, 0) > 0 }
 }
 
-/// Park until `fd` is ready in `dir`. `false` = could not park (no fiber/reactor, switching
-/// blocked, unwound by a cancellation) — the caller then makes the blocking call as before.
-unsafe fn park_on(fd: c_int, write: bool) -> bool {
+/// The three ways a park can come back.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum Park {
+    Ready,
+    /// The fiber is being force-closed (ADR-0043 L2/L4): the caller answers `ECANCELED`.
+    Cancelled,
+    /// No fiber, no reactor, or switching blocked: the caller makes the blocking call itself.
+    Unavailable,
+}
+
+/// Park until `fd` is ready in `dir`.
+unsafe fn park_on(fd: c_int, write: bool) -> Park {
+    // SAFETY: PHP thread inside a fiber, the caller's contract.
+    if unsafe { refuses_park() } {
+        return Park::Cancelled;
+    }
     let Some(r) = super::module::try_reactor() else {
         park_failed("park_on: no reactor");
-        return false;
+        return Park::Unavailable;
     };
     let id = r.submit(Op::Watch { fd, write });
     trace(&format!("park_on fd={fd} write={write} op={id}"));
     // SAFETY: reached from an interposer on a PHP thread inside a fiber, which is await_any's
     // contract; `id` was just submitted to this thread's own reactor.
-    let ok = unsafe { await_any(&[id]).is_some() };
-    trace(&format!("park_on fd={fd} resumed ok={ok}"));
-    if !ok {
-        park_failed("park_on: the fiber could not suspend (switch blocked or unwinding)");
+    let outcome = unsafe { await_any(&[id]) };
+    trace(&format!("park_on fd={fd} resumed {outcome:?}"));
+    match outcome {
+        Parked::Done(_) => Park::Ready,
+        Parked::Cancelled => {
+            r.submit(Op::CancelWatch { target: id });
+            Park::Cancelled
+        }
+        Parked::Unavailable => {
+            r.submit(Op::CancelWatch { target: id });
+            park_failed("park_on: the fiber could not suspend (switch blocked)");
+            Park::Unavailable
+        }
     }
-    ok
 }
 
 /// The socket's own kernel timeout (`SO_RCVTIMEO` for reads, `SO_SNDTIMEO` for writes) in ms;
@@ -386,16 +543,19 @@ unsafe fn sock_timeout_ms(fd: c_int, write: bool) -> c_int {
     if unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut tv as *mut libc::timeval as *mut c_void, &mut len) } != 0 {
         return 0;
     }
-    milliseconds_ceil(tv.tv_sec as i64, tv.tv_usec as i64, 1000)
+    milliseconds_ceil(tv.tv_sec, tv.tv_usec, 1000)
 }
 
-#[derive(PartialEq)]
+/// Why `park_io` came back.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum Wait {
-    /// Ready, or could not park: make the real call as before.
+    /// The descriptor is ready (or the park could not happen, and the real call decides).
     Ready,
     /// The socket's own timeout elapsed first — the kernel would return `EAGAIN` now, and the
     /// real call would block for the whole timeout again, so the handler answers `EAGAIN` itself.
     TimedOut,
+    Cancelled,
+    Unavailable,
 }
 
 /// Park until `fd` is ready in `dir` or its `SO_RCVTIMEO`/`SO_SNDTIMEO` elapses (research 30:
@@ -408,19 +568,69 @@ unsafe fn park_io(fd: c_int, write: bool) -> Wait {
     // SAFETY: `fds` is a live local array and park_pollfds borrows it for the call only; we are on a
     // PHP thread inside a fiber, which is its contract.
     match unsafe { park_pollfds(&fds, timeout) } {
-        Some(false) => Wait::TimedOut,
-        _ => Wait::Ready,
+        PollPark::Fd => Wait::Ready,
+        PollPark::Timer => Wait::TimedOut,
+        PollPark::Cancelled => Wait::Cancelled,
+        PollPark::Unavailable => Wait::Unavailable,
     }
 }
 
-unsafe fn park_sleep(us: u64) -> bool {
+unsafe fn park_sleep(us: u64) -> Park {
+    // SAFETY: PHP thread inside a fiber, the caller's contract.
+    if unsafe { refuses_park() } {
+        return Park::Cancelled;
+    }
     let Some(r) = super::module::try_reactor() else {
         park_failed("park_sleep: no reactor");
-        return false;
+        return Park::Unavailable;
     };
     let id = r.submit(Op::Sleep { us });
     // SAFETY: PHP thread inside a fiber (checked by the caller), and `id` is this thread's own op.
-    unsafe { matches!(await_op(id), Some(Outcome::Slept { .. })) }
+    match unsafe { await_op(id) } {
+        Parked::Done(Outcome::Slept { .. }) => Park::Ready,
+        Parked::Done(_) => Park::Unavailable,
+        Parked::Cancelled => {
+            r.submit(Op::CancelWatch { target: id });
+            Park::Cancelled
+        }
+        Parked::Unavailable => {
+            r.submit(Op::CancelWatch { target: id });
+            Park::Unavailable
+        }
+    }
+}
+
+/// The shape every data call shares: park when the descriptor really blocks, otherwise — and
+/// whenever the park is refused — the raw call, timed. `EAGAIN` when the socket's own timeout won.
+unsafe fn data_call<T: SyscallResult>(g: Gate, fd: c_int, write: bool, events: i16, real: impl FnOnce() -> T) -> T {
+    // SAFETY: the helpers only read the descriptor's flags and options; the raw call is the one the
+    // program made.
+    unsafe {
+        match g {
+            Gate::Outside => real(),
+            Gate::Block(_g, site) => forward(site, real),
+            Gate::Park(_g, site) => {
+                if is_nonblocking(fd) {
+                    return real();
+                }
+                if !would_block(fd) {
+                    return forward(site, real);
+                }
+                if ready_now(fd, events) {
+                    return real();
+                }
+                match park_io(fd, write) {
+                    Wait::Ready => real(),
+                    Wait::TimedOut => {
+                        *libc::__errno_location() = libc::EAGAIN;
+                        T::failure()
+                    }
+                    Wait::Cancelled => cancelled(),
+                    Wait::Unavailable => forward(site, real),
+                }
+            }
+        }
+    }
 }
 
 // ---- the handlers: signatures mirror csrc/park.c ---------------------------------------------
@@ -431,75 +641,32 @@ pub unsafe extern "C" fn ignis_park_read(ret: *const c_void, fd: c_int, buf: *mu
     // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
     // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
     // the program already made; parking only delays it.
-    unsafe {
-        if let Some(_g) = may_park(ret, "read")
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_read, fd, buf, n) as isize
-    }
+    unsafe { data_call(gate(ret, "read"), fd, false, libc::POLLIN, || libc::syscall(libc::SYS_read, fd, buf, n) as isize) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_write(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
-    unsafe {
-        if let Some(_g) = may_park(ret, "write")
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_write, fd, buf, n) as isize
-    }
+    // SAFETY: as `ignis_park_read`.
+    unsafe { data_call(gate(ret, "write"), fd, true, libc::POLLOUT, || libc::syscall(libc::SYS_write, fd, buf, n) as isize) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_recv(ret: *const c_void, fd: c_int, buf: *mut c_void, n: usize, flags: c_int) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // SAFETY: as `ignis_park_read`.
     unsafe {
-        if let Some(_g) = may_park(ret, "recv")
-            && flags & libc::MSG_DONTWAIT == 0
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, std::ptr::null_mut::<c_void>(), std::ptr::null_mut::<c_void>()) as isize
+        let g = gate(ret, "recv");
+        let g = if flags & libc::MSG_DONTWAIT != 0 { without_park(g) } else { g };
+        data_call(g, fd, false, libc::POLLIN, || libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, 0usize, 0usize) as isize)
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_send(ret: *const c_void, fd: c_int, buf: *const c_void, n: usize, flags: c_int) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // SAFETY: as `ignis_park_read`.
     unsafe {
-        if let Some(_g) = may_park(ret, "send")
-            && flags & libc::MSG_DONTWAIT == 0
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_sendto, fd, buf, n, flags, std::ptr::null::<c_void>(), 0usize) as isize
+        let g = gate(ret, "send");
+        let g = if flags & libc::MSG_DONTWAIT != 0 { without_park(g) } else { g };
+        data_call(g, fd, true, libc::POLLOUT, || libc::syscall(libc::SYS_sendto, fd, buf, n, flags, 0usize, 0usize) as isize)
     }
 }
 
@@ -513,21 +680,11 @@ pub unsafe extern "C" fn ignis_park_recvfrom(
     addr: *mut c_void,
     alen: *mut c_uint,
 ) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // SAFETY: as `ignis_park_read`; `addr`/`alen` are handed to the kernel unchanged.
     unsafe {
-        if let Some(_g) = may_park(ret, "recvfrom")
-            && flags & libc::MSG_DONTWAIT == 0
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, addr, alen) as isize
+        let g = gate(ret, "recvfrom");
+        let g = if flags & libc::MSG_DONTWAIT != 0 { without_park(g) } else { g };
+        data_call(g, fd, false, libc::POLLIN, || libc::syscall(libc::SYS_recvfrom, fd, buf, n, flags, addr, alen) as isize)
     }
 }
 
@@ -541,31 +698,48 @@ pub unsafe extern "C" fn ignis_park_sendto(
     addr: *const c_void,
     alen: c_uint,
 ) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // SAFETY: as `ignis_park_read`; `addr` is handed to the kernel unchanged.
     unsafe {
-        if let Some(_g) = may_park(ret, "sendto")
-            && flags & libc::MSG_DONTWAIT == 0
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_sendto, fd, buf, n, flags, addr, alen as usize) as isize
+        let g = gate(ret, "sendto");
+        let g = if flags & libc::MSG_DONTWAIT != 0 { without_park(g) } else { g };
+        data_call(g, fd, true, libc::POLLOUT, || libc::syscall(libc::SYS_sendto, fd, buf, n, flags, addr, alen as usize) as isize)
     }
 }
 
+/// A call whose flags say "do not wait" neither parks nor blocks: it is made raw.
+fn without_park(g: Gate) -> Gate {
+    match g {
+        Gate::Park(..) | Gate::Block(..) => Gate::Outside,
+        other => other,
+    }
+}
+
+/// `O_NONBLOCK` is set: the call answers at once, so there is nothing to park on or to time.
+unsafe fn is_nonblocking(fd: c_int) -> bool {
+    // SAFETY: F_GETFL takes no pointer and validates the descriptor itself.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    flags >= 0 && flags & libc::O_NONBLOCK != 0
+}
+
+/// How `park_pollfds` came back.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum PollPark {
+    Fd,
+    Timer,
+    Cancelled,
+    Unavailable,
+}
+
 /// The parking core behind poll/ppoll/select: one watch per interest, the caller's timeout as a
-/// timer in the same race. `None` = could not park (the caller makes the blocking call itself);
-/// `Some(true)` = an fd woke us; `Some(false)` = the timer won.
-unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> Option<bool> {
+/// timer in the same race.
+unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> PollPark {
+    // SAFETY: PHP thread inside a fiber, the caller's contract.
+    if unsafe { refuses_park() } {
+        return PollPark::Cancelled;
+    }
     let Some(reactor) = super::module::try_reactor() else {
         park_failed("park_pollfds: no reactor");
-        return None;
+        return PollPark::Unavailable;
     };
     let mut ids = Vec::with_capacity(fds.len() * 2 + 1);
     for p in fds {
@@ -582,17 +756,31 @@ unsafe fn park_pollfds(fds: &[libc::pollfd], timeout_ms: c_int) -> Option<bool> 
     let timer = (timeout_ms > 0).then(|| reactor.submit(Op::Sleep { us: timeout_ms as u64 * 1000 }));
     ids.extend(timer);
     if ids.is_empty() {
-        return None;
+        return PollPark::Unavailable;
     }
     // SAFETY: PHP thread inside a fiber; every id in `ids` was submitted to this thread's reactor
     // just above, and the ones that did not win are cancelled immediately after.
-    let (woke, _) = unsafe { await_any(&ids) }?;
+    let outcome = unsafe { await_any(&ids) };
+    let woke = match outcome {
+        Parked::Done((woke, _)) => Some(woke),
+        Parked::Cancelled => None,
+        Parked::Unavailable => {
+            for id in &ids {
+                reactor.submit(Op::CancelWatch { target: *id });
+            }
+            return PollPark::Unavailable;
+        }
+    };
     for id in &ids {
-        if *id != woke {
+        if Some(*id) != woke {
             reactor.submit(Op::CancelWatch { target: *id });
         }
     }
-    Some(Some(woke) != timer)
+    match woke {
+        None => PollPark::Cancelled,
+        Some(w) if Some(w) == timer => PollPark::Timer,
+        Some(_) => PollPark::Fd,
+    }
 }
 
 /// Milliseconds from whole seconds plus a sub-second remainder, rounded up so a short wait never
@@ -643,7 +831,11 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
     // exactly the call the program made.
     unsafe {
         let real = |t: c_int| libc::syscall(libc::SYS_poll, fds, n as usize, t) as c_int;
-        let Some(_g) = may_park(ret, sym) else { return real(timeout) };
+        let (site, _guard) = match gate(ret, sym) {
+            Gate::Outside => return real(timeout),
+            Gate::Block(_g, site) => return if timeout == 0 { real(0) } else { forward(site, || real(timeout)) },
+            Gate::Park(guard, site) => (site, guard),
+        };
         if timeout == 0 || n == 0 {
             return real(timeout);
         }
@@ -665,7 +857,7 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
                 remaining.min(i64::from(c_int::MAX)) as c_int
             };
             match park_pollfds(std::slice::from_raw_parts(fds, n as usize), left) {
-                Some(true) => {
+                PollPark::Fd => {
                     let r = real(0);
                     trace(&format!("{sym}: woke by fd, revents fill r={r}"));
                     if r != 0 {
@@ -678,7 +870,7 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
                     // for what is left of the caller's own timeout.
                     trace(&format!("{sym}: spurious readiness, re-parking"));
                 }
-                Some(false) => {
+                PollPark::Timer => {
                     // The re-poll is not redundant and the trace is not decoration: together they
                     // say whether a timeout was real. `r=0` here means the kernel agrees the
                     // descriptor was never ready, so the caller's timeout was earned; anything else
@@ -689,9 +881,10 @@ unsafe fn poll_impl(ret: *const c_void, sym: &str, fds: *mut libc::pollfd, n: li
                     trace(&format!("{sym}: woke by timer after {}ms, recheck r={r}", started.elapsed().as_millis()));
                     return r;
                 }
-                None => {
+                PollPark::Cancelled => return cancelled(),
+                PollPark::Unavailable => {
                     trace(&format!("{sym}: could not park, blocking"));
-                    return real(left);
+                    return forward(site, || real(left));
                 }
             }
         }
@@ -760,8 +953,12 @@ pub unsafe extern "C" fn ignis_park_select(
         };
         let caller_ts = ts_of(tv);
         let real = |r, w, e| sel(r, w, e, caller_ts.as_ref().map_or(std::ptr::null(), |t| t as *const _));
-        let Some(_g) = may_park(ret, "select") else { return real(r, w, e) };
         let timeout = caller_ts.as_ref().map_or(-1, ms_ceil);
+        let (site, _guard) = match gate(ret, "select") {
+            Gate::Outside => return real(r, w, e),
+            Gate::Block(_g, site) => return if timeout == 0 { real(r, w, e) } else { forward(site, || real(r, w, e)) },
+            Gate::Park(guard, site) => (site, guard),
+        };
         if n <= 0 || timeout == 0 {
             return real(r, w, e);
         }
@@ -791,7 +988,7 @@ pub unsafe extern "C" fn ignis_park_select(
             }
             if events == 0 && !e.is_null() && libc::FD_ISSET(fd, e) {
                 trace(&format!("select fd={fd}: exception interest only, blocking"));
-                return real(r, w, e);
+                return forward(site, || real(r, w, e));
             }
             if events != 0 {
                 fds.push(libc::pollfd { fd, events, revents: 0 });
@@ -799,17 +996,28 @@ pub unsafe extern "C" fn ignis_park_select(
         }
         trace(&format!("select n={n} timeout={timeout}: not ready, parking on {} fds", fds.len()));
         match park_pollfds(&fds, timeout) {
-            Some(by_fd) => {
+            PollPark::Fd | PollPark::Timer => {
                 let r2 = sel(r, w, e, &zero);
-                trace(&format!("select: woke by {}, fill r={r2}", if by_fd { "fd" } else { "timer" }));
+                trace(&format!("select: woke, fill r={r2}"));
                 r2
             }
-            None => {
+            PollPark::Cancelled => cancelled(),
+            PollPark::Unavailable => {
                 trace("select: could not park, blocking");
-                real(r, w, e)
+                forward(site, || real(r, w, e))
             }
         }
     }
+}
+
+/// A connect that could not park finishes the way a blocking one would: waiting for writability.
+///
+/// # Safety
+/// PHP thread; `fd` is the socket the caller is connecting.
+unsafe fn wait_for_writability_like_a_blocking_connect(site: Site, fd: c_int) {
+    let mut pollfd = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+    // SAFETY: `pollfd` is a live local handed to the kernel for the length of the call.
+    unsafe { forward(site, || libc::syscall(libc::SYS_poll, &mut pollfd as *mut libc::pollfd, 1usize, -1) as c_int) };
 }
 
 #[unsafe(no_mangle)]
@@ -820,7 +1028,11 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
     // the program already made; parking only delays it.
     unsafe {
         let real = || libc::syscall(libc::SYS_connect, fd, addr, alen as usize) as c_int;
-        let Some(_g) = may_park(ret, "connect") else { return real() };
+        let (site, _guard) = match gate(ret, "connect") {
+            Gate::Outside => return real(),
+            Gate::Block(_g, site) => return forward(site, real),
+            Gate::Park(guard, site) => (site, guard),
+        };
         let flags = libc::fcntl(fd, libc::F_GETFL);
         if flags < 0 || flags & libc::O_NONBLOCK != 0 {
             trace(&format!("connect fd={fd}: already non-blocking, forwarding"));
@@ -838,10 +1050,10 @@ pub unsafe extern "C" fn ignis_park_connect(ret: *const c_void, fd: c_int, addr:
         }
         let parked = park_on(fd, true);
         libc::fcntl(fd, libc::F_SETFL, flags);
-        if !parked {
-            // Could not park: finish the way a blocking connect would, by waiting for writability.
-            let mut p = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
-            libc::syscall(libc::SYS_poll, &mut p as *mut libc::pollfd, 1usize, -1);
+        match parked {
+            Park::Ready => {}
+            Park::Cancelled => return cancelled(),
+            Park::Unavailable => wait_for_writability_like_a_blocking_connect(site, fd),
         }
         let mut so_err: c_int = 0;
         let mut len = size_of::<c_int>() as libc::socklen_t;
@@ -867,18 +1079,24 @@ pub unsafe extern "C" fn ignis_park_nanosleep(ret: *const c_void, req: *const li
     // nothing here dereferences the caller's buffer sat over this function until 2026-09-19.
     // `rem` is written only on the success path, where the full interval elapsed.
     unsafe {
-        if let Some(_g) = may_park(ret, "nanosleep")
-            && !req.is_null()
-            && let Some(us) = microseconds_of(&*req)
-            && park_sleep(us)
-        {
-            if !rem.is_null() {
-                (*rem).tv_sec = 0;
-                (*rem).tv_nsec = 0;
+        let real = || libc::syscall(libc::SYS_nanosleep, req, rem) as c_int;
+        let (site, _guard) = match gate(ret, "nanosleep") {
+            Gate::Outside => return real(),
+            Gate::Block(_g, site) => return forward(site, real),
+            Gate::Park(guard, site) => (site, guard),
+        };
+        let Some(us) = (!req.is_null()).then(|| microseconds_of(&*req)).flatten() else { return real() };
+        match park_sleep(us) {
+            Park::Ready => {
+                if !rem.is_null() {
+                    (*rem).tv_sec = 0;
+                    (*rem).tv_nsec = 0;
+                }
+                0
             }
-            return 0;
+            Park::Cancelled => cancelled(),
+            Park::Unavailable => forward(site, real),
         }
-        libc::syscall(libc::SYS_nanosleep, req, rem) as c_int
     }
 }
 
@@ -889,13 +1107,18 @@ pub unsafe extern "C" fn ignis_park_usleep(ret: *const c_void, us: c_uint) -> c_
     // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
     // the program already made; parking only delays it.
     unsafe {
-        if let Some(_g) = may_park(ret, "usleep")
-            && park_sleep(us as u64)
-        {
-            return 0;
-        }
         let ts = libc::timespec { tv_sec: (us / 1_000_000) as libc::time_t, tv_nsec: ((us % 1_000_000) * 1000) as libc::c_long };
-        libc::syscall(libc::SYS_nanosleep, &ts as *const libc::timespec, std::ptr::null_mut::<libc::timespec>()) as c_int
+        let real = || libc::syscall(libc::SYS_nanosleep, &ts as *const libc::timespec, std::ptr::null_mut::<libc::timespec>()) as c_int;
+        let (site, _guard) = match gate(ret, "usleep") {
+            Gate::Outside => return real(),
+            Gate::Block(_g, site) => return forward(site, real),
+            Gate::Park(guard, site) => (site, guard),
+        };
+        match park_sleep(us as u64) {
+            Park::Ready => 0,
+            Park::Cancelled => cancelled(),
+            Park::Unavailable => forward(site, real),
+        }
     }
 }
 
@@ -906,15 +1129,25 @@ pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_ui
     // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
     // the program already made; parking only delays it.
     unsafe {
-        if let Some(_g) = may_park(ret, "sleep")
-            && park_sleep((s as u64).saturating_mul(1_000_000))
-        {
-            return 0;
-        }
         let requested = libc::timespec { tv_sec: s as libc::time_t, tv_nsec: 0 };
-        let mut remaining = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        let rc = libc::syscall(libc::SYS_nanosleep, &requested as *const libc::timespec, &mut remaining as *mut libc::timespec);
-        unslept_seconds(rc as c_int, &remaining)
+        let real = || {
+            let mut remaining = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let rc = libc::syscall(libc::SYS_nanosleep, &requested as *const libc::timespec, &mut remaining as *mut libc::timespec);
+            unslept_seconds(rc as c_int, &remaining)
+        };
+        let (site, _guard) = match gate(ret, "sleep") {
+            Gate::Outside => return real(),
+            Gate::Block(_g, site) => return forward(site, real),
+            Gate::Park(guard, site) => (site, guard),
+        };
+        match park_sleep((s as u64).saturating_mul(1_000_000)) {
+            Park::Ready => 0,
+            Park::Cancelled => {
+                *libc::__errno_location() = libc::ECANCELED;
+                s
+            }
+            Park::Unavailable => forward(site, real),
+        }
     }
 }
 
@@ -922,79 +1155,37 @@ pub unsafe extern "C" fn ignis_park_sleep(ret: *const c_void, s: c_uint) -> c_ui
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_accept4(ret: *const c_void, fd: c_int, addr: *mut c_void, alen: *mut c_uint, flags: c_int) -> c_int {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
-    unsafe {
-        // A listening socket is readable when a connection is pending; the real accept4 follows
-        // either way, so "readable" that is not "would succeed" ends as it does in stock PHP.
-        if let Some(_g) = may_park(ret, "accept")
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_accept4, fd, addr, alen, flags) as c_int
-    }
+    // SAFETY: as `ignis_park_read`; `addr`/`alen` go to the kernel unchanged, and the real accept4
+    // follows either way.
+    unsafe { data_call(gate(ret, "accept"), fd, false, libc::POLLIN, || libc::syscall(libc::SYS_accept4, fd, addr, alen, flags) as c_int) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_recvmsg(ret: *const c_void, fd: c_int, msg: *mut c_void, flags: c_int) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // SAFETY: as `ignis_park_read`.
     unsafe {
-        if let Some(_g) = may_park(ret, "recvmsg")
-            && flags & libc::MSG_DONTWAIT == 0
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_recvmsg, fd, msg, flags) as isize
+        let g = gate(ret, "recvmsg");
+        let g = if flags & libc::MSG_DONTWAIT != 0 { without_park(g) } else { g };
+        data_call(g, fd, false, libc::POLLIN, || libc::syscall(libc::SYS_recvmsg, fd, msg, flags) as isize)
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_sendmsg(ret: *const c_void, fd: c_int, msg: *const c_void, flags: c_int) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
+    // SAFETY: as `ignis_park_read`.
     unsafe {
-        if let Some(_g) = may_park(ret, "sendmsg")
-            && flags & libc::MSG_DONTWAIT == 0
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_sendmsg, fd, msg, flags) as isize
+        let g = gate(ret, "sendmsg");
+        let g = if flags & libc::MSG_DONTWAIT != 0 { without_park(g) } else { g };
+        data_call(g, fd, true, libc::POLLOUT, || libc::syscall(libc::SYS_sendmsg, fd, msg, flags) as isize)
     }
 }
 
 /// How long a fiber waits between `flock(LOCK_NB)` attempts, doubling from the first to the second.
 /// Short enough that an uncontended-by-the-time-we-look lock costs little, long enough that a lock
 /// held for a whole request is not polled hundreds of times.
-// ponytail: this retry loop has no overall deadline, and deliberately so. A blocking `flock()`
-// has no timeout in POSIX -- the caller asked to wait until the lock is theirs -- so returning
-// EWOULDBLOCK after some interval of our choosing would be an error no caller is written to
-// expect. The ceiling that remains is real and named here: a lock whose holder died without
-// releasing it parks this fiber for the life of the process. That is strictly better than the
-// behaviour it replaced, where the same case blocked the whole OS thread and every fiber on it
-// (R-SESS, V-58), and it is visible rather than silent, because each retry is an `Op::Sleep` on
-// this thread's reactor and research 42 proposes `ignis_op_oldest_age_seconds` over exactly that
-// id space. Upgrade path: a per-request watchdog that throws into a fiber which has not
-// progressed (S-POOL-LEASE-AGE fix 3) releases this the same way it releases every other held
-// resource -- one mechanism instead of a timeout per call site.
+// ponytail: the retry loop has no deadline of its own, because a blocking `flock()` has none in
+// POSIX; a lock whose holder died parks this fiber for the life of the process (better than the
+// blocked OS thread it replaced, R-SESS/V-58). ADR-0043's per-request ceiling (L0) is what ends it.
 const FLOCK_RETRY_FIRST_US: u64 = 200;
 const FLOCK_RETRY_MAX_US: u64 = 20_000;
 
@@ -1014,9 +1205,13 @@ pub unsafe extern "C" fn ignis_park_flock(ret: *const c_void, fd: c_int, operati
     // `flock` takes no pointer, so there is nothing to dereference: the syscall is exactly the one
     // the program asked for, issued with LOCK_NB added while we are willing to wait for it.
     unsafe {
+        let real = || libc::syscall(libc::SYS_flock, fd, operation) as c_int;
         let blocking = operation & libc::LOCK_NB == 0 && operation & libc::LOCK_UN == 0;
-        let Some(_guard) = may_park(ret, "flock").filter(|_| blocking) else {
-            return libc::syscall(libc::SYS_flock, fd, operation) as c_int;
+        let (site, _guard) = match gate(ret, "flock") {
+            Gate::Outside => return real(),
+            Gate::Block(_g, site) => return if blocking { forward(site, real) } else { real() },
+            Gate::Park(_g, _) if !blocking => return real(),
+            Gate::Park(guard, site) => (site, guard),
         };
 
         let mut wait_us = FLOCK_RETRY_FIRST_US;
@@ -1028,11 +1223,13 @@ pub unsafe extern "C" fn ignis_park_flock(ret: *const c_void, fd: c_int, operati
             if *libc::__errno_location() != libc::EWOULDBLOCK {
                 return rc;
             }
-            if !park_sleep(wait_us) {
-                // Nothing to park on (no reactor, not in a fiber): do what the caller asked for and
-                // let the thread block, which is at least the behaviour it had before this existed.
-                park_failed("flock");
-                return libc::syscall(libc::SYS_flock, fd, operation) as c_int;
+            match park_sleep(wait_us) {
+                Park::Ready => {}
+                Park::Cancelled => return cancelled(),
+                Park::Unavailable => {
+                    park_failed("flock");
+                    return forward(site, real);
+                }
             }
             wait_us = (wait_us * 2).min(FLOCK_RETRY_MAX_US);
         }
@@ -1041,40 +1238,14 @@ pub unsafe extern "C" fn ignis_park_flock(ret: *const c_void, fd: c_int, operati
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_readv(ret: *const c_void, fd: c_int, iov: *const c_void, cnt: c_int) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
-    unsafe {
-        if let Some(_g) = may_park(ret, "readv")
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLIN)
-            && park_io(fd, false) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_readv, fd, iov, cnt) as isize
-    }
+    // SAFETY: as `ignis_park_read`.
+    unsafe { data_call(gate(ret, "readv"), fd, false, libc::POLLIN, || libc::syscall(libc::SYS_readv, fd, iov, cnt) as isize) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *const c_void, cnt: c_int) -> isize {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with exactly the arguments libc was
-    // given, and `ret` is that call site's return address. Nothing here dereferences the caller's
-    // buffer -- it is handed straight back to the kernel -- so the syscall is as sound as the call
-    // the program already made; parking only delays it.
-    unsafe {
-        if let Some(_g) = may_park(ret, "writev")
-            && would_block(fd)
-            && !ready_now(fd, libc::POLLOUT)
-            && park_io(fd, true) == Wait::TimedOut
-        {
-            *libc::__errno_location() = libc::EAGAIN;
-            return -1;
-        }
-        libc::syscall(libc::SYS_writev, fd, iov, cnt) as isize
-    }
+    // SAFETY: as `ignis_park_read`.
+    unsafe { data_call(gate(ret, "writev"), fd, true, libc::POLLOUT, || libc::syscall(libc::SYS_writev, fd, iov, cnt) as isize) }
 }
 
 /// `waitpid` for a named child: wait on a `pidfd` instead of the thread.
@@ -1097,25 +1268,29 @@ pub unsafe extern "C" fn ignis_park_writev(ret: *const c_void, fd: c_int, iov: *
 ///   right errno by itself, exactly as it did before this existed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ignis_park_waitpid(ret: *const c_void, pid: c_int, status: *mut c_int, options: c_int) -> c_int {
-    // SAFETY: csrc/park.c calls this from the interposed symbol with the arguments libc was given.
-    // `status` is never dereferenced here — it is handed to the real `waitpid`, which is the same
-    // call the program already made; parking only delays it. The pidfd is opened and closed here and
-    // escapes nowhere.
+    // SAFETY: as `ignis_park_read`; `status` is handed to the kernel unchanged, the pidfd never
+    // escapes, and the raw `wait4` syscall (not `libc::waitpid`) is what keeps this from re-entering.
     unsafe {
-        if options & libc::WNOHANG == 0
-            && pid > 0
-            && let Some(_g) = may_park(ret, "waitpid")
-        {
-            let pidfd = libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) as c_int;
-            if pidfd >= 0 {
-                park_io(pidfd, false);
-                libc::close(pidfd);
-            }
+        let real = || libc::syscall(libc::SYS_wait4, pid, status, options, std::ptr::null_mut::<c_void>()) as c_int;
+        let blocks = options & libc::WNOHANG == 0;
+        let waits = blocks && pid > 0;
+        let (site, _guard) = match gate(ret, "waitpid") {
+            Gate::Outside => return real(),
+            Gate::Block(_g, site) => return if blocks { forward(site, real) } else { real() },
+            Gate::Park(_g, site) if !waits => return if blocks { forward(site, real) } else { real() },
+            Gate::Park(guard, site) => (site, guard),
+        };
+        let pidfd = libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) as c_int;
+        if pidfd < 0 {
+            return forward(site, real);
         }
-        // The raw syscall, never `libc::waitpid` — that is the symbol this function interposes, and
-        // calling it here would re-enter this handler for ever. `waitpid(p, s, o)` is
-        // `wait4(p, s, o, NULL)`.
-        libc::syscall(libc::SYS_wait4, pid, status, options, std::ptr::null_mut::<c_void>()) as c_int
+        let waited = park_io(pidfd, false);
+        libc::close(pidfd);
+        match waited {
+            Wait::Cancelled => cancelled(),
+            Wait::Unavailable => forward(site, real),
+            Wait::Ready | Wait::TimedOut => real(),
+        }
     }
 }
 
@@ -1306,16 +1481,12 @@ mod tests {
         assert_eq!(unslept_seconds(-1, &timespec(0, 0)), 0);
     }
 
-    /// The wiring, not the arithmetic: outside a fiber `may_park` declines, so the shim must hand
-    /// the call to the kernel unchanged and return exactly what libc would. Without this the two
-    /// fixes above were covered only as pure functions — the gate would not have noticed an
-    /// interposer that computed the right number and then delegated wrongly.
+    /// Outside a fiber the gate declines and the shim must return exactly what libc would.
     #[test]
     fn outside_a_fiber_the_shims_delegate_and_answer_as_libc_does() {
         let here = core::ptr::null::<c_void>();
         let valid = timespec(0, 1_000_000);
-        // SAFETY: not in a fiber and no reactor on this thread, so `may_park` declines and the only
-        // call made is the real nanosleep with a live, well-formed interval of our own.
+        // SAFETY: no fiber and no reactor here, so the only call made is the real nanosleep.
         let slept = unsafe { ignis_park_nanosleep(here, &valid, core::ptr::null_mut()) };
         assert_eq!(slept, 0, "a 1 ms sleep outside a fiber succeeds through the kernel");
 

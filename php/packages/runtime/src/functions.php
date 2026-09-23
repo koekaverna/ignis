@@ -44,20 +44,6 @@ function all(iterable $futures): array
 
 /**
  * Sends one frame of the response this fiber is streaming, and waits if the client is behind.
- *
- * Use it instead of `echo` inside a `StreamedResponse` producer. Symfony calls its callback with no
- * arguments, so `echo` is the only channel it offers there — and `echo` can only ever be taken
- * optimistically, because the runtime's write hook runs where a fiber cannot suspend. This call
- * can wait, so a slow client parks the producing fiber instead of filling memory:
- *
- *     return new StreamedResponse(function () use ($rows): void {
- *         foreach ($rows as $row) {
- *             Ignis\write($row . "\n");   // parks here when the client is behind
- *         }
- *     });
- *
- * Anything `echo`ed earlier is sent first, so the two can be mixed without reordering the response.
- *
  * @throws \RuntimeException if this fiber is not streaming, or the client has gone
  */
 function write(string $chunk): void
@@ -95,16 +81,24 @@ function stop(): void
 }
 
 /**
+ * Marks the current fiber's blocking calls as accepted for $function (ADR-0043 §5): still
+ * counted and reported, but at info instead of failing a strict-mode test or audit.
+ */
+function allowBlocking(callable $function): mixed
+{
+    if (!\function_exists('ignis_allow_blocking')) {
+        return $function();
+    }
+    $wasAlreadyAllowed = \ignis_allow_blocking(true);
+    try {
+        return $function();
+    } finally {
+        \ignis_allow_blocking($wasAlreadyAllowed);
+    }
+}
+
+/**
  * Worker mode: serve HTTP forever, one pooled fiber per request.
- *
- * What the handler returns says how the request is answered, so the reader sees it in the
- * signature rather than in a comment:
- *
- * - `Http\Response` — a whole body; the loop sends it;
- * - `Http\StreamedResponse` — a body produced while the client reads (R-STREAM); the loop drives the
- *   producer and ends it;
- * - `null` — answered through another channel entirely, such as a gRPC stream (E10).
- *
  * @param callable(Http\Request):(Http\Response|null) $handler
  */
 function serve(callable $handler, string $address = '127.0.0.1:8080'): void

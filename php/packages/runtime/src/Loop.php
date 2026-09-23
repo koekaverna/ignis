@@ -11,19 +11,21 @@ final class Loop
 {
     /** @var array<int,\Fiber<mixed,mixed,mixed,mixed>> request id => fiber running the handler */
     private static array $requestFibers = [];
-    /**
-     * request id => the child fibers it spawned, keyed by object id so a finished one leaves in O(1).
-     * @var array<int,array<int,\Fiber<mixed,mixed,mixed,mixed>>>
-     */
+    /** @var array<int,array<int,\Fiber<mixed,mixed,mixed,mixed>>> request id => the child fibers it spawned, keyed by object id so a finished one leaves in O(1). */
     private static array $children = [];
     /** @var array<int,int> op id => request id for deadline timers */
     private static array $deadlines = [];
     /** @var array<int,int> request id => the deadline op it armed, so the timer can be called off */
     private static array $deadlineOf = [];
+    /** @var array<int,int> request id => the L0 fiber-timeout milliseconds armFiberTimeout() armed for it (ADR-0043 §7, L0). */
+    private static array $fiberTimeoutMilliseconds = [];
     /** @var array<int,true> ids sitting in the request queue, so a cancel for anything else is not remembered */
     private static array $queued = [];
     /** @var array<int,int> fiber object id => op id it is parked on (userland parks) */
     private static array $parkedOn = [];
+    /** @var array<int,int> park-timer op => the op it bounds (ADR-0043 §7, the park ceiling). */
+    private static array $parkTimers = [];
+    private static int $parkTimeoutMilliseconds = 0;
     public static int $cancelled = 0;
     public static int $cancelAgeUsMax = 0;
     public static int $cancelLatencyUsMax = 0;
@@ -35,12 +37,14 @@ final class Loop
     private static array $pending = [];
     /** @var list<\Fiber<mixed,mixed,mixed,mixed>> parked pool fibers */
     private static array $idle = [];
+    /** @var array<int,\Fiber<mixed,mixed,mixed,mixed>> fiber object id => fiber to force-close at its next park (ADR-0043 L2) */
+    private static array $killPending = [];
+    /** @var array<int,array{0:\Fiber<mixed,mixed,mixed,mixed>,1:int}> fiber object id => [fiber, request id], the `log` mode's watch */
+    private static array $logSwallowedPending = [];
+    /** IGNIS_ON_SWALLOWED_CANCEL (ADR-0043 §8): force-close a fiber that parks again after a cancellation, or only log it. */
+    private static bool $forceCloseOnSwallowedCancel = true;
     private static bool $running = false;
-    /**
-     * A `callable` return type is not enforced at run time, so the loop checks what came back
-     * rather than trusting it; the contract handlers are written to is `?Http\Response`.
-     * @var null|callable(Http\Request):mixed
-     */
+    /** @var null|callable(Http\Request):mixed the return is checked at run time, since PHP does not */
     private static $requestHandler = null;
     public static int $resumes = 0;
     public static int $fibersCreated = 0;
@@ -50,8 +54,6 @@ final class Loop
     public static int $inflightRequests = 0;
     /** Requests this loop has finished answering (M4-4). */
     public static int $handled = 0;
-    /** False when the runtime is too old to have ignis_publish_stats() (a script run, a test). */
-    private static bool $canPublishStats = true;
     public static int $queuedPeak = 0;
     public static int $rejected = 0;
     public static int $admittedAfterQueue = 0;
@@ -62,10 +64,7 @@ final class Loop
     private static int $queueHead = 0;
     /** @var array<int, true> ids whose client went away while queued. */
     private static array $queueCancelled = [];
-    /**
-     * Nanoseconds spent in each phase (for VALIDATION.md; cheap: one hrtime per batch).
-     * @var array{start: int, ready: int, poll: int, resume: int}
-     */
+    /** @var array{start: int, ready: int, poll: int, resume: int} Nanoseconds spent in each phase (for VALIDATION.md; cheap: one hrtime per batch). */
     public static array $phaseNs = ['start' => 0, 'ready' => 0, 'poll' => 0, 'resume' => 0];
 
     /** Suspend the current fiber until reactor op $id completes; returns its payload. */
@@ -84,20 +83,42 @@ final class Loop
     }
 
     /**
-     * Registers $fiber against $op, hands the thread back to the loop, and unregisters on the way
-     * out however that happens — a resume, or a cancellation thrown into the parked fiber.
-     *
+     * Registers $fiber against $op and hands the thread to the loop; unregisters however the park ends.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function parkOn(\Fiber $fiber, int $op): mixed
     {
         self::$waiting[$op] = $fiber;
         self::$parkedOn[\spl_object_id($fiber)] = $op;
+        $timer = self::armParkTimeout($op);
         try {
             return \Fiber::suspend();
         } finally {
             unset(self::$parkedOn[\spl_object_id($fiber)]);
+            self::disarmParkTimeout($timer);
         }
+    }
+
+    /** Bounds one park with a timer when the park ceiling is on; null when it is off. */
+    private static function armParkTimeout(int $op): ?int
+    {
+        if (self::$parkTimeoutMilliseconds <= 0) {
+            return null;
+        }
+        $timer = \ignis_submit_sleep(self::$parkTimeoutMilliseconds);
+        self::$parkTimers[$timer] = $op;
+
+        return $timer;
+    }
+
+    /** Calls a park's ceiling off once the park ended on its own; a fired one is already gone. */
+    private static function disarmParkTimeout(?int $timer): void
+    {
+        if ($timer === null || !isset(self::$parkTimers[$timer])) {
+            return;
+        }
+        unset(self::$parkTimers[$timer]);
+        \ignis_cancel($timer);
     }
 
     /** {main} has no fiber to park, so park a throwaway one on the op and drive the loop. */
@@ -125,8 +146,7 @@ final class Loop
     }
 
     /**
-     * Body of a pooled fiber: runs jobs forever, parking between them. Never returns — the fiber
-     * either stays parked for the life of the thread or unwinds on a thrown cancellation.
+     * Body of a pooled fiber: runs jobs forever, parking between them.
      * @param Job $job
      */
     private static function poolBody(array $job): never
@@ -134,10 +154,13 @@ final class Loop
         $self = self::currentFiber();
         for (;;) {
             [$function, $arguments, $future, $requestId] = $job;
+            \ignis_fiber_request($requestId ?? 0);
             try {
                 $future->resolve($function(...$arguments));
             } catch (\Throwable $e) {
                 $future->reject($e);
+            } finally {
+                self::rejectIfForceClosedMidJob($future);
             }
             self::forgetChild($requestId, $self);
             self::$idle[] = $self;
@@ -145,13 +168,16 @@ final class Loop
         }
     }
 
+    /** ADR-0043 §7, L2/L3: a graceful force-close unwinds through `finally`, never `catch`, leaving the Future unsettled unless this rejects it. */
+    private static function rejectIfForceClosedMidJob(Future $future): void
+    {
+        if (!$future->isDone()) {
+            $future->reject(new KilledException('fiber force-closed'));
+        }
+    }
+
     /**
      * Drops a finished child from the request that spawned it, before the pool hands the fiber out.
-     *
-     * Without this the fiber stays in `$children` for as long as its parent lives, while the pool has
-     * already re-issued it: a disconnect on request A then threw `CancelledException` into whatever
-     * request B was doing on the same fiber. The list is keyed by object id so this is O(1) and the
-     * spawn order `cancelRequest()` walks in reverse is the insertion order either way.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function forgetChild(?int $requestId, \Fiber $fiber): void
@@ -163,9 +189,7 @@ final class Loop
     }
 
     /**
-     * A pool fiber is only ever resumed by resumeReady(), which only ever hands it a Job — but
-     * that guarantee lives outside the type system, on the other side of Fiber::suspend()'s erased
-     * generic, so the boundary is checked rather than assumed.
+     * The Job resumeReady() handed this pool fiber; that guarantee lives outside the type system.
      * @return Job
      */
     private static function nextJob(): array
@@ -205,8 +229,7 @@ final class Loop
     }
 
     /**
-     * The fiber every pooled job and every request runs on. Nothing here is reachable from the main
-     * stack, and a null would silently corrupt the pool and the cancellation maps rather than fail.
+     * The fiber the current job or request runs on, never the main stack.
      * @return \Fiber<mixed,mixed,mixed,mixed>
      */
     private static function currentFiber(): \Fiber
@@ -246,14 +269,7 @@ final class Loop
         return \count(self::$idle);
     }
 
-    /**
-     * True while this thread's loop is the one draining `ignis_poll()`.
-     *
-     * `ignis_poll()` consumes the completion channel, so a second consumer on the same thread takes
-     * completions the fibers of this loop are parked on and those fibers never wake. Anything that
-     * wants to drive the reactor itself — `Ignis\Revolt\IgnisDriver` is the one in the tree — asks
-     * first and refuses rather than producing a hang nobody can read.
-     */
+    /** True while this thread's loop is the one draining `ignis_poll()`. */
     public static function isRunning(): bool
     {
         return self::$running;
@@ -277,6 +293,7 @@ final class Loop
             while (!$stop()) {
                 self::startPending();
                 self::resumeReady();
+                self::forceClosePending();
                 if (self::$pending !== []) {
                     continue;
                 }
@@ -314,10 +331,11 @@ final class Loop
         Chaos::init();
         self::gcInit();
         self::budgetInit();
-        self::$canPublishStats = \function_exists('ignis_publish_stats');
+        self::$forceCloseOnSwallowedCancel = \trim(Env::text('IGNIS_ON_SWALLOWED_CANCEL', 'force-close')) !== 'log';
+        self::$parkTimeoutMilliseconds = Recovery::parkTimeoutMilliseconds();
         // boot() runs on the first turn of every mode, including classic `listen()`, which never
         // calls serve() and would otherwise watch nothing at all.
-        self::$watching = Env::flag('IGNIS_WATCH') && \function_exists('ignis_watch_generation');
+        self::$watching = Env::flag('IGNIS_WATCH');
         self::$watchGeneration = self::$watching ? \ignis_watch_generation() : 0;
         if (self::$watching) {
             \ignis_watch_end_reload();   // this incarnation is up; whoever is waiting to reload may go
@@ -358,12 +376,7 @@ final class Loop
         }
     }
 
-    /**
-     * Nothing left for this loop to do. `$ready` and `$pending` count because ignis_poll() resumes
-     * C-parked fibers itself: a fiber they settled sits in `$ready` with nothing in flight, and
-     * seeing that is what keeps a nested all() alive (E18-I1). A fiber parked inside a C hook is
-     * not in `$waiting` either, but its op is in flight (E15c fix).
-     */
+    /** Nothing left for this loop to do: no ready, pending, parked or in-flight work. */
     private static function isIdle(): bool
     {
         return self::$waiting === []
@@ -383,24 +396,9 @@ final class Loop
         }
     }
 
-    /**
-     * M4-4: hand this loop's counters to the runtime so /_ignis/metrics can answer them while PHP
-     * is busy. A wedged loop stops publishing, which the endpoint reports as an ageing sample.
-     *
-     * A-DUPES(c): this key set is not `budgetStats()`'s by another name — it is
-     * `crate::metrics::Published::set()`'s fixed field list, sent whole every loop turn because
-     * `ignis_publish_stats()` takes one array, not incremental fields. `inflight` is missing on
-     * purpose: the Rust side already tracks in-flight requests itself (see the module doc at the
-     * top of `metrics.rs`), and `fibers_idle`/`fibers_created`/`resumes`/`handled` are missing from
-     * `budgetStats()` because callers building a `/stats` endpoint already have them as
-     * `Loop::$resumes`, `Loop::$fibersCreated` and `Loop::idleFibers()` (`examples/app.php`,
-     * `examples/hello_server.php`) and would otherwise get them twice.
-     */
+    /** M4-4: hands this loop's counters to the runtime for /_ignis/metrics. */
     private static function publishStats(): void
     {
-        if (!self::$canPublishStats) {
-            return;
-        }
         \ignis_publish_stats([
             'budget' => self::$fiberBudget,
             'queue_depth' => self::$queueDepth,
@@ -439,10 +437,19 @@ final class Loop
                 self::dispatchUnawaited($id, $payload);
                 continue;
             }
+            if (isset(self::$parkTimers[$id])) {
+                self::expireParkTimer($id);
+                continue;
+            }
             if (isset(self::$deadlines[$id])) {
                 $requestId = self::$deadlines[$id];
                 unset(self::$deadlines[$id], self::$deadlineOf[$requestId]);
-                self::cancelRequest($requestId, new DeadlineExceededException('deadline exceeded'), 0);
+                $fiberTimeoutMilliseconds = self::$fiberTimeoutMilliseconds[$requestId] ?? null;
+                unset(self::$fiberTimeoutMilliseconds[$requestId]);
+                $message = $fiberTimeoutMilliseconds === null
+                    ? 'deadline exceeded'
+                    : self::fiberTimeoutMessage($fiberTimeoutMilliseconds, $requestId);
+                self::cancelRequest($requestId, new DeadlineExceededException($message), 0);
                 continue;
             }
             $fiber = self::$waiting[$id] ?? null;
@@ -457,12 +464,7 @@ final class Loop
     }
 
     /**
-     * A completion no fiber is waiting for, as the reactor's tagged union: a cancelled request, or
-     * a new request — which carries no tag, only a method. It arrives off the reactor as
-     * `array<array-key, mixed>`, so every field is checked before use.
-     *
-     * A payload matching neither tag is dropped with no log, on purpose: a fire-and-forget op
-     * nobody awaits can fail at the reactor level, and there is nobody left to tell.
+     * A completion no fiber waits for: a cancelled request or a new one, as the reactor's tagged union.
      * @param array<array-key, mixed> $payload
      */
     private static function dispatchUnawaited(int $id, array $payload): void
@@ -502,11 +504,7 @@ final class Loop
     }
 
 
-    /**
-     * A fiber failed and nobody awaited its Future: surface it instead of losing it (E15c fix).
-     * Only one can be rethrown, so the rest are logged rather than dropped on the floor — the loop
-     * stops on the first crash of a batch, and the ones behind it are usually how it is explained.
-     */
+    /** A fiber failed and nobody awaited its Future: surface it instead of losing it (E15c fix). */
     private static function reportUnobserved(): void
     {
         $errors = self::$unobserved;
@@ -541,10 +539,6 @@ final class Loop
 
     /**
      * Counters for /stats and for VALIDATION: see ADR-0019.
-     *
-     * A-DUPES(c): overlaps `publishStats()` on six keys and is not the same shape as it — see the
-     * note there for why both exist. This one is the public admission-control subset a caller
-     * composes its own `/stats` response from, `inflight` included because nothing else exposes it.
      * @return array<string, int>
      */
     public static function budgetStats(): array
@@ -578,11 +572,7 @@ final class Loop
         self::run();
     }
 
-    /**
-     * Asks the loop to stop serving: no new requests are accepted, the ones in flight finish, and
-     * `serve()` returns. Under `--supervise` the supervisor then respawns this thread with a fresh
-     * engine, which is what makes it a reload rather than an exit (research 40).
-     */
+    /** Stops serving: no new requests, the ones in flight finish, `serve()` returns. */
     public static function stop(): void
     {
         self::$stopping = true;
@@ -602,14 +592,10 @@ final class Loop
         self::watchLoadedFiles();
     }
 
-    /**
-     * Development reload: the files PHP has loaded are the dependency graph, so they are what the
-     * watcher watches (research 40). Off unless `IGNIS_WATCH` is set; a delta after every request,
-     * which is almost always empty.
-     */
+    /** Development reload: watches the files PHP has loaded, a delta after every request (research 40). */
     private static function watchLoadedFiles(): void
     {
-        if (!self::$watching || !\function_exists('ignis_watch_files')) {
+        if (!self::$watching) {
             return;
         }
         $new = [];
@@ -624,15 +610,7 @@ final class Loop
         }
     }
 
-    /**
-     * Begins a graceful stop the first time it is asked for, then waits for everything in flight.
-     *
-     * "In flight" is deliberately the same set `isIdle()` uses. Counting only `$inflightRequests`
-     * lost two kinds of work: a request the front door had already handed this reactor but that
-     * `ignis_poll()` had not delivered yet — measured at 1,472 of 383,181 requests answered 500
-     * across a reload under `wrk -t4 -c32` — and a fiber parked on an op, which is how a
-     * fire-and-forget `Ignis\async()` would have been dropped.
-     */
+    /** Begins a graceful stop the first time it is asked for, then waits for everything in flight. */
     private static function windingDown(): bool
     {
         if (!self::$stopping) {
@@ -640,9 +618,7 @@ final class Loop
         }
         if (!self::$leftDispatch) {
             self::$leftDispatch = true;
-            if (\function_exists('ignis_stop_accepting')) {
-                \ignis_stop_accepting();
-            }
+            \ignis_stop_accepting();
         }
 
         return \ignis_inflight() === 0          // the runtime's count, which includes a request delivered
@@ -652,16 +628,11 @@ final class Loop
             && self::$pending === [];
     }
 
-    /**
-     * Hands a request to the loop's caller instead of to a fiber. Set by `Ignis\Classic\listen()`
-     * for the top-level worker loop; see docs/classic-mode.md for why that mode exists (V-53).
-     * @var null|callable(int,IgnisRequest):void
-     */
+    /** @var null|callable(int,IgnisRequest):void classic mode's handler, set by `Ignis\Classic\listen()` (V-53) */
     public static $rawRequestHandler = null;
 
     /**
-     * B1 (ADR-0019): admit, queue, or shed. Queueing holds the request as data, so a queued
-     * request costs a few hundred bytes instead of the fiber's ~14.7 kB of marginal RSS (V-37).
+     * B1 (ADR-0019): admit, queue, or shed; a queued request is data, not a fiber (V-37).
      * @param IgnisRequest $raw
      */
     private static function dispatchRequest(int $id, array $raw): void
@@ -705,11 +676,7 @@ final class Loop
         return false;
     }
 
-    /**
-     * Takes waiting requests while there is room. O(1) per request: the FIFO is read by index, and
-     * the slot keeps only the id once it is read, so a body is freed now and not at compaction.
-     * A client that went away while queued has nothing to answer.
-     */
+    /** Takes waiting requests while there is room, O(1) per request. */
     private static function drainQueue(): void
     {
         while (self::$queueHead < \count(self::$requestQueue)
@@ -744,21 +711,23 @@ final class Loop
             $id,
         );
         self::spawn(static function () use ($handler, $request, $id): void {
+            $answered = false;
             try {
                 self::answer($id, self::runHandler($handler, $request, $id));
+                $answered = true;
             } catch (\Throwable $e) {
                 self::answerFailed($id, $e);
+                $answered = true;
             } finally {
+                if (!$answered) {
+                    self::answerKilled($id);
+                }
                 self::releaseRequest($id);
             }
         });
     }
 
-    /**
-     * Sending the answer happens outside every `catch` in runHandler(), and the Future spawn()
-     * returns is discarded — so without this a failing `ignis_stream_bind` answers nobody, logs
-     * nothing, and surfaces later as an unobserved rejection that kills the loop, not the request.
-     */
+    /** Answers 500 when sending the answer itself failed, so no request is left unanswered. */
     private static function answerFailed(int $id, \Throwable $exception): void
     {
         self::logFailure('answering the request failed', $exception);
@@ -769,18 +738,14 @@ final class Loop
         }
     }
 
+    /** ADR-0043 L2/L3: the 504 for a fiber force-closed before it answered, sent without a park. */
+    private static function answerKilled(int $id): void
+    {
+        \ignis_respond($id, 504, ['content-type' => 'text/plain'], "504 fiber killed\n");
+    }
+
     /**
-     * Answers $id and says so when the answer was refused, because a refused answer is a request
-     * nobody will ever answer — the client waits until it gives up.
-     *
-     * `ignis_respond()` returns false when the id is unknown, already answered, or in a state this
-     * shape of answer cannot satisfy. Every call site here used to discard that, and the cost was
-     * measured: a gRPC call rejected by admission control was "answered" with HTTP 503, the reactor
-     * refused it because a gRPC id is not a whole-body id, and three of five concurrent calls hung
-     * for ever with nothing logged (V-107). The transport now maps a refusal onto its own wire, so
-     * that particular false is gone; this is here so the next one is a line in the log and not a
-     * hang.
-     *
+     * Answers $id and logs a refused answer, because a refused answer is a request nobody answers.
      * @param array<string, string|list<string>> $headers
      */
     private static function respondTo(int $id, int $status, array $headers, string $body): bool
@@ -800,21 +765,20 @@ final class Loop
     }
 
     /**
-     * Runs the handler with this request's fiber-scoped state. Every throw becomes a status,
-     * the ones from entering the request included: an exception that escaped here would be
-     * answered by nobody, because the Future spawn() returns is discarded.
+     * Runs the handler with this request's fiber-scoped state; every throw becomes a status.
      * @param null|callable(Http\Request):mixed $handler
      */
     private static function runHandler(?callable $handler, Http\Request $request, int $id): mixed
     {
         try {
             self::enterRequest($request, $id);
+            self::armFiberTimeout($id, $request->uri);
             if ($handler === null) {
                 throw new \LogicException('no request handler is set: serve through Ignis\\serve()');
             }
             return $handler($request);
-        } catch (DeadlineExceededException) {
-            return Http\Response::text("504 deadline exceeded\n", 504);
+        } catch (DeadlineExceededException $exception) {
+            return Http\Response::text('504 ' . $exception->getMessage() . "\n", 504);
         } catch (CancelledException) {
             return Http\Response::text("499 cancelled\n", 499);
         } catch (\Throwable $e) {
@@ -824,33 +788,19 @@ final class Loop
         }
     }
 
-    /**
-     * The fiber stays mapped: a StreamedResponse is produced *after* runHandler() returns, and
-     * cancelling it needs to find this fiber. releaseRequest() drops the mapping once the answer
-     * is actually complete (R-STREAM-CANCEL).
-     */
+    /** Leaves the request's scope but keeps the fiber mapped, so a StreamedResponse can still be cancelled. */
     private static function leaveRequestScope(): void
     {
         Scope::set('ignis.request', null);
     }
 
-    /**
-     * Gives this fiber the request id, its own $_SERVER/$_GET/$_POST/$_COOKIE (E13, ADR-0006) and
-     * its own `php://input`.
-     *
-     * The body belongs here for the same reason the superglobals do: the embed SAPI has no
-     * `read_post`, so unmodified code reading `php://input` gets nothing unless the runtime backs
-     * it. Leaving that to classic mode alone cost a measured defect — the runtime fills `$_POST`
-     * for `POST` only, and a framework re-parsing `php://input` for `PUT`/`PATCH` therefore saw an
-     * empty body.
-     */
+    /** Gives this fiber the request id, its own superglobals (E13, ADR-0006) and its own `php://input`. */
     private static function enterRequest(Http\Request $request, int $id): void
     {
         self::$requestFibers[$id] = self::currentFiber();
         Scope::set('ignis.request', $id);
-        if (\function_exists('ignis_set_superglobals')) {
-            \ignis_set_superglobals(...$request->superglobals());
-        }
+        \ignis_fiber_request($id);
+        \ignis_set_superglobals(...$request->superglobals());
         InputStream::register();
         InputStream::setBody($request->body);
         // And where the SAPI keeps it, which is a different place and the one PHP 8.4's
@@ -858,10 +808,7 @@ final class Loop
         \ignis_set_request_info($request->method, $request->header('content-type') ?? '', $request->body);
     }
 
-    /**
-     * What the handler returned IS the contract: a StreamedResponse has its producer driven by the
-     * loop, a Response is sent, and null means another channel answered already (gRPC, E10).
-     */
+    /** What the handler returned is the contract: streamed, sent, or null when another channel answered. */
     private static function answer(int $id, mixed $answer): void
     {
         if ($answer instanceof Http\StreamedResponse) {
@@ -873,16 +820,12 @@ final class Loop
         }
     }
 
-    /**
-     * Drops the request's fiber-scoped state before the fiber goes back to the pool — without it the
-     * next request on the same fiber inherits the last one's token, EntityManager and lease (V-67,
-     * V-68) — then releases the slot and admits the next waiting request from here, so the loop
-     * needs no extra wait point for it.
-     */
+    /** Drops the request's fiber-scoped state before the fiber goes back to the pool (V-67). */
     private static function releaseRequest(int $id): void
     {
         self::disarmDeadline($id);
         unset(self::$requestFibers[$id], self::$children[$id]);
+        \ignis_fiber_request(0);
         Scope::clear();
         \ignis_clear_request_info();
         Output::reset();
@@ -892,13 +835,7 @@ final class Loop
         self::drainQueue();
     }
 
-    /**
-     * Runs a streaming producer and ends its body.
-     *
-     * Binding does not send anything: the status line goes out with the first byte, whatever wrote
-     * it. That is what lets a producer which fails early still answer `500` — once the headers are
-     * out, an error can only truncate, which is all HTTP allows.
-     */
+    /** Runs a streaming producer and ends its body. */
     private static function produce(int $id, Http\StreamedResponse $response): void
     {
         \ignis_stream_bind($id, $response->status, $response->headers);
@@ -920,11 +857,7 @@ final class Loop
         self::endStream($id, $tail, $started);
     }
 
-    /**
-     * Sends whatever the producer left behind and closes the body. A producer that wrote nothing
-     * at all gets an ordinary empty response, not a chunked one; a non-empty tail is only what did
-     * not fit, because the unbind already pushed the rest and opened the response.
-     */
+    /** Sends whatever the producer left behind and closes the body. */
     private static function endStream(int $id, string $tail, bool $started): void
     {
         if (!$started && $tail === '') {
@@ -941,13 +874,7 @@ final class Loop
         \ignis_respond_end($id);
     }
 
-    /**
-     * Throw $exception into the request's children and only then into its own fiber, at their suspension
-     * points (ADR-0009; research 08: "cancel walks children first"). The parent goes last because
-     * its unwinding answers 499 and hands its fiber back to the pool, which the next request may
-     * take while a child is still in its `finally`. Children unwind in reverse spawn order.
-     * A request that is still only queued (B1) has no fiber to throw into: it is never admitted.
-     */
+    /** Throws $exception into the request's children first, then into its own fiber (ADR-0009). */
     private static function cancelRequest(int $requestId, CancelledException $exception, int $ageUs): void
     {
         $cancelStart = hrtime(true);
@@ -956,10 +883,10 @@ final class Loop
         }
         $parent = self::$requestFibers[$requestId] ?? null;
         foreach (array_reverse(self::$children[$requestId] ?? []) as $child) {
-            self::throwInto($child, $exception);
+            self::throwInto($child, $exception, $requestId);
         }
         if ($parent !== null) {
-            self::throwInto($parent, $exception);
+            self::throwInto($parent, $exception, $requestId);
         }
         ++self::$cancelled;
         self::$cancelAgeUsMax = max(self::$cancelAgeUsMax, $ageUs);
@@ -967,9 +894,7 @@ final class Loop
     }
 
     /**
-     * Throws into $fiber and absorbs the injected exception on its way back out; anything else is
-     * a genuine user error and is kept for the unobserved-error report. An unguarded `Fiber::throw`
-     * killed the worker thread — see "Absorbing the injected exception" in ADR-0009.
+     * Throws into $fiber and absorbs the injected exception on its way back; anything else is reported.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function throwAndAbsorb(\Fiber $fiber, \Throwable $exception): void
@@ -984,11 +909,10 @@ final class Loop
     }
 
     /**
-     * `$parkedOn` holds the op of a fiber parked in userland (Ignis\sleep, await); `$waiting` is
-     * scanned for one parked in a C stream op; anything else is a park only Rust can find.
+     * Finds where $fiber is parked (userland, a C stream op, or only Rust knows) and throws there.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
-    private static function throwInto(\Fiber $fiber, \Throwable $exception): void
+    private static function throwInto(\Fiber $fiber, \Throwable $exception, ?int $requestId = null): void
     {
         if ($fiber->isTerminated() || !$fiber->isSuspended()) {
             return;
@@ -998,6 +922,7 @@ final class Loop
             unset(self::$waiting[$opId]);
             ++self::$resumes;
             self::throwAndAbsorb($fiber, $exception);
+            self::watchForSwallowedCancellation($fiber, $requestId);
             return;
         }
         foreach (self::$waiting as $op => $waiter) {
@@ -1005,30 +930,159 @@ final class Loop
                 unset(self::$waiting[$op]);
                 ++self::$resumes;
                 self::throwAndAbsorb($fiber, $exception);
+                self::watchForSwallowedCancellation($fiber, $requestId);
                 return;
             }
         }
-        self::cancelCPark($fiber, $exception);
+        self::cancelCPark($fiber, $exception, $requestId);
     }
 
     /**
      * A fiber parked inside a C hook has an op id only Rust knows, so Rust searches its own table.
-     * Guarded like throwAndAbsorb, and this is the path that actually killed worker threads:
-     * zend_fiber_resume_exception leaves the throwable pending in C when the fiber has no handler,
-     * so it surfaces on return here with no throwInto frame in the trace (ADR-0009).
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
-    private static function cancelCPark(\Fiber $fiber, \Throwable $exception): void
+    private static function cancelCPark(\Fiber $fiber, \Throwable $exception, ?int $requestId = null): void
     {
-        if (!\function_exists('ignis_cancel_parked_any')) {
-            return;
-        }
+        self::throwIntoCPark($fiber, $exception);
+        self::watchForSwallowedCancellation($fiber, $requestId);
+    }
+
+    /**
+     * Resumes $fiber out of its C-side park with $exception thrown in; false when it is not C-parked.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function throwIntoCPark(\Fiber $fiber, \Throwable $exception): bool
+    {
         try {
-            \ignis_cancel_parked_any($fiber, $exception);
+            return \ignis_cancel_parked_any($fiber, $exception);
         } catch (\Throwable $caught) {
             if ($caught !== $exception) {
                 self::$unobserved[] = $caught;
             }
+        }
+
+        return true;
+    }
+
+    /**
+     * Watches whether $fiber parks again instead of unwinding after a cancellation was thrown into it.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function watchForSwallowedCancellation(\Fiber $fiber, ?int $requestId): void
+    {
+        if ($fiber->isTerminated() || self::hasReturnedToThePoolIdle($fiber)) {
+            return;
+        }
+        $fiberId = \spl_object_id($fiber);
+        if (self::$forceCloseOnSwallowedCancel) {
+            self::$killPending[$fiberId] = $fiber;
+            \ignis_fiber_kill_pending($fiber, true);
+            return;
+        }
+        self::$logSwallowedPending[$fiberId] = [$fiber, $requestId ?? 0];
+    }
+
+    /**
+     * True for a fiber back in the idle pool: an ordinary re-park, not a swallowed cancellation.
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function hasReturnedToThePoolIdle(\Fiber $fiber): bool
+    {
+        return \in_array($fiber, self::$idle, true);
+    }
+
+    /** Runs every loop turn (ADR-0043 §7, L2): force-closes fibers that parked again after a cancellation instead of unwinding. */
+    private static function forceClosePending(): void
+    {
+        if (self::forceCloseSuspendedFibers()) {
+            try {
+                self::collectSelfReferencingFiberCycle();
+            } catch (\Throwable $exception) {
+                self::$unobserved[] = $exception;
+            }
+        }
+        self::logFibersThatSwallowedTheirCancellation();
+    }
+
+    /** Drops loop references to each still-suspended `$killPending` fiber and reports whether it found one, so the caller knows a cycle collection is worth running. */
+    private static function forceCloseSuspendedFibers(): bool
+    {
+        $foundOneToClose = false;
+        foreach (\array_keys(self::$killPending) as $fiberId) {
+            if (!\array_key_exists($fiberId, self::$killPending)) {
+                continue;
+            }
+            $fiber = self::$killPending[$fiberId];
+            if ($fiber->isSuspended()) {
+                self::releaseCPark($fiber);
+            }
+            if ($fiber->isTerminated()) {
+                unset(self::$killPending[$fiberId]);
+                continue;
+            }
+            if (!$fiber->isSuspended()) {
+                continue;
+            }
+            unset(self::$killPending[$fiberId]);
+            self::dropLoopReferencesTo($fiber);
+            error_log(\sprintf('Ignis\\Loop: fiber %d parked again after its cancellation and is force-closed (L2)', $fiberId));
+            $foundOneToClose = true;
+        }
+
+        return $foundOneToClose;
+    }
+
+    /**
+     * Ends a fiber's C-side park with the kill thrown in, so the loop can drop its references (research 49 H1).
+     * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
+     */
+    private static function releaseCPark(\Fiber $fiber): void
+    {
+        self::throwIntoCPark($fiber, new KilledException('fiber force-closed'));
+    }
+
+    /** @param \Fiber<mixed,mixed,mixed,mixed> $fiber */
+    private static function dropLoopReferencesTo(\Fiber $fiber): void
+    {
+        $fiberId = \spl_object_id($fiber);
+        unset(self::$parkedOn[$fiberId], self::$killPending[$fiberId]);
+        foreach (self::$waiting as $op => $waiter) {
+            if ($waiter === $fiber) {
+                unset(self::$waiting[$op]);
+            }
+        }
+        self::$idle = array_values(array_filter(self::$idle, static fn(\Fiber $idleFiber): bool => $idleFiber !== $fiber));
+        foreach (array_keys(self::$children) as $requestId) {
+            unset(self::$children[$requestId][$fiberId]);
+        }
+        foreach (self::$requestFibers as $requestId => $requestFiber) {
+            if ($requestFiber === $fiber) {
+                unset(self::$requestFibers[$requestId]);
+            }
+        }
+        self::$ready = array_values(array_filter(self::$ready, static fn(array $entry): bool => $entry[0] !== $fiber));
+        self::$pending = array_values(array_filter(self::$pending, static fn(array $entry): bool => $entry[0] !== $fiber));
+    }
+
+    /** Frees a force-closed fiber's self-reference cycle immediately, rather than on the loop's periodic GC schedule (research 49 H1/H2). */
+    private static function collectSelfReferencingFiberCycle(): void
+    {
+        gc_collect_cycles();
+    }
+
+    /** `IGNIS_ON_SWALLOWED_CANCEL=log`: one warn line per swallowed cancellation, then forgotten. */
+    private static function logFibersThatSwallowedTheirCancellation(): void
+    {
+        foreach (self::$logSwallowedPending as $fiberId => [$fiber, $requestId]) {
+            if ($fiber->isTerminated()) {
+                unset(self::$logSwallowedPending[$fiberId]);
+                continue;
+            }
+            if (!$fiber->isSuspended()) {
+                continue;
+            }
+            unset(self::$logSwallowedPending[$fiberId]);
+            error_log(\sprintf('Ignis\Loop: request %d swallowed its cancellation and parked again', $requestId));
         }
     }
 
@@ -1045,23 +1099,63 @@ final class Loop
         self::$deadlineOf[$requestId] = $op;
     }
 
-    /**
-     * Calls off a request's deadline timer: one wall-clock deadline per request is the contract, and
-     * a request that answered in time has no use for one.
-     *
-     * A timer nobody cancelled still fired, and then `cancelRequest()` ran for an id that was already
-     * answered — inflating `$cancelled` and `$cancelAgeUsMax`, the counters `/stats` reports. Worse,
-     * `ignis_inflight()` counted the pending op, and both `isIdle()` and `windingDown()` wait for that
-     * to reach zero: a graceful drain held for as long as the longest deadline anyone had armed.
-     * The map is cleared before the cancel, because the cancelled op completes under its own id.
-     */
+    /** ADR-0043 §7, L0: arms the same deadline machinery as `Ignis\deadline()` from `Recovery::fiberTimeoutFor($uri)`, unless that is 0 (off). */
+    private static function armFiberTimeout(int $requestId, string $uri): void
+    {
+        $milliseconds = Recovery::fiberTimeoutFor($uri);
+        if ($milliseconds <= 0) {
+            return;
+        }
+        $op = \ignis_submit_sleep($milliseconds);
+        self::$deadlines[$op] = $requestId;
+        self::$deadlineOf[$requestId] = $op;
+        self::$fiberTimeoutMilliseconds[$requestId] = $milliseconds;
+    }
+
+    /** Calls off a request's deadline timer. */
     private static function disarmDeadline(int $requestId): void
     {
+        unset(self::$fiberTimeoutMilliseconds[$requestId]);
         $op = self::$deadlineOf[$requestId] ?? null;
         if ($op === null) {
             return;
         }
         unset(self::$deadlineOf[$requestId], self::$deadlines[$op]);
         \ignis_cancel($op);
+    }
+
+    /** The park ceiling fired: the fiber still parked on the timer's op gets `DeadlineExceededException` naming its park. */
+    private static function expireParkTimer(int $timer): void
+    {
+        $op = self::$parkTimers[$timer];
+        unset(self::$parkTimers[$timer]);
+        $fiber = self::$waiting[$op] ?? null;
+        if ($fiber === null) {
+            return;
+        }
+        unset(self::$waiting[$op]);
+        ++self::$resumes;
+        self::throwAndAbsorb($fiber, new DeadlineExceededException(self::parkTimeoutMessage($fiber)));
+    }
+
+    /** @param \Fiber<mixed,mixed,mixed,mixed> $fiber */
+    private static function parkTimeoutMessage(\Fiber $fiber): string
+    {
+        $parkedAt = \ignis_fiber_where($fiber);
+
+        return $parkedAt === null
+            ? \sprintf('park timeout after %d ms', self::$parkTimeoutMilliseconds)
+            : \sprintf('park timeout after %d ms, parked at %s', self::$parkTimeoutMilliseconds, $parkedAt);
+    }
+
+    /** The L0 504 text, naming the park's file:line when the engine can say (ADR-0043 §7). */
+    private static function fiberTimeoutMessage(int $milliseconds, int $requestId): string
+    {
+        $fiber = self::$requestFibers[$requestId] ?? null;
+        $parkedAt = $fiber === null ? null : \ignis_fiber_where($fiber);
+
+        return $parkedAt === null
+            ? \sprintf('fiber timeout after %d ms', $milliseconds)
+            : \sprintf('fiber timeout after %d ms, parked at %s', $milliseconds, $parkedAt);
     }
 }

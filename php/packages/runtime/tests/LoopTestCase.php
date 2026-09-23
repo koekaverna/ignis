@@ -9,20 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * `Ignis\Loop` is entirely static and PHPUnit shares one process, so one test's leftovers are the
- * next test's starting state. Every static goes back to its declared default before and after each
- * test, read from the class itself (`getDefaultProperties()`) so a new field needs no change here.
- *
- * Two are then overridden on purpose:
- *
- * - `booted` is forced true, which stops `runUntil()` re-running `Loop::boot()` — and with it
- *   `gcInit()`, which calls `gc_disable()` on the whole process, and `budgetInit()`, which would
- *   read whatever `IGNIS_FIBER_BUDGET` the ambient environment happens to hold;
- * - `canPublishStats` is forced false, because only `boot()` ever asks whether
- *   `ignis_publish_stats()` exists and the answer here is no — leaving the declared default `true`
- *   would end every driven loop on an undefined function before its first poll.
- *
- * The reactor underneath is `tests/fake-reactor.php`, whose header states the bound: the E-suites
- * are the contract, this only exercises userland bookkeeping.
+ * next test's starting state. Every static goes back to its declared default before and after each.
  */
 abstract class LoopTestCase extends TestCase
 {
@@ -38,6 +25,10 @@ abstract class LoopTestCase extends TestCase
         FakeReactor::reset();
     }
 
+    /**
+     * Also frees any fiber a test left parked forever: resetting `Loop`'s statics drops its last
+     * external reference, and `gc_collect_cycles()` reclaims the cycle here rather than in a later test (ADR-0043 §7).
+     */
     protected static function resetLoop(): void
     {
         $class = new \ReflectionClass(Loop::class);
@@ -45,7 +36,7 @@ abstract class LoopTestCase extends TestCase
             $class->getProperty($name)->setValue(null, $default);
         }
         self::set('booted', true);
-        self::set('canPublishStats', false);
+        gc_collect_cycles();
     }
 
     protected static function set(string $property, mixed $value): void
@@ -63,10 +54,7 @@ abstract class LoopTestCase extends TestCase
         return (new \ReflectionMethod(Loop::class, $method))->invoke(null, ...$arguments);
     }
 
-    /**
-     * Runs the loop until the fake reactor has nothing left in flight, which is how it says "stop".
-     * Anything else — an unobserved rejection rethrown by `runUntil()`, say — comes straight out.
-     */
+    /** Runs the loop until the fake reactor has nothing left in flight, which is how it says "stop". */
     protected static function drive(): void
     {
         try {

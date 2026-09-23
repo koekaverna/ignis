@@ -101,9 +101,19 @@ pub fn stalled_threads(limit: Duration) -> (usize, usize) {
     match REGISTRY.get() {
         Some(r) => {
             let rs = r.reactors.lock_unpoisoned();
-            (rs.iter().filter(|x| x.pending_requests() > 0 && x.idle_in_php() > limit).count(), rs.len())
+            (rs.iter().filter(|x| x.pending_requests() > 0 && busy_for(x) > limit).count(), rs.len())
         }
         None => (0, 0),
+    }
+}
+
+/// How long the thread has been out of `ignis_poll`, from its scoreboard slot when it has one so a
+/// thread idling inside `poll` is not mistaken for stalled, else the reactor's own poll clock.
+fn busy_for(reactor: &Reactor) -> Duration {
+    match reactor.slot().and_then(crate::scoreboard::slot) {
+        Some(slot) if slot.state.load(Ordering::Acquire) == crate::scoreboard::STATE_IDLE => Duration::ZERO,
+        Some(slot) => Duration::from_nanos(crate::scoreboard::monotonic_ns().saturating_sub(slot.php_since_ns.load(Ordering::Relaxed))),
+        None => reactor.idle_in_php(),
     }
 }
 
@@ -157,6 +167,11 @@ pub async fn drain() -> (Duration, usize) {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+}
+
+/// A snapshot of the reactors registered for dispatch, for the ticker (ADR-0043 §4).
+pub fn reactors() -> Vec<Arc<Reactor>> {
+    REGISTRY.get().map(|r| r.reactors.lock_unpoisoned().clone()).unwrap_or_default()
 }
 
 /// Everything `/_ignis/metrics` sums over the registered threads, in one pass under one lock.
@@ -345,9 +360,13 @@ async fn serve_connection(
 fn health() -> Response<tonic::body::Body> {
     let (stalled, total) = stalled_threads(Duration::from_secs(1));
     let restarts = crate::RESTARTS.load(Ordering::Relaxed);
-    let ok = total > 0 && stalled < total && !is_draining();
+    let leaked = crate::watchdog::leaked_workers();
+    let unhealthy = crate::alerts::global().unhealthy_workers().len();
+    let blocked = crate::watchdog::blocked_workers();
+    let leaked_max = crate::recovery::Settings::global().leaked_workers_max;
+    let ok = total > 0 && stalled < total && !is_draining() && (leaked_max == 0 || leaked < leaked_max);
     let body = format!(
-        "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts}}}\n",
+        "{{\"status\":\"{}\",\"threads\":{total},\"stalled\":{stalled},\"restarts\":{restarts},\"blocked_workers\":{blocked},\"leaked_workers\":{leaked},\"unhealthy_workers\":{unhealthy}}}\n",
         if ok {
             "ok"
         } else if is_draining() {

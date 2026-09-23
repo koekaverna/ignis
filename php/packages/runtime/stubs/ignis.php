@@ -2,16 +2,7 @@
 
 declare(strict_types=1);
 
-/**
- * IDE/static-analysis stubs for the `ignis_*` functions the runtime registers
- * from Rust (crates/ignis/src/php/module.rs). These are never loaded by the
- * ignis binary itself — it defines the real functions before userland runs —
- * so every stub is guarded with function_exists() and just throws if somehow
- * reached under the real binary (BACKLOG.md H-7).
- *
- * Load via composer's autoload-dev (php/composer.json), or `require` this
- * file directly in your IDE/PHPStan/Psalm bootstrap.
- */
+/** IDE and PHPStan stubs for the `ignis_*` functions crates/ignis/src/php/module.rs registers; never loaded by the binary. */
 
 // --- core reactor primitives (ADR-0001/ADR-0002) ---
 
@@ -40,20 +31,6 @@ if (!function_exists('ignis_submit_sleep')) {
 if (!function_exists('ignis_poll')) {
     /**
      * ignis_poll(int $timeout_ms): array — id => payload; the runtime's single wait point (V-33).
-     *
-     * The payload is a tagged union with a closed set of shapes, written out here because the
-     * alternative is `mixed` and every read of it becoming an unchecked offset access. With the
-     * shapes declared, `match ($payload['kind'] ?? null)` narrows in the analyser at no runtime
-     * cost, which is what the truncated-protobuf class of defect comes from not having.
-     *
-     * The Rust side of each arm is `Outcome` in `crates/ignis/src/reactor.rs`:
-     *   int                                                    Slept (late µs) or Ready (1)
-     *   string                                                 Json, or a Blob with a body
-     *   null                                                   a Blob with none
-     *   array{kind:'error', message:string}                    Failed
-     *   array{kind:'cancel', age_us:int}                       Cancelled (ADR-0009)
-     *   array{method:string, uri:string, headers:array<string,string>, body:string}   Request
-     *
      * @return array<int, int|string|null|IgnisCompletion|IgnisRequest>
      */
     function ignis_poll(int $timeout_ms): array
@@ -72,9 +49,8 @@ if (!function_exists('ignis_inflight')) {
 
 if (!function_exists('ignis_stats')) {
     /**
-     * ignis_stats(): array — [threads, stalled, restarts] (ADR-0012, V-17).
-     *
-     * @return array{threads: int, stalled: int, restarts: int}
+     * ignis_stats(): array — worker and recovery counters.
+     * @return array{threads: int, stalled: int, restarts: int, killed: int, blocking_calls: int, leaked_workers: int, blocked_workers: int, alerts_dropped: int}
      */
     function ignis_stats(): array
     {
@@ -93,10 +69,6 @@ if (!function_exists('ignis_serve')) {
 if (!function_exists('ignis_respond')) {
     /**
      * ignis_respond(int $id, int $status, array $headers, string $body): bool (ADR-0002/ADR-0003, V-5).
-     *
-     * A value may be a list so one name can carry several headers -- Set-Cookie is the RFC 7230
-     * exception that cannot be comma-joined (S1-COOKIES).
-     *
      * @param array<string, string|list<string>> $headers
      */
     function ignis_respond(int $id, int $status, array $headers, string $body): bool
@@ -110,7 +82,6 @@ if (!function_exists('ignis_respond')) {
 if (!function_exists('ignis_watch')) {
     /**
      * ignis_watch(resource $stream, int $mode): int — one-shot readiness watch, mode 1=read 2=write (ADR-0008, V-23 addendum).
-     *
      * @param resource $stream
      */
     function ignis_watch($stream, int $mode): int
@@ -130,7 +101,6 @@ if (!function_exists('ignis_cancel')) {
 if (!function_exists('ignis_cancel_parked_any')) {
     /**
      * ignis_cancel_parked_any(\Fiber $fiber, \Throwable $exception): bool — resume a C-parked fiber by throwing (ADR-0009, V-14/V-30).
-     *
      * @param \Fiber<mixed, mixed, mixed, mixed> $fiber
      */
     function ignis_cancel_parked_any(\Fiber $fiber, \Throwable $exception): bool
@@ -144,7 +114,6 @@ if (!function_exists('ignis_cancel_parked_any')) {
 if (!function_exists('ignis_set_superglobals')) {
     /**
      * ignis_set_superglobals(array $server, array $get, array $post, array $cookie): void (ADR-0006, V-11).
-     *
      * @param array<string, mixed> $server
      * @param array<string, mixed> $get
      * @param array<string, mixed> $post
@@ -161,9 +130,7 @@ if (!function_exists('ignis_set_superglobals')) {
 if (!function_exists('ignis_park_inventory')) {
     /**
      * ignis_park_inventory(): array — every library observed making an interposed call in this
-     * process, the symbols it called, and whether the policy let each one park. A `false` blocked
-     * the OS thread. Shape: ['libphp.so' => ['read' => true], 'redis.so' => ['recv' => false]].
-     *
+     * process, the symbols it called, and whether the policy let each one park. A `false` blocked.
      * @return array<string, array<string, bool>>
      */
     function ignis_park_inventory(): array
@@ -202,8 +169,7 @@ if (!function_exists('ignis_clear_request_info')) {
 if (!function_exists('ignis_scope_seal')) {
     /**
      * ignis_scope_seal(object $instance): void — what this fiber currently holds for $instance
-     * becomes row zero, the values every other scope inherits. Call it again after anything that
-     * configures the object past its constructor; sealing twice is sound.
+     * becomes row zero, the values every other scope inherits. Call it again after anything that.
      */
     function ignis_scope_seal(object $instance): void
     {
@@ -259,7 +225,6 @@ if (!function_exists('ignis_watch_files')) {
     /**
      * ignis_watch_files(array $files): int — add loaded files to the watcher; returns how many
      * directories became watched (research 40).
-     *
      * @param list<string> $files
      */
     function ignis_watch_files(array $files): int
@@ -397,7 +362,6 @@ if (!function_exists('ignis_capture_reset')) {
 if (!function_exists('ignis_stream_bind')) {
     /**
      * ignis_stream_bind(int $id, int $status, array $headers): bool — this fiber's output becomes the body of response $id.
-     *
      * @param array<string, string|list<string>> $headers
      */
     function ignis_stream_bind(int $id, int $status, array $headers): bool
@@ -409,7 +373,6 @@ if (!function_exists('ignis_stream_bind')) {
 if (!function_exists('ignis_stream_unbind')) {
     /**
      * ignis_stream_unbind(): array — stops forwarding and reports [tail, started].
-     *
      * @return array{0: string, 1: bool}
      */
     function ignis_stream_unbind(): array
@@ -445,7 +408,6 @@ if (!function_exists('ignis_respond_end')) {
 if (!function_exists('ignis_publish_stats')) {
     /**
      * ignis_publish_stats(array $stats): void — the PHP loop hands its own counters to the runtime for /_ignis/metrics (M4-4).
-     *
      * @param array<string, int> $stats
      */
     function ignis_publish_stats(array $stats): void
@@ -459,5 +421,72 @@ if (!function_exists('ignis_temporal_heartbeat')) {
     function ignis_temporal_heartbeat(int $worker, string $json): bool
     {
         throw new \LogicException('stub: only the ignis binary (temporal feature) defines ' . __FUNCTION__);
+    }
+}
+
+// --- stall detection, stuck-fiber recovery and blocking alerts (ADR-0043) ---
+
+if (!function_exists('ignis_fiber_request')) {
+    /** ignis_fiber_request(int $id): void — the request the current fiber serves, 0 = none. */
+    function ignis_fiber_request(int $id): void
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_fiber_kill_pending')) {
+    /**
+     * ignis_fiber_kill_pending(Fiber $fiber, bool $on): bool — marks $fiber for force-close, refusing it any further C-side park.
+     * @param \Fiber<mixed, mixed, mixed, mixed> $fiber
+     */
+    function ignis_fiber_kill_pending(\Fiber $fiber, bool $on): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_allow_blocking')) {
+    /** ignis_allow_blocking(bool $on): bool — sets the current fiber's flag, returns the previous value. */
+    function ignis_allow_blocking(bool $on): bool
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_fiber_where')) {
+    /**
+     * ignis_fiber_where(Fiber $fiber): ?string — "file:line" of a suspended fiber's suspension point, null otherwise.
+     * @param \Fiber<mixed, mixed, mixed, mixed> $fiber
+     */
+    function ignis_fiber_where(\Fiber $fiber): ?string
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_blocking_sequence')) {
+    /** ignis_blocking_sequence(): int — a monotonically increasing sequence of recorded blocking calls, process-wide. */
+    function ignis_blocking_sequence(): int
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_blocking_records')) {
+    /**
+     * ignis_blocking_records(int $since): array — this thread's blocking records newer than $since.
+     * @return list<array{sequence: int, site: string, duration_us: int, errno: int, request: int, uri: string, allowed: bool, trace: list<string>}>
+     */
+    function ignis_blocking_records(int $since): array
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
+    }
+}
+
+if (!function_exists('ignis_blocking_report')) {
+    /** ignis_blocking_report(): string — the JSON blocking report. */
+    function ignis_blocking_report(): string
+    {
+        throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
     }
 }

@@ -19,7 +19,10 @@ pub mod park {
         Default::default()
     }
 }
+pub mod detector;
 pub mod embed;
+pub mod fibermeta;
+pub mod kill;
 pub mod module;
 pub mod output;
 pub mod post;
