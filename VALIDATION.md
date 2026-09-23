@@ -6454,6 +6454,26 @@ and the audit **exits 1** with `NOT in …: libphp.so:read@/stuck`; with the one
 file and with no route keys in the script it prints the new `WARNING: no route keys found …` and
 audits `/` alone. The Symfony-skeleton half of S-2 and S-3 still waits for a box with composer.
 
+**The chaos suite by hand (owner, 2026-09-23, `SUITES=symfony-http-foundation bench/e15-chaos.sh`
+on this branch's release binary; doctrine's installs skipped):** install from source **~5 min**,
+then each mode **17–18 s** for 1 881 tests:
+
+```
+stock                 tests=1881 failures=0 errors=61 skipped=117  secs=17
+ignis                 tests=1881 failures=0 errors=61 skipped=117  secs=18  chaosYields=0      fibers=1
+chaos-seed-1          tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=14172  noiseTicks=28503 resumes=42681
+chaos-seed-20260916   tests=1881 failures=0 errors=61 skipped=117  secs=17  chaosYields=14509  noiseTicks=28845 resumes=43360
+new under ignis vs stock : (none)      new under chaos vs stock : (none)
+```
+
+The 61 errors are the same tests in every mode, the stock CLI included (the build has no `ext-dom`
+and the functional tests want a `PHP_BINARY -S`). So the gate's own cost is the install, not the
+run: with the vendor tree cached, `ignis` plus one chaos seed is under a minute. What this run does
+**not** show is S-FIBER-TIMEOUT's acceptance (1): the L0 ceiling is armed per request in
+`dispatchRequest()`, and the chaos entry point runs PHPUnit inside one `Ignis\async` fiber with no
+request, so a test that parks that fiber for ever still hangs the run until the script's own
+`timeout 900`. The ceiling has to reach a spawned fiber before the job returns to `ci.yml`.
+
 **Unit level:** `cargo nextest run --workspace` **102 passed** (one new: an abandoned reactor
 refuses HTTP and gRPC admission alike, the drain and the refusal under one lock); clippy, fmt, the
 off build clean. `php -l` on every touched PHP file; the PHP suites run in CI's `php-unit` job (no
