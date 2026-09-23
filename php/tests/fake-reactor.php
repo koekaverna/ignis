@@ -238,6 +238,54 @@ namespace {
         }
     }
 
+    if (!function_exists('ignis_fiber_request')) {
+        function ignis_fiber_request(int $id): void {}
+    }
+
+    if (!function_exists('ignis_fiber_kill_pending')) {
+        /** @param \Fiber<mixed, mixed, mixed, mixed> $fiber */
+        function ignis_fiber_kill_pending(\Fiber $fiber, bool $on): bool
+        {
+            return true;
+        }
+    }
+
+    if (!function_exists('ignis_fiber_where')) {
+        /** @param \Fiber<mixed, mixed, mixed, mixed> $fiber */
+        function ignis_fiber_where(\Fiber $fiber): ?string
+        {
+            return null;
+        }
+    }
+
+    if (!function_exists('ignis_publish_stats')) {
+        /** @param array<string, int> $stats */
+        function ignis_publish_stats(array $stats): void {}
+    }
+
+    if (!function_exists('ignis_watch_generation')) {
+        function ignis_watch_generation(): int
+        {
+            return 0;
+        }
+    }
+
+    if (!function_exists('ignis_watch_files')) {
+        /** @param list<string> $files */
+        function ignis_watch_files(array $files): int
+        {
+            return 0;
+        }
+    }
+
+    if (!function_exists('ignis_watch_end_reload')) {
+        function ignis_watch_end_reload(): void {}
+    }
+
+    if (!function_exists('ignis_stop_accepting')) {
+        function ignis_stop_accepting(): void {}
+    }
+
     if (!function_exists('ignis_respond')) {
         /** @param array<string, string> $headers */
         function ignis_respond(int $id, int $status, array $headers, string $body): bool

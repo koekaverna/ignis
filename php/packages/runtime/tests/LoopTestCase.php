@@ -12,14 +12,9 @@ use PHPUnit\Framework\TestCase;
  * next test's starting state. Every static goes back to its declared default before and after each
  * test, read from the class itself (`getDefaultProperties()`) so a new field needs no change here.
  *
- * Two are then overridden on purpose:
- *
- * - `booted` is forced true, which stops `runUntil()` re-running `Loop::boot()` — and with it
- *   `gcInit()`, which calls `gc_disable()` on the whole process, and `budgetInit()`, which would
- *   read whatever `IGNIS_FIBER_BUDGET` the ambient environment happens to hold;
- * - `canPublishStats` is forced false, because only `boot()` ever asks whether
- *   `ignis_publish_stats()` exists and the answer here is no — leaving the declared default `true`
- *   would end every driven loop on an undefined function before its first poll.
+ * One is then overridden on purpose: `booted` is forced true, which stops `runUntil()` re-running
+ * `Loop::boot()` — and with it `gcInit()`, which calls `gc_disable()` on the whole process, and
+ * `budgetInit()`, which would read whatever `IGNIS_FIBER_BUDGET` the ambient environment holds.
  *
  * The reactor underneath is `tests/fake-reactor.php`, whose header states the bound: the E-suites
  * are the contract, this only exercises userland bookkeeping.
@@ -49,7 +44,6 @@ abstract class LoopTestCase extends TestCase
             $class->getProperty($name)->setValue(null, $default);
         }
         self::set('booted', true);
-        self::set('canPublishStats', false);
         gc_collect_cycles();
     }
 

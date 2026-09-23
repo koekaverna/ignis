@@ -69,8 +69,6 @@ final class Loop
     public static int $inflightRequests = 0;
     /** Requests this loop has finished answering (M4-4). */
     public static int $handled = 0;
-    /** False when the runtime is too old to have ignis_publish_stats() (a script run, a test). */
-    private static bool $canPublishStats = true;
     public static int $queuedPeak = 0;
     public static int $rejected = 0;
     public static int $admittedAfterQueue = 0;
@@ -153,9 +151,7 @@ final class Loop
         $self = self::currentFiber();
         for (;;) {
             [$function, $arguments, $future, $requestId] = $job;
-            if (\function_exists('ignis_fiber_request')) {
-                \ignis_fiber_request($requestId ?? 0);
-            }
+            \ignis_fiber_request($requestId ?? 0);
             try {
                 $future->resolve($function(...$arguments));
             } catch (\Throwable $e) {
@@ -347,11 +343,10 @@ final class Loop
         Chaos::init();
         self::gcInit();
         self::budgetInit();
-        self::$canPublishStats = \function_exists('ignis_publish_stats');
         self::$forceCloseOnSwallowedCancel = \trim(Env::text('IGNIS_ON_SWALLOWED_CANCEL', 'force-close')) !== 'log';
         // boot() runs on the first turn of every mode, including classic `listen()`, which never
         // calls serve() and would otherwise watch nothing at all.
-        self::$watching = Env::flag('IGNIS_WATCH') && \function_exists('ignis_watch_generation');
+        self::$watching = Env::flag('IGNIS_WATCH');
         self::$watchGeneration = self::$watching ? \ignis_watch_generation() : 0;
         if (self::$watching) {
             \ignis_watch_end_reload();   // this incarnation is up; whoever is waiting to reload may go
@@ -432,9 +427,6 @@ final class Loop
      */
     private static function publishStats(): void
     {
-        if (!self::$canPublishStats) {
-            return;
-        }
         \ignis_publish_stats([
             'budget' => self::$fiberBudget,
             'queue_depth' => self::$queueDepth,
@@ -648,7 +640,7 @@ final class Loop
      */
     private static function watchLoadedFiles(): void
     {
-        if (!self::$watching || !\function_exists('ignis_watch_files')) {
+        if (!self::$watching) {
             return;
         }
         $new = [];
@@ -679,9 +671,7 @@ final class Loop
         }
         if (!self::$leftDispatch) {
             self::$leftDispatch = true;
-            if (\function_exists('ignis_stop_accepting')) {
-                \ignis_stop_accepting();
-            }
+            \ignis_stop_accepting();
         }
 
         return \ignis_inflight() === 0          // the runtime's count, which includes a request delivered
@@ -905,12 +895,8 @@ final class Loop
     {
         self::$requestFibers[$id] = self::currentFiber();
         Scope::set('ignis.request', $id);
-        if (\function_exists('ignis_fiber_request')) {
-            \ignis_fiber_request($id);
-        }
-        if (\function_exists('ignis_set_superglobals')) {
-            \ignis_set_superglobals(...$request->superglobals());
-        }
+        \ignis_fiber_request($id);
+        \ignis_set_superglobals(...$request->superglobals());
         InputStream::register();
         InputStream::setBody($request->body);
         // And where the SAPI keeps it, which is a different place and the one PHP 8.4's
@@ -943,9 +929,7 @@ final class Loop
     {
         self::disarmDeadline($id);
         unset(self::$requestFibers[$id], self::$children[$id]);
-        if (\function_exists('ignis_fiber_request')) {
-            \ignis_fiber_request(0);
-        }
+        \ignis_fiber_request(0);
         Scope::clear();
         \ignis_clear_request_info();
         Output::reset();
@@ -1086,9 +1070,6 @@ final class Loop
      */
     private static function cancelCPark(\Fiber $fiber, \Throwable $exception, ?int $requestId = null): void
     {
-        if (!\function_exists('ignis_cancel_parked_any')) {
-            return;
-        }
         self::throwIntoCPark($fiber, $exception);
         self::watchForSwallowedCancellation($fiber, $requestId);
     }
@@ -1124,9 +1105,7 @@ final class Loop
         $fiberId = \spl_object_id($fiber);
         if (self::$forceCloseOnSwallowedCancel) {
             self::$killPending[$fiberId] = $fiber;
-            if (\function_exists('ignis_fiber_kill_pending')) {
-                \ignis_fiber_kill_pending($fiber, true);
-            }
+            \ignis_fiber_kill_pending($fiber, true);
             return;
         }
         self::$logSwallowedPending[$fiberId] = [$fiber, $requestId ?? 0];
@@ -1190,9 +1169,6 @@ final class Loop
      */
     private static function releaseCPark(\Fiber $fiber): void
     {
-        if (!\function_exists('ignis_cancel_parked_any')) {
-            return;
-        }
         self::throwIntoCPark($fiber, new KilledException('fiber force-closed'));
     }
 
@@ -1298,7 +1274,7 @@ final class Loop
     private static function fiberTimeoutMessage(int $milliseconds, int $requestId): string
     {
         $fiber = self::$requestFibers[$requestId] ?? null;
-        $parkedAt = ($fiber !== null && \function_exists('ignis_fiber_where')) ? \ignis_fiber_where($fiber) : null;
+        $parkedAt = $fiber === null ? null : \ignis_fiber_where($fiber);
 
         return $parkedAt === null
             ? \sprintf('fiber timeout after %d ms', $milliseconds)
