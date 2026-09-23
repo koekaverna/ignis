@@ -1,14 +1,9 @@
 <?php
 
 /**
- * Research 50 §A `flock-hold.php`: a lock held across a yield (R-SESS shape, V-58 regression).
- *
- * Fiber A takes `flock(LOCK_EX)`, then `Ignis\sleep()`s while holding it; fiber B asks for the same
- * lock while A holds it. `flock` is one of the interposed calls (`libphp:flock` in the default
- * policy), so B's wait becomes `LOCK_NB` plus a parked retry -- the worker keeps serving `/hello`
- * for the whole hold. This must produce no `stall` and no `blocking_call` line (S-13); with
- * `IGNIS_NO_UNIVERSAL_PARK=1` the same file becomes the control, a genuine blocking `flock` line
- * and a stall.
+ * Research 50 §A `flock-hold.php`: S-13, a lock held across a yield (R-SESS shape, V-58 regression).
+ * Fiber B's `flock` wait becomes a parked retry, so the worker keeps serving `/hello`; expects no
+ * `stall` and no `blocking_call` line (the control is the same file under `IGNIS_NO_UNIVERSAL_PARK=1`).
  */
 
 declare(strict_types=1);

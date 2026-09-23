@@ -1,14 +1,8 @@
 <?php
 
 /**
- * Research 50 §A `finally-io.php`: `finally` does I/O during a force-close.
- *
- * The `try` sleeps long enough for a client disconnect to reach it; the `finally` then does I/O of
- * its own. S-6 expects that I/O to get `FiberError`/`ECANCELED` immediately -- it must never park
- * (the fiber is already being torn down) and never block the thread for the connect timeout. The
- * blackhole target is `stallFixtureBlackhole()` (see `common.php`) for the same reason
- * `block-curl.php` uses it: the RFC 1918 address research 50 names is intercepted by this box's
- * sandbox and answers instantly instead of blocking.
+ * Research 50 §A `finally-io.php`: S-6, `finally` does I/O during a force-close.
+ * That I/O must get `FiberError`/`ECANCELED` immediately, never park or block the thread.
  */
 
 declare(strict_types=1);

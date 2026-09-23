@@ -1,10 +1,9 @@
 <?php
 
 /**
- * Research 50 §A `sqlite.php`: blocking forward inside an extension under `block` -- the
- * documented "cannot park" case (MVP scope, ADR-0043 §9). A `WITH RECURSIVE` in-memory query
- * generating 6,000,000 rows takes 2.2 s on this box (measured standalone, 2026-09-22), the "~2 s"
- * research 50 asks for. `ext-sqlite3` is loaded here (`php -m` confirms `sqlite3`).
+ * Research 50 §A `sqlite.php`: blocking forward inside an extension under `block`, the documented
+ * "cannot park" case (MVP scope, ADR-0043 §9). Measured: a 6,000,000-row `WITH RECURSIVE` query
+ * takes 2.2s, the "~2s" research 50 asks for.
  */
 
 declare(strict_types=1);

@@ -1,14 +1,8 @@
 <?php
 
 /**
- * Research 50 §A `file-read.php`: blocking forward on a regular file.
- *
- * `/dev/zero` is a character device, not a regular file, but it shares the property the scenario
- * needs: it can never be registered with `epoll` (research 30 group (d)), so the interposer's read
- * is always "ready" and the call is forwarded rather than parked -- it still blocks the thread for
- * as long as the read takes. A 1 GiB read of it takes 0.6 s on this box (measured with the loop
- * below run standalone, 2026-09-22), comfortably over the ">100 ms" research 50 asks for, and
- * needs no `dd`-throttled loop device or scratch file on disk.
+ * Research 50 §A `file-read.php`: blocking forward on a regular file (`/dev/zero`, never `epoll`-ready).
+ * Measured: a 1 GiB read takes 0.6s on this box, comfortably over the ">100ms" research 50 asks for.
  */
 
 declare(strict_types=1);

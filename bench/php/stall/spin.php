@@ -1,17 +1,9 @@
 <?php
 
 /**
- * Research 50 §A `spin.php`: Running PHP (VM), no suspension point.
- *
- * `while (true) { $i++; }` never calls into the interpreter's I/O hooks, so it is only visible to
- * the ticker's `/proc` classification (running, `interrupt_acks` advancing once L3 delivers a
- * signal) -- S-1 (detection), S-7 (L3 kill), S-9 (classification).
- *
- * `?jit=1` on `/stuck` is a marker only: the loop below does not change, but running this same
- * file with `IGNIS_PHP_INI` pointing at an ini that sets `opcache.jit=tracing` and
- * `opcache.jit_buffer_size` is the "under JIT" arm of S-7/S-9, because a JIT-compiled loop still
- * has to honour `zend_interrupt_function` at its own back-edge checks -- the fixture does not need
- * two code paths, only two ways of starting it.
+ * Research 50 §A `spin.php`: S-1/S-7/S-9, running PHP (VM) with no suspension point.
+ * Only visible via the ticker's `/proc` classification and L3's signal-delivered kill; `?jit=1`
+ * runs the same loop under JIT via `IGNIS_PHP_INI`, the same file serving both arms.
  */
 
 declare(strict_types=1);
