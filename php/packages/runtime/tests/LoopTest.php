@@ -712,10 +712,8 @@ final class LoopTest extends LoopTestCase
     // ---- ADR-0043 §7, L2: a swallowed cancellation is force-closed -------------------------
 
     /**
-     * `swallow-cancel.php`'s shape (research 50 S-6): a fiber catches its cancellation and parks
-     * again instead of unwinding. The default policy force-closes it at that next park: its own
-     * `finally` runs, the loop answers 504, and the fiber is actually freed — proving the reference
-     * cycle `poolBody()`'s own `$self` creates was collected, not merely dereferenced.
+     * `swallow-cancel.php`'s shape (research 50 S-6): a fiber that parks again instead of
+     * unwinding after a cancellation is force-closed at that next park, and its `finally` still runs.
      */
     public function testASwallowedCancellationIsForceClosedAtItsNextPark(): void
     {
@@ -790,9 +788,8 @@ final class LoopTest extends LoopTestCase
     // ---- ADR-0043 §7, L2/L3: poolBody() wakes an awaiter of a force-closed job -------------
 
     /**
-     * A force-close reached through some path other than a swallowed cancellation — L3's signal
-     * in the real binary, simulated here by marking a plain `Ignis\async()` job's fiber directly —
-     * must still settle its Future, or whoever awaits it hangs forever.
+     * A force-close reached through any path other than a swallowed cancellation must still
+     * settle its Future, or whoever awaits it hangs forever.
      */
     public function testAForceClosedJobRejectsItsFutureWithKilledExceptionInsteadOfHangingItsAwaiter(): void
     {
@@ -853,8 +850,7 @@ final class LoopTest extends LoopTestCase
 
     /**
      * Runs $body with each named environment variable set (or, for `false`, unset), restoring
-     * every one of them afterwards. `Recovery::fiberTimeoutFor()` reads the real environment on
-     * every call rather than a value `boot()` cached, so this is how a test controls it.
+     * every one of them afterward.
      * @param array<string, string|false> $variables
      */
     private static function withEnv(array $variables, callable $body): void

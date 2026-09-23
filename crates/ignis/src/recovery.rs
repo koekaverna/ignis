@@ -1,7 +1,5 @@
-//! ADR-0043 §8: the recovery, blocking-detector and alert settings, resolved once from the
-//! environment with the precedence `config.rs` establishes — an explicit `IGNIS_*` variable beats
-//! the profile, the profile beats the product default. `config.rs` bridges `ignis.toml` into those
-//! variables, so this is the one place both the Rust runtime and the PHP loop read the same answer.
+//! ADR-0043 §8: recovery, blocking-detector and alert settings, resolved once from the environment
+//! (`IGNIS_*` beats profile beats default) so the Rust runtime and the PHP loop agree on one answer.
 use std::sync::OnceLock;
 use std::time::Duration;
 

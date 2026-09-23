@@ -6,9 +6,7 @@ namespace Ignis;
 
 /**
  * ADR-0043 §8: the recovery settings the PHP loop needs, resolved with the same precedence as
- * `crates/ignis/src/recovery.rs` — an explicit `IGNIS_*` variable beats the profile default, the
- * profile beats the product default. Only `fiber_timeout_ms` (L0) matters to PHP: everything else
- * in `[recovery]` and `[recovery.routes.*]` is enforced by the Rust ticker.
+ * `crates/ignis/src/recovery.rs`. Only `fiber_timeout_ms` (L0) matters to PHP.
  */
 final class Recovery
 {
@@ -27,12 +25,8 @@ final class Recovery
     }
 
     /**
-     * `IGNIS_RECOVERY_ROUTES`, the mirror of `recovery::parse_routes()`: comma separated
-     * `prefix=key:value;key:value` entries, longest prefix first so the caller can take the first
-     * match. Every route is kept, as in Rust, so a prefix that sets only Rust-side keys still wins
-     * the match and inherits the global timeout (null) instead of letting a shorter prefix's
-     * `fiber_timeout_ms` apply to it. Only that key is read, because it is all PHP enforces.
-     *
+     * `IGNIS_RECOVERY_ROUTES`, the mirror of `recovery::parse_routes()`: comma-separated
+     * `prefix=key:value;key:value` entries, longest prefix first.
      * @return list<array{0: string, 1: int|null}>
      */
     public static function parseRoutes(string $text): array
@@ -96,10 +90,8 @@ final class Recovery
     }
 
     /**
-     * The L0 ceiling for a request against `$uri`: an explicit `IGNIS_FIBER_TIMEOUT_MS`, else the
-     * active profile's default, then the longest matching `IGNIS_RECOVERY_ROUTES` prefix overrides
-     * either one when it sets `fiber_timeout_ms` itself. 0 means off; an invalid value is ignored
-     * the way Rust ignores it.
+     * The L0 ceiling for a request against `$uri`: `IGNIS_FIBER_TIMEOUT_MS`, else the profile
+     * default, overridden by the longest matching `IGNIS_RECOVERY_ROUTES` prefix. 0 means off.
      */
     public static function fiberTimeoutFor(string $uri): int
     {

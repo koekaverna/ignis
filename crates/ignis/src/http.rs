@@ -107,9 +107,8 @@ pub fn stalled_threads(limit: Duration) -> (usize, usize) {
     }
 }
 
-/// How long the thread has been out of `ignis_poll`: from its scoreboard slot when it has one
-/// (a thread parked inside `poll` with requests in flight is idle, not stalled — the old
-/// poll-timestamp rule counted it), else the reactor's own poll clock.
+/// How long the thread has been out of `ignis_poll`, from its scoreboard slot when it has one so a
+/// thread idling inside `poll` is not mistaken for stalled, else the reactor's own poll clock.
 fn busy_for(reactor: &Reactor) -> Duration {
     match reactor.slot().and_then(crate::scoreboard::slot) {
         Some(slot) if slot.state.load(Ordering::Acquire) == crate::scoreboard::STATE_IDLE => Duration::ZERO,

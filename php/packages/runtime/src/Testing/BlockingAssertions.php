@@ -7,10 +7,8 @@ namespace Ignis\Testing;
 use PHPUnit\Framework\Assert;
 
 /**
- * ADR-0043 §5/research 50 S-3: unit-level blocking audit for a PHPUnit test case. Runs a callable
- * on the loop and fails with the site list when it made a blocking call the detector did not
- * allow — `file_get_contents('/etc/hostname')` fails, `file_get_contents('http://…')` (parks)
- * passes. A no-op, still running $function, when the binary has no detector.
+ * ADR-0043 §5/research 50 S-3: unit-level blocking audit for a PHPUnit test case — fails with the
+ * site list when a run made a blocking call the detector did not allow. A no-op without the binary.
  */
 trait BlockingAssertions
 {

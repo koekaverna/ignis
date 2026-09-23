@@ -5,16 +5,14 @@ declare(strict_types=1);
 namespace Ignis\Testing;
 
 /**
- * What `BlockingAssertions` and `DetectsBlocking` share (ADR-0043 §5, research 50 S-3): running
- * code where the detector can see it, reading its records back and printing them. One trait, so a
- * test case may use both without a method collision.
+ * What `BlockingAssertions` and `DetectsBlocking` share (ADR-0043 §5, research 50 S-3), as one
+ * trait so a test case can use both without a method collision.
  */
 trait BlockingAudit
 {
     /**
-     * Runs $function where the detector records blocking calls — inside a fiber on the loop — and
-     * returns its result. The detector's gate is the fiber: a call made on the test's own context
-     * is never a record. Without the binary the callable simply runs.
+     * Runs $function inside a fiber on the loop, where the detector can record its blocking calls,
+     * and returns its result. Without the binary the callable simply runs.
      */
     protected function ignisAudited(callable $function): mixed
     {

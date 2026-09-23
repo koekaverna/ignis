@@ -1,10 +1,5 @@
-//! ADR-0043 §4 and §7: the ticker. Every `watch_tick` it reads every registered worker's
-//! scoreboard slot, turns the age of the current stall episode into `stall` events by the route's
-//! thresholds, classifies the stuck worker from `/proc`, and escalates: a kill delivered by signal
-//! (L3/L4, `php/kill.rs`), then abandonment (L5) — the slot is marked, the reactor leaves dispatch
-//! with its in-flight requests failed fast (E12'), the supervisor spawns a replacement, the thread
-//! is leaked and counted. It also closes the alert module's windows once a second and writes the
-//! blocking report on `SIGUSR2`. Runs on tokio; never touches PHP memory.
+//! ADR-0043 §4/§7: the stall watchdog ticker — ages each worker's scoreboard slot into warn, kill
+//! (L3/L4) and abandon (L5) events, and runs on tokio, so it never touches PHP memory.
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

@@ -72,7 +72,7 @@ if (!function_exists('ignis_inflight')) {
 
 if (!function_exists('ignis_stats')) {
     /**
-     * ignis_stats(): array — worker and recovery counters (ADR-0012, V-17; ADR-0043 §6/§8).
+     * ignis_stats(): array — worker and recovery counters.
      *
      * @return array{threads: int, stalled: int, restarts: int, killed: int, blocking_calls: int, leaked_workers: int, blocked_workers: int, alerts_dropped: int}
      */
@@ -465,7 +465,7 @@ if (!function_exists('ignis_temporal_heartbeat')) {
 // --- stall detection, stuck-fiber recovery and blocking alerts (ADR-0043) ---
 
 if (!function_exists('ignis_fiber_request')) {
-    /** ignis_fiber_request(int $id): void — the request the current fiber serves, 0 = none (ADR-0043 §3). */
+    /** ignis_fiber_request(int $id): void — the request the current fiber serves, 0 = none. */
     function ignis_fiber_request(int $id): void
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -474,10 +474,7 @@ if (!function_exists('ignis_fiber_request')) {
 
 if (!function_exists('ignis_fiber_kill_pending')) {
     /**
-     * ignis_fiber_kill_pending(Fiber $fiber, bool $on): bool — marks $fiber for force-close: from
-     * then on the C side refuses it any park (a C-parked call returns ECANCELED to the library).
-     * Returns false when $fiber has no metadata (ADR-0043 §7, L2/L4).
-     *
+     * ignis_fiber_kill_pending(Fiber $fiber, bool $on): bool — marks $fiber for force-close, refusing it any further C-side park.
      * @param \Fiber<mixed, mixed, mixed, mixed> $fiber
      */
     function ignis_fiber_kill_pending(\Fiber $fiber, bool $on): bool
@@ -487,7 +484,7 @@ if (!function_exists('ignis_fiber_kill_pending')) {
 }
 
 if (!function_exists('ignis_allow_blocking')) {
-    /** ignis_allow_blocking(bool $on): bool — sets the current fiber's flag, returns the previous value (ADR-0043 §5, Ignis\allowBlocking()). */
+    /** ignis_allow_blocking(bool $on): bool — sets the current fiber's flag, returns the previous value. */
     function ignis_allow_blocking(bool $on): bool
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -496,9 +493,7 @@ if (!function_exists('ignis_allow_blocking')) {
 
 if (!function_exists('ignis_fiber_where')) {
     /**
-     * ignis_fiber_where(Fiber $fiber): ?string — "file:line" of a SUSPENDED fiber's suspension
-     * point, null otherwise (ADR-0043 §7, L0's 504 body).
-     *
+     * ignis_fiber_where(Fiber $fiber): ?string — "file:line" of a suspended fiber's suspension point, null otherwise.
      * @param \Fiber<mixed, mixed, mixed, mixed> $fiber
      */
     function ignis_fiber_where(\Fiber $fiber): ?string
@@ -508,7 +503,7 @@ if (!function_exists('ignis_fiber_where')) {
 }
 
 if (!function_exists('ignis_blocking_sequence')) {
-    /** ignis_blocking_sequence(): int — a monotonically increasing sequence of recorded blocking calls, process-wide (ADR-0043 §5). */
+    /** ignis_blocking_sequence(): int — a monotonically increasing sequence of recorded blocking calls, process-wide. */
     function ignis_blocking_sequence(): int
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);
@@ -517,9 +512,7 @@ if (!function_exists('ignis_blocking_sequence')) {
 
 if (!function_exists('ignis_blocking_records')) {
     /**
-     * ignis_blocking_records(int $since): array — this thread's blocking records newer than
-     * $since (ADR-0043 §5, Ignis\Testing).
-     *
+     * ignis_blocking_records(int $since): array — this thread's blocking records newer than $since.
      * @return list<array{sequence: int, site: string, duration_us: int, errno: int, request: int, uri: string, allowed: bool, trace: list<string>}>
      */
     function ignis_blocking_records(int $since): array
@@ -529,7 +522,7 @@ if (!function_exists('ignis_blocking_records')) {
 }
 
 if (!function_exists('ignis_blocking_report')) {
-    /** ignis_blocking_report(): string — the JSON blocking report (ADR-0043 §5). */
+    /** ignis_blocking_report(): string — the JSON blocking report. */
     function ignis_blocking_report(): string
     {
         throw new \LogicException('stub: only the ignis binary defines ' . __FUNCTION__);

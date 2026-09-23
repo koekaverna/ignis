@@ -95,9 +95,8 @@ function stop(): void
 }
 
 /**
- * Marks the current fiber's blocking calls as accepted for the duration of $function (ADR-0043
- * §5): the detector still counts and reports them, but at info instead of failing a strict-mode
- * test or a `Ignis\Testing` audit. Runs $function unguarded when the binary has no detector.
+ * Marks the current fiber's blocking calls as accepted for $function (ADR-0043 §5): still
+ * counted and reported, but at info instead of failing a strict-mode test or audit.
  */
 function allowBlocking(callable $function): mixed
 {

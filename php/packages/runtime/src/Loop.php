@@ -21,9 +21,7 @@ final class Loop
     /** @var array<int,int> request id => the deadline op it armed, so the timer can be called off */
     private static array $deadlineOf = [];
     /**
-     * request id => the L0 fiber-timeout milliseconds armFiberTimeout() armed for it, only while
-     * that is still the active deadline. An app-level Ignis\deadline() disarms it like any other
-     * deadline, which is what tells the two apart when the timer fires (ADR-0043 §7, L0).
+     * request id => the L0 fiber-timeout milliseconds armFiberTimeout() armed for it (ADR-0043 §7, L0).
      * @var array<int,int>
      */
     private static array $fiberTimeoutMilliseconds = [];
@@ -171,13 +169,7 @@ final class Loop
         }
     }
 
-    /**
-     * ADR-0043 §7, L2/L3: a fiber force-closed under `kill = "graceful"` unwinds through this
-     * `finally` without ever reaching `resolve()`/`reject()` above — the throw is uncatchable, so
-     * the ordinary `catch` never ran — which leaves its Future unsettled and whoever awaits it
-     * hanging forever. `kill = "exception"` already settled it through the `catch` above, so this
-     * is a no-op there.
-     */
+    /** ADR-0043 §7, L2/L3: a graceful force-close unwinds through `finally`, never `catch`, leaving the Future unsettled unless this rejects it. */
     private static function rejectIfForceClosedMidJob(Future $future): void
     {
         if (!$future->isDone()) {
@@ -1057,9 +1049,7 @@ final class Loop
     /**
      * `$parkedOn` holds the op of a fiber parked in userland (Ignis\sleep, await); `$waiting` is
      * scanned for one parked in a C stream op; anything else is a park only Rust can find.
-     *
-     * $requestId, when known, is only for the ADR-0043 §7 L2 watch this arms afterwards: which
-     * request the "swallowed its cancellation" log line names under `IGNIS_ON_SWALLOWED_CANCEL=log`.
+     * $requestId, when known, is only for the swallowed-cancellation watch this arms afterward (ADR-0043 §7, L2).
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function throwInto(\Fiber $fiber, \Throwable $exception, ?int $requestId = null): void
@@ -1122,10 +1112,8 @@ final class Loop
     }
 
     /**
-     * ADR-0043 §7, L2: after a cancellation was thrown into $fiber, watches whether it parks again
-     * instead of unwinding — a swallowed cancellation. `IGNIS_ON_SWALLOWED_CANCEL=force-close`
-     * (the default) marks it for `forceClosePending()`; `=log` only remembers it for one warn line.
-     * A fiber that already terminated unwound cleanly and needs no watch at all.
+     * Watches whether $fiber parks again instead of unwinding after a cancellation was thrown into it.
+     * `IGNIS_ON_SWALLOWED_CANCEL=force-close` (default) queues it for `forceClosePending()`; `=log` only warns once (ADR-0043 §7, L2).
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function watchForSwallowedCancellation(\Fiber $fiber, ?int $requestId): void
@@ -1145,12 +1133,8 @@ final class Loop
     }
 
     /**
-     * A cancellation caught and fully handled — the interrupted job ran to completion instead of
-     * doing more work on it — leaves `poolBody()`'s own loop free to hand the fiber straight back
-     * to the pool before its next park, the same as any other finished job. That re-park is the
-     * ordinary "waiting for a new job" one every idle fiber sits in, not a swallowed cancellation,
-     * so it must not be force-closed: `Loop::spawn()` would otherwise be handed a fiber the engine
-     * is mid-way through destroying the moment a later request reuses it.
+     * A fully handled cancellation returns the fiber to the idle pool, which is an ordinary re-park,
+     * not a swallowed cancellation, so `forceClosePending()` must leave it alone.
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function hasReturnedToThePoolIdle(\Fiber $fiber): bool
@@ -1158,13 +1142,7 @@ final class Loop
         return \in_array($fiber, self::$idle, true);
     }
 
-    /**
-     * Runs every loop turn (ADR-0043 §7, L2): a fiber in `$killPending` that is still suspended
-     * parked again instead of unwinding, so it is force-closed — every reference the loop holds is
-     * dropped and then the local variable, so the object's refcount reaches zero and the engine
-     * unwinds it synchronously with an uncatchable graceful exit, `finally` blocks included. One
-     * still running or already terminated is left for a later turn, or forgotten if terminated.
-     */
+    /** Runs every loop turn (ADR-0043 §7, L2): force-closes fibers that parked again after a cancellation instead of unwinding. */
     private static function forceClosePending(): void
     {
         if (self::forceCloseSuspendedFibers()) {
@@ -1177,12 +1155,7 @@ final class Loop
         self::logFibersThatSwallowedTheirCancellation();
     }
 
-    /**
-     * Drops every loop-held reference to each `$killPending` fiber that is still suspended right
-     * now — parked again instead of unwinding — and reports whether it found one, so the caller
-     * knows a cycle collection is worth running once every frame here has returned. A fiber found
-     * running is left for a later turn; one already terminated is forgotten without one.
-     */
+    /** Drops loop references to each still-suspended `$killPending` fiber and reports whether it found one, so the caller knows a cycle collection is worth running. */
     private static function forceCloseSuspendedFibers(): bool
     {
         $foundOneToClose = false;
@@ -1211,12 +1184,8 @@ final class Loop
     }
 
     /**
-     * A fiber parked inside a C hook is held by `wait.rs` (research 49 H1) for as long as that park
-     * lasts, and a held object is not a collectible cycle: dropping the loop's own references would
-     * leave it suspended for ever if the op never completes. So the park is ended first, with the
-     * kill thrown in — the fiber either unwinds (terminated, nothing left to do) or parks again on
-     * the loop's side, where the references really are the loop's to drop. Nothing to do for a
-     * fiber suspended on the loop's side, and nothing without the binary.
+     * Ends a fiber's C-side park with the kill exception thrown in first, so the loop can then
+     * safely drop its own references to it (research 49 H1).
      * @param \Fiber<mixed,mixed,mixed,mixed> $fiber
      */
     private static function releaseCPark(\Fiber $fiber): void
@@ -1250,18 +1219,7 @@ final class Loop
         self::$pending = array_values(array_filter(self::$pending, static fn(array $entry): bool => $entry[0] !== $fiber));
     }
 
-    /**
-     * `poolBody()` keeps a reference to its own fiber (`$self`) for the length of the job it is
-     * running, so a suspended job fiber is always the tail of a reference cycle back to itself:
-     * removing every reference the loop itself holds (`forceCloseSuspendedFibers()`) only makes it
-     * collectible, never frees it by refcount alone. `gc_collect_cycles()` is what actually frees
-     * it and is what triggers the engine's forced unwind (research 49 H1/H2) — immediately, not on
-     * the loop's own periodic schedule (`collectGarbage()`), because a fiber this call is meant to
-     * reclaim now must not wait for a root count nobody else is going to reach. It has to run after
-     * `forceCloseSuspendedFibers()` has returned and not before: that call's own loop variable is
-     * itself a live reference to the fiber for as long as its stack frame exists, and a cycle with
-     * a live outside referrer is correctly left alone rather than collected.
-     */
+    /** Frees a force-closed fiber's self-reference cycle immediately, rather than on the loop's periodic GC schedule (research 49 H1/H2). */
     private static function collectSelfReferencingFiberCycle(): void
     {
         gc_collect_cycles();
@@ -1299,13 +1257,7 @@ final class Loop
         self::$deadlineOf[$requestId] = $op;
     }
 
-    /**
-     * ADR-0043 §7, L0: arms the same wall-clock deadline machinery as `Ignis\deadline()` from the
-     * resolved `Recovery::fiberTimeoutFor($uri)`, unless that is 0 (off). A later `Ignis\deadline()`
-     * call from the handler disarms it and arms its own, which is the override the ADR asks for:
-     * `disarmDeadline()` drops `$fiberTimeoutMilliseconds` along with the timer, so what fires next
-     * is read as an application deadline, not an L0 one.
-     */
+    /** ADR-0043 §7, L0: arms the same deadline machinery as `Ignis\deadline()` from `Recovery::fiberTimeoutFor($uri)`, unless that is 0 (off). */
     private static function armFiberTimeout(int $requestId, string $uri): void
     {
         $milliseconds = Recovery::fiberTimeoutFor($uri);

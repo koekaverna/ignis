@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# ADR-0043 §5 / research 50 S-2: the blocking-detector load-test instrument, run against a real
-# server script. Starts $1 (default examples/app.php) under `profile = load-test`, `IGNIS_BLOCKING=
-# strict`, drives every route in $2 (one path per line; default: routes grepped out of the script
-# plus `/`) with `wrk` when it is installed or a `curl` loop otherwise, asks the running process for
-# its blocking report over `SIGUSR2`, and diffs the report's sites against $ALLOW (default
-# bench/results/blocking-allow.txt, created empty if missing; ADR-0043 §8 `library:symbol[@route-
-# prefix]` patterns). Exits non-zero on any site/route not covered by the allow file -- research
-# 50's "the allow file starts empty and must stay empty" gate for `examples/app.php`.
+# ADR-0043 §5 / research 50 S-2: the blocking-detector load-test instrument.
+# Run: bench/blocking-audit.sh [script] [route-file] -- drives every route under load-test/strict,
+#      then diffs the SIGUSR2 blocking report against $ALLOW; exits non-zero on any site/route not
+#      covered (the "allow file starts empty and stays empty" gate for examples/app.php).
+# Env: DURATION, CONCURRENCY, ALLOW (default bench/results/blocking-allow.txt), IGNIS_BIN.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -37,9 +34,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Route keys of a `match`/array table, single- or double-quoted. A router that builds its paths
-# some other way is not found here: pass a route file as $2, or the audit drives `/` alone and
-# says so -- an audit that never drove a route cannot vouch for it.
+# Route keys of a `match`/array table, single- or double-quoted. A different router shape needs a
+# route file passed as $2, since an audit that never drove a route cannot vouch for it.
 routes_from_script() {
   grep -oE "^\s*['\"]/[^'\"]*['\"]\s*=>" "$SCRIPT" 2>/dev/null | grep -oE "['\"]/[^'\"]*['\"]" | tr -d "'\"" | sort -u
 }
@@ -57,6 +53,15 @@ if [ "${#ROUTES[@]}" -eq 0 ]; then
   ROUTES=("/")
 fi
 echo "routes under audit: ${ROUTES[*]}"
+
+# Splits $DURATION evenly across the routes so the whole drive takes ~$DURATION seconds instead of
+# route-count * $DURATION, which would starve the later routes of a fair audit.
+per_route_duration() {
+  local total="$1" route_count="$2"
+  local per=$((total / route_count))
+  [ "$per" -lt 1 ] && per=1
+  echo "$per"
+}
 
 LOG_FILE=$(mktemp /tmp/ignis-blocking-audit-XXXXXX.log)
 rm -f "$REPORT_PATH"
@@ -81,11 +86,7 @@ fi
 echo "server up, pid=$SERVER_PID, log=$LOG_FILE"
 
 if command -v wrk >/dev/null 2>&1; then
-  # The whole drive takes ~$DURATION seconds regardless of how many routes there are: each route
-  # gets an even slice of it, one after another, rather than $DURATION seconds each (which would
-  # make the drive take route-count * $DURATION and starve the later routes of a fair audit).
-  PER_ROUTE_DURATION=$(( DURATION / ${#ROUTES[@]} ))
-  [ "$PER_ROUTE_DURATION" -lt 1 ] && PER_ROUTE_DURATION=1
+  PER_ROUTE_DURATION=$(per_route_duration "$DURATION" "${#ROUTES[@]}")
   echo "driving ${#ROUTES[@]} routes with wrk, ${PER_ROUTE_DURATION}s each at concurrency $CONCURRENCY"
   for route in "${ROUTES[@]}"; do
     wrk -t2 -c"$CONCURRENCY" -d"${PER_ROUTE_DURATION}s" "http://$ADDR$route" >/dev/null 2>&1 || true
