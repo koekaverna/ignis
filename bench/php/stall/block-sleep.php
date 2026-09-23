@@ -1,10 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `block-sleep.php`: S-1/S-8/S-9, blocked in the shim, policy `block`.
- * Measured: glibc's `sleep()` does not throw on the L4 signal, it returns the seconds left
- * un-slept, which the `unslept_s` field surfaces as the signal's own evidence.
- */
+/** Research 50 §A `block-sleep.php`: S-1/S-8/S-9, blocked in the shim, policy `block`. */
 
 declare(strict_types=1);
 

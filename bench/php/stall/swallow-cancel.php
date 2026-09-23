@@ -1,10 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `swallow-cancel.php`: S-6, cancellation swallowed.
- * A broad `catch (\Throwable)` parks again instead of letting the cancellation propagate;
- * `force-close` must end the fiber at its next park regardless, `log` must emit one warning line.
- */
+/** Research 50 §A `swallow-cancel.php`: S-6, cancellation swallowed. */
 
 declare(strict_types=1);
 

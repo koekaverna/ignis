@@ -38,15 +38,7 @@ function sleepRoute(Request $request): Response
     return Response::text("slept $milliseconds\n");
 }
 
-/**
- * `block-curl.php` and `finally-io.php` both need a host:port that genuinely blocks a TCP connect
- * rather than answering. Research 50 names `10.255.255.1` (RFC 1918); on this box that address is
- * intercepted by the sandbox's egress filter and answers every private/reserved destination with
- * an immediate HTTP 403 (`x-deny-reason: private_dest_ip`), confirmed with `curl -v` before this
- * file was written, so it is not a blackhole here. `93.184.216.34:81` (a public host, a port its
- * upstream firewall drops) gives a genuine ~5 s connect timeout with no answer on this box.
- * Override with `IGNIS_STALL_BLACKHOLE=host:port` where the RFC 1918 address works as intended.
- */
+/** A host:port whose TCP connect blocks instead of answering, for `block-curl.php` and `finally-io.php`. */
 function stallFixtureBlackhole(): string
 {
     return getenv('IGNIS_STALL_BLACKHOLE') ?: '93.184.216.34:81';

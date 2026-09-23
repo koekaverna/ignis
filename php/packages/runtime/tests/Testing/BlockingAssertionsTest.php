@@ -11,8 +11,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * `BlockingAssertions` needs the binary's detector (`ignis_blocking_sequence()`/`_records()`) to
- * do anything beyond running the callable: this suite is the no-op contract a test case gets
- * under a plain `php` CLI, without which PHPStan reports the trait as unused (research 50 S-3).
+ * do anything beyond running the callable: this suite is the no-op contract a test case gets.
  */
 #[CoversTrait(BlockingAssertions::class)]
 #[CoversTrait(BlockingAudit::class)]

@@ -1,9 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `file-read.php`: blocking forward on a regular file (`/dev/zero`, never `epoll`-ready).
- * Measured: a 1 GiB read takes 0.6s on this box, comfortably over the ">100ms" research 50 asks for.
- */
+/** Research 50 §A `file-read.php`: blocking forward on a regular file (`/dev/zero`, never `epoll`-ready). */
 
 declare(strict_types=1);
 

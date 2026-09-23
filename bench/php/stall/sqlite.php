@@ -2,8 +2,7 @@
 
 /**
  * Research 50 §A `sqlite.php`: blocking forward inside an extension under `block`, the documented
- * "cannot park" case (MVP scope, ADR-0043 §9). Measured: a 6,000,000-row `WITH RECURSIVE` query
- * takes 2.2s, the "~2s" research 50 asks for.
+ * "cannot park" case (MVP scope, ADR-0043 §9). Measured: a 6,000,000-row `WITH RECURSIVE` query.
  */
 
 declare(strict_types=1);

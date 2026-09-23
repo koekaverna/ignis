@@ -5,30 +5,6 @@ declare(strict_types=1);
 /**
  * A fake of the five reactor primitives the userland scheduler cannot run without, so that
  * Ignis\Loop can be unit-tested under a plain PHP CLI with no ignis binary and no sockets.
- *
- * What it bounds: the E-suites (E1/E2/E5/E7/E11/E23) are the contract. The fake only exercises
- * userland bookkeeping — fiber reuse, waiter maps, the settle order — against a simulated clock.
- * If a fake-based test and an E-suite ever disagree, the E-suite is right and the fake is the bug.
- *
- * Every function is guarded with function_exists(), so requiring this file inside the real binary
- * (or after packages/runtime/stubs/ignis.php) changes nothing. That is also why tests/bootstrap.php
- * requires it *before* the composer autoloader: the stubs are autoload-dev files whose bodies throw,
- * and whoever declares a name first wins.
- *
- * ignis_set_superglobals() and ignis_cancel_parked_any() are faked for that reason and no other:
- * the runtime calls them behind function_exists(), the stub makes that guard true, and the stub
- * body then throws inside a request fiber — where Loop::poolBody() rejects a Future nobody reads,
- * so the request just disappears. Any stub function the runtime guards on has to be faked here.
- *
- * ignis_scope_allocate() and ignis_scope_rows_clear() are faked too, but for the opposite reason:
- * Ignis\Scope::create() and Ignis\Scope::clear() call them with no function_exists() guard at all
- * (S-SCOPED-CLASS, BACKLOG.md), because under the real binary they always exist. Loop::releaseRequest()
- * calls Scope::clear() at the end of every request LoopTest.php drives, so without a fake here every
- * Loop test would hit the throwing stub in packages/runtime/stubs/ignis.php, not just ScopeTest.
- * The fake cannot reproduce per-scope property storage — that is engine territory — so it only
- * approximates the one behaviour userland tests can observe from outside: ignis_scope_allocate()
- * never runs $class's constructor, which ReflectionClass::newInstanceWithoutConstructor() gives for
- * free, and it records call order so a test can prove allocate happens before construct.
  */
 
 namespace Ignis\Tests {
@@ -129,10 +105,9 @@ namespace Ignis\Tests {
         }
 
         /**
-     * The real one promotes what the constructor wrote into row zero, wherever it ran. A pure-PHP
-     * fake has no per-scope storage to promote into, so it records the call: what userland tests
-     * can observe is that `Scope::create()` seals **after** constructing, never before.
-     */
+         * The real one promotes what the constructor wrote into row zero, wherever it ran. A pure-PHP
+         * fake has no per-scope storage to promote into, so it records the call: what userland tests.
+         */
     public static function sealScope(object $instance): void
     {
         self::$scopeEvents[] = 'seal:' . $instance::class;

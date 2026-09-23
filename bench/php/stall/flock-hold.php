@@ -1,10 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `flock-hold.php`: S-13, a lock held across a yield (R-SESS shape, V-58 regression).
- * Fiber B's `flock` wait becomes a parked retry, so the worker keeps serving `/hello`; expects no
- * `stall` and no `blocking_call` line (the control is the same file under `IGNIS_NO_UNIVERSAL_PARK=1`).
- */
+/** Research 50 §A `flock-hold.php`: S-13, a lock held across a yield (R-SESS shape, V-58 regression). */
 
 declare(strict_types=1);
 

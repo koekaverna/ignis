@@ -1,9 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `block-curl.php`: S-8, blocked in the shim inside a third-party library.
- * `curl_exec()` resolves as `libcurl:*`, a row the default `IGNIS_PARK` policy does not cover, so it blocks the thread.
- */
+/** Research 50 §A `block-curl.php`: S-8, blocked in the shim inside a third-party library. */
 
 declare(strict_types=1);
 

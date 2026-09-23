@@ -9,11 +9,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-/**
- * `Recovery` needs neither the fake reactor nor the ignis binary: `parseRoutes()` and
- * `profileDefault()` are pure functions of a string, and `fiberTimeoutFor()` only reads the
- * environment `Env` already reads everywhere else in the runtime (ADR-0043 §8, research 50 S-15).
- */
+/** `Recovery` is pure functions of strings and the environment, so it needs neither the fake reactor nor the binary. */
 #[CoversClass(Recovery::class)]
 final class RecoveryTest extends TestCase
 {

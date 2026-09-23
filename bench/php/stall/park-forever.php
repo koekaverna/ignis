@@ -1,9 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `park-forever.php`: S-5, parked forever (a `Future` nobody ever resolves).
- * With `fiber_timeout_ms` set, expects a 504 within it plus a `fiber_timeout` line naming the park.
- */
+/** Research 50 §A `park-forever.php`: S-5, parked forever (a `Future` nobody ever resolves). */
 
 declare(strict_types=1);
 

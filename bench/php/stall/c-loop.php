@@ -1,10 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `c-loop.php`: S-10, running C (`password_hash()`), no interrupt checks reachable.
- * Measured on this box: cost 20 takes 61.5s, the smallest cost that clears the 60s bar the ADR
- * asks for -- override with `?cost=` for a faster or slower box.
- */
+/** Research 50 §A `c-loop.php`: S-10, running C (`password_hash()`), no interrupt checks reachable. */
 
 declare(strict_types=1);
 

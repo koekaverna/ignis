@@ -1,10 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `dtor-park.php`: S-12, GC destructor fiber parks (research 49 H1/H2).
- * A destructor's `usleep()` tries to park whichever fiber happens to be running when the
- * collector runs; expects zero ASAN/valgrind reports and flat memory over 10,000 cycles.
- */
+/** Research 50 §A `dtor-park.php`: S-12, GC destructor fiber parks (research 49 H1/H2). */
 
 declare(strict_types=1);
 

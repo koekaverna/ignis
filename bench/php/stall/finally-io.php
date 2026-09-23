@@ -1,9 +1,6 @@
 <?php
 
-/**
- * Research 50 §A `finally-io.php`: S-6, `finally` does I/O during a force-close.
- * That I/O must get `FiberError`/`ECANCELED` immediately, never park or block the thread.
- */
+/** Research 50 §A `finally-io.php`: S-6, `finally` does I/O during a force-close. */
 
 declare(strict_types=1);
 

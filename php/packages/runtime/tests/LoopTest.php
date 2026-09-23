@@ -17,10 +17,7 @@ require_once __DIR__ . '/LoopTestCase.php';
 
 /**
  * `Ignis\Loop` — 645 lines of scheduler that had no unit test. Everything here runs on
- * `tests/fake-reactor.php`: a simulated clock, an injectable completion queue and a recorded
- * response map. The E-suites against the real binary remain the contract; this covers the
- * bookkeeping that has no reactor in it at all — the fiber pool, admission control (ADR-0019),
- * deadlines, cancellation (ADR-0009) and the response-dispatch contract.
+ * `tests/fake-reactor.php`: a simulated clock, an injectable completion queue and a recorded.
  */
 #[CoversClass(Loop::class)]
 final class LoopTest extends LoopTestCase
@@ -342,8 +339,7 @@ final class LoopTest extends LoopTestCase
 
     /**
      * A pooled fiber goes back to `$idle` the moment its job settles and the next request may take
-     * it. While it also stayed in `$children`, a disconnect on the request that spawned it threw
-     * `CancelledException` into whatever the *next* request was doing on that fiber.
+     * it. While it also stayed in `$children`, a disconnect on the request that spawned it threw.
      */
     public function testAFinishedChildLeavesItsRequestWhileThatRequestIsStillInFlight(): void
     {
@@ -362,16 +358,7 @@ final class LoopTest extends LoopTestCase
 
     // ---- cancellation (ADR-0009) -----------------------------------------------------------
 
-    /**
-     * Children first, in reverse spawn order, and the request fiber last — research 08 states the
-     * intent ("cancel walks children first") and the mechanism gives the reason: unwinding the
-     * parent answers 499 and returns its fiber to the pool, which `drainQueue()` may hand to the
-     * next request while a child of the cancelled one is still running its `finally`.
-     *
-     * The ops below are ones the fake reactor will never complete, so the loop stops with
-     * everything still parked and the cancellation arrives in a poll of its own — which is how a
-     * disconnect really lands.
-     */
+    /** Children first, in reverse spawn order, the request fiber last (research 08). */
     public function testCancellationWalksTheChildrenBeforeTheRequestFiber(): void
     {
         $order = [];
@@ -487,9 +474,7 @@ final class LoopTest extends LoopTestCase
 
     /**
      * A-SWALLOWED-RUST: a fire-and-forget op nobody awaits can fail at the reactor level, and that
-     * failure reaches `dispatchUnawaited()` tagged `kind => 'error'` — neither of the tags it
-     * dispatches on. Pinning that it is dropped, not just undocumented: nothing throws, nothing is
-     * cancelled and no request is dispatched for it.
+     * failure reaches `dispatchUnawaited()` tagged `kind => 'error'` — neither of the tags it.
      */
     public function testAnUnawaitedCompletionMatchingNeitherTagIsSilentlyDropped(): void
     {
@@ -564,10 +549,7 @@ final class LoopTest extends LoopTestCase
 
     /**
      * `answer()` runs after `runHandler()` has returned, outside every `catch` it has, and the
-     * Future `admitRequest()` spawns is discarded — so a failure there used to answer nobody and log
-     * nothing, and came back later as an unobserved rejection that `runUntil()` rethrew, killing the
-     * whole loop instead of the one request. A `StreamedResponse` is how it happens for real: the
-     * stub `ignis_stream_bind()` throws exactly where a failing bind does.
+     * Future `admitRequest()` spawns is discarded — so a failure there used to answer nobody and log.
      */
     public function testAFailureWhileAnsweringBecomesA500AndTheLoopKeepsServing(): void
     {
@@ -598,9 +580,7 @@ final class LoopTest extends LoopTestCase
 
     /**
      * DEFECT found while fixing the one above: `reportUnobserved()` rethrew the first rejection and
-     * assigned `[]` over the rest, so a batch of failing fibers was reported as one and the others
-     * left no trace at all. Only one throwable can come out of `runUntil()`; the others belong in
-     * the log, because a crash is usually explained by what failed beside it.
+     * assigned `[]` over the rest, so a batch of failing fibers was reported as one and the others.
      */
     public function testEveryUnobservedRejectionIsReportedAndOnlyOneCanBeRethrown(): void
     {
